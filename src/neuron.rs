@@ -1,0 +1,764 @@
+//! Spiking neuron models, each checked against the closed form it is supposed to reproduce.
+//!
+//! The models here are old and open. Lapicque described integrate-and-fire in 1907; the leaky
+//! version is the standard textbook object (Gerstner & Kistler, *Spiking Neuron Models*, 2002);
+//! Izhikevich's two-variable model is from *Simple Model of Spiking Neurons*, IEEE Transactions on
+//! Neural Networks 14(6), 2003; adaptive thresholds are the mechanism behind long short-term memory
+//! in spiking networks (Bellec et al., 2018). None of it is proprietary and none of it is new. What
+//! a neuromorphic chip accelerates is exactly this loop, and what it charges for is the memory
+//! traffic around it — so both belong in the open commons.
+//!
+//! # Units are SI at every interface
+//!
+//! [`Neuron::step`] takes `dt` in **seconds**, currents in **amperes**, potentials in **volts**.
+//! This matters more than it looks: the spiking literature is written in milliseconds and
+//! millivolts, and a crate that exposed both conventions would eventually integrate a millisecond
+//! time step as a second and report a firing rate a thousand times wrong — in the right shape, with
+//! the right units printed beside it.
+//!
+//! [`Izhikevich`] is the exception that proves it. Its constants — `0.04`, `5`, `140`, the 30 mV
+//! cutoff — are dimensionally meaningless outside the paper's own millisecond/millivolt frame, so
+//! they are kept **exactly as the paper prints them** where a reader can compare them line by line,
+//! and the conversion happens at the boundary in [`Izhikevich::step`]. The alternative, rescaling
+//! the constants into SI, would make them unrecognisable against the source.
+//!
+//! # What "verified" means here
+//!
+//! Every model in this module has a test that runs it against an analytic solution, not against a
+//! previous run of itself. [`Lif`] integrates by **exponential Euler**, which is not an
+//! approximation for piecewise-constant input — it is the exact solution of the membrane equation
+//! over the step — so the simulated potential agrees with the closed form to floating-point noise
+//! rather than to a discretisation error, and [`Lif::isi`] gives the inter-spike interval in closed
+//! form for the constant-current case so a simulated firing rate can be checked against it.
+
+/// A neuron that can be stepped forward in time.
+///
+/// One trait rather than an enum because a network holds one model type throughout: the memory
+/// layout of a spiking simulation is the thing that determines its energy, and a `Vec<Box<dyn
+/// Neuron>>` would scatter membrane state across the heap and charge a pointer chase per neuron per
+/// step. See [`crate::net`], which stores state in parallel arrays for exactly this reason.
+pub trait Neuron: Clone {
+    /// Whether one step of length `k * dt` with zero input gives exactly the same state as `k`
+    /// steps of `dt` with zero input.
+    ///
+    /// **This is the property that makes event-driven simulation legal**, and it is a constant on
+    /// the trait rather than a comment because [`crate::sim`] refuses to run a model that lacks it
+    /// in [`crate::sim::Mode::EventDriven`]. Skipping over quiet ticks is only free if the model
+    /// can be jumped across them without changing the answer.
+    ///
+    /// True for [`Lif`], [`AdaptiveLif`] and [`IntegrateAndFire`]: the first two integrate by
+    /// exponential Euler, which is the exact solution over any interval of constant input, and
+    /// exponentials compose — `exp(-a/τ) · exp(-b/τ) = exp(-(a+b)/τ)`. The third is linear and does
+    /// not move at all under zero current.
+    ///
+    /// **False for [`Izhikevich`]**, whose `v` equation is quadratic and is integrated by forward
+    /// Euler. Two half-steps and one whole step of that give different answers, so jumping a gap
+    /// would silently change the spike times — which is exactly the kind of error that produces a
+    /// plausible raster plot and an unreproducible result.
+    const EXACT_OVER_GAPS: bool;
+
+    /// Advance by `dt` seconds under input current `i` amperes. Returns `true` if the neuron
+    /// spiked during this step.
+    fn step(&mut self, dt: f64, i: f64) -> bool;
+
+    /// Apply an instantaneous displacement of `dv` volts to the membrane.
+    ///
+    /// This is how a synapse delivers. The alternative — converting a weight into a current and
+    /// passing it to `step` — makes the effect of a spike depend on `dt`, so halving the time step
+    /// would halve every synaptic influence in the network while every parameter stayed the same.
+    /// A delta synapse displaces the membrane by a voltage, and that is what this does.
+    ///
+    /// A refractory neuron IGNORES the displacement. That is what absolute refractoriness means,
+    /// and a model that accumulated input during it would fire the instant the period ended,
+    /// turning the refractory period into a delay line rather than a rate bound.
+    fn bump(&mut self, dv: f64);
+
+    /// Seconds of absolute refractory period still to run, or `0.0` for a model without one.
+    ///
+    /// Exposed because [`crate::sim`] has to land exactly on the end of a refractory period when it
+    /// jumps a neuron across quiet ticks. Without it, an event-driven run and a clocked run of the
+    /// same network disagree about when a neuron resumed integrating — by less than one tick, which
+    /// is small enough never to be noticed and large enough to change a spike time.
+    fn refractory_left(&self) -> f64 {
+        0.0
+    }
+
+    /// Membrane potential in volts.
+    fn potential(&self) -> f64;
+
+    /// Return to the resting state, forgetting any refractory countdown and any adaptation.
+    fn reset(&mut self);
+}
+
+/// Leaky integrate-and-fire.
+///
+/// `tau_m dV/dt = -(V - v_rest) + r_m * I`, with a spike and a reset when `V` reaches `v_th`, and
+/// an absolute refractory period during which the potential is clamped at `v_reset`.
+///
+/// # The closed form this is checked against
+///
+/// Under constant current the membrane relaxes toward `v_inf = v_rest + r_m * I`. Starting from
+/// `v_reset` it reaches threshold after
+///
+/// ```text
+/// T = tau_m * ln( (v_inf - v_reset) / (v_inf - v_th) )
+/// ```
+///
+/// and the inter-spike interval is `T + t_ref`. That expression is [`Lif::isi`], and
+/// `examples/lif_closed_form.rs` compares it against a simulated spike train.
+///
+/// If `v_inf <= v_th` the neuron never fires however long you wait, and `isi` returns `None` rather
+/// than a large number — the difference between "fires rarely" and "does not fire" is a difference
+/// a rate-coded readout cannot recover later.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Lif {
+    /// Membrane time constant, seconds. Sets how fast the potential forgets its input.
+    pub tau_m: f64,
+    /// Resting potential, volts. The value the membrane relaxes to with no input.
+    pub v_rest: f64,
+    /// Firing threshold, volts. A spike is emitted when the potential reaches it.
+    pub v_th: f64,
+    /// Post-spike potential, volts.
+    pub v_reset: f64,
+    /// Membrane resistance, ohms. Converts input current to the steady-state potential offset.
+    pub r_m: f64,
+    /// Absolute refractory period, seconds. The potential is held at `v_reset` for this long after
+    /// a spike, which is what bounds the firing rate at `1 / t_ref`.
+    pub t_ref: f64,
+    /// Current membrane potential, volts.
+    pub v: f64,
+    /// Seconds remaining in the refractory period; zero when the neuron is free to integrate.
+    pub refractory: f64,
+}
+
+impl Default for Lif {
+    /// A cortical-ish default: 20 ms membrane constant, −65 mV rest, −50 mV threshold, 2 ms
+    /// refractory, 10 MΩ. These are round numbers from the textbook range rather than a fit to any
+    /// particular cell, and they are stated here so that a figure produced with the default is
+    /// reproducible from the documentation alone.
+    fn default() -> Self {
+        Self {
+            tau_m: 20e-3,
+            v_rest: -65e-3,
+            v_th: -50e-3,
+            v_reset: -65e-3,
+            r_m: 10e6,
+            t_ref: 2e-3,
+            v: -65e-3,
+            refractory: 0.0,
+        }
+    }
+}
+
+impl Lif {
+    /// The steady-state potential under constant current `i`, volts.
+    #[must_use]
+    pub fn v_inf(&self, i: f64) -> f64 {
+        self.v_rest + self.r_m * i
+    }
+
+    /// Inter-spike interval under constant current `i`, in seconds, in closed form.
+    ///
+    /// `None` when `v_inf(i) <= v_th`: the neuron is sub-threshold and never fires, which is a
+    /// different statement from a long interval and is kept different here.
+    #[must_use]
+    pub fn isi(&self, i: f64) -> Option<f64> {
+        let v_inf = self.v_inf(i);
+        if v_inf <= self.v_th {
+            return None;
+        }
+        let t = self.tau_m * ((v_inf - self.v_reset) / (v_inf - self.v_th)).ln();
+        Some(t + self.t_ref)
+    }
+
+    /// Steady-state firing rate under constant current `i`, in hertz.
+    ///
+    /// `None` for the sub-threshold case, for the same reason as [`Lif::isi`].
+    #[must_use]
+    pub fn rate(&self, i: f64) -> Option<f64> {
+        self.isi(i).map(|t| 1.0 / t)
+    }
+}
+
+impl Neuron for Lif {
+    // Exponential Euler is the exact solution over any interval of constant input, and exponentials
+    // compose across concatenated intervals, so a gap may be jumped in one step.
+    const EXACT_OVER_GAPS: bool = true;
+
+    fn step(&mut self, dt: f64, i: f64) -> bool {
+        if self.refractory > 0.0 {
+            // Clamped, not merely un-integrated: a refractory neuron on real hardware holds its
+            // reset potential rather than drifting, and the distinction shows up as an offset in
+            // the first interval after a burst.
+            self.refractory -= dt;
+            self.v = self.v_reset;
+            return false;
+        }
+        // EXPONENTIAL EULER, which for constant `i` over the step is not an approximation but the
+        // exact solution of `tau dV/dt = -(V - v_inf)`. Forward Euler would be the obvious choice
+        // and is wrong here in a specific way: its error grows with `dt / tau_m` and it goes
+        // unstable above `dt = 2 * tau_m`, so a user who coarsened the time step to save energy
+        // would get a firing rate that drifted and then exploded, with no warning at either point.
+        let v_inf = self.v_inf(i);
+        let decay = (-dt / self.tau_m).exp();
+        self.v = v_inf + (self.v - v_inf) * decay;
+
+        if self.v >= self.v_th {
+            self.v = self.v_reset;
+            self.refractory = self.t_ref;
+            return true;
+        }
+        false
+    }
+
+    fn bump(&mut self, dv: f64) {
+        if self.refractory > 0.0 {
+            return;
+        }
+        self.v += dv;
+    }
+
+    fn refractory_left(&self) -> f64 {
+        self.refractory.max(0.0)
+    }
+
+    fn potential(&self) -> f64 {
+        self.v
+    }
+
+    fn reset(&mut self) {
+        self.v = self.v_rest;
+        self.refractory = 0.0;
+    }
+}
+
+/// Non-leaky integrate-and-fire: a perfect integrator.
+///
+/// `c * dV/dt = I`. No leak, so the potential is an exact linear ramp and the spike times are
+/// exactly `k * c * (v_th - v_reset) / I`. That makes it the sharpest available test of a
+/// simulator's timing — any drift in the loop shows up immediately as a drift in a quantity that
+/// has no error term at all.
+///
+/// It is also the model several digital neuromorphic cores actually implement, because a leak costs
+/// a multiply per neuron per tick and an integrator does not.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct IntegrateAndFire {
+    /// Membrane capacitance, farads.
+    pub c: f64,
+    /// Firing threshold, volts.
+    pub v_th: f64,
+    /// Post-spike potential, volts.
+    pub v_reset: f64,
+    /// Current membrane potential, volts.
+    pub v: f64,
+}
+
+impl Default for IntegrateAndFire {
+    fn default() -> Self {
+        Self { c: 1e-9, v_th: 15e-3, v_reset: 0.0, v: 0.0 }
+    }
+}
+
+impl IntegrateAndFire {
+    /// Exact inter-spike interval under constant current `i`, seconds.
+    ///
+    /// `None` for `i <= 0`, where the potential never rises to threshold.
+    #[must_use]
+    pub fn isi(&self, i: f64) -> Option<f64> {
+        if i <= 0.0 {
+            return None;
+        }
+        Some(self.c * (self.v_th - self.v_reset) / i)
+    }
+}
+
+impl Neuron for IntegrateAndFire {
+    // Linear in `i * dt`, and motionless at `i = 0`: a gap changes nothing at all.
+    const EXACT_OVER_GAPS: bool = true;
+
+    fn step(&mut self, dt: f64, i: f64) -> bool {
+        self.v += i * dt / self.c;
+        if self.v >= self.v_th {
+            self.v = self.v_reset;
+            return true;
+        }
+        false
+    }
+
+    fn bump(&mut self, dv: f64) {
+        self.v += dv;
+    }
+
+    fn potential(&self) -> f64 {
+        self.v
+    }
+
+    fn reset(&mut self) {
+        self.v = self.v_reset;
+    }
+}
+
+/// Leaky integrate-and-fire with an adapting threshold.
+///
+/// The threshold relaxes toward `theta_0` with time constant `tau_a` and steps up by `beta` on
+/// every spike, so a neuron driven hard fires quickly and then slows down. This is the mechanism
+/// that gives spiking networks a memory longer than their membrane constant, and it is what
+/// "adaptive LIF" or "ALIF" refers to in the surrogate-gradient literature.
+///
+/// The adaptation is on the THRESHOLD rather than as an adaptation current. Both forms exist; this
+/// one is chosen because its state is a scalar that can be read directly, which makes the
+/// closed-form check below possible.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct AdaptiveLif {
+    /// The membrane, which behaves exactly as [`Lif`] does.
+    pub lif: Lif,
+    /// Resting threshold, volts — the value `theta` decays back to.
+    pub theta_0: f64,
+    /// Threshold adaptation time constant, seconds.
+    pub tau_a: f64,
+    /// Threshold increment per spike, volts.
+    pub beta: f64,
+    /// Current threshold, volts.
+    pub theta: f64,
+}
+
+impl AdaptiveLif {
+    /// Build from a membrane and an adaptation, taking the resting threshold from the membrane's
+    /// own `v_th` so the two cannot disagree.
+    #[must_use]
+    pub fn new(lif: Lif, tau_a: f64, beta: f64) -> Self {
+        Self { theta_0: lif.v_th, tau_a, beta, theta: lif.v_th, lif }
+    }
+
+    /// Threshold `n` spikes into a burst with no time to decay between them, volts.
+    ///
+    /// `theta_0 + n * beta`, which is trivial arithmetic and is exposed anyway because it is the
+    /// quantity the test checks the simulator against — and because a reader looking for "how much
+    /// does this thing adapt" should find the answer rather than derive it.
+    #[must_use]
+    pub fn theta_after(&self, n: u32) -> f64 {
+        self.theta_0 + f64::from(n) * self.beta
+    }
+}
+
+impl Neuron for AdaptiveLif {
+    // Both state variables are exponential relaxations, and both compose across a gap.
+    const EXACT_OVER_GAPS: bool = true;
+
+    fn step(&mut self, dt: f64, i: f64) -> bool {
+        // The threshold decays whether or not the membrane is refractory. Adaptation is a slow
+        // variable and freezing it during the refractory period would make the adaptation time
+        // constant depend on the firing rate, which is not what the model says.
+        self.theta = self.theta_0 + (self.theta - self.theta_0) * (-dt / self.tau_a).exp();
+        self.lif.v_th = self.theta;
+        let fired = self.lif.step(dt, i);
+        if fired {
+            self.theta += self.beta;
+            self.lif.v_th = self.theta;
+        }
+        fired
+    }
+
+    fn bump(&mut self, dv: f64) {
+        self.lif.bump(dv);
+    }
+
+    fn refractory_left(&self) -> f64 {
+        self.lif.refractory_left()
+    }
+
+    fn potential(&self) -> f64 {
+        self.lif.v
+    }
+
+    fn reset(&mut self) {
+        self.lif.reset();
+        self.theta = self.theta_0;
+        self.lif.v_th = self.theta_0;
+    }
+}
+
+/// Izhikevich's two-variable model.
+///
+/// From *Simple Model of Spiking Neurons*, IEEE Transactions on Neural Networks 14(6):1569–1572,
+/// 2003:
+///
+/// ```text
+/// v' = 0.04 v^2 + 5 v + 140 - u + I
+/// u' = a (b v - u)
+/// if v >= 30 mV:  v <- c,  u <- u + d
+/// ```
+///
+/// with `v` in millivolts and `t` in milliseconds. The constants above are transcribed from the
+/// paper and deliberately not rewritten: `0.04`, `5` and `140` have no meaning outside that frame,
+/// and the only way to check them is to read them against the source.
+///
+/// # Why the substeps
+///
+/// The `v` equation is quadratic and its solution blows up in finite time, which is the mechanism
+/// that produces the spike upstroke. Integrating it with one forward-Euler step of 1 ms overshoots
+/// badly near the upstroke, so the paper's own reference code takes two half-steps of `v` per step
+/// of `u`. [`Izhikevich::substeps`] carries that, defaulting to 2, and is exposed because a user
+/// who wants tighter timing can raise it and one who wants it cheap on a microcontroller can see
+/// exactly what they are trading.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Izhikevich {
+    /// Recovery time scale, the paper's `a`, in reciprocal milliseconds.
+    pub a: f64,
+    /// Recovery sensitivity to `v`, the paper's `b`, dimensionless.
+    pub b: f64,
+    /// Post-spike reset value of `v`, millivolts.
+    pub c: f64,
+    /// Post-spike increment of `u`, the paper's `d`.
+    pub d: f64,
+    /// Membrane potential, millivolts.
+    pub v: f64,
+    /// Recovery variable.
+    pub u: f64,
+    /// Forward-Euler substeps of `v` per call to [`Neuron::step`]. See the type doc.
+    pub substeps: u32,
+}
+
+impl Izhikevich {
+    /// Regular spiking, the paper's Figure 2 parameters: `a = 0.02, b = 0.2, c = -65, d = 8`.
+    ///
+    /// The most common cortical excitatory type, and the one to reach for if you do not have a
+    /// reason to reach for another.
+    #[must_use]
+    pub fn regular_spiking() -> Self {
+        Self::new(0.02, 0.2, -65.0, 8.0)
+    }
+
+    /// Fast spiking, the paper's inhibitory interneuron: `a = 0.1, b = 0.2, c = -65, d = 2`.
+    #[must_use]
+    pub fn fast_spiking() -> Self {
+        Self::new(0.1, 0.2, -65.0, 2.0)
+    }
+
+    /// Chattering / bursting, the paper's `a = 0.02, b = 0.2, c = -50, d = 2`.
+    #[must_use]
+    pub fn chattering() -> Self {
+        Self::new(0.02, 0.2, -50.0, 2.0)
+    }
+
+    /// Build from the paper's four parameters, starting at rest.
+    ///
+    /// The initial state is the paper's own: `v = c`, `u = b * v`.
+    #[must_use]
+    pub fn new(a: f64, b: f64, c: f64, d: f64) -> Self {
+        Self { a, b, c, d, v: c, u: b * c, substeps: 2 }
+    }
+}
+
+impl Neuron for Izhikevich {
+    // FALSE, and load-bearing. The `v` equation is quadratic and integrated by forward Euler, so
+    // one step of `2h` and two steps of `h` do not agree. `sim` refuses to run this model
+    // event-driven rather than producing spike times that depend on which ticks happened to be
+    // quiet.
+    const EXACT_OVER_GAPS: bool = false;
+
+    /// `dt` is in **seconds** and `i` in amperes, like every other model here; both are converted
+    /// at this boundary into the paper's milliseconds and its dimensionless current.
+    ///
+    /// The current conversion is the honest weak point of putting this model behind an SI trait.
+    /// The paper's `I` is not an ampere — it is a number that produces the figures in the paper —
+    /// so the scale chosen here is 1 nA to 1 unit of the paper's `I`, which makes `regular_spiking`
+    /// fire at roughly the published rate for the published inputs. It is a CONVENTION, stated so
+    /// that a reader comparing against the paper knows exactly what was done, and nothing in this
+    /// crate depends on it being the only defensible choice.
+    fn step(&mut self, dt: f64, i: f64) -> bool {
+        let dt_ms = dt * 1e3;
+        let i_paper = i * 1e9;
+        let n = self.substeps.max(1);
+        let h = dt_ms / f64::from(n);
+
+        for _ in 0..n {
+            self.v += h * (0.04 * self.v * self.v + 5.0 * self.v + 140.0 - self.u + i_paper);
+            // Checked INSIDE the substep loop. Checking only after the last one lets `v` run past
+            // the cutoff and into the quadratic's blow-up, where the next substep produces an
+            // infinity and then a NaN that propagates silently through every downstream spike.
+            if self.v >= 30.0 {
+                self.v = self.c;
+                self.u += self.d;
+                return true;
+            }
+        }
+        self.u += dt_ms * self.a * (self.b * self.v - self.u);
+        false
+    }
+
+    /// `dv` is volts, converted here into the model's millivolts.
+    fn bump(&mut self, dv: f64) {
+        self.v += dv * 1e3;
+    }
+
+    /// Volts, converted from the model's millivolts so that the trait's contract holds.
+    fn potential(&self) -> f64 {
+        self.v * 1e-3
+    }
+
+    fn reset(&mut self) {
+        self.v = self.c;
+        self.u = self.b * self.c;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AdaptiveLif, IntegrateAndFire, Izhikevich, Lif, Neuron};
+
+    /// The free membrane has an exact solution. This is the tightest check in the module, and it
+    /// passes at floating-point noise rather than at a discretisation tolerance BECAUSE the
+    /// integrator is exponential Euler — which is the property the comment in `step` claims.
+    #[test]
+    fn free_decay_matches_the_exponential_exactly() {
+        // -55 mV: above rest so there is something to decay, and BELOW the -50 mV threshold so the
+        // neuron does not fire on its first step. The first draft of this test started at -40 mV,
+        // which is over threshold, and the neuron spiked and reset before decaying at all — the
+        // test then compared a reset potential against an exponential and failed for the right
+        // reason by luck.
+        let mut n = Lif { v: -55e-3, ..Lif::default() };
+        let v0 = n.v;
+        let dt = 1e-4;
+        for k in 1..=500 {
+            n.step(dt, 0.0);
+            let t = f64::from(k) * dt;
+            let want = n.v_rest + (v0 - n.v_rest) * (-t / n.tau_m).exp();
+            assert!(
+                (n.v - want).abs() < 1e-12,
+                "step {k}: simulated {} vs closed form {want}",
+                n.v
+            );
+        }
+    }
+
+    /// A coarse step and a fine step must agree, because the exponential is exact at both. This is
+    /// the property forward Euler would fail, and it is what lets a caller trade time resolution
+    /// for energy without silently changing the answer.
+    #[test]
+    fn the_exponential_integrator_is_step_size_independent_on_free_decay() {
+        let run = |dt: f64, steps: u32| {
+            let mut n = Lif { v: -55e-3, ..Lif::default() };
+            for _ in 0..steps {
+                n.step(dt, 0.0);
+            }
+            n.v
+        };
+        let fine = run(1e-5, 5_000);
+        let coarse = run(1e-2, 5);
+        assert!((fine - coarse).abs() < 1e-12, "fine {fine} vs coarse {coarse}");
+    }
+
+    /// The simulated firing rate against `Lif::isi`, over a range of currents.
+    #[test]
+    fn the_firing_rate_matches_the_closed_form_interval() {
+        let proto = Lif::default();
+        for &na in &[2.0, 3.0, 5.0, 10.0, 20.0] {
+            let i = na * 1e-9;
+            let want = proto.isi(i).expect("supra-threshold by construction");
+            let mut n = proto;
+            let dt = 1e-6;
+            let steps = 2_000_000; // 2 s
+            let mut spikes = 0u32;
+            let mut first = None;
+            let mut last = 0.0;
+            for k in 0..steps {
+                if n.step(dt, i) {
+                    let t = f64::from(k) * dt;
+                    if first.is_none() {
+                        first = Some(t);
+                    }
+                    last = t;
+                    spikes += 1;
+                }
+            }
+            assert!(spikes > 2, "{na} nA produced {spikes} spikes");
+            // Measured from the FIRST spike, not from t = 0. The interval before the first spike
+            // starts from `v_rest` rather than from `v_reset`, so including it would compare a
+            // different quantity to the closed form — and with v_rest == v_reset in the default it
+            // would pass anyway, which is how a check like this comes to be wrong and green.
+            let got = (last - first.unwrap()) / f64::from(spikes - 1);
+            let rel = (got - want).abs() / want;
+            assert!(rel < 1e-3, "{na} nA: simulated ISI {got} vs closed form {want}");
+        }
+    }
+
+    /// Sub-threshold means never, and `None` is the only honest way to say it.
+    #[test]
+    fn a_subthreshold_current_has_no_interval_rather_than_a_long_one() {
+        let n = Lif::default();
+        // v_inf = -65 mV + 10 MOhm * 1 nA = -55 mV, below the -50 mV threshold.
+        assert!(n.isi(1e-9).is_none());
+        assert!(n.rate(1e-9).is_none());
+        let mut m = n;
+        let mut spikes = 0u32;
+        for _ in 0..1_000_000 {
+            if m.step(1e-5, 1e-9) {
+                spikes += 1;
+            }
+        }
+        assert_eq!(spikes, 0, "sub-threshold neuron fired {spikes} times in 10 s");
+    }
+
+    /// The refractory period is what bounds the rate. Drive the neuron absurdly hard and the rate
+    /// must converge to `1 / t_ref` rather than to the time step.
+    #[test]
+    fn the_refractory_period_caps_the_firing_rate() {
+        let proto = Lif::default();
+        let huge = 1e-3; // 1 mA; v_inf is 10 kV, which is nonsense physically and exactly the point
+        let want = 1.0 / proto.t_ref;
+        let got = proto.rate(huge).expect("supra-threshold");
+        assert!((got - want).abs() / want < 0.02, "rate {got} vs cap {want}");
+    }
+
+    /// A perfect integrator has no error term at all, so this catches timing drift that the leaky
+    /// model's tolerance would hide.
+    #[test]
+    fn the_perfect_integrator_spikes_at_exactly_the_predicted_times() {
+        let proto = IntegrateAndFire::default();
+        let i = 3e-9;
+        let want = proto.isi(i).expect("positive current");
+        // The interval here is 5 ms. `dt` has to be fine enough that tick quantisation sits far
+        // below the tolerance AND coarse enough that several intervals fit in a test-sized run:
+        // 1e-7 gives 50,000 ticks per interval and four intervals in 200,000 steps. The first
+        // draft used 1e-9 and ran 2e6 steps, which is 2 ms — less than one interval — and the test
+        // failed with "only 0 spikes" rather than with a timing error.
+        let dt = 1e-7;
+        let mut n = proto;
+        let mut times = Vec::new();
+        for k in 0..250_000u32 {
+            if n.step(dt, i) {
+                times.push(f64::from(k) * dt);
+            }
+        }
+        assert!(times.len() >= 3, "only {} spikes", times.len());
+        for w in times.windows(2) {
+            let got = w[1] - w[0];
+            assert!((got - want).abs() < 2.0 * dt, "interval {got} vs exact {want}");
+        }
+    }
+
+    /// Constructing a neuron already at or above threshold is legal and fires on the first step.
+    /// Found by a test that did it accidentally; pinned here so the behaviour is decided rather
+    /// than incidental.
+    #[test]
+    fn a_neuron_built_above_threshold_fires_immediately() {
+        let mut n = Lif { v: -40e-3, ..Lif::default() };
+        assert!(n.step(1e-6, 0.0), "a supra-threshold membrane did not fire");
+        assert!((n.v - n.v_reset).abs() < 1e-15);
+    }
+
+    #[test]
+    fn a_perfect_integrator_with_no_current_never_fires() {
+        let n = IntegrateAndFire::default();
+        assert!(n.isi(0.0).is_none());
+        assert!(n.isi(-1e-9).is_none());
+    }
+
+    /// Adaptation must actually adapt, and by the amount the model says.
+    #[test]
+    fn the_adaptive_threshold_rises_by_beta_per_spike() {
+        let lif = Lif { t_ref: 0.0, ..Lif::default() };
+        // tau_a far longer than the burst, so decay between spikes is negligible and the closed
+        // form `theta_0 + n * beta` is the thing being tested.
+        let mut n = AdaptiveLif::new(lif, 10.0, 2e-3);
+        let theta0 = n.theta_0;
+        let mut spikes = 0u32;
+        for _ in 0..200_000 {
+            if n.step(1e-6, 50e-9) {
+                spikes += 1;
+                if spikes == 4 {
+                    break;
+                }
+            }
+        }
+        assert_eq!(spikes, 4, "expected four spikes, saw {spikes}");
+        let want = n.theta_after(4);
+        assert!(
+            (n.theta - want).abs() < 1e-5,
+            "theta {} vs theta_0 + 4 beta = {want} (theta_0 {theta0})",
+            n.theta
+        );
+    }
+
+    /// Adaptation must slow the neuron down; if it does not, the mechanism is decorative.
+    #[test]
+    fn adaptation_lengthens_successive_intervals() {
+        let lif = Lif { t_ref: 0.0, ..Lif::default() };
+        let mut n = AdaptiveLif::new(lif, 50e-3, 1e-3);
+        let dt = 1e-6;
+        let mut times = Vec::new();
+        for k in 0..500_000u32 {
+            if n.step(dt, 30e-9) {
+                times.push(f64::from(k) * dt);
+                if times.len() == 5 {
+                    break;
+                }
+            }
+        }
+        assert_eq!(times.len(), 5);
+        let iv: Vec<f64> = times.windows(2).map(|w| w[1] - w[0]).collect();
+        for w in iv.windows(2) {
+            assert!(w[1] > w[0], "intervals did not lengthen: {iv:?}");
+        }
+    }
+
+    #[test]
+    fn resetting_an_adaptive_neuron_forgets_its_adaptation() {
+        let mut n = AdaptiveLif::new(Lif { t_ref: 0.0, ..Lif::default() }, 10.0, 2e-3);
+        for _ in 0..50_000 {
+            n.step(1e-6, 50e-9);
+        }
+        assert!(n.theta > n.theta_0);
+        n.reset();
+        assert!((n.theta - n.theta_0).abs() < 1e-15);
+        assert!((n.lif.v_th - n.theta_0).abs() < 1e-15, "the membrane kept a stale threshold");
+    }
+
+    /// Izhikevich's regular-spiking cell must fire, must stay finite, and must never leave a NaN
+    /// behind — the quadratic blow-up makes the last of those a real failure mode rather than a
+    /// hypothetical one.
+    #[test]
+    fn izhikevich_regular_spiking_fires_and_stays_finite() {
+        let mut n = Izhikevich::regular_spiking();
+        let mut spikes = 0u32;
+        for _ in 0..10_000 {
+            if n.step(1e-4, 10e-9) {
+                spikes += 1;
+            }
+            assert!(n.v.is_finite() && n.u.is_finite(), "v {} u {}", n.v, n.u);
+        }
+        assert!(spikes > 5, "regular spiking produced {spikes} spikes in 1 s");
+    }
+
+    /// The three published types must be distinguishable. Fast spiking is defined by firing faster
+    /// than regular spiking at the same drive, and a model that lost that has lost the point of
+    /// carrying four parameters.
+    #[test]
+    fn fast_spiking_fires_faster_than_regular_spiking_at_equal_drive() {
+        let count = |mut n: Izhikevich| {
+            let mut s = 0u32;
+            for _ in 0..10_000 {
+                if n.step(1e-4, 10e-9) {
+                    s += 1;
+                }
+            }
+            s
+        };
+        let rs = count(Izhikevich::regular_spiking());
+        let fs = count(Izhikevich::fast_spiking());
+        assert!(fs > rs, "fast spiking {fs} did not exceed regular spiking {rs}");
+    }
+
+    /// The cutoff check lives inside the substep loop precisely so that this cannot happen. Drive
+    /// the cell far past anything reasonable and assert nothing became non-finite.
+    #[test]
+    fn a_violent_drive_does_not_produce_a_nan() {
+        let mut n = Izhikevich::regular_spiking();
+        for _ in 0..5_000 {
+            n.step(1e-3, 1e-6);
+            assert!(n.v.is_finite(), "v went non-finite");
+            assert!(n.u.is_finite(), "u went non-finite");
+        }
+    }
+}

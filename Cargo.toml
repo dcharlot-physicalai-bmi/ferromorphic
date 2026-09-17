@@ -1,0 +1,92 @@
+[package]
+name = "ferromorphic"
+version = "0.1.0"
+edition = "2024"
+# A POLICY floor, deliberately above the technical one, stated that way so nobody later "corrects"
+# it downward on the grounds that an older toolchain happens to work.
+#
+# 1.98.1 is the toolchain this crate has actually been compiled and tested on. The technical floor
+# is lower — edition 2024 needs 1.85 and nothing here reaches past it — but this is a 2026 library
+# for hardware most of its users cannot buy, and carrying compatibility with year-old toolchains
+# buys nothing and costs the ability to use the language as it is now.
+#
+# What is NOT claimed: that 1.98 is the lowest version that works. Nobody has bisected it. The line
+# says "verified here", which is the direction that cannot break a user.
+rust-version = "1.98"
+description = "Neuromorphic computing in pure Rust: spiking neuron models verified against their closed forms, sparse event-driven networks, spike encoders and decoders, STDP, and a first-class joules ledger that charges for synapse MEMORY TRAFFIC and refuses to report a figure when the device's prices are unstated. std-only, zero dependencies, wasm-clean, deterministic by seed."
+license = "Apache-2.0"
+repository = "https://github.com/dcharlot-physicalai-bmi/ferromorphic"
+homepage = "https://energy.physicalai-bmi.org/neuromorphic"
+documentation = "https://docs.rs/ferromorphic"
+readme = "README.md"
+keywords = ["neuromorphic", "spiking", "snn", "event-driven", "energy"]
+categories = ["science", "algorithms", "simulation", "wasm", "embedded"]
+exclude = ["target/", "web/", "docs/"]
+
+[lib]
+crate-type = ["rlib", "cdylib"]
+
+# THERE ARE NONE, AND THERE WILL BE NONE.
+#
+# The zero-dependency property is a product feature, not an accident: it is what lets this crate be
+# audited end to end by one person, compile to wasm32 without a toolchain argument, and still build
+# in ten years. Anything that needs a dependency — a GPU driver, a power sensor, an FPGA toolchain,
+# a TLS client — is a sibling crate you opt into, and deleting every sibling leaves this one intact.
+[dependencies]
+
+[profile.release]
+opt-level = 3
+lto = true
+
+[workspace]
+members = ["."]
+
+[lints.rust]
+# Every public item carries a doc, and this is what keeps it that way. The standard is that a doc
+# must carry an INVARIANT, a UNIT, a RANGE or a PROVENANCE rather than restate the item's name:
+# `Prices::e_syn_fetch` says which memory read it prices and why every vendor omits it,
+# `Lif::tau_m` says the unit is seconds and that the closed form in the module doc depends on it.
+missing_docs = "deny"
+
+[lints.clippy]
+# `for i in 0..n { v[i] }` where `i` is a NEURON INDEX. The index is the physical identity and is
+# usually also used to reach a second array (`v[i]` and `thresh[i]`), where `enumerate()` renames
+# it to something less meaningful and zips two iterators to say one thing.
+needless_range_loop = "allow"
+# `!(w > 0.0)` is NOT `w <= 0.0`, and the difference is NaN: the first REJECTS a NaN weight, the
+# second ACCEPTS it. A synaptic weight that is NaN poisons a membrane potential silently and then
+# every downstream spike time, so the rejecting form is the deliberate one.
+neg_cmp_op_on_partial_ord = "allow"
+# A neuron model takes the parameters the neuron has. Bundling tau_m, v_rest, v_th, v_reset, r_m
+# and t_ref into a struct to satisfy a count of seven moves the arity, it does not reduce it —
+# and they already ARE a struct.
+too_many_arguments = "allow"
+# 0.25, 2.0, -65.0: every literal in this crate is either exact by construction or TRANSCRIBED
+# from a published source and checked against it. Izhikevich's 0.04, 5.0 and 140.0 are the
+# constants as the 2003 paper prints them, and an underscore or a named constant between the
+# reader and that comparison makes the check harder, not easier.
+unreadable_literal = "allow"
+# 465-site class in the sibling crate, same reason here: every site is a count being divided,
+# `spikes as f64 / steps as f64`. A spike count that exceeded 2^53 would have exhausted memory long
+# before it exhausted the mantissa.
+cast_precision_loss = "allow"
+# THIS ONE CHANGES ANSWERS. `a * b + c` fused into `mul_add` keeps an extra internal bit, so the
+# result differs in the last place — which is exactly where this crate does its work. Every neuron
+# model here is checked against its closed form at a stated tolerance, and a lint that silently
+# improves accuracy on one side of that comparison is a lint that breaks the comparison.
+suboptimal_flops = "allow"
+# `neuron::Neuron`, `ledger::Ledger`, `spike::Spike`. The module IS the namespace, and the
+# repetition is what makes `use ferromorphic::ledger::Ledger` read correctly at the call site.
+module_name_repetitions = "allow"
+# Exact equality is the MECHANISM in two places, not sloppiness in either. A ledger counter is an
+# integer count and comparing it approximately would assert nothing; and the determinism tests
+# compare two runs' spike trains BIT FOR BIT, which is the whole claim being made.
+float_cmp = "allow"
+# A `# Errors` section names the variants a call actually returns and a `# Panics` section names
+# the assertion that fires. Denied because zero is only stable if nothing may re-add the first one.
+missing_errors_doc = "deny"
+missing_panics_doc = "deny"
+must_use_candidate = "deny"
+uninlined_format_args = "deny"
+semicolon_if_nothing_returned = "deny"
+doc_markdown = "deny"
