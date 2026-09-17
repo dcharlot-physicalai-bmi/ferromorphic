@@ -30,6 +30,17 @@
 //! literature reports is still computable, as [`ledger::Ledger::joules_synops_only`], with its doc
 //! saying what it omits.
 //!
+//! **And the field already published the threshold that decides it.** The quantity that says
+//! whether a spiking network can beat its dense equivalent is *spikes per synapse per inference*,
+//! and at least six papers give a number for it — every one of them **below 2**, several below 1.
+//! Davidson and Furber (Frontiers in Neuroscience 15:651141, 2021) derive ~1.72 and conclude that
+//! "most rate-coded spiking network implementations will not be more energy or resource efficient
+//! than the original ANN"; Steve Furber designed `SpiNNaker`, so this is the field auditing itself.
+//! This review located that argument in the literature and **did not locate it implemented as a
+//! check in any spiking-network library**, which is odd for a number that decides whether the whole
+//! approach helps. [`crossover`] makes it a check: the left-hand side is a ratio of two integer
+//! counts the simulator already keeps, so it costs nothing to run on every workload.
+//!
 //! **An event-driven claim is a measurement, not an adjective.** [`sim::Mode::Clocked`] and
 //! [`sim::Mode::EventDriven`] run the same network and are required to produce the same spike
 //! train; the difference between them is [`ledger::Ledger::idle_fraction`], a number. And an
@@ -85,6 +96,7 @@
 
 #![forbid(unsafe_code)]
 
+pub mod crossover;
 pub mod encode;
 pub mod ledger;
 pub mod net;
@@ -93,6 +105,7 @@ pub mod rng;
 pub mod sim;
 pub mod spike;
 
+pub use crossover::{Crossover, Verdict};
 pub use ledger::{Bill, Evidence, Ledger, Prices};
 pub use net::{Net, NetBuilder, NetError};
 pub use neuron::{AdaptiveLif, IntegrateAndFire, Izhikevich, Lif, Neuron};

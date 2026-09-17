@@ -1,6 +1,6 @@
 [package]
 name = "ferromorphic"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 # A POLICY floor, deliberately above the technical one, stated that way so nobody later "corrects"
 # it downward on the grounds that an older toolchain happens to work.
@@ -13,7 +13,7 @@ edition = "2024"
 # What is NOT claimed: that 1.98 is the lowest version that works. Nobody has bisected it. The line
 # says "verified here", which is the direction that cannot break a user.
 rust-version = "1.98"
-description = "Neuromorphic computing in pure Rust: spiking neuron models verified against their closed forms, sparse event-driven networks, spike encoders and decoders, STDP, and a first-class joules ledger that charges for synapse MEMORY TRAFFIC and refuses to report a figure when the device's prices are unstated. std-only, zero dependencies, wasm-clean, deterministic by seed."
+description = "Neuromorphic computing in pure Rust: spiking neuron models verified against their closed forms, sparse event-driven networks, spike encoders that state what they cost, the published SNN-vs-ANN crossover thresholds as a check your workload can run, and a joules ledger that charges for synapse MEMORY TRAFFIC and refuses to report a figure when the device's prices are unstated. std-only, zero dependencies, wasm-clean, deterministic by seed."
 license = "Apache-2.0"
 repository = "https://github.com/dcharlot-physicalai-bmi/ferromorphic"
 homepage = "https://energy.physicalai-bmi.org/neuromorphic"

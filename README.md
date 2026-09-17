@@ -62,6 +62,45 @@ prices your workload. The flattering figure the literature reports is still comp
 `Ledger::joules_synops_only`, with its doc saying exactly what it omits, because a user needs to
 reproduce published numbers in order to argue with them and hiding it would not stop anyone using it.
 
+### The field already published the threshold, and no library checks it
+
+The quantity that decides whether a spiking network can beat its dense equivalent is **spikes per
+synapse per inference** — each spike crossing a synapse costs an accumulate and, far more, a weight
+fetch, and once a network re-reads its weights more often than a dense pass would, the dense pass
+wins. At least six papers give a number for it. **Every one is below 2. Several are below 1.**
+
+| threshold | source | what it says |
+|---|---|---|
+| **~1.72** | Davidson & Furber, *Front. Neurosci.* 15:651141 (2021) | "most rate-coded spiking network implementations will not be more energy or resource efficient than the original ANN" |
+| **0.15 – 1.38** | Dampfhoffer et al., *IEEE TETCI* 7(3):731–741 (2023) | "many previous studies did not consider **memory accesses**, which account for an important fraction of the energy consumption" |
+| **~0.06 – 0.35** | Yan, Bai, Tang & Wong (NUS), arXiv:2409.08290 | op-count evaluations "neglect critical overheads like comprehensive data movements and memory accesses" and reach "misleading conclusions"; under a fair mapping the SNN reaches **0.78×** — a 22% saving, not a 100× one |
+
+Steve Furber designed SpiNNaker, so the first of those is the field auditing itself, not an outsider
+objecting to it.
+
+This review located that argument in the literature and **did not locate it implemented as a check
+in any spiking-network library**. It gets quoted in related-work sections and then not applied —
+which is a strange fate for a number that decides whether the whole approach helps. So it is a check
+here, and it costs nothing, because the left-hand side is a ratio of two integer counts the simulator
+already keeps:
+
+```rust
+let sps = sim.ledger.spikes_per_synapse(net.n_syn as u64, inferences).unwrap();
+for (name, verdict) in sim.ledger.crossover_verdicts(net.n_syn as u64, inferences).unwrap() {
+    println!("{name:24} {verdict:?}");   // Plausible | Marginal | Refuted
+}
+```
+
+Reported against **all three** rather than against a chosen one, because picking the threshold your
+workload passes is the same move as picking the price table that flatters your device. A band gives
+three verdicts and not two: inside it, the cited work's answer depended on assumptions it states, and
+collapsing that to a pass or a fail would be inventing a precision nobody published.
+
+And a verdict is not a measurement of your workload on your hardware. Every threshold was derived for
+a stated technology and dataflow; transplanting it is exactly the borrowing the ledger refuses to do
+with joules. A verdict says *which side of somebody else's published line you fall on* — weaker, and
+checkable.
+
 **An event-driven claim is a measurement, not an adjective.** `Mode::Clocked` and
 `Mode::EventDriven` run the same network and are *required to produce the same spike train*; the
 difference between them is `Ledger::idle_fraction`, a number. On the chain above the clocked run
@@ -96,7 +135,7 @@ Every neuron model here has a test that runs it against an analytic solution.
 - **A sub-threshold current returns `None`, not a large number.** "Fires rarely" and "does not fire"
   are different statements and a rate-coded readout cannot recover the difference later.
 
-65 unit tests and a doctest, `cargo clippy --all-targets -- -D warnings` clean, `#![forbid(unsafe_code)]`,
+72 unit tests and two doctests, `cargo clippy --all-targets -- -D warnings` clean, `#![forbid(unsafe_code)]`,
 and `cargo build --target wasm32-unknown-unknown` compiles the library unchanged.
 
 ## What the encoders cost, on the page
@@ -140,7 +179,7 @@ be reproduced cannot be checked against anything, including itself.
 
 ## Status
 
-**0.1.0.** The core is real and tested; the crate family is not built yet. Planned siblings, each
+**0.2.0.** The core is real and tested; the crate family is not built yet. Planned siblings, each
 following the same rule that a dependency lives outside the core:
 
 | crate | what it would add | why separate |
@@ -154,6 +193,9 @@ following the same rule that a dependency lives outside the core:
 
 - **No training.** No surrogate gradients, no ANN-to-SNN conversion, no plasticity rule yet. STDP is
   next; nothing in this release learns.
+- **The crossover thresholds are other people's numbers.** `Evidence::Derived` on all three: they
+  are analyses, not measurements, and the Yan band in particular is this review's reading of a
+  sparsity figure rather than a number that paper prints. Read `Crossover::source` before quoting.
 - **No device is claimed to be supported.** The price tables describe published figures for
   TrueNorth (2014) and Loihi (2018) and are graded as such. This crate does not talk to any chip.
 - **The Izhikevich current scale is a convention.** The paper's `I` is not an ampere; the 1 nA ↔ 1
