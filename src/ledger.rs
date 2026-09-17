@@ -23,6 +23,29 @@
 //! have one — measured, for a stated device, at a stated boundary — supply it and the ledger will
 //! price your workload.
 //!
+//! # What this crate does NOT claim about the lane
+//!
+//! Measured joules for spiking workloads are not unheard of, and saying so would be false. The
+//! **`NeuroBench`** system track mandates them and publishes them — `SynSense` Xylo Audio 2 at
+//! 0.028 mJ per inference against an Arduino Nano 33 BLE at 0.934 mJ, with idle, active and dynamic
+//! power reported separately and the analog front end priced on its own. **`Rockpool`**'s
+//! `XyloSamna(record_power=True)` returns per-rail watts from the board, and **`BrainChip`'s**
+//! tooling divides on-SoC power-meter samples by frames. Those are real, and they are more than
+//! this crate does: it measures nothing, and has no hardware.
+//!
+//! What this review did not locate is narrower and survives: **a published per-synapse
+//! memory-FETCH energy for any commercially available neuromorphic processor**, and any study that
+//! instrumented a DRAM rail while running a spiking network and reconciled the reading against the
+//! models. The models exist — `SATA_Sim` and `EnforceSNN` put memory at 50–78% of the bill from
+//! `CACTI` and `DRAMPower` — and nothing appears to have checked them against a meter.
+//!
+//! ⚠ **How badly the unchecked models disagree is measurable, and it is worse than it sounds.**
+//! `SpikingJelly` ships its own cross-validation of five literature-sourced energy models. On
+//! identical workloads they disagree by a **median factor of 556, spanning 218x to 753x** — one
+//! network priced at 553.4 µJ by one model and 1.13 µJ by another. Five published methods, one
+//! workload, three orders of magnitude. That is the state of the art this ledger declines to add a
+//! sixth entry to.
+//!
 //! # The flattering number is still available, and it is labelled
 //!
 //! [`Ledger::joules_synops_only`] computes exactly the figure the literature reports, ignoring the
@@ -202,34 +225,53 @@ pub const TRUENORTH_2014: Prices = Prices {
     evidence: Evidence::Measured,
 };
 
-/// Loihi's published per-synaptic-operation energy.
+/// Loihi's published per-synaptic-operation energy — **and this crate graded it wrong first time.**
 ///
 /// Davies et al., *Loihi: A Neuromorphic Manycore Processor with On-Chip Learning*, IEEE Micro
-/// 38(1):82–99, 2018, which reports on the order of 23.6 pJ per synaptic operation for the 14 nm
-/// part at its nominal operating point.
+/// 38(1):82–99, 2018, reports ~23.6 pJ per synaptic operation for the 14 nm part. This crate
+/// shipped that figure at [`Evidence::Measured`] in 0.1.0 and 0.2.0.
 ///
-/// **Read the grade.** This is a vendor-published figure for a research part distributed through a
-/// research community rather than sold, and the measurement protocol behind it is not stated to the
-/// standard [`Evidence::Metered`] requires. It is `Measured`, not `Metered`, and the gap between
-/// those two words is where most of this field's energy claims live.
+/// ⛔ **It is not measured. The table it comes from is captioned "pre-silicon" and the figure is
+/// sourced from pre-silicon SDF and SPICE simulations.** No Loihi was on a meter. The grade here is
+/// now [`Evidence::Simulated`], which is what the primary source supports.
+///
+/// The error is worth leaving visible rather than quietly correcting, because it is exactly the
+/// failure this module exists to prevent, committed inside the module that exists to prevent it.
+/// 23.6 pJ/SynOp is cited across 2024–2026 as a measured number by people who did not open Table 2,
+/// and this crate joined them on its first release. An `Evidence` enum does not help if the value
+/// assigned to it is taken from the citing literature instead of the cited table.
+///
+/// ⚠ **And the direction of the error matters.** Per-synaptic-operation energies actually measured
+/// on silicon sit well ABOVE this simulated figure — `TrueNorth` at 26 pJ in 28 nm
+/// ([`TRUENORTH_2014`]), with ODIN and Darwin3 reported in the same band or higher relative to
+/// their nodes. A field that benchmarks against a pre-silicon simulation is benchmarking against a
+/// number that flatters it, and every efficiency ratio computed from it inherits that.
+///
+/// Those other parts are named here as pointers and are deliberately NOT given `Prices` constants:
+/// this crate has not read their primary sources, and transcribing a number from a literature audit
+/// is the habit that produced the defect above.
 pub const LOIHI_2018: Prices = Prices {
     e_syn_op: 23.6e-12,
     e_syn_fetch: None,
     e_neuron_update: f64::NAN,
     e_spike_out: None,
     e_read: None,
-    source: "Loihi 14 nm, ~23.6 pJ per synaptic operation — Davies et al., IEEE Micro 38(1), 2018. \
-             Vendor-published for a research part; protocol not stated to a metered standard. The \
-             fetch, routing and readout terms were not separately published.",
-    evidence: Evidence::Measured,
+    source: "Loihi 14 nm, ~23.6 pJ per synaptic operation — Davies et al., IEEE Micro 38(1), 2018, \
+             Table 2, CAPTIONED \"pre-silicon\" and sourced from pre-silicon SDF and SPICE \
+             simulations. Not a measurement of any fabricated part, despite being cited as one \
+             throughout 2024-2026. The fetch, routing and readout terms were not published at all.",
+    evidence: Evidence::Simulated,
 };
 
 /// Every device table in this crate, for a caller that wants to sweep them.
 ///
-/// Three entries, and two of them are historical parts from 2014 and 2018. That shortness is
-/// itself the state of the field as this review found it: per-operation energies for the current
-/// commercial parts are quoted in marketing units — TOPS/W, "1000x more efficient" — that do not
-/// reduce to a per-operation joule figure anybody can put in a table.
+/// Three entries; one is unstated, one is a 2014 measurement and one is a 2018 SIMULATION. Exactly
+/// one number in this crate was taken on fabricated silicon.
+///
+/// That shortness is the state of the field as this review found it. Per-operation energies for the
+/// current commercial parts are quoted in marketing units — TOPS/W, "1000x more efficient" — that
+/// do not reduce to a per-operation joule anybody can tabulate, and the one figure the field does
+/// quote universally turns out to be pre-silicon. See [`LOIHI_2018`].
 pub const CATALOGUE: [(&str, Prices); 3] = [
     ("unstated", Prices::UNSTATED),
     ("truenorth-2014", TRUENORTH_2014),
@@ -535,6 +577,34 @@ mod tests {
         };
         assert!((led.idle_fraction().unwrap() - 0.9).abs() < 1e-15);
         assert!(Ledger::default().idle_fraction().is_none(), "nothing ran; there is no fraction");
+    }
+
+    /// ⛔ THE REGRESSION TEST FOR THIS CRATE'S OWN PUBLISHED DEFECT.
+    ///
+    /// 0.1.0 and 0.2.0 shipped `LOIHI_2018` at `Evidence::Measured`. The table it comes from is
+    /// captioned "pre-silicon" and the figure is from SDF and SPICE simulation. The whole field
+    /// cites it as measured; this crate joined them, inside the module written to stop exactly
+    /// that. Pinned here so a future edit has to argue with a test rather than with a comment.
+    #[test]
+    fn the_loihi_figure_is_simulated_because_its_table_says_pre_silicon() {
+        assert_eq!(
+            LOIHI_2018.evidence,
+            Evidence::Simulated,
+            "Davies et al. 2018 Table 2 is captioned pre-silicon; no Loihi was on a meter"
+        );
+        assert!(LOIHI_2018.source.contains("pre-silicon"), "the caption must stay in the source line");
+    }
+
+    /// Exactly one number in this crate was taken on fabricated silicon. If that count rises, the
+    /// new figure needs a primary source somebody in this building actually opened.
+    #[test]
+    fn exactly_one_price_in_this_crate_came_from_fabricated_silicon() {
+        let measured = CATALOGUE
+            .iter()
+            .filter(|(_, p)| p.evidence >= Evidence::Measured)
+            .map(|(n, _)| *n)
+            .collect::<Vec<_>>();
+        assert_eq!(measured, vec!["truenorth-2014"], "silicon-grade tables: {measured:?}");
     }
 
     #[test]

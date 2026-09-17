@@ -1,6 +1,6 @@
 [package]
 name = "ferromorphic"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 # A POLICY floor, deliberately above the technical one, stated that way so nobody later "corrects"
 # it downward on the grounds that an older toolchain happens to work.

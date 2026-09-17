@@ -62,6 +62,46 @@ prices your workload. The flattering figure the literature reports is still comp
 `Ledger::joules_synops_only`, with its doc saying exactly what it omits, because a user needs to
 reproduce published numbers in order to argue with them and hiding it would not stop anyone using it.
 
+### What this crate does not claim
+
+Measured joules for spiking workloads are not unheard of, and saying so would be false. The
+**NeuroBench** system track mandates and publishes them — SynSense Xylo Audio 2 at 0.028 mJ per
+inference against an Arduino Nano 33 BLE at 0.934 mJ, idle and active and dynamic power reported
+separately, analog front end priced on its own. **Rockpool**'s `XyloSamna(record_power=True)`
+returns per-rail watts off the board, and BrainChip's tooling divides on-SoC power-meter samples by
+frames. Those are real, and all three do more than this crate: **ferromorphic measures nothing and
+has no hardware.**
+
+What survived checking is narrower: no published per-synapse memory-**fetch** energy for any
+commercial part, and no study that instrumented a DRAM rail while running a spiking network and
+reconciled the reading against the models. The models exist — SATA_Sim and EnforceSNN put memory at
+**50–78% of the bill** from CACTI and DRAMPower — and nothing appears to have checked them against a
+meter.
+
+**How badly the unchecked models disagree is measurable.** SpikingJelly ships its own
+cross-validation of five literature-sourced energy models. On identical workloads they disagree by a
+**median factor of 556, spanning 218× to 753×** — one network priced at 553.4 µJ by one model and
+1.13 µJ by another. Five published methods, one workload, three orders of magnitude. This ledger
+declines to be the sixth.
+
+### ⛔ A correction to this crate, in this crate
+
+0.1.0 and 0.2.0 shipped `LOIHI_2018` at `Evidence::Measured`. **It is not measured.** The 23.6
+pJ/SynOp figure comes from Davies et al., IEEE Micro 38(1), 2018, **Table 2 — captioned
+"pre-silicon"**, sourced from pre-silicon SDF and SPICE simulations. No Loihi was ever on a meter
+for it. The field cites it as measured throughout 2024–2026, and this crate joined them, **inside
+the module written to stop exactly that**.
+
+It is now `Evidence::Simulated`, with a regression test pinning it and the caption quoted in the
+source line. The error is left visible because an `Evidence` enum does not help if the value handed
+to it was copied from the citing literature instead of the cited table.
+
+And the direction matters: per-synaptic-operation energies actually measured on fabricated silicon
+sit **above** this simulated figure — TrueNorth at 26 pJ in 28 nm. A field benchmarking against a
+pre-silicon simulation is benchmarking against a number that flatters it, and every efficiency ratio
+computed from it inherits that. **Exactly one price in this crate came from fabricated silicon**, and
+a test asserts the count.
+
 ### The field already published the threshold, and no library checks it
 
 The quantity that decides whether a spiking network can beat its dense equivalent is **spikes per
@@ -135,7 +175,7 @@ Every neuron model here has a test that runs it against an analytic solution.
 - **A sub-threshold current returns `None`, not a large number.** "Fires rarely" and "does not fire"
   are different statements and a rate-coded readout cannot recover the difference later.
 
-72 unit tests and two doctests, `cargo clippy --all-targets -- -D warnings` clean, `#![forbid(unsafe_code)]`,
+74 unit tests and two doctests, `cargo clippy --all-targets -- -D warnings` clean, `#![forbid(unsafe_code)]`,
 and `cargo build --target wasm32-unknown-unknown` compiles the library unchanged.
 
 ## What the encoders cost, on the page
@@ -179,7 +219,7 @@ be reproduced cannot be checked against anything, including itself.
 
 ## Status
 
-**0.2.0.** The core is real and tested; the crate family is not built yet. Planned siblings, each
+**0.3.0.** The core is real and tested; the crate family is not built yet. Planned siblings, each
 following the same rule that a dependency lives outside the core:
 
 | crate | what it would add | why separate |
