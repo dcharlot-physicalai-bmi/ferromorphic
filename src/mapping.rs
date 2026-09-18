@@ -183,6 +183,43 @@ pub enum MapError {
         /// Distinct links the union touched. A tree has exactly `cores - 1`.
         edges: usize,
     },
+    /// A hop or delivery count exceeded `u64` while being accumulated.
+    ///
+    /// `spikes_per_neuron` is unvalidated `u64`, and `u64::MAX` spikes from one neuron used to wrap
+    /// silently in release — into a module whose claim is that the hop counts are exact integers.
+    CountOverflow {
+        /// The neuron whose contribution overflowed the count.
+        neuron: usize,
+        /// Which count: `"multicast hops"`, `"unicast hops"`, `"chip crossings"`, `"on-core
+        /// deliveries"`, `"off-core deliveries"` or `"spikes"`.
+        what: &'static str,
+    },
+    /// The cores available cannot hold the synapses, whatever the assignment.
+    ///
+    /// The synapse twin of [`MapError::NotEnoughRoom`]. Without it, 100 synapses offered 20 slots
+    /// were reported as [`MapError::NoFeasibleCore`] — "try another seed or refinement" — and every
+    /// seed and the refiner failed the same way, because arithmetic is not a packing problem.
+    NotEnoughSynapseRoom {
+        /// Synapses in the network.
+        synapses: u64,
+        /// Cores offered.
+        n_cores: u32,
+        /// Synapses one core stores.
+        synapses_per_core: u64,
+        /// `n_cores * synapses_per_core`, the whole machine.
+        capacity: u64,
+    },
+    /// More cores than this implementation will allocate per-core bookkeeping for.
+    ///
+    /// [`Partition::loads`], [`Partition::check`] and the streaming pass each hold a record per
+    /// core. At [`MAX_CORES`] that is stated in the constant's doc; past it the allocation is
+    /// refused here, by the same rule [`MapError::RefinementTooLarge`] applies to the refiner.
+    TooManyCores {
+        /// Cores asked for.
+        n_cores: u32,
+        /// [`MAX_CORES`].
+        limit: u32,
+    },
     /// Kernighan-Lin refinement was asked for on a problem too large for its working set.
     ///
     /// The refiner holds one `i64` per (neuron, core) pair. Refused rather than allocated, because
@@ -234,6 +271,18 @@ impl fmt::Display for MapError {
                 "routes from core {root} touched {cores} cores over {edges} links; a tree needs \
                  exactly {} links",
                 cores.saturating_sub(1)
+            ),
+            Self::CountOverflow { neuron, what } => {
+                write!(f, "the {what} count overflowed u64 at neuron {neuron}")
+            }
+            Self::NotEnoughSynapseRoom { synapses, n_cores, synapses_per_core, capacity } => write!(
+                f,
+                "{synapses} synapses do not fit in {n_cores} cores of {synapses_per_core} \
+                 ({capacity} total)"
+            ),
+            Self::TooManyCores { n_cores, limit } => write!(
+                f,
+                "{n_cores} cores is past the {limit} this implementation keeps per-core records for"
             ),
             Self::RefinementTooLarge { neurons, n_cores, cells, limit } => write!(
                 f,
@@ -534,10 +583,19 @@ impl Fabric {
             Self::Mesh2D { cols, rows } => Some(u64::from(cols - 1) + u64::from(rows - 1)),
             Self::Torus2D { cols, rows } => Some(u64::from(cols / 2) + u64::from(rows / 2)),
             Self::TriangularTorus { .. } => {
+                // ⛔ `n` does NOT fit u32 for every fabric a caller can build: `cols` and `rows`
+                // are each u32, so `100_000 x 100_000` is 1e10 cores, and the comment that stood
+                // here said otherwise. The sweep below is a measurement (135 ms at 2^24 cores,
+                // ~35 s at 2^32), so past the cast's range it is refused rather than truncated
+                // — a truncated sweep never asks about the farthest core and reports a wrong
+                // diameter with no error. The square case has an empirical closed form,
+                // `floor(2·cols/3)` at 8x8, 16x16, 32x32 and 64x64; not adopted, because this
+                // review did not derive it for the non-square case.
+                if n > u64::from(u32::MAX) {
+                    return None;
+                }
                 let mut worst = 0u64;
                 for b in 0..n {
-                    // `n` fits u32 for any fabric a caller can build, and the cast is guarded by
-                    // the loop bound.
                     if let Some(h) = self.hops(0, b as u32) {
                         worst = worst.max(h);
                     }
@@ -999,6 +1057,16 @@ impl fmt::Display for Feasibility {
 // Partition
 // ---------------------------------------------------------------------------------------------
 
+/// The most cores a [`Partition`] may span: `2^24`, above any machine this crate models
+/// (`SpiNNaker2`'s full build is about 10.6 million ARM cores).
+///
+/// What it bounds, stated rather than discovered: [`Partition::loads`] holds one 40-byte
+/// [`CoreLoad`] per core, so 671 MB at the limit; [`Partition::used_cores`] one byte per core; the
+/// streaming pass three `u64`s per core. Before this constant a one-neuron network could be
+/// partitioned over `u32::MAX` cores and `loads()` would attempt 206 GB while
+/// [`partition_refined`] refused a working set a hundredth the size.
+pub const MAX_CORES: u32 = 1 << 24;
+
 /// An assignment of every neuron to a core.
 ///
 /// Constructed against a network so that the length and the range are checked once, at the
@@ -1018,12 +1086,15 @@ impl Partition {
     ///
     /// # Errors
     ///
-    /// [`MapError::NoCores`] for zero cores, [`MapError::LengthMismatch`] when the assignment does
-    /// not have one entry per neuron, and [`MapError::CoreOutOfRange`] naming the first neuron whose
-    /// core index is past the end.
+    /// [`MapError::NoCores`] for zero cores, [`MapError::TooManyCores`] past [`MAX_CORES`],
+    /// [`MapError::LengthMismatch`] when the assignment does not have one entry per neuron, and
+    /// [`MapError::CoreOutOfRange`] naming the first neuron whose core index is past the end.
     pub fn new(net: &Net, core_of: Vec<u32>, n_cores: u32) -> Result<Self, MapError> {
         if n_cores == 0 {
             return Err(MapError::NoCores);
+        }
+        if n_cores > MAX_CORES {
+            return Err(MapError::TooManyCores { n_cores, limit: MAX_CORES });
         }
         if core_of.len() != net.n {
             return Err(MapError::LengthMismatch {
@@ -1157,80 +1228,91 @@ impl Partition {
         let mut binds: Vec<CoreBind> = Vec::new();
         let mut headroom: Vec<CoreHeadroom> = Vec::new();
         let mut unchecked: Vec<&'static str> = Vec::new();
+        if limits.max_fan_in.is_none() {
+            unchecked.push("maximum fan-in per neuron");
+        }
+        if limits.synapses_per_core.is_none() {
+            unchecked.push("synapses per core");
+        }
+        if limits.neurons_per_core.is_none() {
+            unchecked.push("neurons per core");
+        }
+        if self.neurons == 0 {
+            // Nothing was checked, so nothing passed. The first version fabricated a headroom
+            // record on core 0 and answered `Some(true)` — the vacuous case the `Feasibility` doc
+            // rules out.
+            return Ok(Feasibility { verdict: None, binds, headroom, unchecked });
+        }
 
         // --- the wall first: fan-in is a property of the network, not of this placement ---
-        match limits.max_fan_in {
-            Some(cap) => {
-                let cap = u64::from(cap);
-                let mut worst: Option<(usize, u64, u32)> = None;
-                for l in &loads {
-                    if let Some((neuron, d)) = l.worst_fan_in {
-                        if worst.is_none_or(|(_, w, _)| d > w) {
-                            worst = Some((neuron, d, l.core));
-                        }
-                        if d > cap {
-                            binds.push(CoreBind::FanIn { neuron, fan_in: d, cap, core: l.core });
-                        }
-                    }
+        if let Some(cap) = limits.max_fan_in {
+            let cap = u64::from(cap);
+            // ⛔ EVERY NEURON, NOT EACH CORE'S WORST. The first version read one `worst_fan_in`
+            // per core, so two over-cap neurons on one core produced ONE bind and the same two
+            // on different cores produced two: the set of walls reported was a function of the
+            // placement, for the one constraint whose doc says placement cannot relieve it —
+            // and a caller who fixed neuron 20 and re-ran was then handed neuron 21.
+            let deg = net.in_degrees();
+            let mut worst: Option<(usize, u64, u32)> = None;
+            for (neuron, &d) in deg.iter().enumerate() {
+                let d = d as u64;
+                let core = self.core_of[neuron];
+                if worst.is_none_or(|(_, w, _)| d > w) {
+                    worst = Some((neuron, d, core));
                 }
-                if binds.is_empty() {
-                    let (_, w, c) = worst.unwrap_or((0, 0, 0));
-                    headroom.push(CoreHeadroom {
-                        constraint: "maximum fan-in per neuron",
-                        worst_used: w,
-                        worst_core: c,
-                        cap,
-                    });
+                if d > cap {
+                    binds.push(CoreBind::FanIn { neuron, fan_in: d, cap, core });
                 }
             }
-            None => unchecked.push("maximum fan-in per neuron"),
+            if let (true, Some((_, w, c))) = (binds.is_empty(), worst) {
+                headroom.push(CoreHeadroom {
+                    constraint: "maximum fan-in per neuron",
+                    worst_used: w,
+                    worst_core: c,
+                    cap,
+                });
+            }
         }
 
         // --- synapse storage, charged to the postsynaptic core ---
-        match limits.synapses_per_core {
-            Some(cap) => {
-                let mut over = false;
-                for l in &loads {
-                    if l.synapses > cap {
-                        binds.push(CoreBind::Synapses { core: l.core, used: l.synapses, cap });
-                        over = true;
-                    }
-                }
-                if !over {
-                    let worst = loads.iter().max_by_key(|l| (l.synapses, core::cmp::Reverse(l.core)));
-                    headroom.push(CoreHeadroom {
-                        constraint: "synapses per core",
-                        worst_used: worst.map_or(0, |l| l.synapses),
-                        worst_core: worst.map_or(0, |l| l.core),
-                        cap,
-                    });
+        if let Some(cap) = limits.synapses_per_core {
+            let mut over = false;
+            for l in &loads {
+                if l.synapses > cap {
+                    binds.push(CoreBind::Synapses { core: l.core, used: l.synapses, cap });
+                    over = true;
                 }
             }
-            None => unchecked.push("synapses per core"),
+            if !over {
+                let worst = loads.iter().max_by_key(|l| (l.synapses, core::cmp::Reverse(l.core)));
+                headroom.push(CoreHeadroom {
+                    constraint: "synapses per core",
+                    worst_used: worst.map_or(0, |l| l.synapses),
+                    worst_core: worst.map_or(0, |l| l.core),
+                    cap,
+                });
+            }
         }
 
         // --- neuron count ---
-        match limits.neurons_per_core {
-            Some(cap) => {
-                let cap = u64::from(cap);
-                let mut over = false;
-                for l in &loads {
-                    if l.neurons > cap {
-                        binds.push(CoreBind::Neurons { core: l.core, used: l.neurons, cap });
-                        over = true;
-                    }
-                }
-                if !over {
-                    let worst = loads.iter().max_by_key(|l| (l.neurons, core::cmp::Reverse(l.core)));
-                    headroom.push(CoreHeadroom {
-                        constraint: "neurons per core",
-                        worst_used: worst.map_or(0, |l| l.neurons),
-                        worst_core: worst.map_or(0, |l| l.core),
-                        cap,
-                    });
+        if let Some(cap) = limits.neurons_per_core {
+            let cap = u64::from(cap);
+            let mut over = false;
+            for l in &loads {
+                if l.neurons > cap {
+                    binds.push(CoreBind::Neurons { core: l.core, used: l.neurons, cap });
+                    over = true;
                 }
             }
-            None => unchecked.push("neurons per core"),
+            if !over {
+                let worst = loads.iter().max_by_key(|l| (l.neurons, core::cmp::Reverse(l.core)));
+                headroom.push(CoreHeadroom {
+                    constraint: "neurons per core",
+                    worst_used: worst.map_or(0, |l| l.neurons),
+                    worst_core: worst.map_or(0, |l| l.core),
+                    cap,
+                });
+            }
         }
 
         binds.sort_by_key(|b| {
@@ -1413,11 +1495,19 @@ pub const REFINEMENT_CELL_LIMIT: u64 = 8_000_000;
 /// seeds a cheap way to get a better cut.
 ///
 /// Each neuron goes to the eligible core maximising
-/// `|placed neighbours there| - alpha * 0.75 * sqrt(neurons there)`, with
+/// `|placed neighbours there| - alpha * 1.5 * sqrt(neurons there)`, with
 /// `alpha = sqrt(cores) * synapses / neurons^1.5` — the `Fennel` objective at `gamma = 1.5`
-/// (Tsourakakis et al., WSDM 2014). Ties go to the emptier core, then to the lower index.
+/// (Tsourakakis, Gkantsidis, Radunović and Vojnović, WSDM 2014: for `c(x) = α·x^γ` the marginal
+/// cost is `δc(x) = α·γ·x^(γ-1)`, and the greedy index is `|N(v) ∩ S_i| − δc(|S_i|)`; §5.3 gives
+/// `γ = 3/2, α = √k·m/n^(3/2)`). Ties go to the emptier core, then to the lower index.
 ///
-/// ⚠ **This review is not certain that `alpha` is the paper's exact recommended setting.** The
+/// ⛔ The first version shipped `0.75` here — **half** the paper's `γ = 1.5` — while hedging the
+/// `alpha` expression that was the paper's own. The pinned greedy vector did not move when the
+/// coefficient was doubled, because on that fixture the penalty never decided a placement;
+/// `the_streaming_pass_applies_the_papers_balance_penalty` now re-implements the stream with the
+/// paper's coefficient typed in the test, on a fixture where it does decide.
+///
+/// ⚠ The rest of this note stands. The
 /// shape — `sqrt(k) * m / n^1.5`, scaling the balance penalty with the graph's density so that it
 /// stays comparable to a neighbour count — is what it read, and it reproduces the behaviour the
 /// paper describes on the graphs tested here. It is transcribed rather than tuned, and a reader
@@ -1472,8 +1562,10 @@ pub fn partition_greedy(
 /// # Cost
 ///
 /// Candidates are restricted to **boundary neurons** — those with at least one edge leaving their
-/// core. A pass is `O(steps * B^2 * log d)` where `B` is the boundary size and `d` the mean degree,
-/// with `steps` at most `neurons / 2`. This is the slow, readable version; Fiduccia and Mattheyses
+/// core. A pass is `O(steps * (B^2 * log d + n * k))` where `B` is the boundary size, `d` the mean
+/// degree and `n * k` the cost of rebuilding the boundary set from scratch at every step — a term
+/// the first version of this line left out, and which is a 10x factor on the fixtures here — with
+/// `steps` at most `neurons / 2`. This is the slow, readable version; Fiduccia and Mattheyses
 /// (DAC 1982) give the linear-time bucket structure that makes it practical at scale, and it is not
 /// implemented here.
 ///
@@ -1561,6 +1653,9 @@ fn stream_assign(
     if limits.synapses_per_core == Some(0) {
         return Err(MapError::ZeroCapacity { which: "synapses per core" });
     }
+    if n_cores > MAX_CORES {
+        return Err(MapError::TooManyCores { n_cores, limit: MAX_CORES });
+    }
     if net.n == 0 {
         return Ok(Vec::new());
     }
@@ -1577,6 +1672,18 @@ fn stream_assign(
     }
     let deg: Vec<u64> = net.in_degrees().iter().map(|&d| d as u64).collect();
     if let Some(cap) = limits.synapses_per_core {
+        // Whole-machine arithmetic first, for the same reason `NotEnoughRoom` comes first: a
+        // network with more synapses than the machine stores does not map by being packed better.
+        let synapses: u64 = deg.iter().sum();
+        let capacity = cap.saturating_mul(u64::from(n_cores));
+        if synapses > capacity {
+            return Err(MapError::NotEnoughSynapseRoom {
+                synapses,
+                n_cores,
+                synapses_per_core: cap,
+                capacity,
+            });
+        }
         for (i, &d) in deg.iter().enumerate() {
             if d > cap {
                 return Err(MapError::FanInExceedsCore { neuron: i, fan_in: d, cap });
@@ -1630,7 +1737,7 @@ fn stream_assign(
             if limits.synapses_per_core.is_some_and(|cap| syn[c] + d > cap) {
                 continue;
             }
-            let s = score[c] as f64 - alpha * 0.75 * (neurons[c] as f64).sqrt();
+            let s = score[c] as f64 - alpha * 1.5 * (neurons[c] as f64).sqrt();
             match best {
                 None => best = Some((c, s)),
                 Some((bc, bs)) => {
@@ -1875,8 +1982,13 @@ impl SpikeHops {
         if !split_known && self.multicast_hops > 0 {
             unpriced.push("chip-boundary split (cores per chip not stated)");
         }
-        let total = match (on_chip, crossings, injection, split_known) {
-            (Some(a), Some(b), Some(c), true) => Some(a + b + c),
+        // ⛔ `split_known` gates the total only when there were hops to split. The first version
+        // refused a total for the best-placed workload the module exists to celebrate — everything
+        // on-core, nothing on the fabric — with `unpriced` EMPTY: a refusal with no reason, which
+        // contradicted `HopBill::unpriced`'s doc and `Ledger::bill`'s rule that a zero count needs
+        // no price.
+        let total = match (on_chip, crossings, injection) {
+            (Some(a), Some(b), Some(c)) if split_known || self.multicast_hops == 0 => Some(a + b + c),
             _ => None,
         };
         let evidence = if any { p.evidence } else { Evidence::Unstated };
@@ -1954,10 +2066,11 @@ pub fn spike_hops(
         }
         let src = partition.core_of[v];
         let (a, b) = (net.offset[v], net.offset[v + 1]);
+        let overflow = |what: &'static str| MapError::CountOverflow { neuron: v, what };
         if a == b {
             // Fired with no targets: it still emitted, and the ledger counts that, but it costs the
             // fabric nothing.
-            out.spikes += s;
+            out.spikes = out.spikes.checked_add(s).ok_or_else(|| overflow("spikes"))?;
             continue;
         }
         dests.clear();
@@ -1973,16 +2086,21 @@ pub fn spike_hops(
             dests.push(c);
         }
         let tree = multicast_tree(fabric, src, &dests)?;
-        out.multicast_hops += s * tree.hops;
-        out.unicast_hops += s * tree.unicast_hops;
+        // Checked, because `s` is caller-supplied and `u64::MAX` spikes from one neuron used to
+        // wrap silently in release: `multicast_hops: 18446744073709551614` with `Ok` around it.
+        let acc = |cur: u64, x: u64, what: &'static str| -> Result<u64, MapError> {
+            s.checked_mul(x).and_then(|p| cur.checked_add(p)).ok_or_else(|| overflow(what))
+        };
+        out.multicast_hops = acc(out.multicast_hops, tree.hops, "multicast hops")?;
+        out.unicast_hops = acc(out.unicast_hops, tree.unicast_hops, "unicast hops")?;
         if let (Some(total), Some(x)) =
-            (out.chip_crossings.as_mut(), cores_per_chip.and_then(|c| tree.crossings(c)))
+            (out.chip_crossings, cores_per_chip.and_then(|c| tree.crossings(c)))
         {
-            *total += s * x;
+            out.chip_crossings = Some(acc(total, x, "chip crossings")?);
         }
-        out.on_core_deliveries += s * on_core;
-        out.off_core_deliveries += s * off_core;
-        out.spikes += s;
+        out.on_core_deliveries = acc(out.on_core_deliveries, on_core, "on-core deliveries")?;
+        out.off_core_deliveries = acc(out.off_core_deliveries, off_core, "off-core deliveries")?;
+        out.spikes = out.spikes.checked_add(s).ok_or_else(|| overflow("spikes"))?;
         out.sources += 1;
     }
     Ok(out)
@@ -2063,7 +2181,7 @@ pub const SPINNAKER_FABRIC: HopPrices = HopPrices {
     e_hop_chip_crossing: None,
     e_packet_inject: None,
     source: "SpiNNaker: this review did not locate a per-link or per-router-traversal energy in \
-             Furber, Galluppi, Temple and Plana, Proceedings of the IEEE 102(5):652-673, 2014, or \
+             Furber, Galluppi, Temple and Plana, Proceedings of the IEEE 102(5):652-665, 2014, or \
              in the SpiNNaker chip papers it read. Whole-board power figures exist and do not \
              separate the router from the ARM cores, which is the separation this field needs.",
     evidence: Evidence::Unstated,
@@ -2282,13 +2400,23 @@ mod tests {
             for root in 0..n {
                 let t = multicast_tree(&f, root, &all).expect("routes must union into a tree");
                 assert_eq!(t.cores.len(), n as usize, "{f:?} root {root}: tree missed a core");
-                assert_eq!(
-                    t.edges.len() + 1,
-                    t.cores.len(),
-                    "{f:?} root {root}: {} links over {} cores is not a tree",
-                    t.edges.len(),
-                    t.cores.len()
-                );
+                // Acyclic, checked with union-find over the tree's own edge list. The count
+                // identity `edges + 1 == cores` that stood here is what `multicast_tree` itself
+                // enforces before returning, so asserting it could not fail; a cycle check on the
+                // edges is independent of the function's own guard.
+                let mut parent: Vec<usize> = (0..n as usize).collect();
+                fn find(p: &mut [usize], mut x: usize) -> usize {
+                    while p[x] != x {
+                        p[x] = p[p[x]];
+                        x = p[x];
+                    }
+                    x
+                }
+                for &(a, b) in &t.edges {
+                    let (ra, rb) = (find(&mut parent, a as usize), find(&mut parent, b as usize));
+                    assert_ne!(ra, rb, "{f:?} root {root}: link ({a},{b}) closes a cycle");
+                    parent[ra] = rb;
+                }
                 assert_eq!(t.hops, t.edges.len() as u64);
             }
         }
@@ -2856,6 +2984,16 @@ mod tests {
         assert_eq!(g.headroom[0].worst_used, 2);
         assert_eq!(g.headroom[0].spare(), 2);
         assert!((g.headroom[0].utilisation().unwrap() - 0.5).abs() < 1e-15);
+        // ⛔ WORST core, not best: `min_by_key` for `max_by_key` on either branch was green,
+        // because a 2/2 split has no worst. 3/1 does, on both constraints.
+        let p = Partition::new(&net, vec![0, 0, 0, 1], 2).unwrap();
+        let g = p.check(&net, &CoreLimits::new(Some(4), Some(8), None)).unwrap();
+        assert_eq!(g.verdict, Some(true));
+        let by = |name: &str| g.headroom.iter().find(|h| h.constraint == name).unwrap();
+        assert_eq!((by("neurons per core").worst_used, by("neurons per core").worst_core), (3, 0));
+        // chain(4): synapses 0->1, 1->2, 2->3 charged to the postsynaptic core. Core 0 holds
+        // neurons 0, 1, 2 with in-degrees 0, 1, 1; core 1 holds neuron 3 with in-degree 1.
+        assert_eq!((by("synapses per core").worst_used, by("synapses per core").worst_core), (2, 0));
         assert_eq!(super::CoreHeadroom { constraint: "x", worst_used: 0, worst_core: 0, cap: 0 }
             .utilisation(), None);
     }
@@ -2880,6 +3018,36 @@ mod tests {
             partition_greedy(&net, &CoreLimits::UNLIMITED, 0, 0).unwrap_err(),
             MapError::NoCores
         );
+        // ⛔ The synapse twin of NotEnoughRoom: 20 neurons carrying 100 synapses offered 2 cores
+        // of 10 used to come back as NoFeasibleCore, "try another seed or refinement" — and every
+        // seed and the refiner failed identically, because the machine has 20 synapse slots.
+        let mut b = NetBuilder::new(20);
+        for i in 0..20u32 {
+            for j in 0..5u32 {
+                b.connect((i + j + 1) % 20, i, 1e-3, 1).unwrap();
+            }
+        }
+        let dense = b.build();
+        assert_eq!(dense.n_syn, 100);
+        let lim = CoreLimits::new(Some(10), Some(10), None);
+        assert_eq!(
+            partition_greedy(&dense, &lim, 2, 0).unwrap_err(),
+            MapError::NotEnoughSynapseRoom { synapses: 100, n_cores: 2, synapses_per_core: 10, capacity: 20 }
+        );
+        assert_eq!(
+            partition_refined(&dense, &lim, 2, 0, 5).unwrap_err(),
+            MapError::NotEnoughSynapseRoom { synapses: 100, n_cores: 2, synapses_per_core: 10, capacity: 20 }
+        );
+        // And the per-core bookkeeping bound, on both entry points.
+        assert_eq!(
+            Partition::new(&net, vec![0; 10], super::MAX_CORES + 1).unwrap_err(),
+            MapError::TooManyCores { n_cores: super::MAX_CORES + 1, limit: super::MAX_CORES }
+        );
+        assert_eq!(
+            partition_greedy(&net, &CoreLimits::UNLIMITED, super::MAX_CORES + 1, 0).unwrap_err(),
+            MapError::TooManyCores { n_cores: super::MAX_CORES + 1, limit: super::MAX_CORES }
+        );
+        assert!(Partition::new(&net, vec![0; 10], super::MAX_CORES).is_ok());
         assert_eq!(
             Partition::new(&net, vec![0; 9], 2).unwrap_err(),
             MapError::LengthMismatch { what: "core assignment", got: 9, neurons: 10 }
@@ -2970,6 +3138,10 @@ mod tests {
         assert_eq!(h.deliveries(), ledger.syn_ops);
         assert!((h.hops_per_synaptic_operation(&ledger).unwrap() - 1.0).abs() < 1e-15);
         assert_eq!(h.hops_per_synaptic_operation(&Ledger::default()), None);
+        // ⛔ With a ledger whose count is NOT 9: on this fixture multicast_hops, deliveries() and
+        // syn_ops all happened to be 9, so `deliveries()` in the numerator was green. 9/18 = 0.5.
+        let other = Ledger { syn_ops: 18, ..Ledger::default() };
+        assert!((h.hops_per_synaptic_operation(&other).unwrap() - 0.5).abs() < 1e-15);
     }
 
     /// **The claim the module is written around**: the same network and the same spikes, mapped
@@ -3171,6 +3343,17 @@ mod tests {
                 .contains("ran out of room at neuron 1")
         );
         assert!(
+            MapError::CountOverflow { neuron: 6, what: "unicast hops" }.to_string().contains("neuron 6")
+        );
+        assert!(
+            MapError::NotEnoughSynapseRoom { synapses: 100, n_cores: 2, synapses_per_core: 10, capacity: 20 }
+                .to_string()
+                .contains("20 total")
+        );
+        assert!(
+            MapError::TooManyCores { n_cores: 99, limit: 7 }.to_string().contains("99 cores")
+        );
+        assert!(
             MapError::NotEnoughRoom {
                 neurons: 10,
                 n_cores: 3,
@@ -3204,5 +3387,255 @@ mod tests {
         );
         // The same problem on fewer cores is inside the limit.
         assert!(partition_refined(&net, &CoreLimits::UNLIMITED, 4, 0, 2).is_ok());
+    }
+
+    /// ⛔ THE WALL IS REPORTED PER NEURON, WHATEVER THE PLACEMENT. Two neurons over the fan-in cap
+    /// on one core used to produce one bind, and the same two on different cores produced two —
+    /// so a caller who fixed the named neuron and re-ran was handed the next one.
+    #[test]
+    fn every_neuron_over_the_fan_in_wall_is_named_however_it_is_placed() {
+        let mut b = NetBuilder::new(22);
+        for pre in 0..10u32 {
+            b.connect(pre, 20, 1e-3, 1).unwrap();
+            b.connect(pre + 10, 21, 1e-3, 1).unwrap();
+        }
+        let net = b.build();
+        let lim = CoreLimits::new(None, None, Some(4));
+        let same = Partition::single_core(&net).unwrap().check(&net, &lim).unwrap();
+        let mut split_cores = vec![0u32; 22];
+        split_cores[21] = 1;
+        let split = Partition::new(&net, split_cores, 2).unwrap().check(&net, &lim).unwrap();
+        for f in [&same, &split] {
+            assert_eq!(f.verdict, Some(false));
+            assert_eq!(f.binds.len(), 2, "{:?}", f.binds);
+            assert!(matches!(f.binds[0], CoreBind::FanIn { neuron: 20, fan_in: 10, cap: 4, .. }));
+            assert!(matches!(f.binds[1], CoreBind::FanIn { neuron: 21, fan_in: 10, cap: 4, .. }));
+            assert!(!f.repartitionable());
+        }
+        assert!(matches!(split.binds[1], CoreBind::FanIn { core: 1, .. }), "the bind names the core the neuron sits on");
+
+        // An empty network checks nothing and therefore passes nothing.
+        let empty = NetBuilder::new(0).build();
+        let f = Partition::single_core(&empty).unwrap().check(&empty, &CoreLimits::new(Some(4), Some(4), Some(4))).unwrap();
+        assert_eq!(f.verdict, None, "a vacuous pass");
+        assert!(f.headroom.is_empty() && f.binds.is_empty());
+        let g = Partition::single_core(&empty).unwrap().check(&empty, &CoreLimits::UNLIMITED).unwrap();
+        assert_eq!(g.unchecked.len(), 3);
+    }
+
+    /// ⛔ THE FENNEL PENALTY, AGAINST THE PAPER'S RULE RE-IMPLEMENTED HERE. Tsourakakis,
+    /// Gkantsidis, Radunović and Vojnović (WSDM 2014): for `c(x) = α·x^γ` the marginal cost is
+    /// `δc(x) = α·γ·x^(γ−1)`, so at `γ = 3/2` the greedy index is
+    /// `|N(v) ∩ S_i| − α·1.5·√|S_i|`. The module shipped `0.75`, half the paper's, and the pinned
+    /// greedy vector did not move when it was doubled. This test re-runs the stream — the crate's
+    /// own shuffle, the paper's coefficient typed here, the documented tie-break — on a fixture
+    /// where the penalty decides some placements, and requires the module to match seed for seed.
+    #[test]
+    fn the_streaming_pass_applies_the_papers_balance_penalty() {
+        // A 9-clique whose members each also feed one of nine singletons: the clique members
+        // pile onto one core until the penalty outweighs another neighbour there.
+        let mut b = NetBuilder::new(18);
+        for i in 0..9u32 {
+            for j in 0..9u32 {
+                if i != j {
+                    b.connect(i, j, 1e-3, 1).unwrap();
+                }
+            }
+            b.connect(i, 9 + i, 1e-3, 1).unwrap();
+        }
+        let net = b.build();
+        let k = 2usize;
+        let n_f = net.n as f64;
+        let alpha = (k as f64).sqrt() * net.n_syn as f64 / (n_f * n_f.sqrt());
+        let mut nbrs: Vec<Vec<usize>> = vec![Vec::new(); net.n];
+        for pre in 0..net.n {
+            for kk in net.offset[pre]..net.offset[pre + 1] {
+                let post = net.post[kk] as usize;
+                if post != pre {
+                    nbrs[pre].push(post);
+                    nbrs[post].push(pre);
+                }
+            }
+        }
+        let mut decided = 0usize;
+        for seed in 0..12u64 {
+            let mut order: Vec<usize> = (0..net.n).collect();
+            let mut rng = crate::rng::Rng::new(seed);
+            for i in (1..order.len()).rev() {
+                let j = rng.below((i + 1) as u32) as usize;
+                order.swap(i, j);
+            }
+            let mut core_of = vec![usize::MAX; net.n];
+            let mut occupancy = [0u64; 2];
+            for &v in &order {
+                let mut score = [0i64; 2];
+                for &u in &nbrs[v] {
+                    if core_of[u] != usize::MAX {
+                        score[core_of[u]] += 1;
+                    }
+                }
+                let (mut best, mut best_s) = (usize::MAX, f64::NEG_INFINITY);
+                for c in 0..k {
+                    let s = score[c] as f64 - alpha * 1.5 * (occupancy[c] as f64).sqrt();
+                    let better = best == usize::MAX
+                        || s > best_s
+                        || (s == best_s && (occupancy[c], c) < (occupancy[best], best));
+                    if better {
+                        best = c;
+                        best_s = s;
+                    }
+                }
+                if score[best] < *score.iter().max().unwrap() {
+                    decided += 1;
+                }
+                core_of[v] = best;
+                occupancy[best] += 1;
+            }
+            let plan = partition_greedy(&net, &CoreLimits::UNLIMITED, 2, seed).unwrap();
+            let got: Vec<usize> = plan.partition.core_of.iter().map(|&c| c as usize).collect();
+            assert_eq!(got, core_of, "seed {seed}: the module's stream disagrees with the paper's rule");
+        }
+        assert!(decided > 0, "the penalty never decided a placement; this fixture cannot see the coefficient");
+    }
+
+    /// ⛔ A workload with nothing on the fabric has a total, even when the chip size is unknown.
+    /// The first version refused it with `unpriced` empty — a refusal with no reason.
+    #[test]
+    fn a_workload_with_no_fabric_traffic_bills_a_total_even_without_a_chip_size() {
+        let net = chain(2);
+        let p = Partition::single_core(&net).unwrap();
+        let h = spike_hops(&net, &p, &Fabric::Crossbar { cores: 2 }, None, &[3, 0]).unwrap();
+        assert_eq!((h.multicast_hops, h.chip_crossings, h.spikes), (0, None, 3));
+        let prices = HopPrices {
+            e_hop_on_chip: Some(1e-12),
+            e_hop_chip_crossing: Some(1e-11),
+            e_packet_inject: Some(2e-12),
+            source: "test",
+            evidence: Evidence::Projected,
+        };
+        let bill = h.bill(&prices);
+        assert!(bill.unpriced.is_empty(), "{:?}", bill.unpriced);
+        assert!((bill.total.unwrap() - 6e-12).abs() < 1e-24, "three injections and nothing on the fabric");
+        // With traffic and no chip size, the split IS unpriced and the total is still refused.
+        let q = Partition::new(&net, vec![0, 1], 2).unwrap();
+        let g = spike_hops(&net, &q, &Fabric::Crossbar { cores: 2 }, None, &[3, 0]).unwrap();
+        let bill = g.bill(&prices);
+        assert_eq!(bill.total, None);
+        assert!(bill.unpriced.iter().any(|u| u.starts_with("chip-boundary split")));
+        // The unpriced list of an empty table, in the order the bill lists them.
+        let none = HopPrices { e_hop_on_chip: None, e_hop_chip_crossing: None, e_packet_inject: None, source: "", evidence: Evidence::Unstated };
+        assert_eq!(none.unpriced(), vec!["on-chip hop", "chip-crossing hop", "packet injection"]);
+    }
+
+    /// ⛔ A spike count the signature accepts must not wrap the hop counts.
+    #[test]
+    fn a_spike_count_that_overflows_the_hop_counts_is_refused_by_neuron_and_name() {
+        let net = chain(2);
+        let f = Fabric::Mesh2D { cols: 2, rows: 2 };
+        let p = Partition::new(&net, vec![0, 3], 4).unwrap();
+        assert_eq!(
+            spike_hops(&net, &p, &f, Some(2), &[u64::MAX, 0]).unwrap_err(),
+            MapError::CountOverflow { neuron: 0, what: "multicast hops" }
+        );
+        // A second neuron that pushes an already large total over the edge is named as itself.
+        let mut b = NetBuilder::new(3);
+        b.connect(0, 2, 1e-3, 1).unwrap();
+        b.connect(1, 2, 1e-3, 1).unwrap();
+        let two = b.build();
+        let q = Partition::new(&two, vec![0, 0, 3], 4).unwrap();
+        assert_eq!(
+            spike_hops(&two, &q, &f, None, &[u64::MAX / 2, u64::MAX / 2 + 1, 0]).unwrap_err(),
+            MapError::CountOverflow { neuron: 1, what: "multicast hops" }
+        );
+        assert!(spike_hops(&two, &q, &f, None, &[u64::MAX / 4, u64::MAX / 4, 0]).is_ok());
+    }
+
+    /// A triangular torus past `u32` cores is refused rather than swept with a truncated cast.
+    #[test]
+    fn a_triangular_torus_past_u32_cores_has_no_diameter_rather_than_a_wrong_one() {
+        let huge = Fabric::TriangularTorus { cols: 100_000, rows: 100_000 };
+        assert_eq!(huge.n_cores(), 10_000_000_000);
+        assert_eq!(huge.diameter(), None);
+        assert_eq!(Fabric::Torus2D { cols: 100_000, rows: 100_000 }.diameter(), Some(100_000));
+        // The empirical closed form the doc records, at the sizes it was seen.
+        for (side, want) in [(8u32, 5u64), (16, 10), (32, 21), (64, 42)] {
+            assert_eq!(Fabric::TriangularTorus { cols: side, rows: side }.diameter(), Some(want), "{side}x{side}");
+        }
+    }
+
+    /// The provenance string for the module's headline absence claim carries the right pages:
+    /// 652–665, not 652–673 (which was the *Science* `TrueNorth` range two lines away).
+    #[test]
+    fn the_spinnaker_citation_has_the_right_page_range() {
+        assert!(SPINNAKER_FABRIC.source.contains("102(5):652-665, 2014"), "{}", SPINNAKER_FABRIC.source);
+        assert!(!SPINNAKER_FABRIC.source.contains("673"));
+    }
+
+    /// ⛔ Self-synapses and parallel synapses reach the partitioners. `Adjacency::build` skips
+    /// self-synapses and sorts every neighbour list — the sort is what `multiplicity`'s binary
+    /// search needs — and both could be deleted with every test green, because no fixture had a
+    /// self-synapse or came out unsorted. These are the auditor's probes, kept.
+    #[test]
+    fn the_partitioners_on_a_network_with_self_synapses_and_a_multigraph() {
+        let mut b = NetBuilder::new(8);
+        for i in 0..8u32 {
+            b.connect(i, i, 1e-3, 1).unwrap();
+            b.connect(i, (i + 1) % 8, 1e-3, 1).unwrap();
+        }
+        let net = b.build();
+        let lim = CoreLimits::new(Some(4), None, None);
+        for seed in 0..6u64 {
+            let g = partition_greedy(&net, &lim, 2, seed).unwrap();
+            let k = partition_refined(&net, &lim, 2, seed, 20).unwrap();
+            assert_eq!(k.cut, k.partition.cut_edges(&net).unwrap());
+            assert_eq!(k.cut_before_refinement - k.cut, k.refinement_gain, "seed {seed}");
+            assert!(k.cut <= g.cut, "seed {seed}: refinement made it worse");
+        }
+        let mut b = NetBuilder::new(12);
+        for i in 0..12u32 {
+            for _ in 0..3 {
+                b.connect(i, (i + 1) % 12, 1e-3, 1).unwrap();
+            }
+        }
+        let multi = b.build();
+        let lim = CoreLimits::new(Some(6), None, None);
+        for seed in 0..6u64 {
+            let k = partition_refined(&multi, &lim, 2, seed, 20).unwrap();
+            assert_eq!(k.cut_before_refinement - k.cut, k.refinement_gain, "seed {seed}");
+            assert_eq!(k.cut, k.partition.cut_edges(&multi).unwrap());
+            assert!(k.cut.is_multiple_of(3), "seed {seed}: a cut of {} splits a triple", k.cut);
+        }
+    }
+
+    /// ⛔ The refiner's synapse-cap guard BINDS here. Every other `partition_refined` call passes
+    /// `None` or a cap too loose to matter, so the guard could be disabled with every test green.
+    /// Four hubs of in-degree 9 among 36 leaves of in-degree 1 or 2, ten neurons a core: an
+    /// exchange that moves a hub onto a leaf's core moves nine synapses with it, and with the cap
+    /// a few synapses above the balanced load such an exchange is exactly what the guard refuses.
+    #[test]
+    fn refinement_never_ships_an_infeasible_placement() {
+        let mut b = NetBuilder::new(40);
+        for leaf in 4..40u32 {
+            b.connect(leaf, leaf % 4, 1e-3, 1).unwrap();
+            b.connect(leaf, if leaf + 1 < 40 { leaf + 1 } else { 4 }, 1e-3, 1).unwrap();
+        }
+        let net = b.build();
+        let mut shipped = 0;
+        let mut refined = 0;
+        for cap in [20u64, 22, 24, 26, 30] {
+            let lim = CoreLimits::new(Some(10), Some(cap), None);
+            for seed in 0..8u64 {
+                if let Ok(plan) = partition_refined(&net, &lim, 4, seed, 20) {
+                    let v = plan.partition.check(&net, &lim).unwrap();
+                    assert_eq!(v.verdict, Some(true), "cap {cap} seed {seed}: shipped a placement that binds: {:?}", v.binds);
+                    shipped += 1;
+                    if plan.swaps_kept > 0 {
+                        refined += 1;
+                    }
+                }
+            }
+        }
+        assert!(shipped >= 8, "only {shipped} placements shipped; the sweep barely runs");
+        assert!(refined >= 4, "only {refined} placements were actually refined; the guard was never asked");
     }
 }

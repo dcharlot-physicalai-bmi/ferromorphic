@@ -24,20 +24,35 @@
 //! roughly 40 Hz, the oscillation Adrian recorded from the bulb in 1942 and which every subsequent
 //! study of the EPL has had to account for.
 //!
+//! ⛔ **The gamma rhythm this module produces is imposed, not emergent.** [`EplParams::mitral_duty`]
+//! gates the mitral cells to a fixed fraction of each cycle, so the population histogram is
+//! periodic by construction — `the_gamma_period_measured_from_the_train_is_the_one_the_parameters_set`
+//! measures the identical period, bit-exact, with every granule cell removed. The loop is real and
+//! does shape the pattern; the clock is what sets the rhythm. Adrian's 1942 recording is the
+//! reason for the band, not something this circuit reproduces.
+//!
 //! What the loop buys is three things at once:
 //!
 //! 1. **Activity control.** Broad granule inhibition scales with total mitral activity: over a
 //!    five-fold concentration step the broad pool's own output rises from 3 spikes to 13 while the
 //!    open-loop mitral total goes from 50 to 95. ⚠ But in this implementation that limb is
 //!    **subtractive, not divisive**, so it does not preserve ratios — it removes a near-constant
-//!    21 spikes across a ten-fold concentration range, and the settled ratio (2.52) comes out
-//!    *larger* than the open-loop one (1.90). Divisive normalisation is a glomerular-layer
+//!    21 spikes across that five-fold range (0.2x to 1.0x), and the settled ratio (2.52) comes out
+//!    *larger* than the open-loop one (1.90). ⛔ Not ten-fold, which this line used to say: from
+//!    0.1x the broad pool is below its own rheobase at the low end, removes nothing there, and the
+//!    ratio claim inverts (open 2.44, settled 1.87). The subtractive claim needs the pool above its
+//!    rheobase at both ends of the range. Divisive normalisation is a glomerular-layer
 //!    mechanism (Cleland and colleagues) that this module does not implement, and the phrase "gain
 //!    control" is avoided here for that reason. The numbers are from
 //!    `the_broad_pool_answers_concentration_and_not_shape`.
 //! 2. **Decorrelation.** Two odours whose receptor patterns overlap heavily leave the EPL less
 //!    similar than they entered it, because subtracting a common inhibitory term and passing the
 //!    remainder through a spiking threshold is an expansive operation on the differences.
+//!    ⚠ Read that sentence literally: the broad limb is ONE scalar, `i_broad * a_broad`, applied
+//!    identically to every mitral cell (see [`Epl::present`]). There is no cell-to-cell term in
+//!    it, so what this measures is a common threshold shift, not lateral inhibition — the same
+//!    overlap drop is reachable with no granule cell in the circuit by lowering `i_bias` by a
+//!    constant. It is a true property of the circuit and a weaker one than the name suggests.
 //! 3. **A place to write a memory.** The dendrodendritic synapse is plastic, so a single
 //!    presentation can carve a granule ensemble that is tuned to one odour — and because the
 //!    ensemble is inhibitory, recalling the odour means *suppressing everything that is not it*.
@@ -93,9 +108,12 @@
 //! - **Mitral phase.** Each mitral cell integrates `i_bias + i_gain * c[m] - inh[m]` amperes, where
 //!   `c[m]` is the receptor activation of glomerulus `m` and `inh[m]` is the inhibition computed in
 //!   the *previous* cycle. The odour is a **current**, not a spike train: it is sensory transduction,
-//!   not a synapse. The only synaptic input a mitral cell has here is the granule inhibition, which
-//!   is why [`crate::ledger::Ledger::idle_fraction`] over a run reports the first cycle's mitral
-//!   updates as idle.
+//!   not a synapse. Both are work the cell does — an event-driven implementation still has to
+//!   integrate the sensory current toward threshold — so every mitral update with a non-zero
+//!   current is charged as driven, and what [`crate::ledger::Ledger::idle_fraction`] reports over
+//!   a run is the granule cells sitting below their thresholds. ⛔ The first version charged a
+//!   mitral tick as idle whenever no inhibition arrived, and reported an idle fraction of 1.0 for
+//!   a mitral layer that had fired 498 times.
 //! - **Granule phase.** Each granule cell forms a dendritic sum over the mitral spike counts `r` of
 //!   this cycle, is biased **exactly to its own rheobase** `(v_th - v_rest) / r_m`, and is driven by
 //!   `granule_gain * (drive - theta)`. Biasing to rheobase is what makes `theta` mean what its name
@@ -111,9 +129,13 @@
 //!   looked right.
 //! - Each **learned ensemble** computes a **normalised** drive, `dot(template, r) / ||r||`, because
 //!   it is a matched filter for shape and must not care about concentration. That quantity is
-//!   exactly the cosine similarity between the mitral pattern and the stored template, so **the
-//!   recognition score is not computed beside the circuit — it is what the granule cell's dendrite
-//!   already computes.** `granule_drive_equals_the_cosine_by_construction` asserts it to 1e-12.
+//!   exactly the cosine similarity between the mitral pattern and the stored template.
+//!   `granule_drive_equals_the_cosine_by_construction` asserts that identity to 1e-12. ⛔ But
+//!   [`Epl::recall`] computes the score **beside** the circuit, from the settled pattern, and does
+//!   not read the ensemble's spikes: set every ensemble threshold above 1 so that no ensemble cell
+//!   can ever fire and clean recall still identifies every stored odour
+//!   (`recall_scores_beside_the_circuit_and_does_not_need_the_ensembles_to_fire`). The dendrite
+//!   computes the same quantity; the decision does not consume it.
 //!
 //! Inhibition delivered to mitral cell `m` next cycle is
 //!
@@ -156,8 +178,8 @@
 //! params.max_odours = 4;
 //!
 //! let mut source = OdourGenerator::new(9, params.mitral, 0.35)?;
-//! let target = source.next_odour();
-//! let stranger = source.next_odour();
+//! let target = source.next_odour()?;
+//! let stranger = source.next_odour()?;
 //!
 //! let mut epl = Epl::new(params)?;
 //! let id = epl.learn(&target)?;              // ONE presentation
@@ -220,6 +242,15 @@ pub enum OlfactionError {
     Silent,
     /// [`Epl::recall`] was called before anything was learned.
     Untrained,
+    /// [`OdourGenerator::next_odour`] drew `tries` all-zero patterns in a row and stopped.
+    ///
+    /// A bound rather than a retry-forever loop: at a sparsity of `1e-18` the first version never
+    /// returned, and [`OdourGenerator::pair_with_overlap`]'s own "fixed retry count rather than an
+    /// unbounded loop" guarantee was void one call deep.
+    NoActiveChannel {
+        /// Draws attempted before giving up.
+        tries: usize,
+    },
     /// [`OdourGenerator::pair_with_overlap`] could not reach the requested overlap.
     ///
     /// Two independent non-negative patterns already share a floor of similarity; asking for less
@@ -247,6 +278,9 @@ impl fmt::Display for OlfactionError {
             Self::Full { max } => write!(f, "circuit already holds its maximum of {max} odours"),
             Self::Silent => write!(f, "mitral layer emitted no spikes"),
             Self::Untrained => write!(f, "nothing has been learned yet"),
+            Self::NoActiveChannel { tries } => {
+                write!(f, "no channel came up active in {tries} draws; the sparsity is too low")
+            }
             Self::Unreachable { requested, floor } => {
                 write!(f, "overlap {requested} is below this pair's floor of {floor}")
             }
@@ -502,10 +536,15 @@ impl OdourGenerator {
 
     /// Draw one odour.
     ///
-    /// Retries until at least one channel is active, so the return type does not have to carry a
-    /// failure that is a probability-zero event for any sensible sparsity but not an impossible one.
-    pub fn next_odour(&mut self) -> Odour {
-        loop {
+    /// Retries until at least one channel is active, up to [`OdourGenerator::MAX_TRIES`] draws.
+    /// For any sensible sparsity the first draw succeeds; the bound exists because the constructor
+    /// accepts any sparsity in `(0, 1]`, and at `1e-18` an unbounded loop is a hang.
+    ///
+    /// # Errors
+    ///
+    /// [`OlfactionError::NoActiveChannel`] after [`OdourGenerator::MAX_TRIES`] all-zero draws.
+    pub fn next_odour(&mut self) -> Result<Odour, OlfactionError> {
+        for _ in 0..Self::MAX_TRIES {
             let mut c = vec![0.0; self.n];
             for v in &mut c {
                 if self.rng.next_f64() < self.sparsity {
@@ -513,13 +552,23 @@ impl OdourGenerator {
                 }
             }
             if let Ok(o) = Odour::new(c) {
-                return o;
+                return Ok(o);
             }
         }
+        Err(OlfactionError::NoActiveChannel { tries: Self::MAX_TRIES })
     }
 
+    /// Draws [`OdourGenerator::next_odour`] makes before refusing: 4096. At that many all-zero
+    /// draws the expected number of active channels per draw is below `1/4096`, which is not an
+    /// odour generator, it is a coin that never comes up.
+    pub const MAX_TRIES: usize = 4096;
+
     /// `k` independent odours.
-    pub fn library(&mut self, k: usize) -> Vec<Odour> {
+    ///
+    /// # Errors
+    ///
+    /// As [`OdourGenerator::next_odour`].
+    pub fn library(&mut self, k: usize) -> Result<Vec<Odour>, OlfactionError> {
         (0..k).map(|_| self.next_odour()).collect()
     }
 
@@ -557,8 +606,8 @@ impl OdourGenerator {
         let mut lowest = f64::INFINITY;
         let mut pair = None;
         for _ in 0..64 {
-            let x = self.next_odour();
-            let y = self.next_odour();
+            let x = self.next_odour()?;
+            let y = self.next_odour()?;
             let floor =
                 cosine_similarity(x.channels(), y.channels()).ok_or(OlfactionError::ZeroOdour)?;
             if floor < lowest {
@@ -678,11 +727,13 @@ pub struct EplParams {
     /// **The default 0.85 is measured in this module's tests, not taken from the paper**, and it is
     /// a property of the layer's WIDTH rather than of the circuit: two random patterns in 64
     /// dimensions overlap less than two in 32, so the same threshold buys different safety. On the
-    /// 64-cell default, learned odours scored 0.965 and worse over seven seeds while 840 unlearned
-    /// ones peaked at 0.624. On a 32-cell layer the same sweep found an unlearned odour reaching
-    /// **0.897** — inside the band this threshold is supposed to protect. Re-measure it with
-    /// [`Epl::acceptance_rate`] on your own odours before trusting it; a threshold quoted without a
-    /// measured false-positive rate is an unfalsifiable number.
+    /// 32-cell layer the tests use, `one_shot_learning_recalls_and_the_false_positive_rate_is_measured`
+    /// finds a false-positive rate of exactly zero at 0.85 over 120 unlearned odours; the review's
+    /// wider sweep of that layer (60 seeds × 120 unlearned odours at sparsity 0.35) found unlearned
+    /// scores as high as **0.8465** — a margin of 0.0035 under the threshold, which is thin. ⛔ An
+    /// earlier version of this doc quoted three numbers from a sweep nobody could reproduce; they
+    /// are gone. Re-measure with [`Epl::acceptance_rate`] on your own odours before trusting the
+    /// default; a threshold quoted without a measured false-positive rate is an unfalsifiable number.
     pub recall_threshold: f64,
 }
 
@@ -735,6 +786,13 @@ fn spread(lo: f64, hi: f64, n: usize) -> Vec<f64> {
 /// What one presentation produced.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Presentation {
+    /// Inhibition each mitral cell integrated during the **final** cycle, amperes — what the loop
+    /// had settled on when the counts in `mitral` were produced. `i_broad * a_broad` plus
+    /// `i_specific` times the activity-weighted mask average; zero throughout the first cycle.
+    ///
+    /// Exposed because it is the only direct readout of which stored mask the specific limb
+    /// delivered: spike counts saturate at the resting spike and cannot tell one mask from another.
+    pub inhibition: Vec<f64>,
     /// Mitral spike counts in the final gamma cycle: the settled representation.
     pub mitral: Vec<f64>,
     /// Mitral spike counts in the **first** cycle, before any inhibition computed from this
@@ -845,6 +903,21 @@ impl Epl {
             return Err(bad(
                 "mitral_cell.t_ref",
                 "must be positive; the broad pool normalises by the rate it implies",
+            ));
+        }
+        // ⛔ The mitral cell gets the same check as the granule cell. With `v_th` below `v_rest`
+        // every mitral cell saturates identically, the template becomes a constant vector, and the
+        // circuit identifies every odour in the world as odour 0 at a cosine of 0.9999999999999996:
+        // a 100% false-positive rate from a parameter set the first version accepted.
+        if !(p.mitral_cell.tau_m > 0.0)
+            || !p.mitral_cell.tau_m.is_finite()
+            || !(p.mitral_cell.r_m > 0.0)
+            || !p.mitral_cell.r_m.is_finite()
+            || !(p.mitral_cell.v_th > p.mitral_cell.v_rest)
+        {
+            return Err(bad(
+                "mitral_cell",
+                "needs finite positive tau_m and r_m, and v_th > v_rest",
             ));
         }
         if !(p.granule_cell.r_m > 0.0) || !(p.granule_cell.v_th > p.granule_cell.v_rest) {
@@ -994,18 +1067,22 @@ impl Epl {
         let mut t: u64 = 0;
         let granule_base = n as u32;
 
+        let mut delivered = vec![0.0f64; n];
         for cycle in 0..cycles {
             for cell in &mut mitral {
                 cell.reset();
             }
+            delivered.copy_from_slice(&inh);
             counts.fill(0.0);
             for _ in 0..self.mitral_ticks {
                 for m in 0..n {
                     let i = self.mitral_current(odour.channels[m], inh[m]);
-                    // The odour is a CURRENT (transduction); the only spike-borne input a mitral
-                    // cell has here is granule inhibition. So a tick with no inhibition is idle in
-                    // the ledger's sense, which is why cycle 0 reports as idle throughout.
-                    if inh[m] > 0.0 {
+                    // A cell integrating a non-zero current toward threshold is doing work an
+                    // event-driven implementation cannot skip, whether the current is the odour
+                    // or the inhibition. The first version charged "idle" whenever no inhibition
+                    // had arrived, and reported an idle fraction of 1.0 for a layer that fired 498
+                    // times — see the module doc.
+                    if i != 0.0 {
                         self.ledger.neuron_updates_driven += 1;
                     } else {
                         self.ledger.neuron_updates_idle += 1;
@@ -1118,6 +1195,7 @@ impl Epl {
             return Err(OlfactionError::Silent);
         }
         Ok(Presentation {
+            inhibition: delivered,
             mitral: counts,
             mitral_open_loop: open_loop,
             granule_drive: drive,
@@ -1284,20 +1362,30 @@ pub fn capacity_curve(
     }
     let mut epl = Epl::new(params.clone())?;
     let mut source = OdourGenerator::new(seed, params.mitral, sparsity)?;
-    let mut probe_rng = Rng::new(seed ^ 0xA5A5_5A5A_1234_9876);
+    // ⛔ The interfering backgrounds have their OWN generator. The first version drew them from
+    // `source`, so asking for an extra probe point consumed draws and changed every odour learned
+    // afterwards: the same `(params, seed)` gave accuracy 0.875 at 24 odours with five probe
+    // points and 0.833 with one. "Deterministic in `seed`" was true and misleading.
+    // And both the background generator and the occlusion draws are re-seeded from `(seed, k)` at
+    // each probe point, so the point at `k` is a function of `(params, seed, sparsity, k)` alone
+    // and not of how many earlier points were asked for.
     let mut stored: Vec<Odour> = Vec::new();
     let mut out = Vec::with_capacity(probe_at.len());
     for k in 1..=top {
-        let o = source.next_odour();
+        let o = source.next_odour()?;
         epl.learn(&o)?;
         stored.push(o);
         if !probe_at.contains(&k) {
             continue;
         }
         let (mut hits, mut self_sum, mut other_sum) = (0usize, 0.0f64, 0.0f64);
+        let salt = (k as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let mut background =
+            OdourGenerator::new(seed ^ 0x5EED_0BAC_0000_0007 ^ salt, params.mitral, sparsity)?;
+        let mut probe_rng = Rng::new(seed ^ 0xA5A5_5A5A_1234_9876 ^ salt);
         for (i, s) in stored.iter().enumerate() {
-            let background = source.next_odour();
-            let probe = occlusion.apply(s, &background, &mut probe_rng)?;
+            let interferent = background.next_odour()?;
+            let probe = occlusion.apply(s, &interferent, &mut probe_rng)?;
             let r = epl.recall(&probe)?;
             let mine = r.scores[i];
             let other = r
@@ -1325,6 +1413,10 @@ pub fn capacity_curve(
     Ok(out)
 }
 
+/// The longest window [`population_period`] will analyse: `2^18` ticks, about 26 s at the default
+/// time step and about 15 s of computation at the measured quadratic cost.
+pub const MAX_PERIOD_TICKS: u64 = 1 << 18;
+
 /// Period of a spike train's population rhythm, in seconds, measured from the train itself.
 ///
 /// Builds the population histogram over `ticks` time steps from spikes whose `source` is below
@@ -1338,13 +1430,21 @@ pub fn capacity_curve(
 /// thing to do, makes `2T` tie with `T`, and the estimator then reports a period twice too long on
 /// about half its inputs — a failure that draws a perfectly plausible raster.
 ///
-/// `None` when there are no spikes in range, when `ticks` is under 4, when `dt` is not finite and
-/// positive, or when the autocorrelation never goes non-positive inside the search range — that
-/// last case being a window with no resolvable rhythm, which is a different statement from a long
-/// period and is kept different.
+/// `None` when there are no spikes in range, when `ticks` is under 4 or over
+/// [`MAX_PERIOD_TICKS`], when `dt` is not finite and positive, or when the autocorrelation never
+/// goes non-positive inside the search range — that last case being a window with no resolvable
+/// rhythm, which is a different statement from a long period and is kept different.
+///
+/// # Cost
+///
+/// Quadratic in `ticks`: every lag up to `ticks / 2` is a dot product over the window. Measured in
+/// release: 20,000 ticks in 0.1 s, 50,000 in 0.7 s, 100,000 in 3.3 s, 200,000 in 10.5 s. The bound
+/// refuses what would take minutes; the first version's only guard was `ticks > usize::MAX`, which
+/// on a 64-bit machine never fires, and a caller asking about 2e12 ticks was handed a 16 TB
+/// allocation attempt instead of a `None`.
 #[must_use]
 pub fn population_period(train: &Train, source_max: u32, ticks: u64, dt: f64) -> Option<f64> {
-    if ticks < 4 || !(dt > 0.0) || !dt.is_finite() || ticks > usize::MAX as u64 {
+    if !(4..=MAX_PERIOD_TICKS).contains(&ticks) || !(dt > 0.0) || !dt.is_finite() {
         return None;
     }
     let n = ticks as usize;
@@ -1395,7 +1495,7 @@ mod tests {
         CapacityPoint, Epl, EplParams, Occlusion, Odour, OdourGenerator, OlfactionError,
         capacity_curve, cosine_similarity, population_period, spread, tanimoto,
     };
-    use crate::ledger::LOIHI_2018;
+    use crate::ledger::{LOIHI_2018, Ledger};
     use crate::neuron::{Lif, Neuron};
     use crate::rng::Rng;
     use crate::spike::{Spike, Train};
@@ -1544,7 +1644,7 @@ mod tests {
         };
         let mut src = OdourGenerator::new(6, 16, 0.4).unwrap();
         let mut epl = Epl::new(p).unwrap();
-        let odour = src.next_odour();
+        let odour = src.next_odour().unwrap();
         assert_eq!(epl.learn(&odour).unwrap(), 0);
         assert_eq!(epl.ensembles()[0].thresholds.len(), 1);
         assert_eq!(epl.recall(&odour).unwrap().identified, Some(0));
@@ -1616,10 +1716,12 @@ mod tests {
             within >= intervals.len() - 2,
             "closed form {closed:.6e}, intervals {intervals:?}"
         );
-        // The tolerance cannot accept a neighbouring current's answer: it bites.
-        let neighbour = p.mitral_cell.isi(epl.mitral_current(channels[5], 0.0)).unwrap();
+        // The tolerance cannot accept the NEIGHBOURING current's answer: it bites. Channel 6 is
+        // the neighbour of channel 7 (this guard used to compare against channel 5, two away, and
+        // claim "the neighbouring channel"); its interval is 3.18 tolerances off.
+        let neighbour = p.mitral_cell.isi(epl.mitral_current(channels[6], 0.0)).unwrap();
         assert!(
-            (neighbour - closed).abs() > 4.0 * tol,
+            (neighbour - closed).abs() > 3.0 * tol,
             "tolerance {tol:e} is loose enough to accept the wrong current"
         );
         // And a sub-rheobase current has no interval at all, rather than a large one.
@@ -1635,10 +1737,10 @@ mod tests {
     fn granule_drive_equals_the_cosine_by_construction() {
         let mut src = OdourGenerator::new(21, 32, 0.35).unwrap();
         let mut epl = Epl::new(small()).unwrap();
-        for o in &src.library(5) {
+        for o in &src.library(5).unwrap() {
             epl.learn(o).unwrap();
         }
-        let probe = src.next_odour();
+        let probe = src.next_odour().unwrap();
         let shown = epl.present(&probe, 6).unwrap();
         assert_eq!(shown.granule_drive.len(), 5);
         for (k, e) in epl.ensembles().iter().enumerate() {
@@ -1661,7 +1763,7 @@ mod tests {
     fn the_two_limbs_of_the_reciprocal_synapse_are_complements() {
         let mut src = OdourGenerator::new(8, 32, 0.35).unwrap();
         let mut epl = Epl::new(small()).unwrap();
-        let odour = src.next_odour();
+        let odour = src.next_odour().unwrap();
         epl.learn(&odour).unwrap();
         let e = &epl.ensembles()[0];
         // The template is a unit vector, exactly as the drive-equals-cosine identity needs.
@@ -1699,7 +1801,7 @@ mod tests {
             v.iter().map(|x| x / n).collect()
         };
         let mut src = OdourGenerator::new(90, 32, 0.35).unwrap();
-        let odour = src.next_odour();
+        let odour = src.next_odour().unwrap();
         let mut epl = Epl::new(small()).unwrap();
         epl.learn(&odour).unwrap();
         let template = epl.ensembles()[0].template.clone();
@@ -1741,7 +1843,7 @@ mod tests {
         let measure = |gain: f64, scale: f64| {
             let p = EplParams { i_broad: gain, ..small() };
             let mut src = OdourGenerator::new(64, p.mitral, 0.35).unwrap();
-            let base = src.next_odour();
+            let base = src.next_odour().unwrap();
             let scaled = Odour::new(base.channels().iter().map(|c| c * scale).collect()).unwrap();
             let mut epl = Epl::new(p.clone()).unwrap();
             let shown = epl.present(&scaled, 6).unwrap();
@@ -1906,22 +2008,36 @@ mod tests {
     /// The gamma period the circuit runs at is the one its parameters set, measured from the spikes
     /// rather than read back off the parameter. Swept over a factor of four in frequency, so a
     /// circuit that oscillated at some fixed rate of its own would fail at two of the three points.
+    /// ⛔ And the same period, bit-exact, with the loop deleted. This test used to read as
+    /// evidence that "the loop rings"; the rhythm is the `mitral_duty` gate, and the control arm
+    /// says so. See the module doc.
     #[test]
     fn the_gamma_period_measured_from_the_train_is_the_one_the_parameters_set() {
         for hz in [20.0f64, 40.0, 80.0] {
             let p = EplParams { gamma_hz: hz, ..small() };
-            let mut epl = Epl::new(p.clone()).unwrap();
-            let odour = OdourGenerator::new(3, p.mitral, 0.35).unwrap().next_odour();
-            let shown = epl.present(&odour, 8).unwrap();
-            let ticks = (epl.ticks_per_cycle() * 8) as u64;
-            let got = population_period(&shown.train, p.mitral as u32, ticks, p.dt).unwrap();
-            let want = epl.gamma_period();
-            assert!((want - 1.0 / hz).abs() < p.dt, "{hz} Hz rounds badly");
-            assert!(
-                (got - want).abs() < p.dt,
-                "{hz} Hz: measured {got:e}, parameters say {want:e}"
-            );
+            let open = EplParams { broad_granule: 0, i_broad: 0.0, i_specific: 0.0, ..p.clone() };
+            let odour = OdourGenerator::new(3, p.mitral, 0.35).unwrap().next_odour().unwrap();
+            let mut measured = Vec::new();
+            for params in [p.clone(), open] {
+                let mut epl = Epl::new(params.clone()).unwrap();
+                let shown = epl.present(&odour, 8).unwrap();
+                let ticks = (epl.ticks_per_cycle() * 8) as u64;
+                let got = population_period(&shown.train, p.mitral as u32, ticks, p.dt).unwrap();
+                let want = epl.gamma_period();
+                assert!((want - 1.0 / hz).abs() < p.dt, "{hz} Hz rounds badly");
+                assert!(
+                    (got - want).abs() < p.dt,
+                    "{hz} Hz: measured {got:e}, parameters say {want:e}"
+                );
+                measured.push(got);
+            }
+            assert_eq!(measured[0], measured[1], "{hz} Hz: the loop changed the period; the doc says it cannot");
         }
+        // The analysis window is bounded, and refuses rather than allocating.
+        let mut train = crate::spike::Train::new();
+        train.push(Spike { t: 0, source: 0 });
+        assert_eq!(population_period(&train, 8, super::MAX_PERIOD_TICKS + 1, 1e-4), None);
+        assert_eq!(population_period(&train, 8, 2_000_000_000_000, 1e-4), None);
     }
 
     // ---- one-shot learning and recall ----
@@ -1933,8 +2049,8 @@ mod tests {
     fn one_shot_learning_recalls_and_the_false_positive_rate_is_measured() {
         let p = small();
         let mut src = OdourGenerator::new(19, p.mitral, 0.35).unwrap();
-        let library = src.library(8);
-        let novel = src.library(120);
+        let library = src.library(8).unwrap();
+        let novel = src.library(120).unwrap();
 
         let mut epl = Epl::new(p.clone()).unwrap();
         for o in &library {
@@ -1980,12 +2096,12 @@ mod tests {
         let p = EplParams { max_odours: 2, ..small() };
         let mut src = OdourGenerator::new(31, p.mitral, 0.35).unwrap();
         let mut epl = Epl::new(p).unwrap();
-        let odour = src.next_odour();
+        let odour = src.next_odour().unwrap();
         assert_eq!(epl.recall(&odour), Err(OlfactionError::Untrained));
         assert_eq!(epl.learn(&odour).unwrap(), 0);
-        assert_eq!(epl.learn(&src.next_odour()).unwrap(), 1);
+        assert_eq!(epl.learn(&src.next_odour().unwrap()).unwrap(), 1);
         assert_eq!(
-            epl.learn(&src.next_odour()),
+            epl.learn(&src.next_odour().unwrap()),
             Err(OlfactionError::Full { max: 2 })
         );
         // Wrong width is refused with both numbers, not silently truncated.
@@ -2011,7 +2127,7 @@ mod tests {
         let p = small();
         let mut src = OdourGenerator::new(29, p.mitral, 0.35).unwrap();
         let mut epl = Epl::new(p).unwrap();
-        let target = src.next_odour();
+        let target = src.next_odour().unwrap();
         epl.learn(&target).unwrap();
         let mut rng = Rng::new(101);
 
@@ -2032,7 +2148,7 @@ mod tests {
                 };
                 let (mut sum, mut n) = (0.0f64, 0.0f64);
                 for _ in 0..25 {
-                    let background = src.next_odour();
+                    let background = src.next_odour().unwrap();
                     let probe = model.apply(&target, &background, &mut rng).unwrap();
                     sum += epl.recall(&probe).unwrap().score;
                     n += 1.0;
@@ -2057,7 +2173,7 @@ mod tests {
     fn the_learned_mask_earns_its_place_under_interferent_occlusion() {
         let p = small();
         let mut src = OdourGenerator::new(43, p.mitral, 0.35).unwrap();
-        let target = src.next_odour();
+        let target = src.next_odour().unwrap();
         let mut with = Epl::new(p.clone()).unwrap();
         let mut without = Epl::new(EplParams { i_specific: 0.0, ..p }).unwrap();
         with.learn(&target).unwrap();
@@ -2067,7 +2183,7 @@ mod tests {
         let mut rng_off = Rng::new(7); // same stream, so both see the same corruptions
         let (mut on, mut off) = (0.0f64, 0.0f64);
         for _ in 0..40 {
-            let background = src.next_odour();
+            let background = src.next_odour().unwrap();
             let model = Occlusion::Interferent { fraction: 0.6 };
             let a = model.apply(&target, &background, &mut rng).unwrap();
             let b = model.apply(&target, &background, &mut rng_off).unwrap();
@@ -2186,11 +2302,11 @@ mod tests {
         let build = || {
             let mut src = OdourGenerator::new(55, 32, 0.35).unwrap();
             let mut epl = Epl::new(small()).unwrap();
-            let library = src.library(3);
+            let library = src.library(3).unwrap();
             for o in &library {
                 epl.learn(o).unwrap();
             }
-            let probe = src.next_odour();
+            let probe = src.next_odour().unwrap();
             let shown = epl.present(&probe, 5).unwrap();
             (shown, probe, epl)
         };
@@ -2212,10 +2328,10 @@ mod tests {
     fn the_ledger_counts_the_loop_and_still_refuses_to_price_it() {
         let mut src = OdourGenerator::new(63, 32, 0.35).unwrap();
         let mut epl = Epl::new(small()).unwrap();
-        for o in &src.library(4) {
+        for o in &src.library(4).unwrap() {
             epl.learn(o).unwrap();
         }
-        epl.recall(&src.next_odour()).unwrap();
+        epl.recall(&src.next_odour().unwrap()).unwrap();
         assert!(epl.ledger.syn_ops > 0);
         // This implementation fetches a weight per delivery, so the two counts are equal BY
         // CONSTRUCTION, and a design that cached would make them differ.
@@ -2223,6 +2339,47 @@ mod tests {
         assert!(epl.ledger.spikes_out > 0);
         let idle = epl.ledger.idle_fraction().unwrap();
         assert!(idle > 0.0 && idle < 1.0, "idle fraction {idle}");
+
+        // ⛔ THE COUNTS, RECOMPUTED FROM THE TRAIN. `syn_ops > 0` and `syn_ops == syn_fetches` (a
+        // tautology: both lines add the same expression) let the whole granule→mitral direction
+        // of the loop be deleted — 17.4% of the traffic — and the mitral→granule direction be
+        // halved, with 24 tests green. AGENTS.md invariant 9 names that `/ 2` as the failure that
+        // flatters every energy figure. Every mitral spike reaches every granule cell and every
+        // granule spike reaches every mitral cell, so from one presentation's train:
+        //   syn_ops = mitral_spikes * (broad + ensembles * per) + granule_spikes * mitral.
+        let p = small();
+        epl.ledger = Ledger::default();
+        let odour = src.next_odour().unwrap();
+        let cycles = 6;
+        let shown = epl.present(&odour, cycles).unwrap();
+        let n = p.mitral as u32;
+        let (mut mitral_spikes, mut granule_spikes) = (0u64, 0u64);
+        for sp in shown.train.spikes() {
+            if sp.source < n {
+                mitral_spikes += 1;
+            } else {
+                granule_spikes += 1;
+            }
+        }
+        assert!(mitral_spikes > 0 && granule_spikes > 0, "{mitral_spikes} {granule_spikes}");
+        let n_granule = (p.broad_granule + epl.ensembles().len() * p.granule_per_odour) as u64;
+        assert_eq!(epl.ensembles().len(), 4);
+        assert_eq!(epl.ledger.syn_ops, mitral_spikes * n_granule + granule_spikes * u64::from(n));
+        assert_eq!(epl.ledger.syn_fetches, epl.ledger.syn_ops);
+        assert_eq!(epl.ledger.spikes_out, mitral_spikes + granule_spikes);
+        // Every cell is updated on every tick of its phase, driven or idle.
+        let per_cycle = epl.ticks_per_cycle() as u64;
+        let mitral_ticks = (per_cycle as f64 * p.mitral_duty).round() as u64;
+        let granule_ticks = per_cycle - mitral_ticks;
+        assert_eq!(
+            epl.ledger.neuron_updates(),
+            cycles as u64 * (mitral_ticks * u64::from(n) + granule_ticks * n_granule)
+        );
+        // Mitral cells integrate a non-zero current on every tick (i_bias > 0), so every mitral
+        // update is driven; the idle updates are granule cells below threshold.
+        assert!(p.i_bias > 0.0);
+        assert!(epl.ledger.neuron_updates_driven >= cycles as u64 * mitral_ticks * u64::from(n));
+        assert!(epl.ledger.neuron_updates_idle > 0);
         let bill = epl.ledger.bill(&LOIHI_2018);
         assert!(bill.total.is_none(), "the ledger priced a workload it cannot price");
         assert!(bill.unpriced.contains(&"synapse memory fetch"), "{:?}", bill.unpriced);
@@ -2269,8 +2426,8 @@ mod tests {
     #[test]
     fn occlusion_refuses_what_it_cannot_do_and_does_what_it_can() {
         let mut src = OdourGenerator::new(4, 32, 0.35).unwrap();
-        let a = src.next_odour();
-        let b = src.next_odour();
+        let a = src.next_odour().unwrap();
+        let b = src.next_odour().unwrap();
         let mut rng = Rng::new(9);
         // A fraction outside [0, 1], and a NaN amplitude.
         assert!(Occlusion::Dropout { fraction: 1.5 }.apply(&a, &b, &mut rng).is_err());
@@ -2298,5 +2455,131 @@ mod tests {
         assert!(noisy.channels().iter().all(|v| *v >= 0.0));
         assert_ne!(noisy, a);
         assert_eq!(Occlusion::Noise { amplitude: 0.0 }.apply(&a, &b, &mut rng).unwrap(), a);
+    }
+
+    /// ⛔ THE ODOUR-SPECIFIC LIMB WITH MORE THAN ONE ENSEMBLE. The occlusion test above stores
+    /// exactly one odour, and with one ensemble `ensembles[0]`, `ensembles[n - 1 - k]` and a
+    /// probe-independent mean of all masks are the same expression — so recall could deliver the
+    /// WRONG odour's mask, and 24 tests stayed green while the circuit measurably changed.
+    ///
+    /// Spike counts cannot see it: the suppression is mostly "kill the resting spike on every
+    /// inactive channel", which any mask does. The delivered inhibition can. With the broad limb
+    /// off it is `i_specific` times a convex combination of the stored masks, and the weight `w`
+    /// on the probed odour's own mask is read off by projection onto `mask_a - mask_b`. Probing A
+    /// must put most of the weight on A's mask; probing B, on B's. Measured on the unmutated code:
+    /// 0.74 and 0.23 — not 1 and 0, because the other odour's ensemble is partly recruited (its
+    /// drive is 0.6, above the lower ensemble thresholds), which is what the doc means by "a blur
+    /// of several masks". The band is 0.6 / 0.4: `ensembles[0]` for every probe gives 1.0 twice and
+    /// fails B; the reversed pairing gives 0.26 and 0.74 and fails both; the unweighted mean gives
+    /// 0.5 twice and fails both.
+    #[test]
+    fn recall_delivers_the_probed_odours_mask_and_not_anothers() {
+        let p = EplParams { i_broad: 0.0, ..small() };
+        assert!(p.i_specific > 0.0);
+        let mut src = OdourGenerator::new(91, p.mitral, 0.35).unwrap();
+        let (a, b) = (src.next_odour().unwrap(), src.next_odour().unwrap());
+        let mut epl = Epl::new(p.clone()).unwrap();
+        epl.learn(&a).unwrap();
+        epl.learn(&b).unwrap();
+        let mask_a = epl.ensembles()[0].mask.clone();
+        let mask_b = epl.ensembles()[1].mask.clone();
+        let diff: Vec<f64> = (0..p.mitral).map(|m| mask_a[m] - mask_b[m]).collect();
+        let diff_sq: f64 = diff.iter().map(|d| d * d).sum();
+        assert!(diff_sq > 0.5, "the fixture's masks nearly coincide: |diff|^2 = {diff_sq}");
+        let weight_on_a = |epl: &mut Epl, odour: &Odour| -> f64 {
+            let shown = epl.present(odour, 6).unwrap();
+            let total: f64 = shown.inhibition.iter().sum();
+            assert!(total > 0.0, "no specific inhibition was delivered at all");
+            // inh / i_specific = w * mask_a + (1 - w) * mask_b  =>  project onto (mask_a - mask_b).
+            let num: f64 = (0..p.mitral)
+                .map(|m| (shown.inhibition[m] / p.i_specific - mask_b[m]) * diff[m])
+                .sum();
+            num / diff_sq
+        };
+        let w_a = weight_on_a(&mut epl, &a);
+        let w_b = weight_on_a(&mut epl, &b);
+        println!("weight on A's mask: probing A {w_a:.3}, probing B {w_b:.3}");
+        assert!(w_a > 0.6, "probing A put weight {w_a} on A's mask");
+        assert!(w_b < 0.4, "probing B put weight {w_b} on A's mask");
+        // And the readout is a real convex combination, not a projection artefact: both weights
+        // sit inside [0, 1] to rounding.
+        assert!((-1e-9..=1.0 + 1e-9).contains(&w_a) && (-1e-9..=1.0 + 1e-9).contains(&w_b), "{w_a} {w_b}");
+    }
+
+    /// ⛔ `recall` scores beside the circuit, and needs no ensemble spike to do it. With every
+    /// ensemble threshold set to 50 — cosines never exceed 1 — no ensemble cell can fire, the
+    /// specific limb is off, and clean one-shot recall still identifies every stored odour. The
+    /// module doc used to say the score "is not computed beside the circuit".
+    #[test]
+    fn recall_scores_beside_the_circuit_and_does_not_need_the_ensembles_to_fire() {
+        let p = EplParams { ensemble_theta_lo: 50.0, ensemble_theta_hi: 50.0, ..small() };
+        let mut src = OdourGenerator::new(5, p.mitral, 0.35).unwrap();
+        let mut epl = Epl::new(p.clone()).unwrap();
+        let lib = src.library(4).unwrap();
+        for o in &lib {
+            epl.learn(o).unwrap();
+        }
+        for (i, o) in lib.iter().enumerate() {
+            assert_eq!(epl.recall(o).unwrap().identified, Some(i));
+        }
+        let shown = epl.present(&lib[0], 3).unwrap();
+        let first_ensemble_source = (p.mitral + p.broad_granule) as u32;
+        let ens_spikes = shown.train.spikes().iter().filter(|s| s.source >= first_ensemble_source).count();
+        assert_eq!(ens_spikes, 0, "an ensemble cell fired through a threshold of 50");
+        assert!(shown.granule_drive.iter().all(|d| *d < 1.0 + 1e-12));
+    }
+
+    /// ⛔ A mitral cell with its threshold below rest used to be accepted, and identified every
+    /// odour in the world as odour 0 at a cosine of 0.9999999999999996. Now it is refused by name,
+    /// as the granule cell always was.
+    #[test]
+    fn a_mitral_cell_that_cannot_fire_properly_is_refused_by_name() {
+        let bad = |cell: Lif| Epl::new(EplParams { mitral_cell: cell, ..small() });
+        for cell in [
+            Lif { v_th: -80e-3, t_ref: 0.5e-3, ..Lif::default() },
+            Lif { tau_m: f64::NAN, t_ref: 0.5e-3, ..Lif::default() },
+            Lif { tau_m: -4e-3, t_ref: 0.5e-3, ..Lif::default() },
+            Lif { r_m: 0.0, t_ref: 0.5e-3, ..Lif::default() },
+        ] {
+            assert!(
+                matches!(bad(cell), Err(OlfactionError::Parameter { field: "mitral_cell", .. })),
+                "{cell:?} was accepted"
+            );
+        }
+        assert!(Epl::new(small()).is_ok());
+    }
+
+    /// The generator refuses instead of hanging: at a sparsity of 1e-18 the first version never
+    /// returned. And `pair_with_overlap`'s bounded-retry promise now holds one call deep.
+    #[test]
+    fn an_impossible_sparsity_is_a_refusal_not_a_hang() {
+        let mut g = OdourGenerator::new(1, 64, 1e-18).unwrap();
+        assert_eq!(
+            g.next_odour().unwrap_err(),
+            OlfactionError::NoActiveChannel { tries: OdourGenerator::MAX_TRIES }
+        );
+        assert!(g.library(3).is_err());
+        assert!(g.pair_with_overlap(0.5).is_err());
+        let e = OlfactionError::NoActiveChannel { tries: 4096 };
+        assert!(e.to_string().contains("4096"));
+        // A sensible sparsity never comes near the bound.
+        let mut g = OdourGenerator::new(1, 4, 0.05).unwrap();
+        assert!(g.library(200).is_ok());
+    }
+
+    /// ⛔ `capacity_curve` is a function of `(params, seed, k)` and not of which probe points were
+    /// asked for. The first version drew the interfering backgrounds from the same generator as
+    /// the odours to learn, so an extra probe point changed every odour learned after it.
+    #[test]
+    fn the_capacity_curve_does_not_depend_on_the_probe_schedule() {
+        let p = small();
+        let occ = Occlusion::Interferent { fraction: 0.6 };
+        let many = capacity_curve(&p, 3, 0.35, &[2, 4, 8, 16, 24], occ).unwrap();
+        let one = capacity_curve(&p, 3, 0.35, &[24], occ).unwrap();
+        let (a, b) = (&many[many.len() - 1], &one[0]);
+        assert_eq!((a.learned, b.learned), (24, 24));
+        assert_eq!(a.accuracy, b.accuracy);
+        assert_eq!(a.mean_self, b.mean_self);
+        assert_eq!(a.mean_best_other, b.mean_best_other);
     }
 }

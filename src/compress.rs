@@ -775,7 +775,9 @@ pub enum Storage {
     ///
     /// Costs `total + kept * bits`. Break-even against dense is `1/bits` sparsity, so it is a win
     /// almost immediately and never worse than dense by more than one bit per parameter. It is
-    /// what a chip with a fixed crossbar and a validity mask actually implements.
+    /// the layout a fixed crossbar with a validity mask would imply; this review did not locate a
+    /// storage-format description for any commercial part, so that is one of three computable
+    /// possibilities and not a claim about silicon.
     Bitmask,
 }
 
@@ -1016,9 +1018,17 @@ pub fn rate_rms(p: f64, ticks: u64) -> Option<f64> {
 ///
 /// So the analytic inversion is used as a *starting point* and is then reconciled against
 /// [`rate_rms`] itself, stepping until the returned `T` is the smallest one whose own reported
-/// error meets the target. Both loops terminate because [`rate_rms`] is strictly decreasing in
-/// `T`, and in practice each moves by at most one. The contract is therefore exact and
-/// self-consistent: `rate_rms(p, ticks_for_rms(p, e)) <= e`, and `rate_rms(p, t - 1) > e`.
+/// error meets the target. Both loops terminate because [`rate_rms`] is non-increasing in `T`
+/// (not strictly decreasing: past about `2.5e17` consecutive `u64` budgets cast to the same
+/// `f64` and report the identical error) and each step is an integer, and in practice each moves
+/// by at most one. The contract is therefore exact and self-consistent:
+/// `rate_rms(p, ticks_for_rms(p, e)) <= e`, and `rate_rms(p, t - 1) > e`.
+///
+/// ⛔ The second loop is not dead code, though every early test input left it so. At
+/// `p = 0.49, target = 7e-6` the naive ceiling is `5_100_000_000` and `rate_rms` there is
+/// `7.000000000000001e-6` — **above** the target — so the honest answer is one tick more. That is
+/// the mirror of the defect above, and the one direction that ships a wrong budget rather than a
+/// wasted tick. It appears only at targets below about `3e-5`, which the test now reaches.
 #[must_use]
 pub fn ticks_for_rms(p: f64, target: f64) -> Option<u64> {
     if !p.is_finite() || !(0.0..=1.0).contains(&p) || !target.is_finite() || target <= 0.0 {
@@ -1598,8 +1608,9 @@ mod tests {
         ledger_at_ticks, pareto_front, prune_below, prune_magnitude, prune_net, prune_structured,
         quantise, rate_error_vs_ticks, rate_rms, softmax_t, ticks_for_rms, work_multiplier,
     };
-    use super::error_multiplier;
-    use crate::hardware::{Quantiser, Rounding};
+    use super::{error_multiplier, quantise_for_part};
+    use crate::hardware::{DARWIN, HardwareError, LOIHI, Quantiser, Rounding};
+    use crate::metrics::MetricError;
     use crate::ledger::Ledger;
     use crate::metrics::Footprint;
     use crate::net::NetBuilder;
@@ -1822,6 +1833,17 @@ mod tests {
         let q = prune_magnitude(&[1.0, 2.0, 3.0, 4.0], 0.5).expect("valid");
         assert_eq!(q.tied_at_cut, 0);
         assert!(q.separates_cleanly());
+
+        // ⛔ `cut` is the LARGEST removed magnitude, and with one weight removed the largest and
+        // the smallest coincide, so "smallest removed" passed above. Two removed from
+        // [1, 2, 2, 5]: the cut is 2, the smallest kept is 2, and the tie is real — under the
+        // wrong definition the cut is 1, the record says "clean", and the tie count is 0.
+        let r = prune_magnitude(&[1.0, 2.0, 2.0, 5.0], 0.5).expect("valid");
+        assert_eq!(r.n_removed, 2);
+        assert_eq!(r.cut, Some(2.0));
+        assert_eq!(r.smallest_kept, Some(2.0));
+        assert!(!r.separates_cleanly());
+        assert_eq!(r.tied_at_cut, 2);
     }
 
     /// Threshold pruning does not get to choose its sparsity, and the record says what it got.
@@ -1902,6 +1924,34 @@ mod tests {
             }
         }
         assert!((s.weight_sparsity() - 0.5).abs() < 1e-15);
+        // The reported fields are not echoes: `units()` is the INPUT count on this axis, and the
+        // saliencies are the L1 column sums, col * (1 + 2 + 3).
+        assert_eq!(s.units(), 4);
+        assert!((s.unit_sparsity() - 0.5).abs() < 1e-15);
+        assert_eq!(s.saliencies, vec![6.0, 54.0, 12.0, 48.0]);
+        assert_eq!((s.unit, s.saliency), (Unit::InputChannel, Saliency::L1));
+    }
+
+    /// ⛔ THE SORT IS LOAD-BEARING. `is_removed` binary-searches `removed`, which must therefore be
+    /// ascending; both fixtures above happened to remove units already in index order, so the
+    /// sort could be deleted with every test green — and then a caller filtering by `is_removed`
+    /// got `false` for a unit that had been removed. Norms 9, 5, 1 at fraction 2/3 remove units
+    /// in saliency order [2, 1], which is descending in index.
+    #[test]
+    fn the_removed_list_is_ascending_however_the_saliencies_order_it() {
+        let w = [9.0, 0.0, 5.0, 0.0, 1.0, 0.0]; // 3 rows x 2 inputs, L2 norms 9, 5, 1
+        let s = prune_structured(&w, 3, 2, Unit::OutputNeuron, Saliency::L2, 2.0 / 3.0)
+            .expect("valid");
+        assert_eq!(s.removed, vec![1, 2]);
+        for u in 0..3 {
+            assert_eq!(s.is_removed(u), s.removed.contains(&u), "unit {u}");
+        }
+        assert!(!s.is_removed(0));
+        assert!(s.is_removed(2), "the lowest-saliency unit, which an unsorted list hid");
+        assert_eq!(s.saliencies, vec![9.0, 5.0, 1.0]);
+        assert_eq!((s.unit, s.saliency), (Unit::OutputNeuron, Saliency::L2));
+        assert_eq!(s.units(), 3);
+        assert!((s.unit_sparsity() - 2.0 / 3.0).abs() < 1e-15);
     }
 
     /// The saliency scores themselves, against hand arithmetic with no tolerance. 3-4-5.
@@ -1936,6 +1986,40 @@ mod tests {
         let dense = quantise(&w, 4, Rounding::Nearest, None).expect("valid");
         assert_eq!(q.step, dense.step, "pruning the smallest weights cannot move the scale");
         assert!(q.within_half_lsb(1e-12));
+
+        // ⛔ THE WIDTH THE CALLER ASKED FOR. `q.bits` was read by nothing: `bits + 1`, `31` and `8`
+        // in place of `bits` all passed, because the scale comes from the same maximum magnitude
+        // at every width and every assertion above is width-free. The step is not: a symmetric
+        // quantiser's step is `max / (2^(bits-1) - 1)`, which halves with every added bit.
+        assert_eq!(q.bits, 4);
+        for bits in [2u32, 3, 5, 8, 16] {
+            let qb = quantise(&w, bits, Rounding::Nearest, None).expect("valid");
+            assert_eq!(qb.bits, bits);
+            let want_step = 1.0 / ((1u64 << (bits - 1)) - 1) as f64;
+            assert!(
+                (qb.step - want_step).abs() < 1e-15,
+                "bits {bits}: step {} against max/(2^(bits-1)-1) = {want_step}",
+                qb.step
+            );
+        }
+    }
+
+    /// ⛔ `quantise_for_part` had no test at all — the one public function in the module with
+    /// none. It takes its width from the part: Loihi states 9-bit weights (Davies et al. 2018,
+    /// Table 1: 1 to 9 bits), and a part whose width this review did not locate is a refusal that
+    /// names the part and the field.
+    #[test]
+    fn quantise_for_part_takes_the_width_from_the_part_or_refuses_by_name() {
+        let w = [0.02, -0.9, 0.31, 1.0];
+        let q = quantise_for_part(&LOIHI, &w, Rounding::Nearest, None).expect("Loihi states a width");
+        assert_eq!(q.bits, 9);
+        let same = quantise(&w, 9, Rounding::Nearest, None).expect("valid");
+        assert_eq!(q.codes, same.codes);
+        assert_eq!(q.step, same.step);
+        assert!(matches!(
+            quantise_for_part(&DARWIN, &w, Rounding::Nearest, None),
+            Err(CompressError::Hardware(HardwareError::UnstatedSpec { field: "weight_bits", .. }))
+        ));
     }
 
     /// Stochastic rounding without a seed is a refusal, not a silent seed — and with one, it
@@ -1980,7 +2064,11 @@ mod tests {
     /// - Sparse:  250 * (4 + 16)          = 5000 bits; +2048 = 7048 bits -> 881 bytes.
     /// - Bitmask: 1000 + 250 * 4 = 2000 bits; +2048 = 4048 bits -> 506 bytes.
     #[test]
-    fn the_footprint_after_quantisation_matches_the_hand_calculation() {
+    fn the_planned_footprint_matches_the_hand_calculation_at_the_width_the_quantiser_delivers() {
+        // ⛔ This test was named "after quantisation" and never quantised anything. `Plan::weight_bits`
+        // is now tied to the width `quantise` actually delivers, so the plan's arithmetic is
+        // about the model that would ship rather than about an integer nobody checked.
+        let q = quantise(&[0.5, -0.25, 1.0, 0.125], 4, Rounding::Nearest, None).expect("valid");
         let shape = ModelShape { parameters: 1000, state_values: 64, state_bits: 32 };
         let cases = [
             (Storage::Dense, 4000u64, 756u64),
@@ -1989,6 +2077,7 @@ mod tests {
         ];
         for (storage, param_bits, bytes) in cases {
             let plan = Plan::new(0.75, 4, 16, storage).expect("valid plan");
+            assert_eq!(plan.weight_bits, q.bits, "the plan's width is the quantiser's");
             assert_eq!(plan.kept(1000), 250);
             let f = plan.footprint(&shape).expect("valid");
             assert_eq!(f.parameter_bits, param_bits, "{storage:?}");
@@ -2071,7 +2160,8 @@ mod tests {
     /// could be an accident of that `p`. 4000 trials per point gives an RMS estimate with about
     /// 1.1% relative noise, which over eight budgets spanning 8 to 1024 puts the standard error of
     /// the slope near 0.0024; the 0.03 window below is therefore about twelve of those, tight
-    /// enough that a `T^(-1)` or `T^(-1/4)` law fails it by a factor of twenty.
+    /// enough that a `T^(-1)` law misses it by about seventeen windows and a `T^(-1/4)` law by
+    /// about eight.
     #[test]
     fn the_rate_coding_error_falls_as_one_over_root_t() {
         let ticks: Vec<u64> = (3..11).map(|k| 1u64 << k).collect();
@@ -2150,6 +2240,15 @@ mod tests {
                     assert!(worse > target, "T={t} was not minimal for p {p} target {target}");
                 }
             }
+        }
+        // ⛔ THE OTHER DIRECTION: the naive ceiling UNDERSHOOTS. At these two inputs the ceiling's
+        // own `rate_rms` is above the target by one part in 1e15, so the honest budget is one tick
+        // more, and the increment loop — dead under every input above — is what supplies it.
+        for &(p, target, naive) in &[(0.49f64, 7e-6f64, 5_100_000_000u64), (0.075, 1e-6, 69_375_000_000)] {
+            let t = ticks_for_rms(p, target).expect("valid");
+            assert_eq!(t, naive + 1, "p {p} target {target}");
+            assert!(rate_rms(p, naive).expect("valid") > target, "the naive ceiling met the target after all");
+            assert!(rate_rms(p, t).expect("valid") <= target);
         }
         assert_eq!(ticks_for_rms(0.0, 1e-9), Some(1), "a certain outcome needs one tick");
         assert!(ticks_for_rms(0.5, 0.0).is_none());
@@ -2523,6 +2622,14 @@ mod tests {
         assert_eq!(best_under_budget(&pts, 250, 100).expect("one fits"), 4);
         // Tighten the operation budget instead: byte-feasible points can still be excluded.
         assert_eq!(best_under_budget(&pts, 500, 60).expect("one fits"), 1, "index ties go low");
+        // ⛔ The documented tie-break, exercised. The pair above is equal on error, bytes AND ops,
+        // so it pins the index rule and nothing else; `p.error < c.error` alone was green. Equal
+        // error: fewer bytes wins. Equal error and bytes: fewer operations wins. Both are put in
+        // the order that makes the answer the higher index, so generation order cannot be it.
+        let tie = [point(900, 10, 0.05), point(100, 90, 0.05)];
+        assert_eq!(best_under_budget(&tie, 1000, 100).expect("fits"), 1, "fewer bytes at equal error");
+        let tie2 = [point(100, 90, 0.05), point(100, 10, 0.05)];
+        assert_eq!(best_under_budget(&tie2, 1000, 100).expect("fits"), 1, "fewer ops at equal error and bytes");
         let err = best_under_budget(&pts, 10, 10).unwrap_err();
         assert_eq!(
             err,
@@ -2613,11 +2720,53 @@ mod tests {
         assert!(rate_error_vs_ticks(0.5, &[4, 0], 10, &mut Rng::new(1)).is_err());
         assert!(rate_error_vs_ticks(0.5, &[4], 0, &mut Rng::new(1)).is_err());
         assert!(rate_error_vs_ticks(-0.1, &[4], 1, &mut Rng::new(1)).is_err());
-        // And the Display impl says something for every variant it is given.
-        let e = CompressError::NeedsRng;
-        assert!(format!("{e}").contains("reproducible"));
-        let f = CompressError::Overflow { what: "parameter bits" };
-        assert!(format!("{f}").contains("parameter bits"));
+        // And the Display impl names the numbers, for every variant this module defines and for
+        // the two wrapped errors it can build here. This comment used to say "for every variant"
+        // above two of fourteen.
+        let every = [
+            (CompressError::Empty { what: "weights" }, "weights"),
+            (CompressError::NonFinite { what: "teacher logits", index: 7 }, "7"),
+            (CompressError::BadValue { what: "sparsity, which must be in 0..=1", value: 1.5 }, "1.5"),
+            (CompressError::LengthMismatch { a: 3, b: 5 }, "5"),
+            (CompressError::BadShape { got: 3, want: 4 }, "4"),
+            (CompressError::LabelOutOfRange { label: 9, classes: 4 }, "9"),
+            (CompressError::NotADistribution { what: "teacher", sum: 1.25 }, "1.25"),
+            (CompressError::ZeroSupport { what: "student", index: 2 }, "2"),
+            (CompressError::NeedsRng, "reproducible"),
+            (CompressError::Overflow { what: "parameter bits" }, "parameter bits"),
+            (CompressError::NoFeasiblePoint { candidates: 5, max_bytes: 10, max_syn_ops: 11 }, "11"),
+            (CompressError::Hardware(HardwareError::UnstatedSpec { part: "Darwin", field: "weight_bits" }), "weight_bits"),
+            (CompressError::Metric(MetricError::Overflow { what: "dense ops" }), "dense ops"),
+        ];
+        for (e, needle) in every {
+            let text = e.to_string();
+            assert!(text.contains(needle), "{e:?} prints {text:?} without {needle:?}");
+        }
+    }
+
+    /// ⛔ REACHABLE ZEROS. `softmax_t(&[400, 0, -400], 0.5)` underflows to two exact zeros, so the
+    /// `p[i] == 0` guard in `kl_divergence` (without it: `0 * ln(0/q) = NaN`) and the zero-support
+    /// refusal in `cross_entropy` (without it: `+inf`, which the error's own doc says must never
+    /// reach an optimiser) are both on a path a low-temperature distillation takes. Deleting either
+    /// was green. So was accepting a "distribution" with a negative entry that sums to one.
+    #[test]
+    fn the_zero_probability_guards_are_on_a_reachable_path() {
+        let q = softmax_t(&[400.0, 0.0, -400.0], 0.5).expect("valid");
+        assert_eq!(q, vec![1.0, 0.0, 0.0], "the softmax must underflow to exact zeros here");
+        assert_eq!(cross_entropy(&q, 1), Err(CompressError::ZeroSupport { what: "q", index: 1 }));
+        assert_eq!(cross_entropy(&q, 0), Ok(0.0));
+        let uniform = [1.0 / 3.0; 3];
+        let d = kl_divergence(&q, &uniform).expect("p's zeros contribute nothing");
+        assert!((d - 3f64.ln()).abs() < 1e-12, "KL(delta || uniform) = ln 3, got {d}");
+        assert_eq!(
+            kl_divergence(&uniform, &q),
+            Err(CompressError::ZeroSupport { what: "q", index: 1 }),
+            "the other direction is a refusal, not an infinity"
+        );
+        assert!(matches!(
+            kl_divergence(&[-0.5, 1.5], &[0.5, 0.5]),
+            Err(CompressError::NotADistribution { what: "p", .. })
+        ));
     }
 
     /// Determinism: the same seed gives the same sweep, on any platform.
@@ -2649,6 +2798,22 @@ mod tests {
             let newly: usize =
                 (0..w.len()).filter(|&i| !p.kept[i] && w[i] != 0.0).count();
             assert_eq!(p.newly_zeroed, newly);
+        }
+        // ⛔ And the same loop over `prune_below`, whose record could contradict itself with
+        // nothing noticing: `kept[i] = false` deleted gave n_removed 3, n_kept 3 and six `true`s.
+        for threshold in [0.0f64, 0.05, 0.25, 1.0, 5.0] {
+            let p: Pruned = prune_below(&w, threshold).expect("valid");
+            assert_eq!(p.kept.iter().filter(|k| **k).count(), p.n_kept());
+            assert_eq!(p.n_removed + p.n_kept(), w.len());
+            for i in 0..w.len() {
+                assert_eq!(p.kept[i], w[i].abs() >= threshold, "threshold {threshold} index {i}");
+                if !p.kept[i] {
+                    assert_eq!(p.w[i], 0.0);
+                }
+            }
+            let newly: usize =
+                (0..w.len()).filter(|&i| !p.kept[i] && w[i] != 0.0).count();
+            assert_eq!(p.newly_zeroed, newly, "threshold {threshold}");
         }
     }
 }

@@ -1220,6 +1220,10 @@ impl SpikingMaxPool {
                 b: (self.channels, self.height, self.width),
             });
         }
+        let want = dims_len(self.channels, self.height, self.width)?;
+        if spikes.data.len() != want {
+            return Err(ConvError::BadShape { what: "spiking max pool input", got: spikes.data.len(), want });
+        }
         spikes.require_binary()?;
         let (oh, ow) = self.spec.require_out_shape(self.height, self.width)?;
         let mut out = Tensor3::zeros(self.channels, oh, ow)?;
@@ -1448,6 +1452,10 @@ impl TdBn {
                 b: (self.channels, x.height, x.width),
             });
         }
+        let want = dims_len(x.channels, x.height, x.width)?;
+        if x.data.len() != want {
+            return Err(ConvError::BadShape { what: "tdBN input", got: x.data.len(), want });
+        }
         check_finite(&x.data, "tdBN input")?;
         let sigma = self.target_sigma();
         let mut o = x.clone();
@@ -1488,6 +1496,15 @@ impl TdBn {
         }
         if self.eps < 0.0 {
             return Err(ConvError::NonFinite { what: "eps", index: 0, value: self.eps });
+        }
+        // `momentum` documents a range and had no check: at -1 the running variance goes negative
+        // and every inference output is NaN, with `Ok` on every call. Same for a running variance
+        // set negative through the public field.
+        if !(0.0..=1.0).contains(&self.momentum) {
+            return Err(ConvError::NonFinite { what: "momentum (outside [0, 1])", index: 0, value: self.momentum });
+        }
+        if let Some((i, &v)) = self.running_var.iter().enumerate().find(|(_, v)| **v < 0.0) {
+            return Err(ConvError::NonFinite { what: "running_var (negative)", index: i, value: v });
         }
         Ok(())
     }
@@ -1638,10 +1655,20 @@ impl<N: Neuron> SpikingConv2d<N> {
     ///
     /// `kind` says how to charge the input: [`ActivationKind::Spiking`] requires a binary input and
     /// charges accumulates, [`ActivationKind::RealValued`] accepts graded input — which is what a
-    /// [`ResidualStyle::SewAdd`] block upstream produces — and charges multiply-accumulates. The
+    /// [`ResidualStyle::SewAdd`] block upstream produces — and counts multiply-accumulates. The
     /// argument is not inferred from the data, because a batch that happens to contain only zeros
     /// and ones would then be charged the cheaper rate and the layer's cost would depend on its
     /// input rather than on its design.
+    ///
+    /// ⛔ **A multiply-accumulate is not charged to the ledger's `syn_ops`.** That counter is what
+    /// [`crate::ledger::Prices::e_syn_op`] prices — a spike arriving at a synapse and
+    /// *accumulating* — and a MAC on a graded input is a different operation with no price in this
+    /// crate. The first version charged both at the accumulate rate, so a graded and a binary
+    /// workload produced byte-identical ledgers: it supplied, silently, exactly the AC:MAC ratio
+    /// [`crate::metrics::SynOps::effective_total`] declines to supply. MACs are counted in
+    /// [`SpikingConv2d::ops`] where [`crate::ledger::Ledger::bill`] cannot see them, which is the
+    /// honest state of the accounting. The weight **fetch** is charged either way, because the
+    /// weight is read from memory before either operation can happen.
     ///
     /// # Errors
     ///
@@ -1661,6 +1688,14 @@ impl<N: Neuron> SpikingConv2d<N> {
         if kind == ActivationKind::Spiking {
             input.require_binary()?;
         }
+        // The fields are public. A caller who changed `conv.spec` after construction would
+        // otherwise index a drive of one size with a unit array of another: an out-of-bounds
+        // panic when the drive shrank, a silently scrambled spatial map when it grew.
+        let (oh, ow) = self.conv.spec.require_out_shape(self.in_height, self.in_width)?;
+        let now = (self.conv.spec.out_channels, oh, ow);
+        if now != self.out_shape() || self.units.len() != dims_len(now.0, now.1, now.2)? {
+            return Err(ConvError::ShapeMismatch { what: "spiking conv units", a: now, b: self.out_shape() });
+        }
         let (drive, dense, effective) = self.conv.convolve(input)?;
         let step_ops = match kind {
             ActivationKind::Spiking => SynOps { dense, effective_macs: 0, effective_acs: effective },
@@ -1669,8 +1704,13 @@ impl<N: Neuron> SpikingConv2d<N> {
             }
         };
         self.ops.add(step_ops)?;
-        self.ledger.syn_ops =
-            self.ledger.syn_ops.checked_add(effective).ok_or(ConvError::Overflow { what: "syn_ops" })?;
+        if kind == ActivationKind::Spiking {
+            self.ledger.syn_ops = self
+                .ledger
+                .syn_ops
+                .checked_add(effective)
+                .ok_or(ConvError::Overflow { what: "syn_ops" })?;
+        }
         // One fetch per delivery. A layer that cached the kernel across positions would fetch far
         // fewer, which is exactly why the ledger counts fetches separately from operations instead
         // of assuming a ratio — see `Ledger::syn_fetches`.
@@ -1928,6 +1968,14 @@ pub struct ResidualBlock<N: Neuron> {
     /// Synaptic operations of the **second** convolution, accumulated. The first convolution's are
     /// in `first.ops`.
     pub ops: SynOps,
+    /// Exact counters for the **second** stage — its accumulates, its fetches, its neuron updates
+    /// and its spikes — accumulated across every [`ResidualBlock::step`]. The first stage's are in
+    /// `first.ledger`; the block's total is the sum of the two.
+    ///
+    /// ⛔ The first version had no ledger here at all. The second stage's units and deliveries
+    /// touched no counter, so a `SEW-ResNet` priced from `first.ledger` undercounted neuron
+    /// updates and spikes by exactly half and synaptic operations by the whole second convolution.
+    pub ledger: Ledger,
 }
 
 impl<N: Neuron> ResidualBlock<N> {
@@ -1983,6 +2031,7 @@ impl<N: Neuron> ResidualBlock<N> {
             height,
             width,
             ops: SynOps::default(),
+            ledger: Ledger::default(),
         })
     }
 
@@ -2010,14 +2059,42 @@ impl<N: Neuron> ResidualBlock<N> {
         // convolution is charged accumulates regardless of what the block's own input was.
         let (drive, dense, effective) = self.second.convolve(&s1)?;
         self.ops.add(SynOps { dense, effective_macs: 0, effective_acs: effective })?;
+        self.ledger.syn_ops =
+            self.ledger.syn_ops.checked_add(effective).ok_or(ConvError::Overflow { what: "syn_ops" })?;
+        self.ledger.syn_fetches = self
+            .ledger
+            .syn_fetches
+            .checked_add(effective)
+            .ok_or(ConvError::Overflow { what: "syn_fetches" })?;
+        // Same guard as `SpikingConv2d::step`: `second` is a public field.
+        if drive.data.len() != self.units.len() {
+            return Err(ConvError::ShapeMismatch {
+                what: "residual second convolution units",
+                a: drive.shape(),
+                b: (self.channels, self.height, self.width),
+            });
+        }
 
         let mut out = Tensor3::zeros(self.channels, self.height, self.width)?;
         for (j, unit) in self.units.iter_mut().enumerate() {
             let shortcut = x.data[j];
+            let dv = match self.style {
+                ResidualStyle::Naive => drive.data[j] + self.shortcut_gain * shortcut,
+                ResidualStyle::SewAdd | ResidualStyle::SewAnd | ResidualStyle::SewIand => drive.data[j],
+            };
+            if dv == 0.0 {
+                self.ledger.neuron_updates_idle += 1;
+            } else {
+                self.ledger.neuron_updates_driven += 1;
+            }
+            unit.bump(dv);
+            let fired = unit.step(self.dt, 0.0);
+            if fired {
+                self.ledger.spikes_out += 1;
+            }
             match self.style {
                 ResidualStyle::Naive => {
-                    unit.bump(drive.data[j] + self.shortcut_gain * shortcut);
-                    if unit.step(self.dt, 0.0) {
+                    if fired {
                         out.data[j] = 1.0;
                     }
                 }
@@ -2025,13 +2102,19 @@ impl<N: Neuron> ResidualBlock<N> {
                 // later is a compile error here instead of falling through to the branch output.
                 // `merge` returns `None` only for `Naive`, which the arm above already handled.
                 ResidualStyle::SewAdd | ResidualStyle::SewAnd | ResidualStyle::SewIand => {
-                    unit.bump(drive.data[j]);
-                    let branch = if unit.step(self.dt, 0.0) { 1.0 } else { 0.0 };
+                    let branch = if fired { 1.0 } else { 0.0 };
                     out.data[j] = self.style.merge(branch, shortcut).unwrap_or(branch);
                 }
             }
         }
         Ok(out)
+    }
+
+    /// Zero both stages' counters, leaving every membrane where it is.
+    pub fn clear_counts(&mut self) {
+        self.first.clear_counts();
+        self.ops = SynOps::default();
+        self.ledger = Ledger::default();
     }
 
     /// Return every membrane in the block to rest.
@@ -2050,7 +2133,7 @@ mod tests {
         ConvError, Init, MaxPolicy, PoolSpec, ResidualBlock, ResidualStyle, SpikingConv2d,
         SpikingMaxPool, TdBn, Tensor3,
     };
-    use crate::metrics::ActivationKind;
+    use crate::metrics::{ActivationKind, SynOps};
     use crate::neuron::{Lif, Neuron};
     use crate::surrogate::{ArcTan, FastSigmoid, Surrogate};
 
@@ -2477,9 +2560,16 @@ mod tests {
         }
 
         // alpha moves the target and nothing else.
+        //
+        // ⛔ AGAINST A LITERAL, not against `residual_alpha()` itself. The first version computed
+        // `want` from the function under test, so `42.0` passed — and so did `sqrt(2)`, the
+        // reciprocal, which is the one wrong answer a reader is likely to write.
+        const ONE_OVER_ROOT_TWO: f64 = 0.707_106_781_186_547_5;
+        assert!((TdBn::residual_alpha() - ONE_OVER_ROOT_TWO).abs() < 1e-16);
+        assert!((TdBn::residual_alpha() * TdBn::residual_alpha() - 0.5).abs() < 2e-16);
         bn.alpha = TdBn::residual_alpha();
         let out = bn.train_forward(&frames).expect("valid");
-        let want = 0.5 * TdBn::residual_alpha();
+        let want = 0.5 * ONE_OVER_ROOT_TWO;
         assert!((out[0].data[0] - want).abs() < 1e-15);
     }
 
@@ -2874,6 +2964,16 @@ mod tests {
         assert_eq!(out.data, vec![1.0, 0.0]);
         assert_eq!(layer.units[0].refractory_left(), Lif::default().t_ref);
 
+        // `reset` leaves the counters alone, as its doc promises; adding a ledger clear to it was
+        // green because the only test called `clear_counts` first.
+        let counted = layer.ledger;
+        let ops = layer.ops;
+        layer.reset();
+        assert_eq!(layer.ledger, counted, "reset cleared the ledger");
+        assert_eq!(layer.ops.dense, ops.dense);
+        assert_eq!(layer.units[0].refractory_left(), 0.0);
+        let _ = layer.step(&x, ActivationKind::Spiking).expect("fits");
+
         layer.clear_counts();
         assert_eq!(layer.ledger.syn_ops, 0);
         assert_eq!(layer.ops.dense, 0);
@@ -2899,6 +2999,11 @@ mod tests {
         let f = layer.footprint(32, 2, 32).expect("valid");
         assert_eq!(f.parameter_bits, 296 * 32);
         assert_eq!(f.state_bits, 2048 * 2 * 32);
+        // ⛔ Distinct widths, because `footprint(32, 2, 32)` cannot see them swapped — and int8
+        // weights with f32 membranes is exactly the configuration the 28.4x argument is about.
+        let g = layer.footprint(8, 2, 32).expect("valid");
+        assert_eq!(g.parameter_bits, 296 * 8);
+        assert_eq!(g.state_bits, 2048 * 2 * 32);
         assert!(f.state_bits > 13 * f.parameter_bits, "state is {}x the parameters", f.state_bits / f.parameter_bits);
 
         // The three figures the module doc quotes, recomputed. A doc number nothing checks is a
@@ -3002,10 +3107,52 @@ mod tests {
             ),
             Err(ConvError::ShapeMismatch { what: "residual first convolution", .. })
         ));
+        // The SECOND convolution's shape check, which only the first's exercised.
+        let same = Conv2dSpec::same_padding(1, 1, 3, 3).expect("valid");
+        assert!(matches!(
+            ResidualBlock::new(
+                Conv2d::zeros(same).expect("valid"),
+                Conv2d::zeros(narrowing).expect("valid"),
+                4,
+                4,
+                Lif::default(),
+                1e-3,
+                ResidualStyle::SewAdd,
+                0.0,
+            ),
+            Err(ConvError::ShapeMismatch { what: "residual second convolution", .. })
+        ));
+        assert!(matches!(
+            ResidualBlock::new(
+                Conv2d::zeros(same).expect("valid"),
+                Conv2d::zeros(same).expect("valid"),
+                4,
+                4,
+                Lif::default(),
+                1e-3,
+                ResidualStyle::Naive,
+                f64::NAN,
+            ),
+            Err(ConvError::NonFinite { what: "shortcut_gain", .. })
+        ));
         // Non-finite fill and non-finite tdBN threshold.
         assert!(Tensor3::filled(1, 1, 1, f64::INFINITY).is_err());
         assert!(TdBn::new(1, f64::NAN).is_err());
         assert!(TdBn::new(0, 1.0).is_err());
+        // A documented range with, until now, no check.
+        let mut bn = TdBn::new(1, 1.0).expect("valid");
+        bn.momentum = -1.0;
+        assert!(matches!(bn.train_forward(&[t(1, 1, 1, &[1.0])]), Err(ConvError::NonFinite { what: "momentum (outside [0, 1])", .. })));
+        let mut bn = TdBn::new(1, 1.0).expect("valid");
+        bn.running_var[0] = -4.0;
+        assert!(matches!(bn.eval_forward(&t(1, 1, 1, &[1.0])), Err(ConvError::NonFinite { what: "running_var (negative)", .. })));
+        // Two entry points that validated the shape and the finiteness but not the length.
+        let mut short = t(1, 2, 2, &[0.0; 4]);
+        short.data.truncate(2);
+        let mut pool = SpikingMaxPool::new(PoolSpec::new(2, 2).expect("valid"), MaxPolicy::Instant, 1, 2, 2).expect("valid");
+        assert!(matches!(pool.step(&short), Err(ConvError::BadShape { what: "spiking max pool input", got: 2, want: 4 })));
+        let bn = TdBn::new(1, 1.0).expect("valid");
+        assert!(matches!(bn.eval_forward(&short), Err(ConvError::BadShape { what: "tdBN input", got: 2, want: 4 })));
     }
 
     /// The corners of the public surface that no other test reaches: `Init::Fixed`, the tensor
@@ -3074,6 +3221,12 @@ mod tests {
             assert_eq!(s.fan_in(), 2 * k * k);
             assert_eq!(s.n_weights(), 2 * 2 * k * k);
         }
+        // The documented zero-dilation refusal, which the claim list left out.
+        assert_eq!(out_dim(5, 3, 0, 1, 0), None);
+        assert_eq!(out_dim(5, 3, 0, 1, 1), Some(3));
+        // The defaults `TdBn::new` documents as PyTorch's, pinned.
+        let bn = TdBn::new(3, 0.2).expect("valid");
+        assert_eq!((bn.eps, bn.momentum, bn.alpha), (1e-5, 0.1, 1.0));
     }
 
     /// The error messages carry the numbers. A message that says only "bad shape" costs the caller
@@ -3091,7 +3244,159 @@ mod tests {
         let s = e.to_string();
         assert!(s.contains("extent 5"), "{s}");
         assert!(s.contains("padded input 3"), "{s}");
+        // With dilation and padding, so both arithmetic terms in the message are live: the extent
+        // is d*(k-1)+1 = 7 and the padded input is n + 2p = 6.
+        let e = ConvError::ImpossibleShape { axis: "width", n: 4, kernel: 3, pad: 1, stride: 1, dilation: 3 };
+        let s = e.to_string();
+        assert!(s.contains("extent 7") && s.contains("padded input 6"), "{s}");
         let s = ConvError::NotBinary { index: 7, value: 2.0 }.to_string();
         assert!(s.contains('7') && s.contains('2'), "{s}");
+    }
+
+    /// ⛔ A LIVE BLOCK. The AC/MAC column assertion in the identity test is made on an all-zero
+    /// block where both columns are zero, so swapping them was green. Here both stages fire, the
+    /// second stage's accumulates land in the right column, and the block's own ledger — new; the
+    /// block had none — carries the second stage, so the block's total is twice what `first`
+    /// alone reports.
+    #[test]
+    fn a_live_residual_block_counts_its_second_stage_in_the_right_column_and_in_a_ledger() {
+        let spec = Conv2dSpec::new(1, 1, 1, 1).expect("valid");
+        let hot = || Conv2d::new(spec, vec![20e-3], vec![0.0]).expect("valid");
+        let mut b =
+            ResidualBlock::new(hot(), hot(), 2, 2, Lif::default(), 1e-3, ResidualStyle::SewAdd, 0.0)
+                .expect("shape preserving");
+        let x = t(1, 2, 2, &[1., 0., 1., 1.]);
+        let out = b.step(&x, ActivationKind::Spiking).expect("fits");
+        // Stage one fires on every driven unit; stage two is driven by those spikes and fires
+        // too; SEW-ADD then adds the shortcut: 2 where the input was 1, 0 elsewhere.
+        assert_eq!(out.data, vec![2., 0., 2., 2.]);
+        assert_eq!(b.first.ledger.spikes_out, 3);
+        assert_eq!((b.ops.dense, b.ops.effective_macs, b.ops.effective_acs), (4, 0, 3));
+        assert_eq!(b.ledger.syn_ops, 3);
+        assert_eq!(b.ledger.syn_fetches, 3);
+        assert_eq!(b.ledger.spikes_out, 3);
+        assert_eq!(b.ledger.neuron_updates_driven, 3);
+        assert_eq!(b.ledger.neuron_updates_idle, 1);
+        assert_eq!(b.first.ledger.spikes_out + b.ledger.spikes_out, 6, "eight units fired, six spikes");
+        b.clear_counts();
+        assert_eq!(b.ledger, crate::ledger::Ledger::default());
+        assert_eq!(b.first.ledger, crate::ledger::Ledger::default());
+        assert_eq!(b.ops.dense, 0);
+    }
+
+    /// ⛔ A graded input is charged fetches but NOT accumulates. The same layer and the same
+    /// numbers in, once as spikes and once as real values: the ops columns swap, the fetches
+    /// agree, and the ledger's synaptic operations — the accumulate count, the thing
+    /// `Prices::e_syn_op` prices — are 1 and 0. The first version produced identical ledgers.
+    #[test]
+    fn a_graded_input_is_charged_fetches_but_not_accumulates() {
+        let spec = Conv2dSpec::new(1, 1, 1, 1).expect("valid");
+        let mk = || {
+            SpikingConv2d::new(
+                Conv2d::new(spec, vec![20e-3], vec![0.0]).expect("valid"),
+                1,
+                2,
+                Lif::default(),
+                1e-3,
+            )
+            .expect("valid")
+        };
+        let x = t(1, 1, 2, &[1.0, 0.0]);
+        let (mut spiking, mut graded) = (mk(), mk());
+        let a = spiking.step(&x, ActivationKind::Spiking).expect("fits");
+        let b = graded.step(&x, ActivationKind::RealValued).expect("fits");
+        assert_eq!(a.data, b.data, "the membrane arithmetic is the same; only the charge differs");
+        assert_eq!((spiking.ops.effective_acs, spiking.ops.effective_macs), (1, 0));
+        assert_eq!((graded.ops.effective_acs, graded.ops.effective_macs), (0, 1));
+        assert_eq!((spiking.ledger.syn_fetches, graded.ledger.syn_fetches), (1, 1));
+        assert_eq!(spiking.ledger.syn_ops, 1);
+        assert_eq!(graded.ledger.syn_ops, 0, "a multiply-accumulate is not an accumulate");
+        assert_ne!(spiking.ledger, graded.ledger);
+        // And a genuinely graded input under `Spiking` is refused, not rounded.
+        let y = t(1, 1, 2, &[2.0, 0.0]);
+        assert!(matches!(
+            mk().step(&y, ActivationKind::Spiking),
+            Err(ConvError::NotBinary { index: 0, .. })
+        ));
+        assert!(mk().step(&y, ActivationKind::RealValued).is_ok());
+        let ops = SynOps { dense: 2, effective_macs: 1, effective_acs: 0 };
+        assert_eq!(mk().step(&y, ActivationKind::RealValued).map(|_| ()), Ok(()));
+        assert_eq!(ops.effective_macs, 1);
+    }
+
+    /// ⛔ A layer whose public spec was changed after construction is refused rather than indexed
+    /// out of bounds (padding shrunk: the drive is 3x3 under 5x5 units — a panic) or read through
+    /// a scrambled map (padding grown: a 7x7 drive under 5x5 units, `Ok`, wrong).
+    #[test]
+    fn a_layer_whose_public_spec_was_changed_is_refused_rather_than_indexed_out_of_bounds() {
+        let spec = Conv2dSpec::same_padding(1, 1, 3, 3).expect("valid");
+        let mut l = SpikingConv2d::new(Conv2d::zeros(spec).expect("valid"), 5, 5, Lif::default(), 1e-3)
+            .expect("valid");
+        let x = Tensor3::zeros(1, 5, 5).expect("valid");
+        assert!(l.step(&x, ActivationKind::Spiking).is_ok());
+        l.conv.spec.pad_h = 0;
+        l.conv.spec.pad_w = 0;
+        assert!(matches!(
+            l.step(&x, ActivationKind::Spiking),
+            Err(ConvError::ShapeMismatch { what: "spiking conv units", .. })
+        ));
+        l.conv.spec.pad_h = 2;
+        l.conv.spec.pad_w = 2;
+        assert!(
+            matches!(l.step(&x, ActivationKind::Spiking), Err(ConvError::ShapeMismatch { .. })),
+            "a drive larger than the unit array must be refused, not read through"
+        );
+        // The same guard on the block's second convolution.
+        let mut b = ResidualBlock::new(
+            Conv2d::zeros(spec).expect("valid"),
+            Conv2d::zeros(spec).expect("valid"),
+            5,
+            5,
+            Lif::default(),
+            1e-3,
+            ResidualStyle::SewAdd,
+            0.0,
+        )
+        .expect("valid");
+        b.second.spec.pad_h = 0;
+        b.second.spec.pad_w = 0;
+        assert!(matches!(
+            b.step(&x, ActivationKind::Spiking),
+            Err(ConvError::ShapeMismatch { what: "residual second convolution units", .. })
+        ));
+    }
+
+    /// `eval_forward` subtracts the running MEAN. The unbiased-variance test uses a batch whose
+    /// mean is exactly zero, so dropping the subtraction was green — the same class of gap that
+    /// was found and closed for `eps`, `gain`, `shift` and `momentum`, one field over.
+    #[test]
+    fn eval_forward_subtracts_the_running_mean() {
+        let mut bn = TdBn::new(1, 1.0).expect("valid");
+        bn.eps = 0.0;
+        bn.momentum = 1.0;
+        // 7, 9, 11, 13: mean 10, population variance 5, unbiased 20/3.
+        bn.train_forward(&[t(1, 1, 4, &[7., 9., 11., 13.])]).expect("valid");
+        assert_eq!(bn.running_mean[0], 10.0);
+        let out = bn.eval_forward(&t(1, 1, 1, &[10.0])).expect("valid");
+        assert_eq!(out.data, vec![0.0], "a sample at the running mean normalises to exactly zero");
+        let out = bn.eval_forward(&t(1, 1, 1, &[13.0])).expect("valid");
+        assert!((out.data[0] - 3.0 / (20.0_f64 / 3.0).sqrt()).abs() < 1e-15);
+    }
+
+    /// ⛔ THE UNIT CONVENTION, PINNED. Weights are volts per input spike, delivered by `bump`;
+    /// reading them as a current through `r_m` instead was green, because every test used a 20 mV
+    /// weight, which is supra-threshold under both readings. At 10 mV the two give different
+    /// trains: two bumps, each decayed by `exp(-1/20)` after arrival, clear the 15 mV threshold on
+    /// the second tick, the 2 ms refractory period holds two ticks, and then again — [0,1,0,0,0,1]
+    /// — where a 10 mV current through 10 MΩ would fire on the first tick and every third.
+    #[test]
+    fn a_weight_is_a_membrane_displacement_not_a_current() {
+        let spec = Conv2dSpec::new(1, 1, 1, 1).expect("valid");
+        let conv = Conv2d::new(spec, vec![10e-3], vec![0.0]).expect("valid");
+        let mut layer = SpikingConv2d::new(conv, 1, 1, Lif::default(), 1e-3).expect("valid");
+        let x = t(1, 1, 1, &[1.0]);
+        let train: Vec<f64> =
+            (0..6).map(|_| layer.step(&x, ActivationKind::Spiking).expect("fits").data[0]).collect();
+        assert_eq!(train, vec![0., 1., 0., 0., 0., 1.]);
     }
 }

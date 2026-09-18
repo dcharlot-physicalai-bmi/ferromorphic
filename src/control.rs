@@ -241,7 +241,8 @@ fn need_positive(what: &'static str, value: f64) -> Result<(), ControlError> {
 pub struct SigmaDeltaEncoder {
     /// Spikes per second per unit of input, at unit input. Strictly positive, finite.
     pub gain: f64,
-    /// Accumulated charge in units of the threshold; always in `[0, 1)` after a step.
+    /// Accumulated charge in units of the threshold; in `[0, 1)` after every successful step. A
+    /// refused step (see [`SigmaDeltaEncoder::step`]) empties it, so the encoder stays usable.
     pub acc: f64,
     /// Spikes emitted since construction or the last [`SigmaDeltaEncoder::reset`].
     pub spikes: u64,
@@ -266,7 +267,9 @@ impl SigmaDeltaEncoder {
     /// # Errors
     ///
     /// [`ControlError::NotPositive`] for a non-positive `dt`; [`ControlError::NotFinite`] for a
-    /// non-finite `x`.
+    /// non-finite `x`, for a step whose charge is not finite or would emit more than `u64::MAX`
+    /// spikes, and for a running total that would exceed `u64::MAX`. On any of those the
+    /// accumulator is emptied rather than left holding `inf` or `NaN`.
     pub fn step(&mut self, dt: f64, x: f64) -> Result<u64, ControlError> {
         need_positive("dt", dt)?;
         need_finite("encoder input", x)?;
@@ -275,12 +278,23 @@ impl SigmaDeltaEncoder {
             return Ok(0);
         }
         let n = self.acc.floor();
+        // ⛔ ONE CALL CAN DO IT. The comment that stood here said a run long enough to overflow
+        // `u64` would take 1e11 years at 1 GHz. `step(1.0, 1e300)` at a gain of 1e6 does it in
+        // one: the cast saturated silently in release, the add panicked in debug, and with an
+        // infinite product `acc` became `inf - inf = NaN` and the encoder was dead without
+        // saying so. `NaN` fails the comparison below, so it is refused by the same line.
+        if !(n < U64_EXACT) {
+            self.acc = 0.0;
+            return Err(ControlError::NotFinite { what: "spikes in one step (past u64)", value: n });
+        }
+        let count = n as u64;
+        let Some(total) = self.spikes.checked_add(count) else {
+            self.acc = 0.0;
+            return Err(ControlError::NotFinite { what: "total spike count (past u64)", value: n });
+        };
         self.acc -= n;
-        // `n` came from a finite accumulator, so the cast is bounded by the charge actually
-        // delivered; a run long enough to overflow `u64` would take 1e11 years at 1 GHz.
-        let n = n as u64;
-        self.spikes += n;
-        Ok(n)
+        self.spikes = total;
+        Ok(count)
     }
 
     /// The exact spike count this encoder emits in `t` seconds at constant input `x`, from rest.
@@ -291,12 +305,16 @@ impl SigmaDeltaEncoder {
     /// # Errors
     ///
     /// [`ControlError::NotPositive`] for a non-positive `t`; [`ControlError::NotFinite`] for a
-    /// non-finite `x` or a product that overflows.
+    /// non-finite `x` or a count that is not finite or does not fit in `u64` — the same refusal
+    /// [`SigmaDeltaEncoder::step`] makes, so the closed form and the simulator agree on what
+    /// they will not count.
     pub fn spikes_in(&self, x: f64, t: f64) -> Result<u64, ControlError> {
         need_positive("t", t)?;
         need_finite("encoder input", x)?;
         let n = (self.gain * x.max(0.0) * t).floor();
-        need_finite("expected spike count", n)?;
+        if !(n < U64_EXACT) {
+            return Err(ControlError::NotFinite { what: "expected spike count (past u64)", value: n });
+        }
         Ok(n as u64)
     }
 
@@ -312,6 +330,9 @@ impl SigmaDeltaEncoder {
         self.spikes = 0;
     }
 }
+
+/// `2^64` as an `f64`: a non-negative `f64` strictly below it converts to `u64` exactly.
+const U64_EXACT: f64 = 18_446_744_073_709_551_616.0;
 
 /// A push-pull pair of encoders: one for the positive part of a signal, one for the negative.
 ///
@@ -926,8 +947,10 @@ impl Pendulum {
     /// The small-angle period, seconds: `2π·sqrt(L/g)`.
     ///
     /// The number everyone remembers, and an **underestimate** at every finite amplitude — by 1.7%
-    /// at 30°, by 18% at 120°. [`Pendulum::exact_period`] is the one to compare a simulation
-    /// against, and the gap between the two is what makes that comparison worth making.
+    /// at 30°, by 18% at 90° and by 37% at 120° (`K(sin 60°)/(π/2) = 1.3729`; the first version
+    /// of this line printed the 90° figure against the 120° label). [`Pendulum::exact_period`] is
+    /// the one to compare a simulation against, and the gap between the two is what makes that
+    /// comparison worth making.
     #[must_use]
     pub fn small_angle_period(&self) -> f64 {
         TAU * (self.length_m / self.gravity).sqrt()
@@ -1297,11 +1320,19 @@ impl Matsuoka {
 /// its inhibition weakens, the silent side **escapes** and takes over. Nothing plans the
 /// alternation; it is what the two mechanisms do together.
 ///
-/// This is the *escape* half-centre rather than the *release* variant — the distinction matters
-/// for how the rhythm responds to sensory input, and this implementation did not locate a single
-/// canonical parameterisation for either, so the defaults here are stated in
-/// [`HalfCentre::locomotor`] and are a tuning of this crate's own neuron defaults rather than a
-/// transcription from a source.
+/// ⛔ **What this is, measured, rather than what the type name suggests.** At the
+/// [`HalfCentre::locomotor`] parameters each side fires **one spike per alternation**, at a period
+/// of 49 ms, with no interval below half the mean over 8 s — a two-neuron single-spike ping-pong,
+/// not the alternating multi-spike bursts a locomotor half-centre produces. The mechanism is a
+/// **release** half-centre, not an escape one: set the threshold-adaptation increment to zero and
+/// the pair goes winner-take-all (501 spikes to 2), so the alternation is driven by the active
+/// side's own fatigue weakening its inhibition. An escape half-centre needs the silent cell to
+/// break through on its own — post-inhibitory rebound, an h-current — and
+/// [`crate::neuron::AdaptiveLif`] has no such term. The first version of this doc said "escape"
+/// and the test said "bursts"; both were wrong, and the test now pins the 49 ms and the one spike
+/// per cycle so the description cannot drift from the model again. This implementation did not
+/// locate a single canonical parameterisation, so the defaults are a tuning of this crate's own
+/// neuron defaults rather than a transcription from a source.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct HalfCentre {
     /// Left and right adapting neurons.
@@ -1316,13 +1347,16 @@ pub struct HalfCentre {
 }
 
 impl HalfCentre {
-    /// The parameterisation the tests use, tuned to alternate at a few hundred milliseconds.
+    /// The parameterisation the tests use: it alternates at **49 ms**, one spike per side per cycle.
     ///
     /// 20 ms membrane, 150 ms threshold adaptation stepping 1.5 mV per spike, 3 nA of tonic drive
-    /// and a 30 ms inhibitory synapse weighted so that a fully active side removes about 2.4 nA
-    /// from its partner. The left side starts 3 mV depolarised, which is what breaks the
-    /// symmetry — a perfectly symmetric half-centre fires **in phase** forever, and that is a
-    /// property of the equations rather than a numerical accident.
+    /// and a 30 ms inhibitory synapse of 4e-11 A·s per spike. What that weight removes from the
+    /// partner: the inhibition trace peaks at 46 Hz after a spike, which is 1.85 nA, and averages
+    /// 20.5 Hz over the run, which is 0.82 nA — the first version of this doc said 2.4 nA, a
+    /// figure with no provenance that would need a sustained 60 Hz the model never reaches. The
+    /// left side starts 3 mV depolarised, which is what breaks the symmetry — a perfectly
+    /// symmetric half-centre fires **in phase** forever, and that is a property of the equations
+    /// rather than a numerical accident.
     ///
     /// # Errors
     ///
@@ -1391,9 +1425,11 @@ impl HalfCentre {
 /// What a [`HalfCentre`] run produced.
 #[derive(Debug, Clone, PartialEq)]
 pub struct HalfCentreRun {
-    /// Left side's burst envelope, hertz, one sample per step.
+    /// Left side's inhibition-trace envelope, hertz, one sample per step. At the `locomotor`
+    /// parameters each side fires once per cycle, so this is a single-spike trace shape rather
+    /// than a burst envelope; see the [`HalfCentre`] doc.
     pub left: Vec<f64>,
-    /// Right side's burst envelope, hertz, one sample per step.
+    /// Right side's envelope, as `left`.
     pub right: Vec<f64>,
     /// Spikes emitted by each side over the run.
     pub spikes: [u64; 2],
@@ -1924,6 +1960,14 @@ mod tests {
         }
         assert_eq!(pos, 0, "the positive channel fired on a negative error");
         assert_eq!(neg, 50);
+        // ⛔ `spikes()` counts BOTH channels: `pos.spikes` alone was green, because this test — the
+        // only one with a negative input — never read the total. It is the number the budget
+        // reports, so a controller that only ever pushed one way would have been billed for free.
+        assert_eq!(s.spikes(), 50, "spikes() dropped the negative channel");
+        for _ in 0..1_000 {
+            s.step(1e-3, 0.5).unwrap();
+        }
+        assert_eq!(s.spikes(), 100, "spikes() after both channels have fired");
     }
 
     #[test]
@@ -2053,6 +2097,22 @@ mod tests {
             );
             measured.push(e);
         }
+        // ⛔ THE NEGATIVE HALF. Every closed-form test in this module drove the controller with a
+        // strictly positive error, so the `p_neg` and `d_*_neg` arms could be replaced with the
+        // positive ones and 45 tests stayed green — while a controller asked to go DOWN burnt
+        // 60,000 spikes and never moved the plant. The controller is exactly antisymmetric,
+        // `u(-e) = -u(e)`, so the same sweep at setpoint -1 must land on the negated prediction.
+        for &kp in &gains {
+            let spec = SpikingPidSpec::proportional(20_000.0, kp, 5e-3);
+            let (e, spikes) = run_loop(spec, k, tau, -setpoint, 3.0);
+            let want = plant.p_only_steady_state_error(-setpoint, kp);
+            assert!(want < 0.0, "the closed form must be negative for a negative setpoint");
+            assert!(
+                (e / want - 1.0).abs() < 0.01,
+                "Kp {kp}, setpoint -1: measured {e}, closed form {want} ({spikes} spikes)"
+            );
+        }
+
         // ANTI-VACUITY: the tolerance must be tighter than the sweep's own spacing, or a
         // controller with the wrong gain would pass. Every measured error is checked to be far
         // from every OTHER gain's prediction.
@@ -2136,7 +2196,7 @@ mod tests {
         let dt = 5e-6;
         let steps = 400_000; // 2 s; ten slow-arm time constants, so nothing transient is left
 
-        let measure = |a_d_on: bool| {
+        let measure = |a_d_on: bool, c: f64| {
             let mut spec = SpikingPidSpec::from_gains(g, kp, 0.0, kd, tau_p, tau_f, tau_s);
             if !a_d_on {
                 spec.a_d = 0.0;
@@ -2157,13 +2217,13 @@ mod tests {
 
         // u is linear in t, so its mean over the window equals its value at the window's midpoint.
         let t_mid = (steps as f64 - 20_000.5) * dt;
-        let (with_d, elapsed) = measure(true);
+        let (with_d, elapsed) = measure(true, c);
         let want = kp * c * (t_mid - tau_p) + kd * c;
         assert!((with_d / want - 1.0).abs() < 2e-3, "command {with_d}, closed form {want}");
         assert!((elapsed - steps as f64 * dt).abs() < 1e-9, "elapsed_s drifted: {elapsed}");
 
         // ANTI-VACUITY: turn the D term off and the answer must move by Kd·c and no more.
-        let (without_d, _) = measure(false);
+        let (without_d, _) = measure(false, c);
         let want_p = kp * c * (t_mid - tau_p);
         assert!((without_d / want_p - 1.0).abs() < 2e-3, "P-only {without_d}, want {want_p}");
         assert!(
@@ -2176,6 +2236,21 @@ mod tests {
         // be larger than the tolerance or this test does not see the lag at all.
         let no_lag = kp * c * t_mid + kd * c;
         assert!((with_d / no_lag - 1.0).abs() > 2e-3, "the ramp lag is below the tolerance");
+
+        // ⛔ THE NEGATIVE RAMP drives the `d_fast_neg`/`d_slow_neg` arms and the negative P
+        // channel, which nothing else in the suite reaches; with them deleted the D contribution
+        // here was +0.000000 against a closed form of -3. The controller is antisymmetric to the
+        // last bit, because every arm is `positive trace - negative trace` and the two swap roles.
+        let (with_d_neg, _) = measure(true, -c);
+        assert!(
+            (with_d_neg / -want - 1.0).abs() < 2e-3,
+            "negative ramp: command {with_d_neg}, closed form {}",
+            -want
+        );
+        assert!(
+            (with_d_neg + with_d).abs() <= 1e-12 * with_d.abs(),
+            "u(-c) = {with_d_neg} is not the negative of u(+c) = {with_d}"
+        );
     }
 
     /// The gain mapping is arithmetic, and it round-trips: ask for classical gains, read them
@@ -2217,7 +2292,14 @@ mod tests {
     /// the plant then has to unwind.
     #[test]
     fn saturation_does_not_wind_the_integrator_up() {
-        let mut spec = SpikingPidSpec::from_gains(20_000.0, 1.0, 30.0, 0.0, 5e-3, 1e-3, 10e-3);
+        // ⛔ A SMALL Kp, ON PURPOSE. The first version used Kp = 1 with |e| = 10 against a limit
+        // of 0.5, so the P term alone (±10) reversed the command the instant the error flipped and
+        // the integrator was never asked to unwind — which left the direction clause of the
+        // anti-windup (`(u - raw).signum() == (before - integral).signum()`) deletable: replaced
+        // by "freeze whenever saturated", the classic integrator lock-up, 45 tests stayed green.
+        // At Kp = 0.02 the P term is ±0.2 and the integral has to come down through 0.3 before
+        // the command crosses zero: 225 ticks correct, 3364 locked up, against the 2000 below.
+        let mut spec = SpikingPidSpec::from_gains(20_000.0, 0.02, 30.0, 0.0, 50e-3, 1e-3, 10e-3);
         spec.a_d = 0.0;
         spec.u_limit = 0.5;
         let mut pid = SpikingPid::new(spec).unwrap();
@@ -2604,9 +2686,16 @@ mod tests {
     }
 
     /// ⭐ (c) again, in spikes. The spiking half-centre alternates, and the phase is near π.
+    ///
+    /// ⛔ Named for what it measures. This test was called `..._produces_anti_phase_bursts` while
+    /// the model produced one spike per side per cycle at 49 ms; the doc said "a few hundred
+    /// milliseconds". Both numbers are pinned here now, so a change to the model that turned it
+    /// into the bursting oscillator the old name described would be a failure to update, not a
+    /// silent one.
     #[test]
-    fn the_spiking_half_centre_produces_anti_phase_bursts() {
+    fn the_spiking_half_centre_alternates_one_spike_a_side_per_cycle_at_49_ms() {
         let mut hc = HalfCentre::locomotor().unwrap();
+        let seconds = 8.0;
         let run = hc.run(2e-5, 400_000).unwrap();
         assert!(run.spikes[0] > 50 && run.spikes[1] > 50, "sides barely fired: {:?}", run.spikes);
         let period = run.period().unwrap();
@@ -2614,6 +2703,18 @@ mod tests {
             period.relative_jitter() < 0.1,
             "the rhythm is not a limit cycle: {period:?}"
         );
+        assert!(
+            (period.period_s - 49e-3).abs() < 1.5e-3,
+            "period {} s; the doc says 49 ms",
+            period.period_s
+        );
+        for side in 0..2 {
+            let per_cycle = run.spikes[side] as f64 * period.period_s / seconds;
+            assert!(
+                (per_cycle - 1.0).abs() < 0.05,
+                "side {side}: {per_cycle} spikes per cycle; this model fires exactly one"
+            );
+        }
         let phi = run.phase().unwrap();
         assert!((phi - PI).abs() < 0.35, "phase {phi} rad, anti-phase is {PI}");
         // Both sides do comparable work — a "rhythm" where one side fires and the other is
@@ -2675,6 +2776,26 @@ mod tests {
         assert!(
             pid2.budget(Mode::EventDriven).spikes_per_second().unwrap() > 1.0,
             "the comparison case is indistinguishable from the held one"
+        );
+        // ⛔ THE LEDGER, ASSERTED ON A RUN THAT DID SOMETHING. `budget()` says three synapses per
+        // spike — P, I and D on one train, the module's central architectural claim — and
+        // `to_ledger` says every spike is one driven update and one routed spike. Neither was
+        // checked: `2, 1` in place of `2, 3`, `driven = 0` and `spikes_out: 0` all passed, because
+        // the only ledger assertions were on the held run where every count is zero anyway.
+        let n = pid2.spikes();
+        let led2 = pid2.budget(Mode::Clocked).to_ledger();
+        assert_eq!(led2.syn_ops, 3 * n, "three synapses per spike");
+        assert_eq!(led2.syn_fetches, 3 * n);
+        assert_eq!(led2.neuron_updates_driven, n, "one driven update per spike");
+        assert_eq!(led2.spikes_out, n, "one routed spike per spike");
+        assert_eq!(led2.neuron_updates_idle, 2 * steps as u64 - n);
+        assert_eq!(led2.neuron_updates(), 2 * steps as u64);
+        let ev2 = pid2.budget(Mode::EventDriven).to_ledger();
+        assert_eq!((ev2.neuron_updates_idle, ev2.neuron_updates_driven, ev2.syn_ops), (0, n, 3 * n));
+        assert!(
+            ev2.idle_fraction() == Some(0.0),
+            "an event-driven run has no idle updates: {:?}",
+            ev2.idle_fraction()
         );
 
         // ⛔ And the clocked implementation pays for every one of those idle ticks. This is the
@@ -2982,5 +3103,147 @@ mod tests {
             phase_difference(&a[..2_000], &c[..2_000], dt),
             Err(ControlError::TooFewCycles { .. })
         ));
+    }
+
+    /// ⛔ THE OVERFLOW THE OLD COMMENT SAID WOULD TAKE 1e11 YEARS. One call at a finite input.
+    #[test]
+    fn a_step_that_would_overflow_the_spike_count_is_refused_and_leaves_the_encoder_alive() {
+        let mut e = SigmaDeltaEncoder::new(1e6).unwrap();
+        assert!(matches!(e.step(1.0, 1e300), Err(ControlError::NotFinite { .. })));
+        assert!(e.acc.is_finite() && (0.0..1.0).contains(&e.acc), "acc {}", e.acc);
+        assert_eq!(e.spikes, 0, "a refused step counted something");
+        // Alive: the next ordinary step counts exactly what the closed form says.
+        assert_eq!(e.step(1e-3, 1.0).unwrap(), 1_000);
+        assert_eq!(e.spikes, 1_000);
+        // The closed form refuses the same inputs the simulator refuses, rather than returning
+        // `u64::MAX` for one and panicking on the other.
+        assert!(matches!(e.spikes_in(1e300, 1.0), Err(ControlError::NotFinite { .. })));
+        assert!(
+            matches!(e.spikes_in(1e20, 1.0), Err(ControlError::NotFinite { .. })),
+            "1e26 spikes is past u64 and must not be truncated to it"
+        );
+        assert_eq!(e.spikes_in(1e12, 1.0).unwrap(), 1_000_000_000_000_000_000);
+        // An infinite product leaves no NaN behind.
+        let mut e = SigmaDeltaEncoder::new(1e300).unwrap();
+        assert!(e.step(1.0, 1e300).is_err());
+        assert_eq!(e.acc, 0.0);
+        // And a total that would wrap is refused with the counter intact.
+        let mut e = SigmaDeltaEncoder::new(1.0).unwrap();
+        e.spikes = u64::MAX - 1;
+        assert!(matches!(e.step(1.0, 3.0), Err(ControlError::NotFinite { .. })));
+        assert_eq!(e.spikes, u64::MAX - 1);
+    }
+
+    /// Both sides of the clamp. `-1e300` in place of `-limit` was green: nothing ever saturated
+    /// negative.
+    #[test]
+    fn the_symmetric_clamp_clamps_both_sides() {
+        assert_eq!(super::clamp_sym(1e9, 0.5), 0.5);
+        assert_eq!(super::clamp_sym(-1e9, 0.5), -0.5);
+        assert_eq!(super::clamp_sym(0.25, 0.5), 0.25);
+        assert_eq!(super::clamp_sym(-0.25, 0.5), -0.25);
+    }
+
+    /// ⛔ THE TORQUE INPUT. The plant's input gain — the factor that turns the spiking
+    /// controller's command into motion — had no check: every pendulum test stepped at zero
+    /// torque, and `+ torque_nm` in place of `+ torque_nm / inertia` passed 45 tests. Under a
+    /// constant torque a damped pendulum settles where gravity balances it,
+    /// `theta = asin(tau / (m·g·L))`, exactly.
+    #[test]
+    fn a_constant_torque_settles_the_pendulum_at_its_static_balance_angle() {
+        let (length, mass) = (0.5, 1.0);
+        for &(b, torque) in &[(0.5, 0.02), (0.5, 0.5), (2.0, 1.0)] {
+            let mut p = Pendulum::new(length, mass).unwrap().with_damping(b).unwrap();
+            for _ in 0..400_000 {
+                p.step(1e-4, torque).unwrap();
+            }
+            // g from the small-angle period, which the elliptic test pins against a literal.
+            let g = length * (core::f64::consts::TAU / p.small_angle_period()).powi(2);
+            let want = (torque / (mass * g * length)).asin();
+            assert!(
+                (p.theta - want).abs() < 1e-9 * want,
+                "b {b}, torque {torque}: theta {} against asin {want}",
+                p.theta
+            );
+            assert!(p.omega.abs() < 1e-9, "still moving after 40 s: {}", p.omega);
+        }
+    }
+
+    /// The small-angle underestimate at the three amplitudes the doc quotes, against the ratios
+    /// `K(sin(θ/2))/(π/2)` typed here: 1.01741 at 30°, 1.18034 at 90°, 1.37288 at 120°. The doc
+    /// used to print the 90° number against the 120° label, and nothing could see it.
+    #[test]
+    fn the_small_angle_underestimate_is_the_size_the_doc_says() {
+        let p = Pendulum::new(1.0, 1.0).unwrap();
+        let ratio = |deg: f64| p.exact_period(deg.to_radians()).unwrap() / p.small_angle_period();
+        assert!((ratio(30.0) - 1.01741).abs() < 1e-5, "30°: {}", ratio(30.0));
+        assert!((ratio(90.0) - 1.18034).abs() < 1e-5, "90°: {}", ratio(90.0));
+        assert!((ratio(120.0) - 1.37288).abs() < 1e-5, "120°: {}", ratio(120.0));
+    }
+
+    /// ⛔ `predict` propagates the STATE through `a`, not only the variance. Every test that read
+    /// `x` used `a = 1`, where the multiply is a no-op, so deleting it was green.
+    #[test]
+    fn predict_propagates_the_state_through_a_and_not_only_the_variance() {
+        let mut f = ScalarKalman::new(0.5, 0.0, 1.0, 8.0, 0.0).unwrap();
+        f.predict();
+        assert_eq!(f.x, 4.0);
+        f.predict();
+        assert_eq!(f.x, 2.0);
+        assert_eq!(f.p, 0.0);
+        let mut g = ScalarKalman::new(1.05, 0.0, 1.0, 8.0, 0.0).unwrap();
+        g.predict();
+        assert!((g.x - 8.4).abs() < 1e-12);
+    }
+
+    /// ⛔ The population estimator against a MOVING truth and an OFF-CENTRE one. The only
+    /// tracking test used a constant stimulus at the exact centre of the range, where a filter
+    /// that never predicts still converges, a decoder handed rates at the wrong window still
+    /// lands on the answer by symmetry, and `spikes += 1` looks like a count.
+    #[test]
+    fn the_population_estimator_tracks_a_ramp_decodes_off_centre_and_counts_every_spike() {
+        let pop = GaussianPopulation::new(24, 0.0, 1.0, 0.09, 80.0, 2.0).unwrap();
+        let mut rng = Rng::new(11);
+
+        // A ramp from 0.25 to 0.75 over 400 windows of 50 ms.
+        let mut est = PopulationEstimator::new(pop.clone(), 1.0, 1e-3, 0.05, 0.5, 0.5).unwrap();
+        let mut total = 0u64;
+        let (mut last, mut truth) = (0.0, 0.0);
+        for i in 0..400 {
+            truth = 0.25 + 0.5 * (i as f64 / 399.0);
+            let counts = pop.sample_counts(&mut rng, truth, 0.05).unwrap();
+            total += counts.iter().sum::<u64>();
+            last = est.observe(&counts).unwrap();
+        }
+        assert_eq!(est.spikes, total, "every spike folded in is counted");
+        assert!(total > 4_000, "the population barely fired: {total}");
+        assert!((last - truth).abs() < 0.03, "estimate {last} at the end of a ramp to {truth}");
+
+        // Off-centre: the decoder's baseline clearance depends on the rates being counts over
+        // THIS window. At 0.5 a wrong window is symmetric and invisible; at 0.25 it is not. The
+        // decode of NOISY counts is biased inward here even though the decode of the true rates is
+        // not (0.2503): cells near baseline clear it or fail to at random, and the clearance is
+        // one-sided. The filter's fixed point is therefore the mean of what the decoder reports,
+        // computed here from the raw counts with the window written out — independently of the
+        // estimator's own conversion, which is the thing under test.
+        let window = 0.05;
+        let mut est = PopulationEstimator::new(pop.clone(), 1.0, 1e-3, window, 0.25, 0.25).unwrap();
+        let (mut sum_x, mut sum_z) = (0.0, 0.0);
+        for i in 0..600 {
+            let counts = pop.sample_counts(&mut rng, 0.25, window).unwrap();
+            let rates: Vec<f64> = counts.iter().map(|&c| c as f64 / window).collect();
+            let z = pop.decode_center_of_mass(&rates).unwrap();
+            let x = est.observe(&counts).unwrap();
+            if i >= 300 {
+                sum_x += x;
+                sum_z += z;
+            }
+        }
+        let (mean_x, mean_z) = (sum_x / 300.0, sum_z / 300.0);
+        assert!(mean_z > 0.265, "the noisy decode is not biased at 0.25 after all: {mean_z}");
+        assert!(
+            (mean_x - mean_z).abs() < 0.005,
+            "estimate {mean_x} against the mean of its own decoded measurements {mean_z}"
+        );
     }
 }

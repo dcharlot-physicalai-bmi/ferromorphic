@@ -157,9 +157,13 @@ pub enum CochleaError {
     },
     /// A gammatone order outside `1..=`[`MAX_ORDER`].
     ///
-    /// The upper bound is not physiology, it is arithmetic: each stage multiplies the pole once
-    /// more, so a very high order makes the passband gain `(1 − r)^order` underflow at the
-    /// narrow-filter end of the bank.
+    /// The upper bound is a policy, not physiology and not arithmetic. This doc used to say the
+    /// passband gain `(1 − r)^order` underflows at high order; measured at the narrowest realistic
+    /// case, order 8 at 100 Hz and 48 kHz, the gain is `4.95e-19` against an `f64` floor of
+    /// `2.2e-308`, so nothing is within 289 orders of magnitude of underflowing. What the bound
+    /// actually buys: the per-sample cost is `order` complex multiplies per channel, and the
+    /// closed forms this module ships are driven and measured at orders 2 to 6 and constructed at
+    /// 8. Above that nothing here has been checked.
     Order {
         /// The order requested.
         order: usize,
@@ -263,8 +267,16 @@ pub const MAX_ORDER: usize = 8;
 
 /// The highest centre frequency, as a fraction of the sample rate, that a [`Gammatone`] accepts.
 ///
-/// `0.45`, not `0.5`. See [`CochleaError::CentreFrequency`] for why the guard is below Nyquist.
-pub const NYQUIST_GUARD: f64 = 0.45;
+/// `0.40`, not `0.5`. See [`CochleaError::CentreFrequency`] for why the guard is below Nyquist.
+///
+/// ⛔ **Measured, not argued.** This constant was `0.45`, justified as "conservative by argument".
+/// Driving the filter and locating its peak by ternary search: at `0.40·fs` the peak sits
+/// `0.0005 ERB` below `f_c`, at `0.44·fs` `0.0014 ERB`, at `0.445·fs` `0.03 ERB`, and at the old
+/// guard itself, `0.45·fs`, **`0.0375 ERB` — 1.9× the tolerance the peak test holds every other
+/// channel to** (`Gammatone::new(21600, 48000)` was accepted and peaked 88 Hz low). The
+/// negative-frequency image the all-pole form drops stops being negligible between 0.44 and
+/// 0.445; 0.40 is the value with margin, and the peak test now runs at the guard itself.
+pub const NYQUIST_GUARD: f64 = 0.40;
 
 /// Patterson's bandwidth factor: the gammatone's exponential decay rate is `2π · b · ERB(f_c)`.
 ///
@@ -447,8 +459,10 @@ pub fn erb_space(lo: f64, hi: f64, n: usize) -> Result<Vec<f64>, CochleaError> {
 /// The payoff is that the transfer function is exact and short:
 /// `|H(f)|² = |1 − p·e^{-i·2π·f/fs}|^{-2n}`, whose minimum denominator is at `f = f_c`
 /// **exactly**, for any sample rate. So [`Gammatone::peak_frequency`] is not an approximation, and
-/// a measured peak that misses `f_c` is a real defect rather than a discretisation artefact. The
-/// −3 dB width follows in closed form too, in [`Gammatone::bandwidth_3db`].
+/// below [`NYQUIST_GUARD`]`·fs` a measured peak that misses `f_c` is a real defect rather than a
+/// discretisation artefact — above it the dropped image is no longer negligible and the *driven*
+/// peak drifts even though the denominator's minimum does not, which is why the guard sits where
+/// it does. The −3 dB width follows in closed form too, in [`Gammatone::bandwidth_3db`].
 ///
 /// # The two outputs
 ///
@@ -643,6 +657,11 @@ impl Gammatone {
     /// The point of the quantity: `β` grows with `ERB(f_c)`, so **low-frequency channels ring
     /// later**. That is the travelling wave, and a front end that ignored it would align the apex
     /// and the base of the cochlea at the same instant, which no ear does.
+    ///
+    /// Tie convention: when `(n − 1)·r/(1 − r)` is an exact integer `m`, samples `m − 1` and `m`
+    /// hold the same value and this returns the **later** one. A measure-zero case over real
+    /// centre frequencies, named because a test that takes the first argmax would disagree by one
+    /// sample there.
     #[must_use]
     pub fn peak_latency(&self) -> f64 {
         let m = (self.order as f64 - 1.0) * self.r / (1.0 - self.r);
@@ -806,6 +825,11 @@ impl Compression {
 
     /// Apply the law to a non-negative input. Negative inputs are rectified to zero first, so this
     /// is safe to call on a raw displacement.
+    ///
+    /// The **law** is not checked here — this is the inner loop. For one [`Compression::validate`]
+    /// would refuse the result is meaningless: `Log { knee: -1.0 }` returns `NaN` for inputs past
+    /// the knee and `Power { exponent: -1.0 }` returns `inf` at zero. A [`Filterbank`] validates at
+    /// construction; a caller using `apply` directly owns the check.
     #[must_use]
     pub fn apply(self, x: f64) -> f64 {
         let x = x.max(0.0);
@@ -815,6 +839,11 @@ impl Compression {
             Self::Log { knee } => (1.0 + x / knee).ln(),
         }
     }
+}
+
+/// `max(x, 0)` that passes `NaN` through instead of replacing it with zero.
+fn floor_at_zero(x: f64) -> f64 {
+    if x < 0.0 { 0.0 } else { x }
 }
 
 /// Half-wave rectification: `max(x, 0)`.
@@ -1129,10 +1158,45 @@ impl Meddis {
         let dq = self.y * (self.m - self.q) + self.x * self.w - k * self.q;
         let dc = k * self.q - self.l * self.c - self.r * self.c;
         let dw = self.r * self.c - self.x * self.w;
-        self.q = (self.q + dq * dt).max(0.0);
-        self.c = (self.c + dc * dt).max(0.0);
-        self.w = (self.w + dw * dt).max(0.0);
+        // `f64::max(NaN, 0.0)` is `0.0`: it would launder a poisoned pool into a silent, healthy
+        // looking cell. This floor keeps a NaN a NaN, so it is visible downstream.
+        self.q = floor_at_zero(self.q + dq * dt);
+        self.c = floor_at_zero(self.c + dc * dt);
+        self.w = floor_at_zero(self.w + dw * dt);
         self.h * self.c
+    }
+
+    /// Check every constant and state variable, naming the first that cannot run.
+    ///
+    /// Every field is public, so a caller can build `Meddis { b: -300.0, ..Meddis::default() }` —
+    /// which has a *negative* steady-state pool, a sustained rate of 228 spikes/s past both
+    /// documented ceilings, and until this check existed was accepted by [`Filterbank`].
+    ///
+    /// # Errors
+    ///
+    /// [`CochleaError::NotFinite`] or [`CochleaError::NotPositive`] naming the constant; the
+    /// state variables `q`, `c` and `w` may be zero but not negative or non-finite.
+    pub fn validate(&self) -> Result<(), CochleaError> {
+        for (what, v) in [
+            ("meddis a", self.a),
+            ("meddis b", self.b),
+            ("meddis g", self.g),
+            ("meddis y", self.y),
+            ("meddis l", self.l),
+            ("meddis x", self.x),
+            ("meddis r", self.r),
+            ("meddis m", self.m),
+            ("meddis h", self.h),
+        ] {
+            positive(what, v)?;
+        }
+        for (what, v) in [("meddis q", self.q), ("meddis c", self.c), ("meddis w", self.w)] {
+            let v = finite(what, v)?;
+            if v < 0.0 {
+                positive(what, v)?;
+            }
+        }
+        Ok(())
     }
 
     /// [`Meddis::step`] with its arguments checked.
@@ -1444,6 +1508,7 @@ impl Filterbank {
                 (Vec::new(), DEFAULT_DRIVE_HALF_WAVE)
             }
             Transduction::Meddis(m) => {
+                m.validate()?;
                 let dt = 1.0 / fs;
                 let bound = m.stable_dt_bound();
                 if dt > bound {
@@ -1493,11 +1558,19 @@ impl Filterbank {
     }
 
     /// Replace the change detector on every channel.
-    #[must_use]
-    pub fn with_onset(mut self, onset: Onset) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Whatever [`Onset::new`] refuses. `Onset::tau_fast` and `tau_slow` are public, so a detector
+    /// [`Onset::new`] would have refused — the fast path slower than the slow one — can be built by
+    /// assignment; the first version of this builder took it as given, and the result was a
+    /// detector that labelled the tone's OFFSET as its onset (41 onset spikes in the offset window,
+    /// none at the onset), which is exactly the failure [`CochleaError::OnsetTaus`] exists to stop.
+    pub fn with_onset(mut self, onset: Onset) -> Result<Self, CochleaError> {
+        let onset = Onset::new(onset.tau_fast, onset.tau_slow)?;
         self.onset = vec![onset; self.f_c.len()];
         self.reset();
-        self
+        Ok(self)
     }
 
     /// Replace the compression applied to the envelope before the change detector.
@@ -1511,14 +1584,19 @@ impl Filterbank {
     }
 
     /// Give every channel its own copy of `agc`, or remove the loops with `None`.
-    #[must_use]
-    pub fn with_agc(mut self, agc: Option<Agc>) -> Self {
+    ///
+    /// # Errors
+    ///
+    /// Whatever [`Agc::new`] refuses. `Agc::tau` and `target` are public; a negative `tau` drives
+    /// the level to `-1e18` and the gain to a negative number, which inverts the signal against a
+    /// doc promising `(0, 1]`.
+    pub fn with_agc(mut self, agc: Option<Agc>) -> Result<Self, CochleaError> {
         self.agc = match agc {
-            Some(a) => vec![a; self.f_c.len()],
+            Some(a) => vec![Agc::new(a.tau, a.target)?; self.f_c.len()],
             None => Vec::new(),
         };
         self.reset();
-        self
+        Ok(self)
     }
 
     /// Replace the output cell used for all three populations.
@@ -2244,7 +2322,12 @@ mod tests {
     /// Mean analytic envelope of `f_c`'s channel under a steady unit tone at `f`, after the
     /// transient has decayed by `e^{-14}`.
     fn steady_envelope(f_c: f64, fs: f64, f: f64) -> f64 {
-        let mut g = Gammatone::new(f_c, fs).expect("valid channel");
+        steady_envelope_at_order(f_c, fs, 4, f)
+    }
+
+    /// As `steady_envelope`, for a cascade of any order.
+    fn steady_envelope_at_order(f_c: f64, fs: f64, order: usize, f: f64) -> f64 {
+        let mut g = Gammatone::with_shape(f_c, fs, order, PATTERSON_B).expect("valid channel");
         let settle = (14.0 / g.decay_rate() * fs).ceil() as usize;
         // Average over whole ripple periods so the residual negative-frequency image cancels.
         let window = ((fs / f).ceil() as usize) * 8;
@@ -2278,6 +2361,10 @@ mod tests {
     /// Bisect the measured response for the frequency where it falls to `target`, searching
     /// upward from `f_c` if `up`, downward otherwise.
     fn measured_crossing(f_c: f64, fs: f64, target: f64, up: bool) -> f64 {
+        measured_crossing_at_order(f_c, fs, 4, target, up)
+    }
+
+    fn measured_crossing_at_order(f_c: f64, fs: f64, order: usize, target: f64, up: bool) -> f64 {
         let span = 6.0 * erb_hz(f_c);
         let (mut lo, mut hi) = if up {
             (f_c, f_c + span)
@@ -2286,7 +2373,7 @@ mod tests {
         };
         for _ in 0..50 {
             let m = 0.5 * (lo + hi);
-            if steady_envelope(f_c, fs, m) > target {
+            if steady_envelope_at_order(f_c, fs, order, m) > target {
                 lo = m;
             } else {
                 hi = m;
@@ -2431,7 +2518,9 @@ mod tests {
     /// image, not by any slack in the filter.
     #[test]
     fn a_gammatone_peaks_at_its_stated_centre_frequency() {
-        for &f_c in &[250.0, 1000.0, 4000.0] {
+        // ⛔ The last entry is the guard itself. At the old guard of 0.45·fs this test fails by
+        // 1.9x its own tolerance; the constant is now pinned to a measurement, not an argument.
+        for &f_c in &[250.0, 1000.0, 4000.0, FS * NYQUIST_GUARD] {
             let peak = measured_peak(f_c, FS);
             let tol = 0.02 * erb_hz(f_c);
             assert!(
@@ -2523,7 +2612,18 @@ mod tests {
             Gammatone::new(FS * 0.46, FS),
             Err(CochleaError::CentreFrequency { .. })
         ));
+        assert!(matches!(
+            Gammatone::new(FS * 0.41, FS),
+            Err(CochleaError::CentreFrequency { .. })
+        ), "0.41·fs is past the measured guard of 0.40");
+        assert!(Gammatone::new(FS * 0.40, FS).is_ok());
         assert!(Gammatone::new(FS * NYQUIST_GUARD, FS).is_ok());
+        // The order bound, as a literal: 8 builds, 9 does not.
+        assert!(Gammatone::with_shape(1000.0, FS, 8, PATTERSON_B).is_ok());
+        assert!(matches!(
+            Gammatone::with_shape(1000.0, FS, 9, PATTERSON_B),
+            Err(CochleaError::Order { order: 9 })
+        ));
         assert!(matches!(
             Gammatone::new(-100.0, FS),
             Err(CochleaError::CentreFrequency { .. })
@@ -2549,7 +2649,13 @@ mod tests {
 
     /// Order is a real parameter, not decoration: a third-order filter's −3 dB width uses
     /// `2^{1/3}` and a fifth-order one uses `2^{1/5}`, so the widths must differ in a stated
-    /// direction. This is what catches a cascade that silently runs a fixed number of stages.
+    /// direction.
+    ///
+    /// ⛔ This compares algebra with algebra — `bandwidth_3db` against a retyped
+    /// `bandwidth_3db_continuous` — and drives no filter; the comment that stood here said it
+    /// "catches a cascade that silently runs a fixed number of stages", and it cannot: `step`
+    /// capped at four stages passed it. `every_order_is_driven_and_measured` is the test that
+    /// does what this one claimed.
     #[test]
     fn changing_the_order_changes_the_shape_the_way_the_algebra_says() {
         let f_c = 1000.0;
@@ -2570,13 +2676,58 @@ mod tests {
         }
     }
 
+    /// ⛔ EVERY ORDER, DRIVEN. Four of the module's closed forms carry an `n` no test had ever run:
+    /// `step` capped at four stages, `with_shape`'s gain at `powi(4)`, the continuous bandwidth at
+    /// `2^{1/4}` and the magnitude response at `powf(2.0)` all passed 58 tests, because every
+    /// driven test used the default fourth order. Here orders 2 to 6 are each measured four ways:
+    /// the impulse-envelope peak lands exactly on `peak_latency`, a unit tone at `f_c` comes out at
+    /// unit amplitude, the −3 dB width bisected from the driven response matches the continuous
+    /// closed form, and the driven response one ERB above `f_c` matches `magnitude_response`.
+    #[test]
+    fn every_order_is_driven_and_measured() {
+        let f_c = 1000.0;
+        for order in 2..=6 {
+            let mut g = Gammatone::with_shape(f_c, FS, order, PATTERSON_B).expect("valid channel");
+            let n = (0.05 * FS) as usize;
+            let mut env = Vec::with_capacity(n);
+            for i in 0..n {
+                g.step(if i == 0 { 1.0 } else { 0.0 });
+                env.push(g.envelope());
+            }
+            let want = (g.peak_latency() * FS).round() as usize;
+            assert!(want > 0, "order {order}: latency rounds to zero samples");
+            assert_eq!(argmax(&env), want, "order {order}: impulse-envelope peak");
+
+            let a = steady_envelope_at_order(f_c, FS, order, f_c);
+            assert!((a - 1.0).abs() < 3e-3, "order {order}: unit tone at f_c came out at {a}");
+
+            let target = 1.0 / 2f64.sqrt();
+            let hi = measured_crossing_at_order(f_c, FS, order, target, true);
+            let lo = measured_crossing_at_order(f_c, FS, order, target, false);
+            let width = hi - lo;
+            let want_bw = g.bandwidth_3db_continuous();
+            assert!(
+                (width - want_bw).abs() / want_bw < 1e-2,
+                "order {order}: measured -3 dB width {width} against {want_bw}"
+            );
+
+            let f1 = f_c + erb_hz(f_c);
+            let driven = steady_envelope_at_order(f_c, FS, order, f1);
+            let closed = g.magnitude_response(f1);
+            assert!(
+                (driven - closed).abs() < 2e-3,
+                "order {order}: driven {driven} vs magnitude_response {closed} at +1 ERB"
+            );
+        }
+    }
+
     // -------------------------------------------------------------------------------------
     // (d) The travelling-wave delay
     // -------------------------------------------------------------------------------------
 
     /// A click excites every channel at the same instant; the latency of each channel's envelope
     /// peak is its own ringing time. Checked against the exact discrete formula
-    /// `⌊(n·r − 1)/(1 − r)⌋/fs` and, separately, against the continuous `(n − 1)/β`.
+    /// `⌊(n − 1)·r/(1 − r)⌋/fs` and, separately, against the continuous `(n − 1)/β`.
     #[test]
     fn a_click_produces_the_predicted_travelling_wave_delay() {
         let x = click(FS, 1.0, 0.2, 0.0).expect("a valid click");
@@ -2765,6 +2916,13 @@ mod tests {
         assert!(decade < 10.0, "a decade became {decade}x");
         assert!(decade > 1.0, "compression inverted the order");
         assert_eq!(c.apply(0.0), 0.0, "silence must compress to silence");
+
+        // ⛔ The knee divides. At `knee = 1`, the only value above, `x / knee` and `x` are the
+        // same expression, so a `Log` that ignored its knee was green. At knee 0.01 a 1e-4 input
+        // is one hundredth of the way to the knee: ln(1.01) = 0.00995, not 1e-4.
+        let c = Compression::Log { knee: 0.01 }.validate().expect("valid");
+        let y = c.apply(1e-4);
+        assert!((y - 1e-2).abs() < 1e-4, "ln(1 + 1e-4 / 0.01) = {y}, not near 1e-2");
     }
 
     #[test]
@@ -3565,6 +3723,12 @@ mod tests {
             "burst rms was {r}, uniform says {}",
             1.0 / 3f64.sqrt()
         );
+        // ⛔ Bipolar, which the rms cannot see: uniform on [0, a] has E[x²] = a²/3 exactly like
+        // uniform on [-a, a]. A DC-offset burst would put a step into every gammatone.
+        let mean = inside.iter().sum::<f64>() / inside.len() as f64;
+        assert!(mean.abs() < 0.02, "burst mean {mean}; the doc says [-amplitude, amplitude]");
+        let min = inside.iter().cloned().fold(f64::INFINITY, f64::min);
+        assert!(min < -0.9, "burst minimum {min}; the samples never went negative");
         assert!(matches!(
             noise_burst(&mut rng, FS, 1.0, 0.2, 0.15, 0.1, 0.0),
             Err(CochleaError::Window { .. })
@@ -3923,6 +4087,7 @@ mod tests {
             )
             .expect("a valid bank")
             .with_agc(agc)
+            .expect("a valid loop")
         };
         let quiet = tone(FS, 1000.0, 0.1, 0.3).expect("a valid tone");
         let loud = tone(FS, 1000.0, 1.0, 0.3).expect("a valid tone");
@@ -3944,5 +4109,108 @@ mod tests {
             "with AGC the ratio was {ratio_gained}, barely below the linear {ratio_plain}"
         );
         assert!(ratio_gained > 1.0, "the AGC inverted the level order");
+    }
+
+    /// The tone starts at zero phase, as its doc says and as nothing measured: `.cos()` in place of
+    /// `.sin()` was green because rms, a single-bin transform and zero-crossing counts are all
+    /// phase-blind. A cosine begins with a click.
+    #[test]
+    fn a_tone_starts_at_zero_phase_and_rises() {
+        let x = tone(FS, 1000.0, 1.0, 0.01).expect("a valid tone");
+        assert_eq!(x[0], 0.0, "sample zero is not zero: the tone begins with a step");
+        assert!(x[1] > 0.0 && x[1] < 0.2, "sample one is {}, not a small positive value", x[1]);
+    }
+
+    /// ⛔ FIVE OF SIX BUILDERS COULD BE REDUCED TO VALIDATE-ONLY NO-OPS with every test green:
+    /// `with_onset`, `with_cell` and `with_envelope_compression` were never called; `with_drive`
+    /// and `with_onset_drive` were called only to see them refuse. Each is shown here to change
+    /// the front end's output in the direction it claims.
+    #[test]
+    fn every_builder_changes_the_output_it_says_it_does() {
+        let build = || {
+            Filterbank::erb_bank(FS, 400.0, 3000.0, 6, Transduction::HalfWave(Compression::default()))
+                .expect("a valid bank")
+        };
+        let x = tone_burst(FS, 1000.0, 1.0, 0.4, 0.1, 0.2, 2e-3).expect("a valid burst");
+        // (sustained, onset, offset) spike counts.
+        let count = |bank: &mut Filterbank| -> (usize, usize, usize) {
+            let train = bank.spike_train(&x).expect("finite");
+            let (mut s, mut on, mut off) = (0, 0, 0);
+            for sp in train.spikes() {
+                match bank.decode_source(sp.source) {
+                    Some((ChannelKind::Sustained, _)) => s += 1,
+                    Some((ChannelKind::Onset, _)) => on += 1,
+                    Some((ChannelKind::Offset, _)) => off += 1,
+                    None => panic!("a spike with no address"),
+                }
+            }
+            (s, on, off)
+        };
+        let (base_s, base_on, base_off) = count(&mut build());
+        assert!(base_s > 0 && base_on > 0 && base_off > 0, "{base_s} {base_on} {base_off}");
+
+        let half = build().drive() * 0.5;
+        let (s, _, _) = count(&mut build().with_drive(half).expect("valid"));
+        assert!(s < base_s, "half the drive, sustained {s} against {base_s}");
+
+        let quarter = build().onset_drive() * 0.25;
+        let (_, on, off) = count(&mut build().with_onset_drive(quarter).expect("valid"));
+        assert!(on < base_on && off < base_off, "a quarter of the onset drive: {on} {off}");
+
+        let stiff = Lif { v_th: Lif::default().v_th + 10e-3, ..Lif::default() };
+        let (s, on, _) = count(&mut build().with_cell(stiff));
+        assert!(s < base_s && on < base_on, "a 10 mV higher threshold: {s} {on}");
+
+        let fast = build().onset_signal(&x).expect("finite");
+        // A slower detector with a SMALLER tau ratio: the step-response peak height depends only
+        // on tau_slow / tau_fast (0.81 at 20:1, 0.70 at 10:1), so 5 ms / 100 ms would peak at the
+        // same height as the default 1 ms / 20 ms and only later. 5 ms / 50 ms peaks later AND lower.
+        let slow_detector = Onset::new(5e-3, 50e-3).expect("valid");
+        assert!(slow_detector.step_peak_height() < Onset::default().step_peak_height());
+        let mut b = build().with_onset(slow_detector).expect("valid");
+        let slow = b.onset_signal(&x).expect("finite");
+        let peak = |trace: &[f64]| trace.iter().fold(0.0f64, |m, v| m.max(*v));
+        let arg = |trace: &[f64]| argmax(trace);
+        assert!(arg(&slow[2]) > arg(&fast[2]), "a slower detector must peak later");
+        assert!(peak(&slow[2]) < peak(&fast[2]), "a detector with a smaller tau ratio must peak lower");
+
+        let mut b = build().with_envelope_compression(Compression::Linear).expect("valid");
+        let lin = b.onset_signal(&x).expect("finite");
+        assert_ne!(lin[2], fast[2], "linear and power-law compression gave the same onset signal");
+        // The compression stage is in the onset PATH, not only stored: a power law compresses a
+        // unit-amplitude envelope's rise less than linear passes it, so the peaks differ.
+        assert!((peak(&lin[2]) - peak(&fast[2])).abs() > 1e-3 * peak(&fast[2]));
+
+        let with_loop = build().with_agc(Some(Agc::new(20e-3, 20.0).expect("valid"))).expect("valid");
+        let (s, _, _) = count(&mut { with_loop });
+        assert!(s < base_s, "an AGC on a unit tone must reduce the sustained count: {s} vs {base_s}");
+    }
+
+    /// ⛔ PUBLIC FIELDS ARE NOT A BACK DOOR PAST THE CONSTRUCTORS. `Onset::tau_fast`, `Agc::tau`
+    /// and every Meddis constant are public; each can be set to a value its constructor refuses,
+    /// and the first version of every builder took the struct as given. Now each re-validates.
+    #[test]
+    fn a_builder_refuses_a_struct_its_constructor_would_have_refused() {
+        let bank = || {
+            Filterbank::erb_bank(FS, 400.0, 3000.0, 6, Transduction::HalfWave(Compression::Linear))
+                .expect("a valid bank")
+        };
+        let o = Onset { tau_fast: 30e-3, tau_slow: 1e-3, ..Onset::default() };
+        assert!(matches!(bank().with_onset(o), Err(CochleaError::OnsetTaus { .. })));
+        let mut a = Agc::new(20e-3, 20.0).expect("valid");
+        a.tau = -1e-3;
+        assert!(matches!(bank().with_agc(Some(a)), Err(CochleaError::NotPositive { .. })));
+        let m = Meddis { b: -300.0, ..Meddis::default() };
+        assert!(matches!(
+            Filterbank::erb_bank(FS, 400.0, 3000.0, 6, Transduction::Meddis(m)),
+            Err(CochleaError::NotPositive { .. })
+        ));
+        assert!(Meddis::default().validate().is_ok());
+        let dead = Meddis { l: 0.0, ..Meddis::default() };
+        assert!(dead.validate().is_err(), "a zero loss rate has an infinite steady-state cleft");
+        // And a NaN in the pool is not laundered into a healthy zero.
+        let mut m = Meddis { q: f64::NAN, ..Meddis::default() };
+        m.step(1e-4, 0.0);
+        assert!(m.q.is_nan(), "a NaN pool came back as {}", m.q);
     }
 }
