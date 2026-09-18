@@ -9,7 +9,7 @@ hardware constraint models, analog device non-idealities, NIR, event-camera deco
 metrics, teaching tasks — and a joules ledger that charges for the memory traffic a synaptic
 operation needs.
 
-**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 36 modules, 1,497 tests.**
+**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 40 modules, 1,544 tests.**
 
 Run it in a browser without installing anything:
 **[energy.physicalai-bmi.org/neuromorphic](https://energy.physicalai-bmi.org/neuromorphic)** — the
@@ -60,6 +60,10 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 | `device` | analog non-idealities: what a weight becomes when it is a physical conductance |
 | `compress` | pruning, quantisation, distillation and the rate-budget trade, to fit the part you can buy |
 | `mapping` | placing a network on cores: partitioning, multicast trees, fabric hops, and where the energy goes |
+| `nef` | the Neural Engineering Framework: tuning curves, least-squares decoders, factorised weights, and dynamics through a synapse — Nengo's three principles, each against its closed form |
+| `vsa` | vector symbolic architectures / hyperdimensional computing: bipolar, binary and holographic models, codebooks, sequences, and a resonator network, with the bundle capacity as a binomial |
+| `sparse` | sparse coding by local competition: the LCA and its spiking form, checked against the LASSO's own optimality conditions |
+| `resonate` | resonate-and-fire neurons stepped by the exact complex exponential, and the Legendre Memory Unit as a delay line in `d` numbers |
 | `sim`, `net`, `spike`, `rng` | the event-driven simulator, sparse connectivity, spike trains, seeded PCG32 |
 
 ## Use it
@@ -225,7 +229,7 @@ Every neuron model here has a test that runs it against an analytic solution.
 - **A sub-threshold current returns `None`, not a large number.** "Fires rarely" and "does not fire"
   are different statements and a rate-coded readout cannot recover the difference later.
 
-1,497 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
+1,544 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
 `#![forbid(unsafe_code)]`, and `cargo build --target wasm32-unknown-unknown` compiles the library
 unchanged. Three of the `examples/` are verification gates that exit non-zero when a closed form
 disagrees with the simulator.
@@ -271,7 +275,9 @@ be reproduced cannot be checked against anything, including itself.
 
 ## Status
 
-**0.6.0.** Thirty-six modules, all audited, all repaired; the crate family is not built yet. Planned
+**0.6.0, with the third wave landing.** Thirty-six modules audited and repaired, four more since
+(`nef`, `vsa`, `sparse`, `resonate`) written against closed forms and not yet audited by mutation;
+the crate family is not built yet. Planned
 siblings, each following the same rule that a dependency lives outside the core:
 
 | crate | what it would add | why separate |
