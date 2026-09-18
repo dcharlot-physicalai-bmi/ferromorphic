@@ -9,7 +9,7 @@ hardware constraint models, analog device non-idealities, NIR, event-camera deco
 metrics, teaching tasks — and a joules ledger that charges for the memory traffic a synaptic
 operation needs.
 
-**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 43 modules, 1,561 tests.**
+**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 46 modules, 1,577 tests.**
 
 Run it in a browser without installing anything:
 **[energy.physicalai-bmi.org/neuromorphic](https://energy.physicalai-bmi.org/neuromorphic)** — the
@@ -67,6 +67,9 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 | `hopfield` | associative memory as an energy landscape: classical, dense (Krotov-Hopfield) and modern continuous Hopfield networks, with the crosstalk, the 0.138 load and the one-step retrieval each measured |
 | `dendrite` | two compartments: the soma's conductance-weighted steady state, learning by the dendritic prediction of somatic firing, and the XOR a point neuron provably cannot compute |
 | `touch` | SA1, RA and Pacinian afferents as spiking cells driven by depth, velocity and vibration; a fingertip that locates a contact by its spike centroid and reports slip |
+| `optimise` | QUBO by stochastic spiking: max-cut and graph colouring as energies, a Glauber sampler checked against the exact Boltzmann distribution, an annealer checked against brute force |
+| `phasor` | the phasor (complex) vector symbolic architecture: binding as phase addition, symbols as spike times on a rhythm, and the threshold phasor associative memory |
+| `reinforce` | three-factor learning: synaptic eligibility traces, a broadcast prediction error, TD(λ) and a softmax actor checked against the Bellman solution of a chain |
 | `sim`, `net`, `spike`, `rng` | the event-driven simulator, sparse connectivity, spike trains, seeded PCG32 |
 
 ## Use it
@@ -232,7 +235,7 @@ Every neuron model here has a test that runs it against an analytic solution.
 - **A sub-threshold current returns `None`, not a large number.** "Fires rarely" and "does not fire"
   are different statements and a rate-coded readout cannot recover the difference later.
 
-1,561 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
+1,577 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
 `#![forbid(unsafe_code)]`, and `cargo build --target wasm32-unknown-unknown` compiles the library
 unchanged. Three of the `examples/` are verification gates that exit non-zero when a closed form
 disagrees with the simulator.
@@ -278,9 +281,10 @@ be reproduced cannot be checked against anything, including itself.
 
 ## Status
 
-**0.6.0, with the third wave landing.** Thirty-six modules audited and repaired, seven more since
-(`nef`, `vsa`, `sparse`, `resonate`, `hopfield`, `dendrite`, `touch`) written against closed forms
-and not yet audited by mutation; the crate family is not built yet. Planned
+**0.7.0.** Thirty-six modules audited by mutation and repaired; ten more in the third wave
+(`nef`, `vsa`, `sparse`, `resonate`, `hopfield`, `dendrite`, `touch`, `optimise`, `phasor`,
+`reinforce`) written against closed forms and not yet audited by mutation — that audit is the next
+release's job; the crate family is not built yet. Planned
 siblings, each following the same rule that a dependency lives outside the core:
 
 | crate | what it would add | why separate |
