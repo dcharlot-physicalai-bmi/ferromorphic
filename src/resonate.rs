@@ -611,6 +611,15 @@ mod tests {
         assert!((shifted_legendre(2, 0.5) + 0.5).abs() < 1e-15, "P̃_2(1/2) = P_2(0) = −1/2");
         assert!((shifted_legendre(3, 0.5)).abs() < 1e-15, "odd polynomials vanish at the centre");
         assert!(matches!(Lmu::new(0, 1.0), Err(ResonateError::Empty { .. })));
+        // The two readouts against `reconstruct` at the ends of the window, on a state whose
+        // every coefficient is non-zero — dropping the last one survived the first mutation sweep
+        // because a slow sine at order 6 leaves it near zero.
+        let mut probe = Lmu::new(3, 1.0).unwrap();
+        probe.m = vec![1.0, 2.0, 3.0];
+        assert_eq!(probe.delayed(), 6.0);
+        assert_eq!(probe.current(), 2.0, "1 − 2 + 3");
+        assert!((probe.reconstruct(1.0).unwrap() - 6.0).abs() < 1e-15);
+        assert!((probe.reconstruct(0.0).unwrap() - 2.0).abs() < 1e-15);
         assert!(matches!(Lmu::new(3, 0.0), Err(ResonateError::OutOfRange { what: "theta", .. })));
         assert!(matches!(lmu.reconstruct(1.5), Err(ResonateError::OutOfRange { what: "r", .. })));
     }

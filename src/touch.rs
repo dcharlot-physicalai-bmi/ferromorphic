@@ -612,6 +612,17 @@ mod tests {
         assert!(sa_hold > 15, "SA1 fired {sa_hold} times during a 500 ms hold");
         assert!(ra_ramp > 0, "RA did not fire during the ramp");
         assert_eq!(ra_hold, 0, "RA fired {ra_hold} times during a steady hold");
+        // The RELEASE ramp too: the RA channel is sign-blind, and a rectified drive would answer
+        // the making of contact and not its breaking.
+        let release = ((0.60 * fs) as usize)..((0.65 * fs) as usize);
+        let mut ra_out = Afferent::ra(2e-7, cell()).unwrap();
+        let mut ra_release = 0;
+        for (k, c) in feats.iter().enumerate() {
+            if ra_out.step(fs, c).unwrap() && release.contains(&k) {
+                ra_release += 1;
+            }
+        }
+        assert!(ra_release > 0, "RA did not fire while the contact was released");
         // A linear ramp's corners are one-sample acceleration impulses of 200 m/s². Through the
         // band-pass (0.22 of it reaches the cell) and the cell's 20 ms integration that deposits
         // about 9 mV, under the 15 mV threshold, so the Pacinian is silent for this ramp too — the
@@ -692,6 +703,22 @@ mod tests {
         }
         assert!(p_count > 50, "PC fired only {p_count} times under a 250 Hz vibration");
         assert_eq!(r_count, 0, "RA fired {r_count} times under a 4.7 mm/s peak vibration");
+        // The band-pass is IN the Pacinian's path: a 5 Hz, 5 mm sway on a 6 mm hold has a raw
+        // acceleration amplitude of (2π·5)²·5e-3 = 4.9 m/s² — 4.9 nA raw, which fires — but the
+        // band passes 0.12 of it, 0.6 nA, under rheobase. Feeding the raw acceleration to the
+        // cell survived the first mutation sweep because nothing slow and large had been tried.
+        let w_slow = core::f64::consts::TAU * 5.0;
+        let slow: Vec<f64> = (0..n).map(|k| 6e-3 + 5e-3 * (w_slow * k as f64 / fs).sin()).collect();
+        let sfeats = features(&slow, fs).unwrap();
+        let mut pc_slow = Afferent::pc(1e-9, cell()).unwrap();
+        let mut ra_slow = Afferent::ra(2e-7, cell()).unwrap();
+        let (mut p_slow, mut r_slow) = (0, 0);
+        for c in &sfeats {
+            p_slow += u32::from(pc_slow.step(fs, c).unwrap());
+            r_slow += u32::from(ra_slow.step(fs, c).unwrap());
+        }
+        assert_eq!(p_slow, 0, "PC fired {p_slow} times under a 5 Hz sway the band should reject");
+        assert!(r_slow > 0, "a 157 mm/s sway is an RA signal and RA did not fire");
         // The SA1 keeps firing for the hold, vibration or not; the PC channel is the one that
         // added something.
         assert!(s_count > 20);
@@ -762,6 +789,12 @@ mod tests {
         let f = features(&depth, fs).unwrap();
         assert!((f[2].velocity - 1.0).abs() < 1e-9);
         assert!(f[2].acceleration.abs() < 1e-6);
+        // On a parabola the central difference is exact and a one-sided one is not: depth k² at
+        // unit rate gives velocity 2t = 4 at t = 2 (one-sided: 5) and acceleration exactly 2.
+        let parabola = [0.0, 1.0, 4.0, 9.0, 16.0];
+        let g = features(&parabola, 1.0).unwrap();
+        assert_eq!(g[2].velocity, 4.0);
+        assert_eq!(g[2].acceleration, 2.0);
         let d = ramp_and_hold(fs, 2e-3, 0.1, 0.2, 0.05).unwrap();
         assert_eq!(d.len(), 500);
         assert_eq!(d[0], 0.0);

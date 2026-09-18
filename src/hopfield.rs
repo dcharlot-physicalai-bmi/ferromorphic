@@ -741,6 +741,13 @@ mod tests {
         assert!(recovered >= 18, "recovered {recovered} of 20 from 10% corruption");
         assert_eq!(dense.update_cost(), 2 * 100 * 100);
         assert_eq!(classical.update_cost(), 100);
+        // The rectified energy is never positive — F is zero on negative overlaps — so the
+        // ANTI-pattern of a stored pattern has energy at most zero. Unrectified z³ gives it about
+        // +N³, and survived the first mutation sweep because every other assertion held.
+        let anti: Vec<f64> = patterns[0].iter().map(|x| -x).collect();
+        let e_anti = dense.energy(&anti).unwrap();
+        assert!(e_anti <= 0.0, "the rectified energy of the anti-pattern is {e_anti}");
+        assert!(dense.energy(&patterns[0]).unwrap() <= -(100.0f64.powi(3)), "the stored pattern's own term is −N³");
         // Degree 2 is the classical energy up to the diagonal: the same fixed-point verdicts on a
         // sparse store.
         let mut quad = Dense::new(n, 2).unwrap();
@@ -838,6 +845,16 @@ mod tests {
         assert_eq!(overlap(&[1.0], &[1.0, 1.0]), None);
         assert_eq!(overlap(&[], &[]), None);
         assert_eq!(overlap(&[1.0, -1.0, 1.0], &[1.0, 1.0, 1.0]), Some(2.0 / 3.0));
+        // A zero field leaves a neuron as it is: an empty network recalls its cue unchanged and
+        // converges at once. Flipping ties to +1 survived the first mutation sweep.
+        let empty = Classical::new(4).unwrap();
+        let r = empty.recall(&[-1.0, 1.0, -1.0, 1.0], 5).unwrap();
+        assert_eq!(r.state, vec![-1.0, 1.0, -1.0, 1.0]);
+        assert!(r.converged && r.sweeps == 1);
+        // `round`, not `floor`: 15% of 310 is 46.5, which rounds to 47 flips.
+        let pat = vec![1.0; 310];
+        let c = corrupt(&pat, 0.15, &mut Rng::new(2)).unwrap();
+        assert_eq!(c.iter().filter(|x| **x < 0.0).count(), 47);
         for e in [
             HopfieldError::Empty { what: "x" },
             HopfieldError::Dimension { what: "y", got: 1, want: 2 },

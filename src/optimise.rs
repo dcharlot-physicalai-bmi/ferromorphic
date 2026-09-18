@@ -634,6 +634,9 @@ mod tests {
         let k33: Vec<(usize, usize)> = (0..3).flat_map(|i| (3..6).map(move |j| (i, j))).collect();
         assert_eq!(Qubo::max_cut(6, &k33).unwrap().brute_force().unwrap().1, -9.0, "K3,3 cuts all nine");
         assert_eq!(Qubo::zeros(30).unwrap().brute_force(), None, "past the enumeration bound");
+        // A tie goes to the LOWEST state index, as the doc says: an all-zero problem ties on every
+        // state and answers state 0. `<=` in the search survived the first mutation sweep.
+        assert_eq!(Qubo::zeros(3).unwrap().brute_force(), Some((0, 0.0)));
     }
 
     /// Before it is an optimiser the sweep is a sampler: at fixed β its state histogram matches

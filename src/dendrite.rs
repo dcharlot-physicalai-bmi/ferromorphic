@@ -500,6 +500,12 @@ mod tests {
         // The prediction is the steady state with the teacher off.
         assert!((s.prediction(v_d) - s.steady_state(v_d, 0.0, 0.0).unwrap()).abs() < 1e-18);
         assert!(matches!(s.steady_state(v_d, -1e-9, 0.0), Err(DendriteError::OutOfRange { what: "g_e", .. })));
+        // With E_E = 0 the excitatory term vanishes from the arithmetic and dropping it survived
+        // the first mutation sweep. At E_E = +10 mV it does not.
+        let shifted = TwoCompartment { e_e: 10e-3, ..TwoCompartment::round_defaults() };
+        let want = (50e-9 * -70e-3 + 50e-9 * v_d + 20e-9 * 10e-3 + 10e-9 * -75e-3) / 130e-9;
+        assert!((shifted.steady_state(v_d, 20e-9, 10e-9).unwrap() - want).abs() < 1e-15);
+        assert!(shifted.steady_state(v_d, 20e-9, 10e-9).unwrap() > s.steady_state(v_d, 20e-9, 10e-9).unwrap());
     }
 
     /// ⭐ The dendrite learns to predict the teacher, and then the teacher can go. Two inputs at
@@ -595,6 +601,13 @@ mod tests {
         }
         let outs = cell.branch_outputs(&[1.0, 0.0]).unwrap();
         assert!(outs[0] > 0.99 && outs[1] < 0.01, "{outs:?}");
+        // A branch output is a SIGMOID, bounded in (0, 1): an exponential also computes XOR here
+        // and survived the first mutation sweep, so the bound is asserted on a strongly driven
+        // branch and the midpoint on a zero-driven one.
+        assert!(outs[0] < 1.0, "a branch saturated past one: {}", outs[0]);
+        let flat = BranchedNeuron::new(vec![vec![1.0]], vec![0.0], 0.05, 0.5).unwrap();
+        assert_eq!(flat.branch_outputs(&[0.0]).unwrap(), vec![0.5]);
+        assert!(flat.branch_outputs(&[100.0]).unwrap()[0] <= 1.0);
         // And the same weights summed into ONE branch — a point neuron — fail on (1, 1) or (0, 0):
         // a single sigmoid of the sum sees 0 for both corners and cannot separate them from the
         // sum 0 of the two mixed corners either.

@@ -1319,6 +1319,10 @@ mod tests {
         assert!(matches!(hrr.check(&[0.0, f64::NAN]), Err(VsaError::NonFinite { index: 1 })));
         let book = Codebook { symbols: vec![vec![1.0, 1.0]], dim: 2 };
         assert!(matches!(book.nearest(&[1.0], &mut meter), Err(VsaError::Dimension { .. })));
+        // A tie goes to the LOWER index, as the doc says; `>=` in the search survived the first
+        // mutation sweep because no codebook held two equal symbols.
+        let twins = Codebook { symbols: vec![vec![1.0, -1.0], vec![1.0, 1.0], vec![1.0, 1.0]], dim: 2 };
+        assert_eq!(twins.nearest(&[1.0, 1.0], &mut meter).unwrap(), (1, 1.0));
         assert!(matches!(book.nearest(&[1.0, f64::INFINITY], &mut meter), Err(VsaError::NonFinite { index: 1 })));
         assert!(!book.is_empty());
         let e = VsaError::Factors { got: 2, want: 3 };

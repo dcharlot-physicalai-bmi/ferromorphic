@@ -1072,7 +1072,12 @@ mod tests {
     fn the_full_weight_matrix_is_the_factorised_product() {
         let mut rng = Rng::new(13);
         let pre = Ensemble::new(&EnsembleSpec::default_for(60, 2, 21)).unwrap();
-        let post = Ensemble::new(&EnsembleSpec::default_for(40, 3, 22)).unwrap();
+        // ⛔ A post-population of radius 2, because at radius 1 the `/ radius` in the weights is
+        // invisible: dropping it survived the first mutation sweep.
+        let mut post_spec = EnsembleSpec::default_for(40, 3, 22);
+        post_spec.radius = 2.0;
+        let post = Ensemble::new(&post_spec).unwrap();
+        assert_eq!(post.radius, 2.0);
         let dec = pre.identity_decoders(300, 0.05, &mut rng).unwrap();
         // T is 3 x 2.
         let t = [1.0, 0.5, -2.0, 0.25, 0.0, 3.0];

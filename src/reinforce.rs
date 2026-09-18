@@ -704,6 +704,24 @@ mod tests {
         assert!(matches!(Actor::new(3, 0, 0.1, 0.5), Err(ReinforceError::Empty { what: "actions" })));
         let a = Actor::new(3, 2, 0.1, 0.5).unwrap();
         assert!(matches!(a.policy(3), Err(ReinforceError::Index { .. })));
+        // The deposited eligibility is the policy gradient of ln π: `1 − π(a)` on the chosen
+        // action and `−π(k)` on the others, which SUMS TO ZERO over the actions. With two actions
+        // at 0.5 each, `π(a)` and `1 − π(a)` are the same number and the wrong one survived the
+        // first mutation sweep; at π = (0.8, 0.2) they are not.
+        let mut skew = Actor::new(1, 2, 0.1, 0.5).unwrap();
+        skew.theta = vec![4.0f64.ln(), 0.0];
+        let p = skew.policy(0).unwrap();
+        assert!((p[0] - 0.8).abs() < 1e-12 && (p[1] - 0.2).abs() < 1e-12);
+        let chosen = skew.act(0, &mut Rng::new(3)).unwrap();
+        assert!((skew.trace.e[chosen] - (1.0 - p[chosen])).abs() < 1e-15, "chosen action's eligibility");
+        assert!((skew.trace.e[0] + skew.trace.e[1]).abs() < 1e-15, "the eligibilities do not sum to zero: {:?}", skew.trace.e);
+        // A terminal successor is worth zero whatever the table holds: the value field is public,
+        // and an update into a terminal state must not read it.
+        let mut c = Critic::new(3, 0.5, 0.9, 0.0).unwrap();
+        c.v[2] = 5.0;
+        let delta = c.update(1, 1.0, 2, true).unwrap();
+        assert_eq!(delta, 1.0, "δ = r + γ·0 − V(1)");
+        assert_eq!(c.v[1], 0.5);
         let mut rng = Rng::new(1);
         let mut c = Critic::new(3, 0.1, 0.9, 0.5).unwrap();
         let mut a = Actor::new(3, 2, 0.1, 0.5).unwrap();
