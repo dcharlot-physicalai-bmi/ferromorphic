@@ -32,7 +32,11 @@
 //! — which is bought back by running the whole model for `T` timesteps and letting the membranes
 //! integrate, so every operation count below is *per timestep* and the model's true bill is `T`
 //! times it. And it costs the thing this module exists to measure: **the parts that did not become
-//! accumulates**. Normalisation is a real multiply per element. The scalar `s` is a real multiply per
+//! accumulates**. Spikformer puts a `BatchNorm` after every linear layer, and the honest reckoning
+//! of it cuts both ways: at inference the **gain folds into the preceding weight matrix for free**,
+//! so it is not a multiply anyone pays, while the **shift becomes a bias that does not fold away**
+//! and costs one add per output element per timestep — charged by [`Linear`] and switched on by
+//! [`Spec::bias`]. The scalar `s` is a real multiply per
 //! element. The membrane update inside every spiking neuron is a multiply, two adds and a comparison
 //! per neuron per timestep. Spikformer's residual shortcut *adds two spike tensors*, which produces
 //! values in `{0, 1, 2}` — no longer binary — so **every projection downstream of the first shortcut
@@ -76,6 +80,15 @@
 //! the second is `0.125`. The gap is not an error in either number. It is the arithmetic that the
 //! first number does not have a slot for — and neither does `NeuroBench`'s [`crate::metrics::SynOps`],
 //! which is why [`Audit::synops`] exists next to [`Audit::split`] and why their totals differ.
+//!
+//! ⚠ **Neither fraction is a property of an architecture on its own.** Both are ratios of
+//! *effective* counts, so both move with how densely the model fires, and on a randomly
+//! initialised model that is set by [`Spec::gain`] — a constant this crate invented and says so.
+//! On the eight-token, sixteen-channel, two-block shape these tests use, with `IAND` shortcuts over
+//! four timesteps, [`Audit::ac_fraction`] runs `0.3962` at a gain of 1, `0.4304` at 4, `0.4579` at
+//! the default 6 and `0.4915` at 12, while [`Audit::synaptic_ac_fraction`] is `1.0` at every one of
+//! them. Any single honest fraction quoted without its gain is a number nobody can reproduce, which
+//! is why the test sweeps it instead of pinning one.
 //!
 //! # Units
 //!
@@ -397,6 +410,10 @@ pub fn is_exact_power_of_two(x: f64) -> bool {
     let bits = x.to_bits();
     let exponent = (bits >> 52) & 0x7ff;
     let mantissa = bits & ((1u64 << 52) - 1);
+    // `mantissa == 0` alone already rejects every subnormal — a subnormal power of two is
+    // `0.mantissa x 2^-1022` and so has exactly one mantissa bit set — and the `x > 0.0` guard
+    // above has already taken the only zero-mantissa subnormal pattern, `+0.0`. The exponent test
+    // is kept as the explicit statement of the documented rule rather than as the deciding clause.
     exponent != 0 && mantissa == 0
 }
 
@@ -544,16 +561,28 @@ impl Audit {
         self.sites.iter().find(|s| s.path == path && s.kind == kind)
     }
 
-    /// Effective operations of one kind.
+    /// Effective operations of one kind, summed over every site carrying it.
+    ///
+    /// **Saturating.** A total past `u64::MAX` is reported as `u64::MAX` rather than wrapped or
+    /// panicked on. [`Audit::charge`] already refuses a single site that overflows, but two sites
+    /// that each fit can still sum past the end, and a plain `sum()` here answered that by
+    /// panicking in a debug build and **wrapping in a release one** — reporting an enormous count
+    /// as a small one, which is the failure [`crate::metrics::MetricError`]'s overflow variant
+    /// exists to prevent. [`Split::total`] still refuses rather than saturates, so a caller who
+    /// needs the distinction has it.
     #[must_use]
     pub fn effective_of(&self, kind: OpKind) -> u64 {
-        self.sites.iter().filter(|s| s.kind == kind).map(|s| s.effective).sum()
+        self.sites
+            .iter()
+            .filter(|s| s.kind == kind)
+            .fold(0u64, |a, s| a.saturating_add(s.effective))
     }
 
-    /// Dense operations of one kind.
+    /// Dense operations of one kind, summed over every site carrying it. Saturating, for the
+    /// reason [`Audit::effective_of`] gives.
     #[must_use]
     pub fn dense_of(&self, kind: OpKind) -> u64 {
-        self.sites.iter().filter(|s| s.kind == kind).map(|s| s.dense).sum()
+        self.sites.iter().filter(|s| s.kind == kind).fold(0u64, |a, s| a.saturating_add(s.dense))
     }
 
     /// The split: what this pass actually did, by primitive.
@@ -579,7 +608,9 @@ impl Audit {
     /// **The honest fraction**: accumulates as a share of *every* operation the pass performed.
     ///
     /// `None` when the pass performed no operations at all, which is a different statement from a
-    /// fraction of zero.
+    /// fraction of zero — **or** when the total does not fit in a `u64`, which [`Split::total`]
+    /// refuses rather than saturating. A caller who needs to tell those apart asks
+    /// [`Audit::effective_total`], and a printed report names which one it hit.
     #[must_use]
     pub fn ac_fraction(&self) -> Option<f64> {
         let total = self.effective_total()?;
@@ -598,7 +629,15 @@ impl Audit {
     /// with it.
     ///
     /// `None` when the pass performed no synaptic operations, so that an all-silent run does not
-    /// report perfect spike-drivenness.
+    /// report perfect spike-drivenness, or when accumulates plus multiply-accumulates does not fit
+    /// in a `u64`.
+    ///
+    /// ⚠ **It is a ratio of effective counts, so it is conditional on the data.** A model that
+    /// contains live multiply-accumulate layers reports `Some(1.0)` on any input that happens to
+    /// leave every one of them silent — a one-block `SpikeAdd` model with a zeroed `MLP` does
+    /// exactly that with `dense_of(OpKind::Mac) == 8`, and this module's tests pin that case. The
+    /// architectural claim "fully spike-driven" is `dense_of(OpKind::Mac) == 0`; this is not it,
+    /// and a report that quotes one without the other is quoting the flattering half.
     #[must_use]
     pub fn synaptic_ac_fraction(&self) -> Option<f64> {
         let ac = self.effective_of(OpKind::Ac);
@@ -613,12 +652,19 @@ impl Audit {
     /// Effective operations that occupy a hardware multiplier: multiply-accumulates plus bare
     /// multiplies. Shifts are excluded and counted on their own.
     ///
+    /// Which kinds those are is [`OpKind::needs_multiplier`] and nothing else — the predicate is
+    /// the single source of truth for "occupies a multiplier", rather than a list repeated here
+    /// that could drift away from it.
+    ///
     /// Saturating rather than wrapping. A workload reaching `u64::MAX` multiplies is not one this
     /// crate can simulate, but a wrapped count would report an enormous number as a small one —
     /// the failure mode [`crate::metrics::MetricError`]'s overflow variant exists to prevent.
     #[must_use]
     pub fn multiplier_ops(&self) -> u64 {
-        self.effective_of(OpKind::Mac).saturating_add(self.effective_of(OpKind::Mul))
+        OpKind::ALL
+            .iter()
+            .filter(|k| k.needs_multiplier())
+            .fold(0u64, |a, k| a.saturating_add(self.effective_of(*k)))
     }
 
     /// This pass expressed in `NeuroBench`'s [`crate::metrics::SynOps`].
@@ -628,10 +674,19 @@ impl Audit {
     /// that [`Audit::split`] counts have nowhere to go. Comparing `synops().effective_total()` with
     /// [`Audit::effective_total`] measures how much of a spiking transformer's arithmetic the
     /// field's own benchmark metric cannot see.
+    ///
+    /// The `dense` denominator is **every synaptic site of the model** — dense accumulates plus
+    /// dense multiply-accumulates, whether or not the data made them fire. Which kinds count as
+    /// synaptic is [`OpKind::is_synaptic`] and nothing else, so the predicate and this sum cannot
+    /// drift apart. Saturating, as [`Audit::dense_of`].
     #[must_use]
     pub fn synops(&self) -> SynOps {
+        let dense = OpKind::ALL
+            .iter()
+            .filter(|k| k.is_synaptic())
+            .fold(0u64, |a, k| a.saturating_add(self.dense_of(*k)));
         SynOps {
-            dense: self.dense_of(OpKind::Ac) + self.dense_of(OpKind::Mac),
+            dense,
             effective_macs: self.effective_of(OpKind::Mac),
             effective_acs: self.effective_of(OpKind::Ac),
         }
@@ -649,13 +704,23 @@ impl fmt::Display for Audit {
             }
             writeln!(f, "  {:<8} dense {dense:>12}  effective {eff:>12}", kind.label())?;
         }
-        match self.synaptic_ac_fraction() {
-            Some(x) => writeln!(f, "  AC share of synaptic operations (as reported): {x:.4}")?,
-            None => writeln!(f, "  AC share of synaptic operations: no synaptic operations")?,
+        // `None` from either fraction means one of two different things, and a report that called
+        // an unrepresentable total "nothing ran" would be the same class of error as a wrapped
+        // count: a large number printed as a small statement.
+        let synaptic = self.effective_of(OpKind::Ac).checked_add(self.effective_of(OpKind::Mac));
+        match (self.synaptic_ac_fraction(), synaptic) {
+            (Some(x), _) => writeln!(f, "  AC share of synaptic operations (as reported): {x:.4}")?,
+            (None, None) => {
+                writeln!(f, "  AC share of synaptic operations: the total does not fit in u64")?;
+            }
+            (None, Some(_)) => {
+                writeln!(f, "  AC share of synaptic operations: no synaptic operations")?;
+            }
         }
-        match self.ac_fraction() {
-            Some(x) => write!(f, "  AC share of ALL operations: {x:.4}"),
-            None => write!(f, "  AC share of ALL operations: nothing ran"),
+        match (self.ac_fraction(), self.effective_total()) {
+            (Some(x), _) => write!(f, "  AC share of ALL operations: {x:.4}"),
+            (None, None) => write!(f, "  AC share of ALL operations: the total does not fit in u64"),
+            (None, Some(_)) => write!(f, "  AC share of ALL operations: nothing ran"),
         }
     }
 }
@@ -762,9 +827,19 @@ impl Tensor {
     ///
     /// # Errors
     ///
-    /// [`AttnError::Empty`] for a zero dimension.
+    /// [`AttnError::Empty`] for a zero dimension; [`AttnError::Overflow`] if `tokens * channels`
+    /// does not fit in a `usize`. The shape is checked **before** the element count is formed, so
+    /// this refuses where an unchecked `tokens * channels` would have panicked in the allocation —
+    /// [`Tensor::new`] has always refused it and these constructors now agree.
     pub fn silent(tokens: usize, channels: usize) -> Result<Self, AttnError> {
-        Self::new(tokens, channels, vec![0.0; tokens.max(1) * channels.max(1)], Domain::Binary)
+        if tokens == 0 {
+            return Err(AttnError::Empty { what: "tokens" });
+        }
+        if channels == 0 {
+            return Err(AttnError::Empty { what: "channels" });
+        }
+        let n = tokens.checked_mul(channels).ok_or(AttnError::Overflow { what: "tensor" })?;
+        Self::new(tokens, channels, vec![0.0; n], Domain::Binary)
     }
 
     /// Positional spike table from the sinusoidal encoding of Vaswani et al., *Attention Is All You
@@ -780,7 +855,9 @@ impl Tensor {
     ///
     /// # Errors
     ///
-    /// [`AttnError::Empty`] for a zero dimension.
+    /// [`AttnError::Empty`] for a zero dimension; [`AttnError::Overflow`] if `tokens * channels`
+    /// does not fit in a `usize`, refused before the capacity is reserved rather than panicking
+    /// in the multiplication.
     pub fn sinusoidal_spikes(tokens: usize, channels: usize) -> Result<Self, AttnError> {
         if tokens == 0 {
             return Err(AttnError::Empty { what: "tokens" });
@@ -788,8 +865,9 @@ impl Tensor {
         if channels == 0 {
             return Err(AttnError::Empty { what: "channels" });
         }
+        let n = tokens.checked_mul(channels).ok_or(AttnError::Overflow { what: "tensor" })?;
         let d = channels as f64;
-        let mut bits = Vec::with_capacity(tokens * channels);
+        let mut bits = Vec::with_capacity(n);
         for pos in 0..tokens {
             for c in 0..channels {
                 let pair = (c / 2) as f64;
@@ -1069,6 +1147,25 @@ impl Linear {
 // The spiking neuron layer
 // ---------------------------------------------------------------------------------------------
 
+/// `base^exp` by repeated squaring, over the full `u32` exponent range that `f64::powi`'s `i32`
+/// cannot carry. `base` is a membrane decay in `[0, 1)` at every call site, so the running product
+/// underflows toward zero and never overflows.
+fn pow_u32(base: f64, exp: u32) -> f64 {
+    let mut acc = 1.0f64;
+    let mut b = base;
+    let mut e = exp;
+    while e > 0 {
+        if e & 1 == 1 {
+            acc *= b;
+        }
+        e >>= 1;
+        if e > 0 {
+            b *= b;
+        }
+    }
+    acc
+}
+
 /// A layer of leaky integrate-and-fire neurons, one per `(token, channel)`, in Spikformer's
 /// discrete dimensionless form.
 ///
@@ -1150,10 +1247,16 @@ impl LifLayer {
     }
 
     /// The closed-form membrane after `steps` silent timesteps starting from `v0`, assuming no
-    /// spike occurred. Used to check [`LifLayer::forward`] against something other than itself.
+    /// spike occurred: `v_reset + (v0 - v_reset) * decay^steps`.
+    ///
+    /// Used to check [`LifLayer::forward`] against something other than itself, so it is exact
+    /// over the **whole** `u32` range. The power is taken by repeated squaring on the `u32`
+    /// itself: `self.decay().powi(steps as i32)` turned every `steps >= 2^31` into a negative
+    /// exponent and returned `inf` — for `tau = 2`, `v_reset = 0`, `v0 = 1` it answered `inf` at
+    /// `steps = 2_147_483_648` and `0.0` one step earlier.
     #[must_use]
     pub fn relaxed(&self, v0: f64, steps: u32) -> f64 {
-        self.v_reset + (v0 - self.v_reset) * self.decay().powi(steps as i32)
+        self.v_reset + (v0 - self.v_reset) * pow_u32(self.decay(), steps)
     }
 
     /// Current membrane potentials, row-major by token.
@@ -1181,6 +1284,15 @@ impl LifLayer {
     /// tangent case `x + v_reset == v_th` is `None` for `tau > 1`, where the membrane approaches
     /// the threshold without touching it, and `Some(1)` for `tau == 1`, where it lands on it
     /// exactly in one step.
+    ///
+    /// ⚠ `None` carries **three** distinct meanings and only `x` itself tells them apart:
+    ///
+    /// 1. `x` is not finite, so there is no trajectory to solve;
+    /// 2. `x <= v_th - v_reset`, the sub-threshold asymptote above;
+    /// 3. the neuron **does** fire, later than `u32::MAX` timesteps. That is reachable: at
+    ///    `tau = 1e10`, `v_th = 0.5`, `v_reset = 0` and `x = 1.0` the closed form gives step
+    ///    `6.93e9`. Reporting it would need a wider integer, and letting the cast saturate would
+    ///    claim a first spike at `u32::MAX` — a step no run reaches, which is worse than `None`.
     ///
     /// ⚠ The prediction is exact for the recurrence as written. Where a membrane lands within a
     /// floating-point ulp of the threshold the iteration's accumulated rounding could in principle
@@ -1470,11 +1582,24 @@ pub fn attend(
 /// two, gives it bit for bit, because scaling by a power of two commutes exactly with rounding.
 /// That removes one real multiply per element per timestep from the bill for free.
 ///
-/// [`Ssa::new`] refuses the fold when either condition fails rather than performing it approximately:
-/// a non-power-of-two `s` would make the two paths differ in the last place, and a non-zero
-/// `v_reset` would break the linearity the argument rests on. This crate did not locate the fold
-/// described in the spiking-transformer literature; it is offered here as an exact rewrite with the
-/// conditions stated, not as a reproduction of anyone's result.
+/// [`Ssa::new`] refuses the fold rather than performing it approximately, and there are **three**
+/// conditions, not two:
+///
+/// 1. `s` is an exact positive normal power of two ([`is_exact_power_of_two`]); a non-power-of-two
+///    `s` would make the two paths differ in the last place.
+/// 2. `v_reset == 0`; a non-zero one breaks the linearity the argument rests on.
+/// 3. Both paths stay in the range where the rewrite is exact. Every operand of the attention
+///    product is binary, so an attended element is at most `tokens · d_head` — the number of
+///    (key, channel) pairs that can contribute a one — and the unfolded path must be able to form
+///    `s · tokens · d_head` finitely, while the folded path must be able to form `v_th / s` as a
+///    normal number. Without this third condition `s = 2^1022` satisfies the first two and the
+///    two paths disagree **completely**: on a 2×2 all-ones input the unfolded path overflows to
+///    infinity and returns [`AttnError::NonFinite`] while the folded path returns a full row of
+///    spikes.
+///
+/// This crate did not locate the fold described in the spiking-transformer literature; it is
+/// offered here as an exact rewrite with the conditions stated, not as a reproduction of anyone's
+/// result.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Ssa {
     tokens: usize,
@@ -1552,6 +1677,24 @@ impl Ssa {
                 return Err(AttnError::UnfoldableScale {
                     scale,
                     why: "v_reset is not zero, so the membrane recurrence is not scale-invariant",
+                });
+            }
+            // The third condition. q, k and v are all neuron outputs and therefore binary, so an
+            // attended element is a count of (key, channel) pairs and cannot exceed
+            // `tokens * d_head`. If the unfolded path cannot even form `s` times that, the two
+            // paths do not agree on this block's own inputs and the fold is not a rewrite.
+            let peak = (tokens as f64) * ((d_model / heads) as f64);
+            if !(peak * scale).is_finite() {
+                return Err(AttnError::UnfoldableScale {
+                    scale,
+                    why: "s times the largest attainable attended element overflows, so the \
+                          unfolded path would return NonFinite where the folded one returns spikes",
+                });
+            }
+            if !(v_th / scale).is_normal() {
+                return Err(AttnError::UnfoldableScale {
+                    scale,
+                    why: "v_th / s is not a normal number, so the folded threshold is not exact",
                 });
             }
         }
@@ -2234,7 +2377,26 @@ pub struct Spec {
     /// How shortcuts combine, which decides whether the model stays multiplier-free.
     pub residual: Residual,
     /// Uniform weight init is `±gain / sqrt(fan_in)`. Not a published initialisation.
+    ///
+    /// ⚠ **It moves the headline.** [`Audit::ac_fraction`] is a function of firing density while
+    /// the per-neuron overhead is fixed, so the fraction rises with the gain; quoting one without
+    /// naming the gain it was measured at is quoting a number nobody can reproduce. This module's
+    /// tests sweep it rather than pin one value.
     pub gain: f64,
+    /// Whether every projection carries the bias a folded `BatchNorm` leaves behind.
+    ///
+    /// Spikformer puts a `BatchNorm` after every linear layer, and folding it at inference cuts
+    /// both ways: the BN **gain folds into the preceding weight matrix for free**, so it is not a
+    /// multiply anyone pays, but the BN **shift becomes a bias that does not fold away** — one
+    /// [`OpKind::Add`] per output element per timestep, paid whether or not anything fired. That
+    /// is `tokens * (5 * d_model + mlp_hidden)` adds per block per timestep: four attention
+    /// projections and the output projection at `d_model` outputs each, plus the `MLP`'s
+    /// `mlp_hidden` and `d_model`.
+    ///
+    /// At initialisation the folded shift is exactly zero (`running_mean = 0`, `gamma = 1`,
+    /// `beta = 0`), so switching this on changes **no spike** — only the bill. Left settable so a
+    /// reader can have the bias-free count back and see the difference it makes.
+    pub bias: bool,
 }
 
 impl Spec {
@@ -2255,7 +2417,13 @@ impl Spec {
             order: Order::ScoresFirst,
             residual: Residual::SpikeAdd,
             gain: 6.0,
+            bias: true,
         }
+    }
+
+    /// The folded-`BatchNorm` shift for one projection: zero at initialisation, or absent.
+    fn bias_for(&self, n_out: usize) -> Option<Vec<f64>> {
+        if self.bias { Some(vec![0.0; n_out]) } else { None }
     }
 
     /// Build a model with weights drawn from `rng`.
@@ -2271,10 +2439,10 @@ impl Spec {
         let mut blocks = Vec::with_capacity(self.depth);
         for _ in 0..self.depth {
             let d = self.d_model;
-            let wq = Linear::new(d, d, draw(self.gain, d, d, rng), None)?;
-            let wk = Linear::new(d, d, draw(self.gain, d, d, rng), None)?;
-            let wv = Linear::new(d, d, draw(self.gain, d, d, rng), None)?;
-            let wo = Linear::new(d, d, draw(self.gain, d, d, rng), None)?;
+            let wq = Linear::new(d, d, draw(self.gain, d, d, rng), self.bias_for(d))?;
+            let wk = Linear::new(d, d, draw(self.gain, d, d, rng), self.bias_for(d))?;
+            let wv = Linear::new(d, d, draw(self.gain, d, d, rng), self.bias_for(d))?;
+            let wo = Linear::new(d, d, draw(self.gain, d, d, rng), self.bias_for(d))?;
             let attn = Ssa::new(
                 self.tokens,
                 self.heads,
@@ -2289,10 +2457,18 @@ impl Spec {
                 self.fold_scale,
                 self.order,
             )?;
-            let fc1 =
-                Linear::new(d, self.mlp_hidden, draw(self.gain, d, self.mlp_hidden, rng), None)?;
-            let fc2 =
-                Linear::new(self.mlp_hidden, d, draw(self.gain, self.mlp_hidden, d, rng), None)?;
+            let fc1 = Linear::new(
+                d,
+                self.mlp_hidden,
+                draw(self.gain, d, self.mlp_hidden, rng),
+                self.bias_for(self.mlp_hidden),
+            )?;
+            let fc2 = Linear::new(
+                self.mlp_hidden,
+                d,
+                draw(self.gain, self.mlp_hidden, d, rng),
+                self.bias_for(d),
+            )?;
             let mlp = SpikingMlp::new(self.tokens, fc1, fc2, self.tau, self.v_th, self.v_reset)?;
             blocks.push(Block::new(attn, mlp, self.residual)?);
         }
@@ -2326,6 +2502,65 @@ mod tests {
     fn random_spikes(tokens: usize, channels: usize, p: f64, rng: &mut Rng) -> Tensor {
         let bits: Vec<bool> = (0..tokens * channels).map(|_| rng.next_f64() < p).collect();
         Tensor::spikes(tokens, channels, &bits).expect("valid spikes")
+    }
+
+    /// The same toy with Spikformer's additive shortcut, so the residual stream leaves
+    /// [`Domain::Binary`] at the first shortcut and the `MLP`'s first layer is a live
+    /// multiply-accumulate — the one shape the audit's `MAC` paths can be read on by hand.
+    fn spikeadd_toy() -> Model {
+        let d = 2;
+        let lin = || Linear::new(d, d, eye(d), None).expect("square identity");
+        let attn = Ssa::new(
+            2,
+            1,
+            lin(),
+            lin(),
+            lin(),
+            lin(),
+            2.0,
+            0.5,
+            0.0,
+            1.0,
+            false,
+            Order::ScoresFirst,
+        )
+        .expect("toy attention");
+        let mlp = SpikingMlp::new(2, lin(), lin(), 2.0, 0.5, 0.0).expect("toy mlp");
+        let block = Block::new(attn, mlp, Residual::SpikeAdd).expect("toy block");
+        Model::new(2, Position::None, vec![block]).expect("toy model")
+    }
+
+    /// The reason text a site of this path and kind must carry, written out as literals so that a
+    /// swap or a rewrite in the source fails here rather than passing a length check.
+    fn expected_reason(path: &str, kind: OpKind) -> &'static str {
+        if path.ends_with(".bias") {
+            return "a bias is added to every output whether or not anything fired";
+        }
+        if path.ends_with(".membrane") {
+            return "membrane update terms: the leak difference and the sum back into v";
+        }
+        if path.ends_with(".leak") {
+            return "the membrane leak factor 1/tau multiplies the whole difference";
+        }
+        if path.ends_with(".threshold") {
+            return "one threshold comparison per neuron per timestep";
+        }
+        if path.ends_with(".scale") {
+            return "the attention scale multiplies every element of the attended output";
+        }
+        match kind {
+            OpKind::Ac => {
+                "the activation operand is binary, so the weight is gated rather than multiplied"
+            }
+            OpKind::Mac => {
+                "neither operand is binary: the activation is multi-valued and needs a multiplier"
+            }
+            OpKind::Add => "a shortcut adds two tensors elementwise, widening the domain",
+            OpKind::Logic => "a shortcut combines two binary tensors with one gate per element",
+            OpKind::Mul | OpKind::Shift | OpKind::Compare => {
+                panic!("{path} carries a bare {kind} with no reason of its own")
+            }
+        }
     }
 
     /// The hand-counted toy: 2 tokens, 2 channels, 1 head, 1 block, identity weights everywhere,
@@ -2870,8 +3105,14 @@ mod tests {
         assert_eq!(Domain::Integer(3).sum(Domain::Integer(4)), Domain::Integer(7));
         assert_eq!(Domain::Real.sum(Domain::Binary), Domain::Real);
         // Saturating, because a wrapped bound would turn a wide operand back into a narrow one.
+        // Both arms saturate: two already-wide integer streams meet at a second `SpikeAdd`
+        // shortcut, which is precisely the case the saturation comment warns about.
         assert_eq!(Domain::Integer(u32::MAX).sum(Domain::Binary), Domain::Integer(u32::MAX));
+        assert_eq!(Domain::Integer(u32::MAX).sum(Domain::Integer(2)), Domain::Integer(u32::MAX));
+        assert_eq!(Domain::Integer(u32::MAX - 1).sum(Domain::Integer(3)), Domain::Integer(u32::MAX));
         assert_eq!(Domain::Binary.bound(), Some(1));
+        assert_eq!(Domain::Integer(5).bound(), Some(5), "the bound is the one it carries");
+        assert_eq!(Domain::Integer(u32::MAX).bound(), Some(u32::MAX));
         assert_eq!(Domain::Real.bound(), None);
     }
 
@@ -2908,6 +3149,11 @@ mod tests {
         let reported = audit.synaptic_ac_fraction().unwrap();
         let honest = audit.ac_fraction().unwrap();
         assert_eq!(reported, 1.0, "this model really is fully spike-driven at its synapses");
+        // …and that is an architectural fact about THIS model, not an accident of this input. The
+        // line above passes just as well on a model whose multiply-accumulate layers merely stayed
+        // silent, which is a different claim; `a_reported_fraction_of_one_is_not_a_multiplier_free_architecture`
+        // is that case.
+        assert_eq!(audit.dense_of(OpKind::Mac), 0, "a dense MAC site exists in this model");
         assert!(honest < reported, "the two fractions agreed, which cannot happen here");
         assert!(honest > 0.0);
         // The report a user pastes must carry both numbers, not the flattering one alone.
@@ -3059,7 +3305,16 @@ mod tests {
         assert!(!audit.sites().is_empty());
         for s in audit.sites() {
             assert!(s.effective <= s.dense, "{} {} {}/{}", s.path, s.kind, s.effective, s.dense);
-            assert!(s.because.len() > 20, "{} has no reason", s.path);
+            // Not `len() > 20`. `because` is a content field — it names WHICH operand decided the
+            // kind — and a length check passes for any string of any meaning, including the
+            // opposite one.
+            assert_eq!(
+                s.because,
+                expected_reason(&s.path, s.kind),
+                "{} ({}) carries the wrong reason",
+                s.path,
+                s.kind
+            );
         }
         let spikes: u64 = outs.iter().map(Tensor::nonzero).sum();
         assert!(spikes > 0, "a silent run would satisfy the invariant trivially");
@@ -3354,5 +3609,785 @@ mod tests {
         assert!(a.site("position", OpKind::Logic).is_none());
         assert_eq!(b.site("position", OpKind::Logic).unwrap().effective, 32);
         assert_ne!(y1.values(), y2.values(), "the positional encoder changed nothing");
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // The parts an earlier test suite could not see fail.
+    // ---------------------------------------------------------------------------------------
+
+    /// ⭐ The wavelength schedule of Vaswani et al., which is the only thing that citation is for.
+    ///
+    /// `sinusoidal_spikes(_, 2)` cannot see it: at two channels `pair = c / 2` is zero for both, so
+    /// the factor collapses to `10000^0 = 1` and every sign is `sin(pos)` or `cos(pos)`. The
+    /// positions below are read off the **paper's** closed form — pair `i` of `d` channels has
+    /// wavelength `2π · 10000^(2i/d)` — and written here as literals.
+    ///
+    /// At `d = 4`, pair 0 is `sin(pos)`, first negative at `pos = 4` (`π = 3.1416`), its cosine at
+    /// `pos = 2` (`π/2 = 1.5708`). Pair 1 is `10000^(2/4) = 100`, so `sin(pos/100)` first goes
+    /// negative at `⌈100π⌉ = 315` and `cos(pos/100)` at `⌈100 · π/2⌉ = 158`.
+    ///
+    /// At `d = 8` the four pairs are `1`, `10000^(2/8) = 10`, `10000^(4/8) = 100` and
+    /// `10000^(6/8) = 1000`, so their sine channels first go negative at 4, 32, 315 and 3142.
+    #[test]
+    fn the_sinusoidal_table_follows_vaswanis_wavelength_schedule() {
+        fn first_silent(t: &Tensor, c: usize) -> Option<usize> {
+            (0..t.tokens()).find(|p| t.at(*p, c) == Some(0.0))
+        }
+
+        let four = Tensor::sinusoidal_spikes(400, 4).unwrap();
+        assert_eq!(first_silent(&four, 0), Some(4), "sin(pos) crosses zero at pi");
+        assert_eq!(first_silent(&four, 1), Some(2), "cos(pos) crosses zero at pi/2");
+        assert_eq!(first_silent(&four, 2), Some(315), "sin(pos/100): 100 pi = 314.159");
+        assert_eq!(first_silent(&four, 3), Some(158), "cos(pos/100): 100 pi/2 = 157.08");
+
+        let eight = Tensor::sinusoidal_spikes(4000, 8).unwrap();
+        assert_eq!(first_silent(&eight, 0), Some(4), "10000^0 = 1");
+        assert_eq!(first_silent(&eight, 2), Some(32), "10000^(2/8) = 10, so ceil(10 pi)");
+        assert_eq!(first_silent(&eight, 4), Some(315), "10000^(4/8) = 100");
+        assert_eq!(first_silent(&eight, 6), Some(3142), "10000^(6/8) = 1000");
+
+        // Row 0 is still all ones, and the schedule is what lets two far-apart positions differ.
+        assert_eq!(eight.row(0).unwrap(), &[1.0; 8]);
+        assert_ne!(eight.row(0).unwrap(), eight.row(1000).unwrap());
+    }
+
+    /// ⭐ `Site::because` explains every row of a report, and a length check is not a content
+    /// check: swapping the accumulate and multiply-accumulate explanations left every other
+    /// assertion in this module passing while every site reported the opposite of the truth.
+    #[test]
+    fn every_site_says_which_operand_decided_its_kind() {
+        let x = Tensor::spikes(2, 2, &[true, false, false, true]).unwrap();
+
+        let mut m = toy();
+        let mut a = Audit::new();
+        m.forward(&x, &mut a).unwrap();
+        let ac = a.site("block0.attn.q_proj", OpKind::Ac).unwrap();
+        assert_eq!(
+            ac.because,
+            "the activation operand is binary, so the weight is gated rather than multiplied"
+        );
+        assert_eq!(
+            a.site("block0.attn.q_neuron.membrane", OpKind::Add).unwrap().because,
+            "membrane update terms: the leak difference and the sum back into v"
+        );
+        assert_eq!(
+            a.site("block0.attn.q_neuron.leak", OpKind::Shift).unwrap().because,
+            "the membrane leak factor 1/tau multiplies the whole difference"
+        );
+        assert_eq!(
+            a.site("block0.attn.q_neuron.threshold", OpKind::Compare).unwrap().because,
+            "one threshold comparison per neuron per timestep"
+        );
+
+        let mut widened = spikeadd_toy();
+        let mut b = Audit::new();
+        widened.forward(&x, &mut b).unwrap();
+        let mac = b.site("block0.mlp.fc1", OpKind::Mac).unwrap();
+        assert_eq!(
+            mac.because,
+            "neither operand is binary: the activation is multi-valued and needs a multiplier"
+        );
+        assert_eq!(
+            b.site("block0.shortcut1", OpKind::Add).unwrap().because,
+            "a shortcut adds two tensors elementwise, widening the domain"
+        );
+        // The two explanations are opposites, so they cannot be interchangeable.
+        assert_ne!(ac.because, mac.because);
+        assert!(ac.because.contains("is binary"), "{}", ac.because);
+        assert!(mac.because.contains("neither operand is binary"), "{}", mac.because);
+    }
+
+    /// ⭐ The rule that is "the whole audit", exercised at **both** attention products with a
+    /// non-binary operand — which no test did, so either site could name the wrong operand and
+    /// report a multiplier-free datapath for a product that needs a multiplier.
+    ///
+    /// `attend` is public and takes [`Tensor::real`], so this is reachable from the public API.
+    #[test]
+    fn each_attention_product_follows_the_operand_that_decides_it() {
+        let qb = Tensor::spikes(2, 2, &[true, false, false, true]).unwrap();
+        let kb = Tensor::spikes(2, 2, &[true, false, false, true]).unwrap();
+        let vb = Tensor::spikes(2, 2, &[true, true, false, true]).unwrap();
+        let qr = Tensor::real(2, 2, vec![1.5, 0.0, 0.0, 2.5]).unwrap();
+        let kr = Tensor::real(2, 2, vec![1.5, 0.0, 0.0, 2.5]).unwrap();
+        let vr = Tensor::real(2, 2, vec![0.5, 1.5, 0.0, 2.0]).unwrap();
+
+        let kind = |q: &Tensor, k: &Tensor, v: &Tensor, o: Order, path: &str| {
+            let mut a = Audit::new();
+            attend(q, k, v, o, "t", &mut a).unwrap();
+            let s = a.sites().iter().find(|s| s.path == path).expect("the site is charged");
+            assert_eq!(s.because, expected_reason(path, s.kind), "{path}");
+            s.kind
+        };
+
+        // S = Q Kᵀ is an integer matrix, so `S · V` is decided by V and by nothing else.
+        assert_eq!(
+            kind(&qb, &kb, &vr, Order::ScoresFirst, "t.attend"),
+            OpKind::Mac,
+            "a real V at S·V still needs a multiplier"
+        );
+        assert_eq!(
+            kind(&qr, &kb, &vb, Order::ScoresFirst, "t.attend"),
+            OpKind::Ac,
+            "a real Q does not reach S·V"
+        );
+        assert_eq!(
+            kind(&qr, &kb, &vb, Order::ScoresFirst, "t.scores"),
+            OpKind::Ac,
+            "one binary operand is enough to remove the multiplier from Q·Kᵀ"
+        );
+        assert_eq!(kind(&qr, &kr, &vb, Order::ScoresFirst, "t.scores"), OpKind::Mac);
+
+        // `Q (Kᵀ V)` is decided by Q; the gram by K and V.
+        assert_eq!(
+            kind(&qr, &kb, &vb, Order::ValuesFirst, "t.attend"),
+            OpKind::Mac,
+            "a real Q at Q·(KᵀV) needs a multiplier"
+        );
+        assert_eq!(
+            kind(&qb, &kr, &vb, Order::ValuesFirst, "t.attend"),
+            OpKind::Ac,
+            "a real K does not reach Q·(KᵀV)"
+        );
+        assert_eq!(
+            kind(&qb, &kr, &vb, Order::ValuesFirst, "t.gram"),
+            OpKind::Ac,
+            "a binary V is enough at Kᵀ V"
+        );
+        assert_eq!(kind(&qb, &kr, &vr, Order::ValuesFirst, "t.gram"), OpKind::Mac);
+    }
+
+    /// The conditional positional encoder sits in front of a **caller-supplied** tensor, which may
+    /// already have been widened. The convolution's kind has to follow that input rather than the
+    /// binary case it happens to be exercised on everywhere else.
+    #[test]
+    fn a_depthwise_convolution_follows_its_input_domain() {
+        let conv = DepthwiseConv1d::centre_tap(2, 3).unwrap();
+        let bin = Tensor::spikes(2, 2, &[true, false, true, true]).unwrap();
+        let wide = Tensor::new(2, 2, vec![2.0, 0.0, 1.0, 2.0], Domain::Integer(2)).unwrap();
+
+        let mut a = Audit::new();
+        conv.forward(&bin, "c", &mut a).unwrap();
+        assert_eq!(a.site("c", OpKind::Ac).unwrap().dense, 2 * 2 * 3);
+        assert!(a.site("c", OpKind::Mac).is_none(), "a binary input needs no multiplier");
+
+        let mut b = Audit::new();
+        let y = conv.forward(&wide, "c", &mut b).unwrap();
+        assert_eq!(y.values(), wide.values(), "the centre tap is still the identity");
+        assert_eq!(
+            b.site("c", OpKind::Mac).unwrap().dense,
+            2 * 2 * 3,
+            "a widened input needs a multiplier and the conv reported an accumulate"
+        );
+        assert!(b.site("c", OpKind::Ac).is_none());
+
+        // And through the encoder, which is where a caller actually meets it.
+        let mut p = Position::Conditional(
+            DepthwiseConv1d::centre_tap(2, 3).unwrap(),
+            LifLayer::new(2, 2, 2.0, 0.4, 0.0).unwrap(),
+        );
+        let mut c = Audit::new();
+        p.apply(&wide, "position", &mut c).unwrap();
+        assert!(c.site("position.conv", OpKind::Mac).is_some(), "the encoder hid the multiplier");
+    }
+
+    /// ⭐ `Audit::synops().dense` is the denominator of every `NeuroBench` sparsity figure this
+    /// module can produce, and it was only ever read on a model with no multiply-accumulates at
+    /// all — the one shape where dropping its `MAC` term is invisible.
+    #[test]
+    fn the_synops_denominator_counts_dense_multiply_accumulates_too() {
+        let mut a = Audit::new();
+        a.charge("p", OpKind::Ac, "test reason, long enough", 10, 4).unwrap();
+        a.charge("q", OpKind::Mac, "test reason, long enough", 7, 3).unwrap();
+        a.charge("r", OpKind::Mul, "test reason, long enough", 100, 100).unwrap();
+        let s = a.synops();
+        assert_eq!(s.dense, 17, "10 dense accumulates plus 7 dense multiply-accumulates");
+        assert_eq!(s.effective_acs, 4);
+        assert_eq!(s.effective_macs, 3);
+        assert_eq!(s.effective_total(), Some(7), "the 100 multiplies have no slot in SynOps");
+
+        // And on a model, hand-counted. The SpikeAdd toy widens its stream at the first shortcut,
+        // so `mlp.fc1` is 2 tokens × 2 in × 2 out = 8 dense MACs, while the other seven product
+        // sites (q/k/v/out projections, Q Kᵀ, S V, fc2) are 8 dense ACs each: 56 + 8 = 64.
+        let mut m = spikeadd_toy();
+        let x = Tensor::spikes(2, 2, &[true, false, false, true]).unwrap();
+        let mut b = Audit::new();
+        m.forward(&x, &mut b).unwrap();
+        assert_eq!(b.dense_of(OpKind::Ac), 56, "seven accumulate sites of 8");
+        assert_eq!(b.dense_of(OpKind::Mac), 8, "the MLP's first layer after the widening");
+        assert_eq!(b.synops().dense, 64, "the metric's denominator dropped the MAC layer");
+    }
+
+    /// ⭐ `synaptic_ac_fraction` is a ratio of **effective** counts, so `Some(1.0)` is a statement
+    /// about one input, not about an architecture. This model contains a live multiply-accumulate
+    /// layer, fires on two outputs, and reports itself perfectly spike-driven with zero multiplier
+    /// operations. The architectural claim is `dense_of(Mac) == 0`, and it is false here.
+    #[test]
+    fn a_reported_fraction_of_one_is_not_a_multiplier_free_architecture() {
+        let d = 2;
+        let lin = || Linear::new(d, d, eye(d), None).unwrap();
+        let zero = || Linear::new(d, d, vec![0.0; d * d], None).unwrap();
+        let attn = Ssa::new(
+            2,
+            1,
+            lin(),
+            lin(),
+            lin(),
+            lin(),
+            2.0,
+            0.5,
+            0.0,
+            1.0,
+            false,
+            Order::ScoresFirst,
+        )
+        .unwrap();
+        let mlp = SpikingMlp::new(2, zero(), zero(), 2.0, 0.5, 0.0).unwrap();
+        let block = Block::new(attn, mlp, Residual::SpikeAdd).unwrap();
+        let mut m = Model::new(2, Position::None, vec![block]).unwrap();
+
+        let x = Tensor::spikes(2, 2, &[true, false, false, true]).unwrap();
+        let mut a = Audit::new();
+        let y = m.forward(&x, &mut a).unwrap();
+        assert_eq!(y.nonzero(), 2, "a silent run would make every fraction below meaningless");
+
+        assert_eq!(a.dense_of(OpKind::Mac), 8, "the MLP's first layer IS a multiply-accumulate");
+        assert_eq!(a.effective_of(OpKind::Mac), 0, "its weights are zero, so none of them fired");
+        assert_eq!(a.synaptic_ac_fraction(), Some(1.0), "and the reported fraction says perfect");
+        assert_eq!(a.multiplier_ops(), 0, "so does the multiplier count");
+        // The `IAND` model in `an_iand_shortcut_keeps_the_whole_model_multiplier_free` is the
+        // architectural claim; this one is what the same reported number looks like without it.
+    }
+
+    /// ⭐ Two sites that each fit in a `u64` can still sum past the end of one. `Audit::charge`
+    /// refuses the per-site overflow, but the aggregates answered it by panicking in a debug build
+    /// and **wrapping in a release one**: `dense_of` returned 18446744073709551614 for two sites of
+    /// `u64::MAX`, and `Display` reaches it, so printing a report was enough to trigger it.
+    #[test]
+    fn aggregate_counts_saturate_instead_of_wrapping() {
+        let mut a = Audit::new();
+        a.charge("one", OpKind::Ac, "test reason, long enough", u64::MAX, u64::MAX).unwrap();
+        a.charge("two", OpKind::Ac, "test reason, long enough", u64::MAX, u64::MAX).unwrap();
+        assert_eq!(a.dense_of(OpKind::Ac), u64::MAX, "the dense aggregate wrapped");
+        assert_eq!(a.effective_of(OpKind::Ac), u64::MAX, "the effective aggregate wrapped");
+        assert_eq!(a.synops().dense, u64::MAX, "the NeuroBench denominator wrapped");
+        assert_eq!(a.split().accumulates, u64::MAX);
+
+        // `Split::total` still REFUSES rather than saturating, so the two remain distinguishable.
+        a.charge("three", OpKind::Compare, "test reason, long enough", 1, 1).unwrap();
+        assert_eq!(a.effective_total(), None, "the grand total must refuse, not saturate");
+        assert_eq!(a.ac_fraction(), None, "a fraction of an unrepresentable total is not a number");
+
+        // And a report prints, rather than panicking or calling an enormous count "nothing ran".
+        let text = a.to_string();
+        assert!(text.contains("18446744073709551615"), "{text}");
+        assert!(text.contains("AC share of ALL operations: the total does not fit in u64"), "{text}");
+
+        // The synaptic total refuses from its own side.
+        let mut b = Audit::new();
+        b.charge("ac", OpKind::Ac, "test reason, long enough", u64::MAX, u64::MAX).unwrap();
+        b.charge("mac", OpKind::Mac, "test reason, long enough", 1, 1).unwrap();
+        assert_eq!(b.synaptic_ac_fraction(), None);
+        assert!(
+            b.to_string().contains("AC share of synaptic operations: the total does not fit in u64"),
+            "{b}"
+        );
+
+        // multiplier_ops has always documented saturation; it still saturates.
+        let mut c = Audit::new();
+        c.charge("m1", OpKind::Mac, "test reason, long enough", u64::MAX, u64::MAX).unwrap();
+        c.charge("m2", OpKind::Mul, "test reason, long enough", u64::MAX, u64::MAX).unwrap();
+        assert_eq!(c.multiplier_ops(), u64::MAX);
+    }
+
+    /// ⭐ The closed form the whole neuron section is checked against, over the **whole** `u32`
+    /// range and with a reset potential that is not zero.
+    ///
+    /// `powi(steps as i32)` turned every `steps >= 2^31` into a negative exponent: at `tau = 2`,
+    /// `v_reset = 0`, `v0 = 1` it answered `inf` at `2_147_483_648` and `0.0` one step earlier.
+    /// And with `v_reset = 0`, the only value the rest of the module uses, the `(v0 - v_reset)`
+    /// offset vanishes identically, so the offset was never checked at all.
+    #[test]
+    fn the_closed_form_membrane_is_exact_over_the_whole_step_range() {
+        let n = LifLayer::new(1, 1, 2.0, 1.0, 0.0).unwrap();
+        assert_eq!(n.relaxed(1.0, 0), 1.0, "no steps is no decay");
+        assert_eq!(n.relaxed(1.0, 1), 0.5);
+        assert_eq!(n.relaxed(1.0, 10), 1.0 / 1024.0, "2^-10, as a literal");
+        assert_eq!(n.relaxed(1.0, 2_147_483_647), 0.0);
+        assert_eq!(n.relaxed(1.0, 2_147_483_648), 0.0, "a negative exponent returned inf here");
+        assert_eq!(n.relaxed(1.0, u32::MAX), 0.0);
+
+        // The reset offset, with a reset potential the rest of the module never uses. tau = 2 gives
+        // a decay of 1/2, so -0.25 + (0.75 + 0.25) * 0.25 = 0.0 exactly, while dropping the offset
+        // would give -0.25 + 0.75 * 0.25 = -0.0625.
+        let o = LifLayer::new(1, 1, 2.0, 1.0, -0.25).unwrap();
+        assert_eq!(o.relaxed(0.75, 2), 0.0, "the (v0 - v_reset) offset was dropped");
+        assert_eq!(o.relaxed(0.75, 0), 0.75);
+        assert_eq!(o.relaxed(1.75, 1), 0.75, "-0.25 + 2.0 * 0.5");
+        assert_eq!(o.relaxed(-0.25, 5), -0.25, "starting at rest stays at rest");
+        assert_eq!(o.relaxed(0.75, u32::MAX), -0.25, "it relaxes TO v_reset, not to zero");
+
+        // And the closed form still tracks the simulation it exists to check, offset live.
+        let mut sim = LifLayer::new(1, 1, 4.0, 10.0, -0.25).unwrap();
+        let mut audit = Audit::new();
+        sim.forward(&Tensor::real(1, 1, vec![2.0]).unwrap(), "n", &mut audit).unwrap();
+        let v0 = sim.membranes()[0];
+        assert!((v0 - 0.25).abs() < 1e-15, "-0.25 + 0.25 * 2.0 = 0.25, got {v0}");
+        let silent = Tensor::real(1, 1, vec![0.0]).unwrap();
+        for step in 1..=5u32 {
+            sim.forward(&silent, "n", &mut audit).unwrap();
+            let (got, want) = (sim.membranes()[0], sim.relaxed(v0, step));
+            assert!((got - want).abs() < 1e-14, "step {step}: {got} vs closed form {want}");
+        }
+        assert!(sim.membranes()[0] < v0, "the membrane did not move; the comparison is vacuous");
+        assert!(sim.membranes()[0] > -0.25, "it decayed past the reset it converges to");
+    }
+
+    /// ⭐ The scale fold's two stated conditions did not imply the exactness the doc claimed.
+    /// `s = 2^1022` is an exact normal power of two and `v_reset` is zero — both hold — and the two
+    /// paths disagree completely: on a 2×2 all-ones input the unfolded path overflows to infinity
+    /// and refuses, while the folded path returns a full row of spikes.
+    #[test]
+    fn the_fold_is_refused_where_the_two_paths_would_not_agree() {
+        let d = 2;
+        let lin = || Linear::new(d, d, eye(d), None).unwrap();
+        let mk = |scale: f64, v_th: f64, fold: bool| {
+            Ssa::new(
+                2,
+                1,
+                lin(),
+                lin(),
+                lin(),
+                lin(),
+                2.0,
+                v_th,
+                0.0,
+                scale,
+                fold,
+                Order::ScoresFirst,
+            )
+        };
+        let huge = 2f64.powi(1022);
+        assert!(is_exact_power_of_two(huge), "condition 1 holds, so condition 3 is what refuses");
+        let e = mk(huge, 0.5, true).unwrap_err();
+        assert!(matches!(e, AttnError::UnfoldableScale { .. }), "{e}");
+        assert!(format!("{e}").contains("overflows"), "{e}");
+
+        // The unfolded path at that scale really does refuse — that IS the disagreement.
+        let ones = Tensor::spikes(2, 2, &[true; 4]).unwrap();
+        let mut plain = mk(huge, 0.5, false).unwrap();
+        assert!(
+            matches!(
+                plain.forward(&ones, "s", &mut Audit::new()),
+                Err(AttnError::NonFinite { .. })
+            ),
+            "the unfolded path no longer overflows, so this test has stopped testing anything"
+        );
+
+        // A folded threshold that is not a normal number is refused from the other end.
+        let e = mk(2f64.powi(-1022), 2f64.powi(40), true).unwrap_err();
+        assert!(format!("{e}").contains("v_th / s"), "{e}");
+
+        // Just inside the bound the fold is still allowed AND still bit-exact: every operand is
+        // binary, so an attended element is at most tokens · d_head = 4, and 4 · 2^1020 = 2^1022.
+        let big = 2f64.powi(1020);
+        let mut unfolded = mk(big, 0.5, false).unwrap();
+        let mut folded = mk(big, 0.5, true).unwrap();
+        let a = unfolded.forward(&ones, "s", &mut Audit::new()).unwrap();
+        let b = folded.forward(&ones, "s", &mut Audit::new()).unwrap();
+        assert_eq!(a.values(), b.values(), "the two paths disagreed inside the accepted range");
+        assert!(a.nonzero() > 0, "both were silent, so the comparison proves nothing");
+        // And the paper's own scale is nowhere near the edge.
+        assert!(mk(0.125, 1.0, true).is_ok(), "Spikformer's s must still fold");
+    }
+
+    /// ⭐ Spikformer puts a `BatchNorm` after every linear layer. At inference the gain folds into
+    /// the preceding weights for free; the **shift** becomes a bias that does not fold away, and
+    /// `Spec::build` passed `None` for all six projections per block, charging none of them.
+    ///
+    /// The count is hand-derived: `tokens · (4 · d_model + d_model + mlp_hidden)` per block per
+    /// timestep — four attention projections and the output projection at `d_model` outputs each,
+    /// the `MLP`'s two layers at `mlp_hidden` and `d_model`. At 8 tokens, `d_model = 16`,
+    /// `mlp_hidden = 64`, 2 blocks and 4 timesteps: `8 · 144 · 2 · 4 = 9216`.
+    #[test]
+    fn the_folded_batchnorm_shift_is_charged_and_changes_no_spike() {
+        let spec = Spec { residual: Residual::SewIand, ..Spec::spikformer_like(8, 16, 4, 2) };
+        assert!(spec.bias, "Spikformer normalises after every projection");
+        let bare = Spec { bias: false, ..spec };
+
+        let mut rng = Rng::new(22);
+        let inputs: Vec<Tensor> = (0..4).map(|_| random_spikes(8, 16, 0.3, &mut rng)).collect();
+        let mut with_bias = spec.build(&mut Rng::new(21), Position::None).unwrap();
+        let mut without = bare.build(&mut Rng::new(21), Position::None).unwrap();
+        let (o1, a1) = with_bias.run(&inputs).unwrap();
+        let (o2, a2) = without.run(&inputs).unwrap();
+
+        let bias_adds: u64 =
+            a1.sites().iter().filter(|s| s.path.ends_with(".bias")).map(|s| s.effective).sum();
+        assert_eq!(bias_adds, 9216, "the folded BatchNorm shift, hand-counted");
+        assert_eq!(
+            a2.sites().iter().filter(|s| s.path.ends_with(".bias")).count(),
+            0,
+            "the bias-free spec charged one anyway"
+        );
+        assert_eq!(a1.effective_of(OpKind::Add) - a2.effective_of(OpKind::Add), 9216);
+
+        // The shift is exactly zero at initialisation, so it moves no spike — only the bill.
+        let spikes: u64 = o1.iter().map(Tensor::nonzero).sum();
+        assert!(spikes > 0, "a silent run would make the comparison vacuous");
+        for (a, b) in o1.iter().zip(&o2) {
+            assert_eq!(a.values(), b.values(), "the folded shift moved a spike");
+        }
+
+        // And it is not a rounding-level change to the headline.
+        let (honest, bare_honest) = (a1.ac_fraction().unwrap(), a2.ac_fraction().unwrap());
+        assert!((bare_honest - 0.5063).abs() < 5e-5, "without the shift: {bare_honest}");
+        assert!((honest - 0.4579).abs() < 5e-5, "with the shift: {honest}");
+        assert!(honest < bare_honest, "the omitted adds were flattering the fraction");
+    }
+
+    /// ⭐ The honest fraction is not a property of the architecture: it moves nearly ten points
+    /// with a constant this crate invented and says so. `Spec::gain` sets the firing density while
+    /// the per-neuron overhead is fixed, so the fraction rises with it — which is why it is swept
+    /// here rather than pinned once and quoted as *the* number.
+    #[test]
+    fn the_honest_fraction_moves_with_the_initialisation_gain() {
+        let mut rng = Rng::new(22);
+        let inputs: Vec<Tensor> = (0..4).map(|_| random_spikes(8, 16, 0.3, &mut rng)).collect();
+        // Measured on this exact shape and these exact seeds, with the folded shift charged.
+        // 2.449 is the Kaiming-uniform bound sqrt(6), which the default 6.0 resembles and is not.
+        let sweep = [(1.0, 0.3962), (2.449, 0.4045), (4.0, 0.4304), (6.0, 0.4579), (12.0, 0.4915)];
+        let mut seen = Vec::new();
+        for (gain, want) in sweep {
+            let spec =
+                Spec { gain, residual: Residual::SewIand, ..Spec::spikformer_like(8, 16, 4, 2) };
+            let mut m = spec.build(&mut Rng::new(21), Position::None).unwrap();
+            let (outs, audit) = m.run(&inputs).unwrap();
+            let spikes: u64 = outs.iter().map(Tensor::nonzero).sum();
+            assert!(spikes > 0, "gain {gain} was silent, so its fraction means nothing");
+            let got = audit.ac_fraction().unwrap();
+            assert!((got - want).abs() < 5e-5, "gain {gain}: {got}, expected {want}");
+            // The REPORTED fraction is 1.0 at every gain, so it says nothing about any of this.
+            assert_eq!(audit.synaptic_ac_fraction(), Some(1.0), "gain {gain}");
+            seen.push(got);
+        }
+        assert!(seen[4] - seen[0] > 0.09, "the sweep collapsed: {seen:?}");
+        assert!(seen.windows(2).all(|w| w[0] < w[1]), "density did not rise with gain: {seen:?}");
+    }
+
+    /// `Tensor::new` has always refused a shape whose element count does not fit in a `usize`. Two
+    /// of its siblings formed that product first and panicked in the multiplication instead.
+    #[test]
+    fn a_tensor_shape_that_cannot_fit_is_refused_rather_than_panicking() {
+        assert!(matches!(
+            Tensor::new(usize::MAX, 2, vec![], Domain::Binary),
+            Err(AttnError::Overflow { what: "tensor" })
+        ));
+        assert!(matches!(
+            Tensor::silent(usize::MAX, 2),
+            Err(AttnError::Overflow { what: "tensor" })
+        ));
+        assert!(matches!(
+            Tensor::sinusoidal_spikes(usize::MAX, 2),
+            Err(AttnError::Overflow { what: "tensor" })
+        ));
+        // A zero dimension is still refused first, and as Empty rather than Overflow.
+        assert!(matches!(Tensor::silent(0, 2), Err(AttnError::Empty { what: "tokens" })));
+        assert!(matches!(Tensor::silent(2, 0), Err(AttnError::Empty { what: "channels" })));
+        assert!(matches!(Tensor::sinusoidal_spikes(0, 2), Err(AttnError::Empty { what: "tokens" })));
+        assert!(matches!(
+            Tensor::sinusoidal_spikes(2, 0),
+            Err(AttnError::Empty { what: "channels" })
+        ));
+        // And the ordinary shapes still work.
+        assert_eq!(Tensor::silent(3, 4).unwrap().values().len(), 12);
+    }
+
+    /// Three documented construction-time refusals that nothing could make fire. Each could be
+    /// deleted and the module stayed green, which turns a named refusal into a shape error several
+    /// frames deeper — or into nothing at all.
+    #[test]
+    fn the_construction_time_refusals_can_all_be_made_to_fire() {
+        let sq = || Linear::new(2, 2, eye(2), None).unwrap();
+        let mk_attn = || {
+            Ssa::new(
+                2,
+                1,
+                sq(),
+                sq(),
+                sq(),
+                sq(),
+                2.0,
+                1.0,
+                0.0,
+                1.0,
+                false,
+                Order::ScoresFirst,
+            )
+            .unwrap()
+        };
+
+        // Ssa: every projection must be d_model × d_model.
+        let tall = Linear::new(3, 2, vec![0.0; 6], None).unwrap();
+        let e = Ssa::new(
+            2,
+            1,
+            sq(),
+            tall,
+            sq(),
+            sq(),
+            2.0,
+            1.0,
+            0.0,
+            1.0,
+            false,
+            Order::ScoresFirst,
+        )
+        .unwrap_err();
+        assert!(
+            matches!(e, AttnError::BadShape { what: "attention projection", got: 6, want: 4 }),
+            "{e}"
+        );
+
+        // The accessors a caller reads these shapes back through.
+        let good = mk_attn();
+        assert_eq!(good.d_model(), 2);
+        assert_eq!(good.heads(), 1);
+        assert_eq!(good.tokens(), 2);
+        assert!(!good.folds_scale(), "this block was built without the fold");
+
+        // Block: the MLP must come back at the attention's width, or the shortcut cannot line up.
+        let wide_mlp = SpikingMlp::new(
+            2,
+            Linear::new(2, 2, eye(2), None).unwrap(),
+            Linear::new(2, 3, vec![0.0; 6], None).unwrap(),
+            2.0,
+            1.0,
+            0.0,
+        )
+        .unwrap();
+        assert_eq!(wide_mlp.n_out(), 3, "the MLP really is three channels wide");
+        let e = Block::new(mk_attn(), wide_mlp, Residual::None).unwrap_err();
+        assert!(matches!(e, AttnError::BadShape { what: "block width", got: 3, want: 2 }), "{e}");
+
+        // Model: a block built for two tokens cannot join a three-token model. Membranes are per
+        // position, so this is the check that stops one sequence's state entering another.
+        let mlp = SpikingMlp::new(2, sq(), sq(), 2.0, 1.0, 0.0).unwrap();
+        let block = Block::new(mk_attn(), mlp, Residual::None).unwrap();
+        assert_eq!(block.d_model(), 2);
+        let e = Model::new(3, Position::None, vec![block.clone()]).unwrap_err();
+        assert!(matches!(e, AttnError::BadShape { what: "block tokens", got: 2, want: 3 }), "{e}");
+        let ok = Model::new(2, Position::None, vec![block.clone()]).expect("the matching shape");
+        assert_eq!(ok.tokens(), 2);
+        assert_eq!(ok.depth(), 1);
+
+        // And blocks of different widths do not stack.
+        let sq4 = || Linear::new(4, 4, eye(4), None).unwrap();
+        let attn4 = Ssa::new(
+            2,
+            1,
+            sq4(),
+            sq4(),
+            sq4(),
+            sq4(),
+            2.0,
+            1.0,
+            0.0,
+            1.0,
+            false,
+            Order::ScoresFirst,
+        )
+        .unwrap();
+        let mlp4 = SpikingMlp::new(2, sq4(), sq4(), 2.0, 1.0, 0.0).unwrap();
+        let wide = Block::new(attn4, mlp4, Residual::None).unwrap();
+        let e = Model::new(2, Position::None, vec![block, wide]).unwrap_err();
+        assert!(matches!(e, AttnError::BadShape { what: "block width", got: 4, want: 2 }), "{e}");
+        assert!(matches!(Model::new(2, Position::None, vec![]), Err(AttnError::Empty { .. })));
+    }
+
+    /// `OpKind::needs_multiplier` and `OpKind::is_synaptic` are the definitions [`Audit`]'s own
+    /// aggregates are built from, and neither was asserted anywhere. `OpKind::ALL` is what a report
+    /// iterates, so a duplicate entry in it silently drops one whole row and doubles another.
+    #[test]
+    fn the_operation_kind_predicates_say_what_the_audit_means_by_them() {
+        assert!(OpKind::Mac.needs_multiplier(), "a multiply-accumulate occupies the multiplier");
+        assert!(OpKind::Mul.needs_multiplier(), "so does a bare multiply");
+        for k in [OpKind::Ac, OpKind::Add, OpKind::Shift, OpKind::Compare, OpKind::Logic] {
+            assert!(!k.needs_multiplier(), "{k} does not occupy a multiplier");
+        }
+        assert!(OpKind::Ac.is_synaptic());
+        assert!(OpKind::Mac.is_synaptic());
+        for k in [OpKind::Add, OpKind::Mul, OpKind::Shift, OpKind::Compare, OpKind::Logic] {
+            assert!(!k.is_synaptic(), "{k} is not one of NeuroBench's two synaptic counts");
+        }
+
+        // ALL lists each kind exactly once.
+        assert_eq!(OpKind::ALL.len(), 7);
+        for k in [
+            OpKind::Ac,
+            OpKind::Mac,
+            OpKind::Add,
+            OpKind::Mul,
+            OpKind::Shift,
+            OpKind::Compare,
+            OpKind::Logic,
+        ] {
+            assert_eq!(OpKind::ALL.iter().filter(|x| **x == k).count(), 1, "{k} appears once");
+        }
+        let mut labels: Vec<&str> = OpKind::ALL.iter().map(|k| k.label()).collect();
+        labels.sort_unstable();
+        labels.dedup();
+        assert_eq!(labels.len(), 7, "two kinds print the same label");
+
+        // The domain predicate the product rule is written in terms of, and how a domain prints.
+        assert!(Domain::Binary.is_binary());
+        assert!(!Domain::Integer(2).is_binary(), "a 0..=2 stream still needs a multiplier");
+        assert!(!Domain::Real.is_binary());
+        assert_eq!(Domain::Binary.to_string(), "binary");
+        assert_eq!(Domain::Integer(3).to_string(), "integer 0..=3");
+        assert_eq!(Domain::Real.to_string(), "real");
+        assert_eq!(OpKind::Mac.to_string(), "MAC");
+
+        // And the product rule these sit next to.
+        assert_eq!(OpKind::product(Domain::Binary, Domain::Real), OpKind::Ac);
+        assert_eq!(OpKind::product(Domain::Real, Domain::Binary), OpKind::Ac);
+        assert_eq!(OpKind::product(Domain::Binary, Domain::Binary), OpKind::Ac);
+        assert_eq!(OpKind::product(Domain::Integer(2), Domain::Real), OpKind::Mac);
+        assert_eq!(OpKind::product(Domain::Real, Domain::Real), OpKind::Mac);
+    }
+
+    /// A printed report lists every kind the pass touched, in `OpKind::ALL`'s order — including the
+    /// gated shortcut's logic row, which is the row a duplicate entry in `ALL` would drop.
+    #[test]
+    fn a_printed_report_lists_every_kind_the_pass_touched() {
+        let spec = Spec { residual: Residual::SewIand, ..Spec::spikformer_like(4, 4, 2, 1) };
+        let mut m = spec.build(&mut Rng::new(3), Position::None).unwrap();
+        let x = random_spikes(4, 4, 0.5, &mut Rng::new(77));
+        let mut audit = Audit::new();
+        m.forward(&x, &mut audit).unwrap();
+        let text = audit.to_string();
+        let labels: Vec<&str> = text
+            .lines()
+            .filter(|l| l.contains("dense") && l.contains("effective"))
+            .map(|l| l.split_whitespace().next().expect("a row has a label"))
+            .collect();
+        assert_eq!(
+            labels,
+            ["AC", "add", "shift", "compare", "logic"],
+            "the report's rows are wrong:\n{text}"
+        );
+        assert!(text.starts_with("operation audit over 1 timestep(s)"), "{text}");
+        assert!(text.contains("AC share of synaptic operations (as reported): 1.0000"), "{text}");
+    }
+
+    /// `multiplier_ops` is the arithmetic that occupies the multiplier array: multiply-accumulates
+    /// **and** bare multiplies. Dropping either term was invisible, because the only assertions
+    /// anywhere on it were `> 0` and `== 0`.
+    #[test]
+    fn multiplier_ops_counts_bare_multiplies_as_well_as_multiply_accumulates() {
+        let mut a = Audit::new();
+        a.charge("mac", OpKind::Mac, "test reason, long enough", 9, 3).unwrap();
+        a.charge("mul", OpKind::Mul, "test reason, long enough", 9, 5).unwrap();
+        a.charge("shift", OpKind::Shift, "test reason, long enough", 9, 7).unwrap();
+        a.charge("ac", OpKind::Ac, "test reason, long enough", 9, 9).unwrap();
+        assert_eq!(a.multiplier_ops(), 8, "3 multiply-accumulates plus 5 bare multiplies");
+        assert_eq!(a.effective_of(OpKind::Shift), 7, "a shift is counted on its own");
+
+        // On a real layer: a leak that is not a power of two is a bare multiply per neuron per
+        // timestep, and it is the only multiplier work an otherwise binary model does.
+        let mut n = LifLayer::new(2, 3, 3.0, 1.0, 0.0).unwrap();
+        let mut b = Audit::new();
+        n.forward(&Tensor::silent(2, 3).unwrap(), "n", &mut b).unwrap();
+        assert_eq!(b.effective_of(OpKind::Mac), 0, "nothing here is a multiply-accumulate");
+        assert_eq!(b.multiplier_ops(), 6, "1/3 is not a shift: 6 neurons, 6 multiplies");
+    }
+
+    /// `Linear::nonzero_weights` is the connection density every effective count is conditioned on,
+    /// and the only assertion on it was `== 0` on an all-zero matrix — which `return 0` satisfies.
+    #[test]
+    fn nonzero_weights_counts_the_connections_that_exist() {
+        assert_eq!(Linear::new(3, 3, eye(3), None).unwrap().nonzero_weights(), 3, "an identity");
+        assert_eq!(
+            Linear::new(3, 2, vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], None).unwrap().nonzero_weights(),
+            6,
+            "a full matrix"
+        );
+        let sparse = Linear::new(2, 2, vec![0.0, -1.0, 0.0, 0.0], None).unwrap();
+        assert_eq!(sparse.nonzero_weights(), 1, "a negative weight is still a connection");
+        assert_eq!(Linear::new(2, 2, vec![0.0; 4], None).unwrap().nonzero_weights(), 0);
+
+        // And it is the density the effective count follows: one live weight, one accumulate.
+        let mut a = Audit::new();
+        sparse.forward(&Tensor::spikes(1, 2, &[false, true]).unwrap(), "l", &mut a).unwrap();
+        assert_eq!(a.site("l", OpKind::Ac).unwrap().effective, 1);
+        assert_eq!(a.site("l", OpKind::Ac).unwrap().dense, 4);
+    }
+
+    /// The attention scale is charged per **non-zero** element, like every other site:
+    /// [`Site::effective`] is "operands that were not zero", and charging the scale on zeros would
+    /// contradict the rule the rest of the audit follows. The toy attends to two of its four.
+    #[test]
+    fn the_attention_scale_is_charged_only_where_the_element_was_not_zero() {
+        let d = 2;
+        let lin = || Linear::new(d, d, eye(d), None).unwrap();
+        let mut ssa = Ssa::new(
+            2,
+            1,
+            lin(),
+            lin(),
+            lin(),
+            lin(),
+            2.0,
+            0.25,
+            0.0,
+            0.5,
+            false,
+            Order::ScoresFirst,
+        )
+        .unwrap();
+        let x = Tensor::spikes(2, 2, &[true, false, false, true]).unwrap();
+        let mut a = Audit::new();
+        let y = ssa.forward(&x, "s", &mut a).unwrap();
+        assert_eq!(y.values(), &[1.0, 0.0, 0.0, 1.0], "the identity did not come through");
+        let site = a.site("s.scale", OpKind::Shift).expect("a scale of 0.5 is a shift");
+        assert_eq!(site.dense, 4, "2 tokens x 2 channels, whatever the data did");
+        assert_eq!(site.effective, 2, "the attended matrix has two zeros and they cost nothing");
+        assert!(site.effective < site.dense, "the scale was charged on zeros");
+    }
+
+    /// Sites merge by path **and** kind. Nothing in the module charges one path with two kinds, so
+    /// the second half of that key was never exercised — and a future site that did would have had
+    /// its comparisons folded into an accumulate row.
+    #[test]
+    fn one_path_with_two_kinds_stays_two_rows() {
+        let mut a = Audit::new();
+        a.charge("layer", OpKind::Ac, "test reason, long enough", 4, 2).unwrap();
+        a.charge("layer", OpKind::Compare, "test reason, long enough", 3, 3).unwrap();
+        a.charge("layer", OpKind::Ac, "test reason, long enough", 4, 1).unwrap();
+        assert_eq!(a.sites().len(), 2, "the two kinds merged into one row");
+        let ac = a.site("layer", OpKind::Ac).expect("the accumulate row");
+        assert_eq!((ac.dense, ac.effective), (8, 3), "the two accumulate charges did not merge");
+        let cmp = a.site("layer", OpKind::Compare).expect("the comparison row");
+        assert_eq!((cmp.dense, cmp.effective), (3, 3), "the comparison absorbed the accumulates");
+        assert_eq!(a.effective_of(OpKind::Ac), 3);
+        assert_eq!(a.effective_of(OpKind::Compare), 3);
+    }
+
+    /// `first_spike_step` returns `None` for three different reasons and the doc now names all
+    /// three. The third is reachable: a long enough time constant pushes a neuron that **does**
+    /// fire past `u32::MAX` steps, and letting the cast saturate would claim a first spike at
+    /// 4294967295 — a step no run reaches.
+    #[test]
+    fn a_first_spike_beyond_u32_is_none_and_not_a_saturated_step() {
+        let slow = LifLayer::new(1, 1, 1e10, 0.5, 0.0).unwrap();
+        // Not the sub-threshold case: the drive is well above v_th - v_reset.
+        assert!(1.0 > slow.v_th(), "this neuron is above threshold and does eventually fire");
+        assert!(slow.decay() < 1.0, "it does leak, so the closed form applies");
+        // ln(0.5) / ln(1 - 1e-10) is 6.93e9, past the end of a u32.
+        assert_eq!(slow.first_spike_step(1.0), None, "a saturated cast would answer u32::MAX");
+        // The same drive at an ordinary time constant fires on step 1.
+        assert_eq!(LifLayer::new(1, 1, 2.0, 0.5, 0.0).unwrap().first_spike_step(1.0), Some(1));
+        // And the non-finite case, which is the first of the three.
+        assert_eq!(slow.first_spike_step(f64::NAN), None);
+        assert_eq!(slow.first_spike_step(f64::INFINITY), None);
     }
 }

@@ -253,6 +253,26 @@ fn positive(x: f64, what: &'static str) -> Result<f64, VisionError> {
     if x > 0.0 { Ok(x) } else { Err(VisionError::NonPositive { what, value: x }) }
 }
 
+/// Reject a neighbourhood half-width that no patch over `geom` could usefully carry.
+///
+/// A patch of half-width `r` centred on any pixel of the lattice already covers **every** column
+/// and row once `r` reaches `max(width, height) - 1`, so every larger `r` adds nothing but the
+/// zero padding [`TimeSurface::patch`] documents, while the buffer grows as `(2r + 1)^2`. Leaving
+/// `r` unbounded is also an arithmetic hazard rather than merely a wasteful one: `2 * radius + 1`
+/// overflows `u16` at `radius = 32768`, and `EHarris::new(geom(64, 64), 32768, ..)` used to be
+/// accepted and then panic on the first event. The bound is stated at every constructor that
+/// stores a radius, so the refusal arrives before the allocation rather than during it.
+fn radius_within(geom: Geometry, radius: u16) -> Result<usize, VisionError> {
+    let r = usize::from(radius);
+    if r + 1 > usize::from(geom.width.max(geom.height)) {
+        return Err(VisionError::BadParameters {
+            why: "the neighbourhood half-width reaches past the sensor's larger dimension, \
+                  beyond which every further ring is padding",
+        });
+    }
+    Ok(r)
+}
+
 // ---------------------------------------------------------------------------------------------
 // Geometry
 // ---------------------------------------------------------------------------------------------
@@ -630,7 +650,9 @@ impl TimeSurface {
     /// # Errors
     ///
     /// [`VisionError::OutOfBounds`] if the *centre* is off the lattice, [`VisionError::NonFinite`]
-    /// for a bad query time.
+    /// for a bad query time, and [`VisionError::BadParameters`] when `radius` reaches the sensor's
+    /// larger dimension — past that point the patch is all padding and `2 * radius + 1` is no
+    /// longer a `u16`. See the note on the private `radius_within`.
     pub fn patch(
         &self,
         x: u16,
@@ -641,8 +663,8 @@ impl TimeSurface {
     ) -> Result<Vec<f64>, VisionError> {
         let t = finite(t_s, "query time")?;
         self.geom.require(x, y)?;
+        let side = 2 * radius_within(self.geom, radius)? + 1;
         let r = i64::from(radius);
-        let side = (2 * radius + 1) as usize;
         let mut out = vec![0.0; side * side];
         for dy in -r..=r {
             for dx in -r..=r {
@@ -716,10 +738,25 @@ impl Frame {
         Geometry { width: self.width, height: self.height }
     }
 
-    /// The value at a pixel, or `None` off the lattice.
+    /// Whether `data` holds exactly `width * height` entries.
+    ///
+    /// The fields are public so that an image can be written down as a literal — which is what
+    /// makes the statistics below checkable against arithmetic — and the price is that the type
+    /// cannot enforce its own shape in a constructor. Everything this module *produces* is
+    /// consistent; a hand-built `Frame` that is not reports `false` here, and the accessors say
+    /// what they do in that case rather than panicking: [`Frame::at`] returns `None` for a pixel
+    /// whose datum is missing, and [`Frame::sum`], [`Frame::mean`] and [`Frame::variance`] are
+    /// over `data` as it stands rather than over the lattice `width` and `height` claim.
+    #[must_use]
+    pub fn is_consistent(&self) -> bool {
+        self.data.len() == self.geometry().pixels()
+    }
+
+    /// The value at a pixel, or `None` off the lattice — or when `data` is shorter than the
+    /// lattice claims, for which see [`Frame::is_consistent`].
     #[must_use]
     pub fn at(&self, x: u16, y: u16) -> Option<f64> {
-        self.geometry().index(x, y).map(|i| self.data[i])
+        self.geometry().index(x, y).and_then(|i| self.data.get(i).copied())
     }
 
     /// Sum over all pixels.
@@ -735,7 +772,10 @@ impl Frame {
         self.data.iter().map(|v| v * v).sum()
     }
 
-    /// Mean over all pixels, or `None` for an empty image.
+    /// Mean over `data`, or `None` for an empty image.
+    ///
+    /// Over `data` rather than over `width * height`: see [`Frame::is_consistent`] for the one
+    /// case where those differ.
     #[must_use]
     pub fn mean(&self) -> Option<f64> {
         if self.data.is_empty() {
@@ -1036,6 +1076,12 @@ pub enum FlowOutcome {
 /// `None` disables the pass. The paper states `th2` as a fraction of the local time scale; this
 /// implementation takes an absolute time because a fraction of `window_s` would couple two
 /// parameters that a user tunes for different reasons.
+///
+/// `reject_s` is **inclusive**, exactly as the two memory windows in this module are: a point
+/// whose residual is *exactly* `reject_s` is the last one kept. Which way that comparison faces
+/// is not a detail on a real recording — events land on round microseconds, so residuals land on
+/// exact multiples of the quantum and the boundary case is the common case, not the rare one —
+/// and it is pinned by a test rather than left to whichever comparison someone writes next.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PlaneFlow {
     radius: u16,
@@ -1060,7 +1106,9 @@ impl PlaneFlow {
     ///   accepting fewer would return a fit determined by the collinearity guard rather than by the
     ///   data.
     /// - [`VisionError::BadParameters`] when `radius` is zero — a one-pixel neighbourhood has no
-    ///   support — or when `reject_s` exceeds `window_s`, which is a rejection pass that can never
+    ///   support — when `radius` reaches the sensor's larger dimension, past which the
+    ///   neighbourhood loop is all off-lattice and a `u16` radius costs `(2r+1)^2` iterations per
+    ///   event, or when `reject_s` exceeds `window_s`, which is a rejection pass that can never
     ///   reject.
     pub fn new(
         geom: Geometry,
@@ -1075,6 +1123,7 @@ impl PlaneFlow {
                 why: "a radius-0 neighbourhood contains only the event itself",
             });
         }
+        radius_within(geom, radius)?;
         if min_events < 3 {
             return Err(VisionError::TooFew {
                 what: "minimum plane-fit support",
@@ -1323,7 +1372,8 @@ impl Hots {
     /// # Errors
     ///
     /// [`VisionError::NonPositive`] for a bad `tau_s`, [`VisionError::TooFew`] for zero centres or
-    /// zero radius, and anything [`TimeSurface::new`] refuses.
+    /// zero radius, [`VisionError::BadParameters`] for a radius at or past the sensor's larger
+    /// dimension, and anything [`TimeSurface::new`] refuses.
     pub fn new(
         geom: Geometry,
         radius: u16,
@@ -1337,7 +1387,9 @@ impl Hots {
         if radius == 0 {
             return Err(VisionError::TooFew { what: "patch radius", have: 0, need: 1 });
         }
-        let side = (2 * usize::from(radius) + 1).pow(2);
+        // Bounded before the draw, not after: `(2 * radius + 1)^2` is the length of every vector
+        // about to be allocated, and on a 32-bit target it overflows `usize` for a large `u16`.
+        let side = (2 * radius_within(geom, radius)? + 1).pow(2);
         let centers: Vec<Vec<f64>> =
             (0..n_centers).map(|_| (0..side).map(|_| rng.next_f64()).collect()).collect();
         Self::with_centers(geom, radius, tau_s, centers)
@@ -1348,9 +1400,11 @@ impl Hots {
     /// # Errors
     ///
     /// [`VisionError::TooFew`] when the set is empty or the radius is zero;
-    /// [`VisionError::BadParameters`] when a prototype's length is not `(2 * radius + 1)^2`;
-    /// [`VisionError::NonFinite`] for a non-finite prototype entry; plus anything
-    /// [`TimeSurface::new`] refuses.
+    /// [`VisionError::BadParameters`] when a prototype's length is not `(2 * radius + 1)^2`, or
+    /// when `radius` reaches the sensor's larger dimension — beyond that the patch
+    /// [`Hots::learn`] takes is all padding, and `(2 * radius + 1)^2` overflows a 32-bit `usize`
+    /// before the padding runs out; [`VisionError::NonFinite`] for a non-finite prototype entry;
+    /// plus anything [`TimeSurface::new`] refuses.
     pub fn with_centers(
         geom: Geometry,
         radius: u16,
@@ -1363,7 +1417,7 @@ impl Hots {
         if radius == 0 {
             return Err(VisionError::TooFew { what: "patch radius", have: 0, need: 1 });
         }
-        let want = (2 * usize::from(radius) + 1).pow(2);
+        let want = (2 * radius_within(geom, radius)? + 1).pow(2);
         for c in &centers {
             if c.len() != want {
                 return Err(VisionError::BadParameters {
@@ -1536,9 +1590,15 @@ impl Hats {
     }
 
     /// Bins per cell per polarity plane, `(2 * radius + 1)^2`.
+    ///
+    /// Every field of this type is public, so `radius` can be any `u16`, and at the top of that
+    /// range the square overflows a 32-bit `usize` — silently, in a release `wasm32` build. It is
+    /// therefore saturating here and refused outright by [`Hats::descriptor_len`], which is the
+    /// fallible entry point every consumer goes through.
     #[must_use]
     pub fn bins_per_cell(self) -> usize {
-        (2 * usize::from(self.radius) + 1).pow(2)
+        let side = 2 * usize::from(self.radius) + 1;
+        side.saturating_mul(side)
     }
 
     /// Cells across and down for a given sensor, `ceil(width / cell_px)` by
@@ -1562,11 +1622,23 @@ impl Hats {
     ///
     /// # Errors
     ///
-    /// As [`Hats::cell_grid`].
+    /// As [`Hats::cell_grid`], plus [`VisionError::BadParameters`] when the product does not fit
+    /// this target's `usize`. That is not a theoretical branch: the fields are public, so a
+    /// `radius` near `u16::MAX` is constructible, and `(2 * radius + 1)^2` passes `u32` at
+    /// `radius = 32767`. Refusing here is what keeps [`Hats::descriptor`]'s `bins` and its own
+    /// `side * side` the same number, which is what keeps its writes in bounds.
     pub fn descriptor_len(self, geom: Geometry) -> Result<usize, VisionError> {
         let (cx, cy) = self.cell_grid(geom)?;
         let planes = if self.split_polarity { 2 } else { 1 };
-        Ok(cx * cy * planes * self.bins_per_cell())
+        let side = 2 * usize::from(self.radius) + 1;
+        let too_long = || VisionError::BadParameters {
+            why: "the HATS descriptor length does not fit this target's usize",
+        };
+        let bins = side.checked_mul(side).ok_or_else(too_long)?;
+        cx.checked_mul(cy)
+            .and_then(|c| c.checked_mul(planes))
+            .and_then(|c| c.checked_mul(bins))
+            .ok_or_else(too_long)
     }
 
     /// Compute the descriptor for a whole event slice.
@@ -1581,6 +1653,22 @@ impl Hats {
     /// Each cell's histogram is divided by the number of events in that cell, which is the paper's
     /// averaging step and is what makes a fast-moving object's descriptor comparable to a slow
     /// one's. A cell with no events keeps its exact zeros.
+    ///
+    /// # The divisor is the cell's total, not the plane's — and that is a choice
+    ///
+    /// With `split_polarity` set, **both** planes of a cell are divided by that cell's *total*
+    /// event count, not by the count of their own polarity. The consequence is worth stating
+    /// plainly, because it is not what "the average of the plane's time surfaces" would mean: an
+    /// `On`-dominated cell and a balanced cell with **identical `On` texture** produce different
+    /// `On` planes, scaled by the polarity mix. [`Hats::descriptor`]'s own test asserts exactly
+    /// that — one `On` and one `Off` event in a cell give `0.5`, not `1.0`, in each plane's centre
+    /// bin.
+    ///
+    /// **This implementation did not locate an author-released reference implementation to check
+    /// that reading against**, and it is a place where the arithmetic is a decision rather than a
+    /// derivation — unlike the memory surface itself, which the paper writes out. It is flagged
+    /// here for the same reason the `tau` reading is flagged on the type doc: a reader with the
+    /// paper should check, and this is where a disagreement should be recorded.
     ///
     /// # Errors
     ///
@@ -1710,10 +1798,25 @@ pub struct EHarris {
 }
 
 impl EHarris {
-    /// `Harris`'s own sensitivity constant, dimensionless, as the 1988 paper prints it.
+    /// `Harris`'s own sensitivity constant, dimensionless, as the 1988 paper prints it: `0.04`.
     ///
-    /// Sets the largest eigenvalue ratio that still scores positive. `0.04` admits anything up to
-    /// about a 19:1 ratio; raising it makes the detector fussier about how square a corner is.
+    /// # What the number decides
+    ///
+    /// It sets the largest eigenvalue ratio that still scores positive. Writing `rho = l1 / l2`
+    /// with `l1 >= l2 > 0`, the response `l1 * l2 - k * (l1 + l2)^2` is positive exactly when
+    /// `rho > k * (1 + rho)^2`, so the admitted ratios run up to
+    ///
+    /// ```text
+    /// rho_max(k) = ((1 - 2k) + sqrt(1 - 4k)) / (2k)
+    /// ```
+    ///
+    /// which is `22.956...` at `k = 0.04` and `14.598...` at `k = 0.06`. Raising `k` makes the
+    /// detector fussier about how square a corner is, and `k = 0.25` admits nothing at all.
+    ///
+    /// An earlier revision of this doc said `0.04` admits "about a 19:1 ratio". That was wrong —
+    /// 19:1 is what `k = 0.0475` admits — and the claim now has a test: a patch whose structure
+    /// tensor has eigenvalues in exactly the ratio `20.5:1`, which sits between the two bounds
+    /// above, scores positive at `0.04` and negative at `0.06`.
     pub const K_HARRIS: f64 = 0.04;
 
     /// A detector over `geom`.
@@ -1728,7 +1831,9 @@ impl EHarris {
     /// [`VisionError::NonPositive`] for a bad `window_s`, [`VisionError::NonFinite`] for a bad `k`
     /// or `threshold`, and [`VisionError::TooFew`] when `radius` is below 2 — `Sobel` consumes one
     /// ring and the structure tensor needs more than a single interior pixel to have two
-    /// directions.
+    /// directions. [`VisionError::BadParameters`] when `radius` reaches the sensor's larger
+    /// dimension: the window is then all padding, and `2 * radius + 1` stops being a `u16`, which
+    /// used to be accepted here and panic inside [`EHarris::score_at`] on the first event.
     pub fn new(
         geom: Geometry,
         radius: u16,
@@ -1742,6 +1847,7 @@ impl EHarris {
         if radius < 2 {
             return Err(VisionError::TooFew { what: "eHarris window radius", have: radius.into(), need: 2 });
         }
+        radius_within(geom, radius)?;
         let sae = TimeSurface::new(geom, Decay::Linear { window_s }, false)?;
         Ok(Self { radius, window_s, k, threshold, sae })
     }
@@ -1813,7 +1919,9 @@ impl EHarris {
         let t = finite(t_s, "query time")?;
         self.sae.geometry().require(x, y)?;
         let r = i64::from(self.radius);
-        let side = (2 * self.radius + 1) as usize;
+        // `usize`, not `u16`: `2 * radius + 1` wraps a `u16` at radius 32768. `EHarris::new`
+        // refuses any radius that large, and the arithmetic here does not rely on it having.
+        let side = 2 * usize::from(self.radius) + 1;
         let mut patch = vec![0.0; side * side];
         for dy in -r..=r {
             for dx in -r..=r {
@@ -2094,14 +2202,28 @@ impl EFast {
         Ok(out)
     }
 
+    /// The criterion itself, in one place: a corner is declared when **both** circles produced an
+    /// arc, and the verdict carries the inner arc's length because that is what [`Corner::score`]
+    /// reports.
+    ///
+    /// [`EFast::is_corner`] and [`EFast::push`] both route through this rather than each spelling
+    /// out `inner.is_some() && outer.is_some()`. Two encodings of one rule is how the inner-only
+    /// weakening — which changes the detection count on a moving corner by about 12% — came to
+    /// survive a suite that asserts the `AND` through `is_corner` and never through `push`.
+    fn verdict(arcs: (Option<usize>, Option<usize>)) -> Option<usize> {
+        match arcs {
+            (Some(inner), Some(_outer)) => Some(inner),
+            _ => None,
+        }
+    }
+
     /// Whether a pixel satisfies the criterion on both circles.
     ///
     /// # Errors
     ///
     /// As [`EFast::arcs_at`].
     pub fn is_corner(&self, x: u16, y: u16, pol: Polarity) -> Result<bool, VisionError> {
-        let (i, o) = self.arcs_at(x, y, pol)?;
-        Ok(i.is_some() && o.is_some())
+        Ok(Self::verdict(self.arcs_at(x, y, pol)?).is_some())
     }
 
     /// Accept an event and classify it.
@@ -2118,10 +2240,8 @@ impl EFast {
     pub fn push(&mut self, e: PixelEvent) -> Result<Option<Corner>, VisionError> {
         self.sae.update(e)?;
         match self.arcs_at(e.x, e.y, e.polarity) {
-            Ok((Some(i), Some(_))) => {
-                Ok(Some(Corner { t_s: e.t_s, x: e.x, y: e.y, score: i as f64 }))
-            }
-            Ok(_) => Ok(None),
+            Ok(arcs) => Ok(Self::verdict(arcs)
+                .map(|i| Corner { t_s: e.t_s, x: e.x, y: e.y, score: i as f64 })),
             Err(VisionError::OutOfBounds { .. }) => Ok(None),
             Err(other) => Err(other),
         }
@@ -2624,6 +2744,19 @@ pub fn moving_corner(
     Ok(sort_events(out))
 }
 
+/// The largest number of events [`rotating_bar`] will produce before refusing: ten million.
+///
+/// The generator emits one event per annulus pixel per half turn, so the count is
+/// `annulus_pixels * (1 + omega_rad_s * duration_s / pi)` and **nothing in the parameter list
+/// bounds it**: `positive()` accepts any finite `omega_rad_s`, and on a 3x3 sensor the measured
+/// counts run 1274, 12734, 127324, 1273240 for `omega` of 1e3 to 1e6 — linear, with no ceiling.
+/// At `omega = 1e12` over one second the request is ~1.3e12 events, about 30 TB.
+///
+/// Ten million is where this crate draws the line: 240 MB of `PixelEvent`, well past any stimulus
+/// the module's own tests build (a few thousand) and well short of a machine. A caller that wants
+/// more can call the generator in slices of `duration_s`.
+pub const MAX_ROTATING_BAR_EVENTS: usize = 10_000_000;
+
 /// A bar through a centre, rotating at a constant angular velocity, with **exact** event times.
 ///
 /// The bar is a full diameter, so it covers angles `phi` and `phi + pi` at once, and pixel `p` is
@@ -2655,7 +2788,8 @@ pub fn moving_corner(
 /// # Errors
 ///
 /// [`VisionError::NonPositive`] for a non-positive `omega_rad_s`, `r_min_px`, `r_max_px` or
-/// `duration_s`; [`VisionError::BadParameters`] when `r_min_px >= r_max_px`;
+/// `duration_s`; [`VisionError::BadParameters`] when `r_min_px >= r_max_px`, or when the
+/// parameters ask for more than [`MAX_ROTATING_BAR_EVENTS`] events;
 /// [`VisionError::NonFinite`] for a bad parameter.
 pub fn rotating_bar(
     geom: Geometry,
@@ -2679,7 +2813,32 @@ pub fn rotating_bar(
         });
     }
     let pi = core::f64::consts::PI;
-    let mut out = Vec::new();
+    let period = pi / omega;
+    // How many times the bar can sweep one pixel inside the recording. Each pixel of the annulus
+    // fires once per half turn, so this is `floor(duration / period) + 1` at most, whatever the
+    // phase. Nothing in the signature bounds it: at `omega = 1e12` and one second this asks for
+    // ~1.3e12 events, and once `period` falls below `duration / 2^53` the crossing counter `k`
+    // stops advancing in binary64 and the loop below would never end at all. So it is counted
+    // first and refused here, rather than discovered as a hang.
+    let per_pixel = (duration / period).floor() + 1.0;
+    let annulus = (0..geom.height)
+        .flat_map(|y| (0..geom.width).map(move |x| (x, y)))
+        .filter(|&(x, y)| {
+            let r = (f64::from(x) - cx).hypot(f64::from(y) - cy);
+            (r_min..=r_max).contains(&r)
+        })
+        .count();
+    if !per_pixel.is_finite() || per_pixel * annulus as f64 > MAX_ROTATING_BAR_EVENTS as f64 {
+        return Err(VisionError::BadParameters {
+            why: "the angular velocity and duration ask for more rotating-bar events than \
+                  MAX_ROTATING_BAR_EVENTS allows",
+        });
+    }
+    // Safe: `per_pixel` is finite, at least 1, and bounded by the check above.
+    let sweeps = per_pixel as u64 + 1;
+    let mut out = Vec::with_capacity(
+        annulus.saturating_mul(sweeps as usize).min(MAX_ROTATING_BAR_EVENTS),
+    );
     for y in 0..geom.height {
         for x in 0..geom.width {
             let (dx, dy) = (f64::from(x) - cx, f64::from(y) - cy);
@@ -2689,19 +2848,18 @@ pub fn rotating_bar(
             }
             let phi = dy.atan2(dx);
             // Smallest k putting t at or after zero, then every k until the duration runs out.
+            // The iteration count is the bound established above; the `t > duration` test is what
+            // still decides, so the emitted set is exactly what the closed form names.
             let base = (phi - theta0) / omega;
-            let period = pi / omega;
             let k0 = (-base / period).ceil();
-            let mut k = k0;
-            loop {
-                let t = base + k * period;
+            for i in 0..sweeps {
+                let t = base + (k0 + i as f64) * period;
                 if t > duration {
                     break;
                 }
                 if t >= 0.0 {
                     out.push(PixelEvent { t_s: t, x, y, polarity });
                 }
-                k += 1.0;
             }
         }
     }
@@ -2811,12 +2969,12 @@ pub fn quantise_microseconds(events: &[PixelEvent]) -> Result<Vec<PixelEvent>, V
 #[cfg(test)]
 mod tests {
     use super::{
-        Decay, EFast, EHarris, FAST_CIRCLE_16, FAST_CIRCLE_20, FlowOutcome, Frame, Geometry,
-        Hats, Hots, Motion, Objective, PixelEvent, PlaneFlow, TimeSurface, VisionError,
-        accumulate_count, accumulate_decay, accumulate_polarity, argmax, contrast, fit_plane,
-        flow_error, looming_disc, looming_disc_flow, moving_corner, moving_edge, moving_edge_flow,
-        newest_arc, quantise_microseconds, rotating_bar, rotating_bar_flow, search_translation,
-        sweep, warped_image,
+        Decay, EFast, EHarris, FAST_CIRCLE_16, FAST_CIRCLE_20, Flow, FlowOutcome, Frame, Geometry,
+        Hats, Hots, MAX_ROTATING_BAR_EVENTS, Motion, Objective, PixelEvent, PlaneFlow, TimeSurface,
+        VisionError, accumulate_count, accumulate_decay, accumulate_polarity, argmax, contrast,
+        fit_plane, flow_error, looming_disc, looming_disc_flow, moving_corner, moving_edge,
+        moving_edge_flow, newest_arc, quantise_microseconds, require_time_ordered, rotating_bar,
+        rotating_bar_flow, search_translation, sweep, warped_image,
     };
     use crate::aer::AerEvent;
     use crate::rng::Rng;
@@ -3906,7 +4064,9 @@ mod tests {
     /// On a half-plane filling the window, every row is identical, so the vertical `Sobel` response
     /// is **exactly zero**, `det(M)` is exactly zero, and the `Harris` score is `-k * trace(M)^2`:
     /// strictly negative. On a quadrant both eigenvalues are positive and the score clears zero,
-    /// because `k = 0.04` admits eigenvalue ratios up to about 19:1.
+    /// because `k = 0.04` admits eigenvalue ratios up to `22.956...`; the closed form is on
+    /// [`EHarris::K_HARRIS`] and the ratio itself is checked in
+    /// `the_harris_constant_sets_the_eigenvalue_ratio_its_doc_names`.
     ///
     /// Asserting the *sign* is what makes this a check. A threshold is a tuning parameter and a
     /// test against one only says that somebody chose it to pass.
@@ -4105,6 +4265,132 @@ mod tests {
         assert_eq!(build(4, 12).arcs_at(cx, cy, Polarity::On).unwrap(), (Some(4), None));
         assert!(!build(4, 12).is_corner(cx, cy, Polarity::On).unwrap());
         assert!(!build(9, 5).is_corner(cx, cy, Polarity::On).unwrap());
+
+        // **And the same criterion through `push`**, which is the streaming API every consumer
+        // uses and which carried its own second copy of the rule until this audit. Every
+        // assertion above goes through `arcs_at`/`is_corner`; weakening `push` to accept an inner
+        // arc alone survived all of them, and it is not an equivalent mutant — on this module's
+        // own moving-corner stream the AND fires 231 times and inner-only 258.
+        //
+        // The centre pixel is on neither circle, so `push`'s own `update` cannot change the
+        // fixture; what it returns is the verdict and nothing else.
+        let fire = |mut d: EFast| {
+            d.push(PixelEvent { t_s: 1.0, x: cx, y: cy, polarity: Polarity::On }).unwrap()
+        };
+        // The score a corner reports is the INNER arc length, which is what makes these two
+        // different assertions rather than one repeated.
+        assert_eq!(fire(build(4, 5)).map(|c| c.score), Some(4.0));
+        assert_eq!(fire(build(3, 4)).map(|c| c.score), Some(3.0));
+        assert_eq!(fire(build(6, 8)).map(|c| c.score), Some(6.0));
+        assert!(fire(build(8, 10)).is_none(), "push fired on a half circle");
+        assert!(fire(build(1, 1)).is_none(), "push fired on an isolated pixel");
+        // Good inner arc, bad outer one: the case the AND exists for.
+        assert!(fire(build(4, 12)).is_none(), "push accepted an inner arc with no outer one");
+        // And the mirror image, so the assertion is about the conjunction rather than about the
+        // outer circle alone.
+        assert!(fire(build(9, 5)).is_none(), "push accepted an outer arc with no inner one");
+    }
+
+    /// **The two `Bresenham` circles, against the tables `FAST` prints** — as literals, because
+    /// every other `eFAST` test in this file writes its fixture *through* these same tables and so
+    /// cancels their geometry out of both sides of its own assertion.
+    ///
+    /// Changing `FAST_CIRCLE_16[2]` from `(2, 2)` to `(2, 1)`, or duplicating an offset so the
+    /// "circle" has a repeated pixel and a missing one, used to survive all 60 tests.
+    ///
+    /// The literals are the standard `FAST` circle of radius 3 (Rosten and Drummond, *Machine
+    /// Learning for High-Speed Corner Detection*, ECCV 2006) and the radius-4 circle `eFAST`'s
+    /// second test uses. Below them the three properties that make the arc search meaningful are
+    /// asserted from the geometry rather than from the table: every offset sits on its circle,
+    /// every offset is distinct, consecutive offsets are adjacent pixels, and the polar angle
+    /// advances monotonically so that "a window over consecutive entries" really is an arc.
+    #[test]
+    fn the_fast_circles_are_the_bresenham_rings_their_docs_name() {
+        assert_eq!(
+            FAST_CIRCLE_16,
+            [
+                (0, 3),
+                (1, 3),
+                (2, 2),
+                (3, 1),
+                (3, 0),
+                (3, -1),
+                (2, -2),
+                (1, -3),
+                (0, -3),
+                (-1, -3),
+                (-2, -2),
+                (-3, -1),
+                (-3, 0),
+                (-3, 1),
+                (-2, 2),
+                (-1, 3),
+            ]
+        );
+        assert_eq!(
+            FAST_CIRCLE_20,
+            [
+                (0, 4),
+                (1, 4),
+                (2, 3),
+                (3, 2),
+                (4, 1),
+                (4, 0),
+                (4, -1),
+                (3, -2),
+                (2, -3),
+                (1, -4),
+                (0, -4),
+                (-1, -4),
+                (-2, -3),
+                (-3, -2),
+                (-4, -1),
+                (-4, 0),
+                (-4, 1),
+                (-3, 2),
+                (-2, 3),
+                (-1, 4),
+            ]
+        );
+
+        for (circle, radius) in [(&FAST_CIRCLE_16[..], 3usize), (&FAST_CIRCLE_20[..], 4)] {
+            let n = circle.len();
+            let r = radius as f64;
+            assert_eq!(n, 4 * radius + 4, "the ring has the wrong circumference");
+            for (i, &(dx, dy)) in circle.iter().enumerate() {
+                // On the circle to within half a pixel, which is what rasterising it means.
+                let d = (dx as f64).hypot(dy as f64);
+                assert!((d - r).abs() <= 0.5, "offset {i} = ({dx}, {dy}) is {d} from the centre");
+                // Distinct: a repeated pixel would let one timestamp vote twice in the arc test.
+                for (j, &other) in circle.iter().enumerate() {
+                    assert!(i == j || (dx, dy) != other, "offsets {i} and {j} are the same pixel");
+                }
+                // Adjacent to its successor around the ring, including across the seam. This is
+                // what makes a contiguous window over the slice a contiguous arc on the sensor.
+                let (nx, ny) = circle[(i + 1) % n];
+                assert_eq!(
+                    (nx - dx).abs().max((ny - dy).abs()),
+                    1,
+                    "offsets {i} and {} are not neighbouring pixels",
+                    (i + 1) % n
+                );
+                // The centre is not on the ring.
+                assert!((dx, dy) != (0, 0));
+            }
+            // The polar angle decreases monotonically over exactly one turn, so the ordering is
+            // circular rather than merely a permutation that happens to start and end together.
+            let mut prev = (circle[0].1 as f64).atan2(circle[0].0 as f64);
+            let mut wraps = 0;
+            for &(dx, dy) in &circle[1..] {
+                let a = (dy as f64).atan2(dx as f64);
+                if a > prev {
+                    wraps += 1;
+                    assert!(wraps <= 1, "the ring changes direction at ({dx}, {dy})");
+                }
+                prev = a;
+            }
+            assert_eq!(wraps, 1, "the ring does not cover exactly one turn");
+        }
     }
 
     /// The arc search itself, on hand-written timestamp rings, including the wrap-around case that
@@ -4268,10 +4554,14 @@ mod tests {
             assert_eq!(k, 0, "there is only one cluster to select");
         }
 
-        // The closed form, computed here and nowhere else in the crate.
+        // The closed form, computed here and nowhere else in the crate — and out of the PAPER'S
+        // two constants written as literals, not out of `Hots::alpha_for`. An earlier revision
+        // built the product from the code's own rate, so the constants cancelled from both sides
+        // and `ALPHA_DECAY: 20000.0 -> 10000.0` moved the layer's whole learning schedule while
+        // this assertion held to 1e-12.
         let mut prod = 1.0f64;
         for n in 0..steps {
-            prod *= 1.0 - Hots::alpha_for(n);
+            prod *= 1.0 - 0.01 / (1.0 + n as f64 / 20000.0);
         }
         let want = 1.0 + (lambda0 - 1.0) * prod;
         let got = h.centers()[0][4];
@@ -4309,10 +4599,30 @@ mod tests {
         assert_eq!(h.nearest(&a).unwrap().0, 0);
         assert_eq!(h.nearest(&b).unwrap().0, 1);
         assert_eq!(h.nearest(&c).unwrap().0, 2);
-        // The distance is the Euclidean one, not a squared one: two orthogonal unit vectors are
-        // sqrt(2) apart.
-        assert!((h.nearest(&b).unwrap().1).abs() < 1e-15);
-        assert!((h.nearest(&a).unwrap().1).abs() < 1e-15);
+        // A prototype is exactly zero from itself. That is the easy half, and on its own it is no
+        // test at all: sqrt(0) == 0, so deleting the `.sqrt()` in `nearest` survived it.
+        assert_eq!(h.nearest(&b).unwrap().1, 0.0);
+        assert_eq!(h.nearest(&a).unwrap().1, 0.0);
+        // The half that was missing. The distance is the EUCLIDEAN one, not the squared one, and
+        // the probe has to be a vector the dictionary does not contain for the two to differ.
+        // `c` is orthogonal to both `a` and `b`, so both squared distances are exactly 2 and both
+        // Euclidean distances are sqrt(2) = 1.41421356... Returning the square would give 2.
+        let ab = Hots::with_centers(g, 1, 1e-3, vec![a.clone(), b.clone()]).unwrap();
+        let (k, dist) = ab.nearest(&c).unwrap();
+        assert_eq!(k, 0, "the tie between two equidistant prototypes did not go to the low index");
+        assert!(
+            (dist - core::f64::consts::SQRT_2).abs() < 1e-15,
+            "two orthogonal unit vectors came out {dist} apart, not sqrt(2)"
+        );
+        // Named against the squared distance too, because that is the mutation: 2.0, not 1.414.
+        assert!((dist - 2.0).abs() > 0.5, "the distance returned was the SQUARED one");
+        // And an asymmetric probe, so the answer is not a special value of the symmetric case:
+        // 0.5 * c is 0.5 from c, and sqrt(1 + 0.25) = 1.118... from a. The square would be 1.25.
+        let mut half = vec![0.0; 9];
+        half[5] = 0.5;
+        let (k2, d2) = h.nearest(&half).unwrap();
+        assert_eq!(k2, 2, "the nearest prototype to half of c is c");
+        assert!((d2 - 0.5).abs() < 1e-15, "distance {d2}, not 0.5");
         let mut probe = vec![0.0; 9];
         probe[4] = 0.9;
         probe[3] = 0.1;
@@ -5138,6 +5448,1194 @@ mod tests {
             let b = d.score_of_patch(&t, side).unwrap();
             assert!((a - b).abs() < 1e-9, "the Harris response is not transpose-invariant: {a} vs {b}");
         }
+    }
+
+
+    // -----------------------------------------------------------------------------------------
+    // Gaps found by a SECOND mutation audit of this module
+    // -----------------------------------------------------------------------------------------
+    //
+    // Ninety-six further mutations were applied to the code above and the suite re-run. The
+    // twenty-five the previous round claimed to catch were all caught; thirty-eight more escaped,
+    // and they cluster into the tests below. The pattern is the same one this crate keeps finding:
+    // the CENTRAL arithmetic of each mechanism is well tested, and its periphery — the constant
+    // table, the second copy of a criterion, the measuring instrument itself, the parameters every
+    // test leaves at their defaults, the refusal branches — is not.
+
+    /// **The instrument the module's central check reads its angular error from.**
+    ///
+    /// `plane_fit_flow_recovers_the_generated_velocity_exactly` asserts `mean_angle_err < 1e-9`,
+    /// and the accumulation behind that number had no test of its own: `ae += d` weakened to
+    /// `ae += 0.0 * d` survived all 60 tests, as did deleting the wrap loop whose doc argues that
+    /// "359 degrees is one degree of error, not 359". The module guards the other two error fields
+    /// against exactly this — the cone test on `mean_speed_err`, the quantised test on
+    /// `max_rel_speed_err` — and this is the guard that was never written for the third.
+    ///
+    /// Everything below is arithmetic on hand-built outcomes, so every expected value is a literal.
+    #[test]
+    fn flow_error_measures_the_angle_it_names_and_wraps_it_onto_the_circle() {
+        let ev = |t: f64| PixelEvent { t_s: t, x: 1, y: 1, polarity: Polarity::On };
+        let fit = |speed: f64, dir: f64| {
+            FlowOutcome::Fitted(Flow {
+                vx: speed * dir.cos(),
+                vy: speed * dir.sin(),
+                speed,
+                direction_rad: dir,
+            })
+        };
+
+        // One event, one fit, against a truth pointing along +x at 100 px/s. The angular error is
+        // exactly 0.25 rad, the speed error exactly 10 px/s, the relative one exactly 0.1.
+        let e = flow_error(&[ev(0.0)], &[fit(110.0, 0.25)], |_| Some((100.0, 0.0))).unwrap();
+        assert_eq!((e.fitted, e.offered), (1, 1));
+        assert!((e.mean_angle_err - 0.25).abs() < 1e-15, "angle {}", e.mean_angle_err);
+        assert!((e.mean_speed_err - 10.0).abs() < 1e-12, "speed {}", e.mean_speed_err);
+        assert!((e.max_rel_speed_err - 0.1).abs() < 1e-15, "relative {}", e.max_rel_speed_err);
+
+        // THE WRAP. An estimate at -(pi - 0.01) against a truth at +(pi - 0.01) is 0.02 rad out,
+        // not 2 pi - 0.02 = 6.2631853. Without the wrap loop this reads the second number, and the
+        // tests' own `wrapped_angle` helper is a SEPARATE implementation used only by the rotating
+        // bar, so `flow_error`'s own wrap had never run on an input that needed it.
+        let pi = core::f64::consts::PI;
+        let near = pi - 0.01;
+        let e = flow_error(&[ev(0.0)], &[fit(100.0, -near)], |_| {
+            Some((100.0 * near.cos(), 100.0 * near.sin()))
+        })
+        .unwrap();
+        assert!((e.mean_angle_err - 0.02).abs() < 1e-12, "wrapped to {}", e.mean_angle_err);
+        // The unwrapped value, named, so the assertion above cannot be read as approximate.
+        assert!(e.mean_angle_err < 0.1, "the angular error was not wrapped at all");
+
+        // The mean is a mean: errors of 0.0 and 0.5 over two events give 0.25.
+        let e = flow_error(
+            &[ev(0.0), ev(1.0)],
+            &[fit(100.0, 0.0), fit(100.0, 0.5)],
+            |_| Some((100.0, 0.0)),
+        )
+        .unwrap();
+        assert_eq!(e.fitted, 2);
+        assert!((e.mean_angle_err - 0.25).abs() < 1e-15, "mean {}", e.mean_angle_err);
+
+        // An event that did not fit counts as offered and not as fitted; one whose ground truth is
+        // undefined counts in neither. Those are different exclusions and both are asserted.
+        let e = flow_error(
+            &[ev(0.0), ev(1.0)],
+            &[fit(100.0, 0.0), FlowOutcome::Degenerate],
+            |_| Some((100.0, 0.0)),
+        )
+        .unwrap();
+        assert_eq!((e.fitted, e.offered), (1, 2));
+        let e = flow_error(&[ev(0.0), ev(1.0)], &[fit(100.0, 0.0), fit(100.0, 0.0)], |e| {
+            (e.t_s == 0.0).then_some((100.0, 0.0))
+        })
+        .unwrap();
+        assert_eq!((e.fitted, e.offered), (1, 1));
+
+        // A zero-speed ground truth has no relative error to report — the division would be
+        // infinite — but still has an absolute one.
+        let e = flow_error(&[ev(0.0)], &[fit(3.0, 0.0)], |_| Some((0.0, 0.0))).unwrap();
+        assert_eq!(e.max_rel_speed_err, 0.0);
+        assert!((e.mean_speed_err - 3.0).abs() < 1e-15);
+
+        // A length mismatch is a refusal, not a `zip` that silently truncates — which is precisely
+        // the "decoder quietly eating valid records" failure this module's docs keep citing.
+        assert!(matches!(
+            flow_error(&[ev(0.0), ev(1.0)], &[fit(100.0, 0.0)], |_| Some((100.0, 0.0))),
+            Err(VisionError::TooFew { .. })
+        ));
+        assert!(matches!(
+            flow_error(&[ev(0.0)], &[fit(100.0, 0.0), fit(100.0, 0.0)], |_| Some((100.0, 0.0))),
+            Err(VisionError::TooFew { .. })
+        ));
+        // And a mean over nothing is refused rather than reported as zero.
+        assert!(matches!(
+            flow_error(&[ev(0.0)], &[FlowOutcome::Degenerate], |_| Some((100.0, 0.0))),
+            Err(VisionError::TooFew { .. })
+        ));
+    }
+
+    /// **[`Objective::Variance`] and [`Objective::MeanSquare`] are different functions, and the
+    /// suite could not tell them apart in either direction.**
+    ///
+    /// `contrast_maximisation_finds_the_true_translation` loops over both and asks only whether
+    /// the argmax lands on truth, which both satisfy — so replacing the `MeanSquare` arm with
+    /// `variance()` survived, and so did replacing the `Variance` arm with `sum_of_squares / n`.
+    /// On that test's own stimulus the ratio between the two objectives is 64.0 at `vx = 0` and
+    /// 1.016 at truth, so they are nowhere near each other; the test simply never looked.
+    ///
+    /// Here both are read off an image whose four pixels are written down, so both expected values
+    /// are literals — and the `MeanSquare` doc's claim that it "differs from variance by exactly
+    /// `mean^2`" becomes the third assertion rather than a sentence.
+    #[test]
+    fn the_two_focus_measures_are_different_functions_of_the_same_image() {
+        let g = geom(2, 2);
+        let evs = [PixelEvent { t_s: 0.0, x: 0, y: 0, polarity: Polarity::On }];
+        let m = Motion::Translation { vx: 0.0, vy: 0.0 };
+        // One event warped by nothing: the image is exactly [1, 0, 0, 0].
+        let wi = warped_image(g, &evs, 0.0, m).unwrap();
+        assert_eq!(wi.frame.data, vec![1.0, 0.0, 0.0, 0.0]);
+        assert_eq!((wi.placed, wi.dropped), (1, 0));
+
+        // sum_of_squares = 1 over n = 4 pixels.
+        assert_eq!(contrast(g, &evs, 0.0, m, Objective::MeanSquare).unwrap(), 0.25);
+        // mean = 0.25, so the population variance is (0.5625 + 3 * 0.0625) / 4.
+        assert_eq!(contrast(g, &evs, 0.0, m, Objective::Variance).unwrap(), 0.1875);
+        // And the stated difference: mean^2 = 0.0625.
+        let ms = contrast(g, &evs, 0.0, m, Objective::MeanSquare).unwrap();
+        let var = contrast(g, &evs, 0.0, m, Objective::Variance).unwrap();
+        assert_eq!(ms - var, 0.0625);
+        assert_eq!(ms - var, wi.frame.mean().unwrap().powi(2));
+
+        // A second image, so neither number is a special value of the one-event case: two events
+        // on one pixel give [2, 0, 0, 0], mean 0.5, MeanSquare 1.0, variance 0.75.
+        let two = [
+            PixelEvent { t_s: 0.0, x: 0, y: 0, polarity: Polarity::On },
+            PixelEvent { t_s: 0.0, x: 0, y: 0, polarity: Polarity::Off },
+        ];
+        assert_eq!(contrast(g, &two, 0.0, m, Objective::MeanSquare).unwrap(), 1.0);
+        assert_eq!(contrast(g, &two, 0.0, m, Objective::Variance).unwrap(), 0.75);
+    }
+
+    /// **The two `HOTS` constants against the paper, written out as literals.**
+    ///
+    /// [`Hots::ALPHA0`] and [`Hots::ALPHA_DECAY`] are transcriptions, and the only way to check a
+    /// transcription is to put the source's number beside it. The convergence test above checks
+    /// the *recurrence structure*, which is a different and worthwhile claim — but it held to
+    /// 1e-12 with `ALPHA_DECAY` halved, because it built its closed form out of `alpha_for`.
+    ///
+    /// Lagorce, Orchard, Gallupi, Shi and Benosman, IEEE `TPAMI` 39(7), 2017, print
+    /// `alpha = 0.01 / (1 + p_k / 20000)`.
+    #[test]
+    fn the_hots_learning_rate_is_the_papers_two_constants() {
+        assert_eq!(Hots::ALPHA0, 0.01);
+        assert_eq!(Hots::ALPHA_DECAY, 20000.0);
+        // The rule at three points, each from the paper's expression rather than read back off it.
+        assert_eq!(Hots::alpha_for(0), 0.01);
+        assert_eq!(Hots::alpha_for(20000), 0.01 / 2.0);
+        assert_eq!(Hots::alpha_for(60000), 0.01 / 4.0);
+        // It decays, and it never reaches zero: a cluster slows down, it does not stop learning.
+        let mut prev = f64::INFINITY;
+        for n in [0u64, 1, 100, 20000, 1_000_000] {
+            let a = Hots::alpha_for(n);
+            assert!(a > 0.0 && a < prev, "alpha_for({n}) = {a} against {prev}");
+            prev = a;
+        }
+    }
+
+    /// **The patch layout, on a neighbourhood that is not symmetric.**
+    ///
+    /// [`TimeSurface::patch`]'s doc says row-major, and transposing the write survived all 60
+    /// tests: every `HOTS` test drives a single pixel, which makes the patch the centre indicator
+    /// and therefore symmetric, and the border test uses the corner `(0, 0)`, whose result is
+    /// symmetric too.
+    ///
+    /// Three pixels here fire at three different times, so the three non-zero entries are three
+    /// different numbers and a transpose exchanges two of them.
+    #[test]
+    fn a_patch_is_row_major_and_an_asymmetric_neighbourhood_shows_it() {
+        let g = geom(16, 16);
+        let mut ts = TimeSurface::new(g, Decay::Exponential { tau_s: 1e-3 }, false).unwrap();
+        for (t, x, y) in [(0.0, 5u16, 5u16), (1e-3, 6, 5), (2e-3, 5, 6)] {
+            ts.update(PixelEvent { t_s: t, x, y, polarity: Polarity::On }).unwrap();
+        }
+        let p = ts.patch(5, 5, 1, Polarity::On, 2e-3).unwrap();
+        assert_eq!(p.len(), 9);
+        // Row-major over offsets (dx, dy) in -1..=1: the index is (dy + 1) * 3 + (dx + 1).
+        // (0, 0) is the centre, index 4, and fired two time constants ago.
+        assert!((p[4] - (-2.0f64).exp()).abs() < 1e-15, "the centre holds {}", p[4]);
+        // (+1, 0) — one COLUMN right, same row — is index 5, and fired one time constant ago.
+        assert!((p[5] - (-1.0f64).exp()).abs() < 1e-15, "dx = +1 landed at {}", p[5]);
+        // (0, +1) — one ROW down, same column — is index 7, and fired just now.
+        assert_eq!(p[7], 1.0, "dy = +1 landed at {}", p[7]);
+        // Transposing the write exchanges 5 and 7, and those two hold different numbers.
+        assert!(p[5] != p[7], "the two off-centre entries are indistinguishable");
+        for i in [0usize, 1, 2, 3, 6, 8] {
+            assert_eq!(p[i], 0.0, "entry {i} is not zero");
+        }
+    }
+
+    /// **[`Hots::assign`] — the inference path, the thing the type doc calls the layer's output —
+    /// appeared exactly once in this file: its own definition.** Replacing its body with `Ok(0)`
+    /// survived all 60 tests.
+    ///
+    /// It makes two claims and both are checked: it returns the *nearest* prototype, and it does
+    /// so **without learning**.
+    #[test]
+    fn hots_assign_reports_the_cluster_without_moving_it() {
+        let g = geom(16, 16);
+        let ev = PixelEvent { t_s: 0.0, x: 8, y: 8, polarity: Polarity::On };
+        // Driving one pixel makes the patch exactly the centre indicator, so the nearest prototype
+        // is known by hand: `near` is parallel to it at half the length, `far` is orthogonal.
+        let mut near = vec![0.0; 9];
+        near[4] = 0.5;
+        let mut far = vec![0.0; 9];
+        far[3] = 1.0;
+
+        // Ordered one way the answer is 0 ...
+        let mut a = Hots::with_centers(g, 1, 1e-3, vec![near.clone(), far.clone()]).unwrap();
+        assert_eq!(a.assign(ev).unwrap(), 0);
+        // ... and ordered the other way it is 1, which a hardcoded `Ok(0)` cannot produce.
+        let mut b = Hots::with_centers(g, 1, 1e-3, vec![far.clone(), near.clone()]).unwrap();
+        assert_eq!(b.assign(ev).unwrap(), 1);
+
+        // Nothing moved: `assign` is inference. Assigning again changes neither counter.
+        assert_eq!(b.assign(PixelEvent { t_s: 1e-3, ..ev }).unwrap(), 1);
+        assert_eq!(b.counts(), &[0, 0]);
+        assert_eq!(b.centers()[1], near);
+        // And `learn` on the same event DOES move it, so the comparison above is a real one.
+        assert_eq!(b.learn(PixelEvent { t_s: 2e-3, ..ev }).unwrap(), 1);
+        assert_eq!(b.counts(), &[0, 1]);
+        assert_ne!(b.centers()[1], near);
+        assert_eq!(b.centers()[0], far, "learning moved a prototype that did not win");
+    }
+
+    /// **[`PlaneFlow`] takes its neighbourhood from the event's own polarity plane, and no stream
+    /// in the suite ever had two polarities in it.**
+    ///
+    /// Hardcoding the read to `Polarity::On` survived all 60 tests, and it can only show up on an
+    /// `Off` event — whose neighbourhood would then be read off the `On` edge's timestamps. So the
+    /// stimulus is two edges at once, in different directions, on opposite polarities. Each is
+    /// exactly planar on its own plane, so each recovery is exact; reading the wrong plane costs a
+    /// right angle.
+    #[test]
+    fn plane_flow_fits_on_the_events_own_polarity_plane() {
+        let g = geom(64, 64);
+        let (on_deg, on_speed) = (0.0f64, 300.0f64);
+        let (off_deg, off_speed) = (117.0f64, 200.0f64);
+        let make = |deg: f64, speed: f64, pol: Polarity| {
+            let normal = deg * core::f64::consts::PI / 180.0;
+            let (lo, hi) = edge_span(g, normal);
+            moving_edge(g, normal, speed, lo - 2.0, (hi - lo + 4.0) / speed, pol).unwrap()
+        };
+        let mut evs = make(on_deg, on_speed, Polarity::On);
+        evs.extend(make(off_deg, off_speed, Polarity::Off));
+        evs.sort_by(|a, b| {
+            a.t_s
+                .partial_cmp(&b.t_s)
+                .unwrap_or(core::cmp::Ordering::Equal)
+                .then(a.y.cmp(&b.y))
+                .then(a.x.cmp(&b.x))
+        });
+        assert!(evs.iter().filter(|e| e.polarity == Polarity::Off).count() > 1000);
+        assert!(evs.iter().filter(|e| e.polarity == Polarity::On).count() > 1000);
+
+        // The window has to hold the trailing half-neighbourhood of the SLOWER edge.
+        let mut pf = PlaneFlow::new(g, 3, 4.0 * 3.0 / off_speed, None, 8).unwrap();
+        let outs = pf.run(&evs).unwrap();
+        let on_truth = moving_edge_flow(on_deg * core::f64::consts::PI / 180.0, on_speed);
+        let off_truth = moving_edge_flow(off_deg * core::f64::consts::PI / 180.0, off_speed);
+
+        for (pol, truth, name) in
+            [(Polarity::On, on_truth, "On"), (Polarity::Off, off_truth, "Off")]
+        {
+            let e = flow_error(&evs, &outs, |ev| (ev.polarity == pol).then_some(truth)).unwrap();
+            assert!(e.fitted * 2 > e.offered, "{name}: {} of {} fitted", e.fitted, e.offered);
+            assert!(e.max_rel_speed_err < 1e-9, "{name}: speed error {:e}", e.max_rel_speed_err);
+            assert!(e.mean_angle_err < 1e-9, "{name}: angular error {:e}", e.mean_angle_err);
+        }
+
+        // The two edges really are far apart, so the assertions above are not a coincidence:
+        // scoring the Off events against the On edge's truth is wrong by more than a radian.
+        let crossed =
+            flow_error(&evs, &outs, |ev| (ev.polarity == Polarity::Off).then_some(on_truth))
+                .unwrap();
+        assert!(
+            crossed.mean_angle_err > 1.0,
+            "the two stimuli are not distinguishable: {:e}",
+            crossed.mean_angle_err
+        );
+    }
+
+    /// **[`EFast`] builds its `SAE` with `split: true` deliberately, and no test ever gave it an
+    /// `Off` event.** Hardcoding `EFast::push`'s plane to `Polarity::On` survived all 60 tests.
+    ///
+    /// The fixture writes a quarter-circle entirely onto the `Off` plane, so the `On` plane holds
+    /// nothing at all and the two answers are as far apart as they can be.
+    #[test]
+    fn efast_reads_the_circle_on_the_events_own_polarity_plane() {
+        let g = geom(40, 40);
+        let (cx, cy) = (20u16, 20u16);
+        let mut d = EFast::new(g).unwrap();
+        {
+            let sae = d.surface_mut();
+            for c in [&FAST_CIRCLE_16[..], &FAST_CIRCLE_20[..]] {
+                for &(dx, dy) in c {
+                    let x = (i64::from(cx) + dx) as u16;
+                    let y = (i64::from(cy) + dy) as u16;
+                    sae.update(PixelEvent { t_s: 0.0, x, y, polarity: Polarity::Off }).unwrap();
+                }
+            }
+            for (c, k) in [(&FAST_CIRCLE_16[..], 4usize), (&FAST_CIRCLE_20[..], 5usize)] {
+                for &(dx, dy) in c.iter().take(k) {
+                    let x = (i64::from(cx) + dx) as u16;
+                    let y = (i64::from(cy) + dy) as u16;
+                    sae.update(PixelEvent { t_s: 1.0, x, y, polarity: Polarity::Off }).unwrap();
+                }
+            }
+        }
+        // Read on the plane the events were written to: a corner.
+        assert_eq!(d.arcs_at(cx, cy, Polarity::Off).unwrap(), (Some(4), Some(5)));
+        assert!(d.is_corner(cx, cy, Polarity::Off).unwrap());
+        // Read on the other plane: nothing has ever fired there, every entry is infinitely old,
+        // and no arc can be newer than its complement.
+        assert_eq!(d.arcs_at(cx, cy, Polarity::On).unwrap(), (None, None));
+        assert!(!d.is_corner(cx, cy, Polarity::On).unwrap());
+        // And through `push`, which is where the plane is taken from the event rather than named.
+        let mut off = d.clone();
+        let hit = off.push(PixelEvent { t_s: 1.0, x: cx, y: cy, polarity: Polarity::Off }).unwrap();
+        assert_eq!(hit.map(|c| c.score), Some(4.0), "an Off event did not read the Off plane");
+        let mut on = d.clone();
+        assert!(
+            on.push(PixelEvent { t_s: 1.0, x: cx, y: cy, polarity: Polarity::On })
+                .unwrap()
+                .is_none(),
+            "an On event read the Off plane's corner"
+        );
+    }
+
+    /// **Mutation found: `reject_s`'s `<=` weakened to `<` survived every test.**
+    ///
+    /// The module pins the inclusive convention on both memory windows and on the `eHarris`
+    /// binarisation window; the outlier threshold is the fourth comparison of the same class and
+    /// it had neither a test nor a doc sentence. It is the same defect the module's own docs
+    /// describe as "two implementations of the same paper disagreeing on a recording whose events
+    /// land on round microseconds".
+    ///
+    /// # Why the boundary here is exact
+    ///
+    /// Eight ring pixels at `t = 0` and the centre at `t = 9 / 1024` s. The support is symmetric
+    /// in `(x, y)`, so both gradient sums vanish **exactly** and the first-pass fit is the flat
+    /// plane `t = c` with `c = (9 / 1024) / 9 = 1 / 1024`. Residuals are therefore exactly
+    /// `1 / 1024` on the ring and `8 / 1024` at the centre — all powers of two, so no rounding
+    /// enters — and setting `reject_s` to exactly `1 / 1024` decides the whole ring at once.
+    #[test]
+    fn the_outlier_rejection_threshold_is_inclusive_at_its_boundary() {
+        let g = geom(32, 32);
+        let t_centre = 9.0 / 1024.0;
+        let ring_residual = 1.0 / 1024.0;
+        assert_eq!(t_centre / 9.0, ring_residual, "the fixture's arithmetic is not exact");
+        // `min_events` is nine, the whole neighbourhood, so the outcome REPORTS the surviving
+        // count: the boundary decides eight points at once and the number comes back in the
+        // `RejectedTooMany` payload rather than having to be inferred from a fit.
+        let run = |reject_s: Option<f64>| {
+            let mut pf = PlaneFlow::new(g, 1, 0.05, reject_s, 9).unwrap();
+            for dy in -1i64..=1 {
+                for dx in -1i64..=1 {
+                    if (dx, dy) == (0, 0) {
+                        continue;
+                    }
+                    pf.push(PixelEvent {
+                        t_s: 0.0,
+                        x: (5 + dx) as u16,
+                        y: (5 + dy) as u16,
+                        polarity: Polarity::On,
+                    })
+                    .unwrap();
+                }
+            }
+            pf.push(PixelEvent { t_s: t_centre, x: 5, y: 5, polarity: Polarity::On }).unwrap()
+        };
+        // EXACTLY at the threshold the eight ring points are KEPT and only the centre is rejected.
+        // Under `<` the same call keeps nothing at all, so this one assertion is the whole test.
+        let at = run(Some(ring_residual));
+        assert!(
+            matches!(at, FlowOutcome::RejectedTooMany { inliers: 8 }),
+            "at the boundary: {at:?}"
+        );
+        // A hair above, the same eight.
+        let above = run(Some(ring_residual * 1.0001));
+        assert!(
+            matches!(above, FlowOutcome::RejectedTooMany { inliers: 8 }),
+            "above the boundary: {above:?}"
+        );
+        // A hair below, the ring goes too and nothing survives — which is what says the eight
+        // above are the boundary's doing and not simply everything that was there.
+        let below = run(Some(ring_residual * 0.9999));
+        assert!(
+            matches!(below, FlowOutcome::RejectedTooMany { inliers: 0 }),
+            "below the boundary: {below:?}"
+        );
+        // Wide enough to reject nothing, all nine survive and the flat fit is reported as
+        // `NoMotion` — so the outcomes above are the rejection pass and not the support's shape.
+        let wide = run(Some(0.05));
+        assert!(matches!(wide, FlowOutcome::NoMotion), "with nothing rejected: {wide:?}");
+        // And with the pass disabled entirely, the same answer, which is the control.
+        assert!(matches!(run(None), FlowOutcome::NoMotion), "{:?}", run(None));
+    }
+
+    /// **Mutation found: `.round()` weakened to `.floor()` survived every test.**
+    ///
+    /// `quantisation_rounds_the_clock_without_losing_an_event` asserts only that the timestamps
+    /// became whole microseconds and that more than half of them moved, and truncation satisfies
+    /// both. But the module's stated error bound — "a timestamp rounded to the nearest microsecond
+    /// carries an error up to 0.5 us", which is what predicts the 1.5e-4 relative gradient error
+    /// at 900 px/s — is a claim about round-to-nearest. Under truncation the quantum is one-sided
+    /// with a systematic bias and the prediction roughly doubles, while the measured 3.1e-4
+    /// against a 1e-3 assertion would not notice.
+    ///
+    /// So the rule is pinned at four points chosen to separate `round` from `floor`, from `trunc`,
+    /// from `ceil` and from round-half-to-even.
+    #[test]
+    fn quantisation_rounds_to_nearest_rather_than_truncating() {
+        let at = |t_s: f64| {
+            quantise_microseconds(&[PixelEvent { t_s, x: 0, y: 0, polarity: Polarity::On }])
+                .unwrap()[0]
+                .t_s
+        };
+        // 2.7 us goes UP. `floor` and `trunc` would give 2.
+        assert!((at(2.7e-6) - 3e-6).abs() < 1e-15, "2.7 us became {} s", at(2.7e-6));
+        // 2.2 us goes DOWN. `ceil` would give 3.
+        assert!((at(2.2e-6) - 2e-6).abs() < 1e-15, "2.2 us became {} s", at(2.2e-6));
+        // An exact half goes AWAY FROM ZERO, which is what `f64::round` documents. Round-half-to-
+        // even would send 0.5 to 0 and 2.5 to 2; both products below are exact in binary64.
+        assert!((at(0.5e-6) - 1e-6).abs() < 1e-15, "0.5 us became {} s", at(0.5e-6));
+        assert!((at(2.5e-6) - 3e-6).abs() < 1e-15, "2.5 us became {} s", at(2.5e-6));
+        // Zero is a fixed point rather than a special case, and so is a whole microsecond.
+        assert_eq!(at(0.0), 0.0);
+        assert!((at(4e-6) - 4e-6).abs() < 1e-18);
+        // The error a round introduces is at most half a quantum, which is the claim the module's
+        // quantised-recovery bound is derived from. Truncation would break this at 0.5 us.
+        for k in 0..200 {
+            let t = f64::from(k) * 0.37e-6;
+            assert!((at(t) - t).abs() <= 0.5e-6 + 1e-18, "{t} moved to {}", at(t));
+        }
+    }
+
+    /// **Mutation found: `for len in lo..=hi` reversed to `(lo..=hi).rev()` — the LONGEST valid
+    /// arc instead of the shortest — survived every test.**
+    ///
+    /// Every arc fixture in this module is two-level by construction, one shared old timestamp and
+    /// one shared new one, so exactly one length is ever valid and the choice is invisible. A real
+    /// `SAE` has three or more distinct levels at every pixel, and then the two answers genuinely
+    /// differ — and the returned length is what is compared against `inner_arc` and `outer_arc`, so
+    /// it decides detections on real data.
+    #[test]
+    fn the_newest_arc_returned_is_the_shortest_valid_one() {
+        // Three levels: 3, 3, 2, then five zeros.
+        let t = [3.0f64, 3.0, 2.0, 0.0, 0.0, 0.0, 0.0, 0.0];
+        // The shortest valid arc is {3, 3}: strictly newer than max(2, 0, ..) = 2.
+        assert_eq!(newest_arc(&t, 1, 7), Some(2));
+        // Length 3 is ALSO valid — {3, 3, 2} beats max(0, ..) = 0 — so the search is choosing
+        // between two right answers rather than finding the only one.
+        assert_eq!(newest_arc(&t, 3, 3), Some(3));
+        // Length 1 is not: no single entry is strictly newer than all seven others.
+        assert_eq!(newest_arc(&t, 1, 1), None);
+        // Asked for a range that starts above the shortest answer, it returns the shortest one IN
+        // the range.
+        assert_eq!(newest_arc(&t, 2, 7), Some(2));
+
+        // The same three-level structure across the seam, so the preference survives wrapping.
+        let w = [2.0f64, 0.0, 0.0, 0.0, 0.0, 0.0, 3.0, 3.0];
+        assert_eq!(newest_arc(&w, 1, 7), Some(2));
+        assert_eq!(newest_arc(&w, 3, 3), Some(3));
+    }
+
+    /// **The paper's own sensor is the untested case.**
+    ///
+    /// `cell_grid`'s two `div_ceil` calls had one assertion on them — a 20x20 sensor with
+    /// `cell_px = 10`, where floor and ceil agree — so replacing both with `/ k` survived all 60
+    /// tests. [`Hats::n_cars`] is the `N-CARS`/`ATIS` configuration and that sensor is **304x240**:
+    /// 304 / 10 is 30.4, and under floor division the right-hand column of events writes into the
+    /// *next row's* cell and, in the bottom-right corner, past the end of `per_cell`.
+    #[test]
+    fn hats_tiles_a_sensor_whose_width_is_not_a_multiple_of_the_cell() {
+        let h = Hats::n_cars();
+        let atis = geom(304, 240);
+        // ceil(304 / 10) = 31 and ceil(240 / 10) = 24, not 30 and 24.
+        assert_eq!(h.cell_grid(atis).unwrap(), (31, 24));
+        assert_eq!(h.descriptor_len(atis).unwrap(), 31 * 24 * 2 * 49);
+        assert_eq!(h.descriptor_len(atis).unwrap(), 72912);
+        // A remainder in each direction, and the exactly-divisible case beside them.
+        assert_eq!(h.cell_grid(geom(25, 25)).unwrap(), (3, 3));
+        assert_eq!(h.cell_grid(geom(30, 30)).unwrap(), (3, 3));
+        assert_eq!(h.cell_grid(geom(31, 30)).unwrap(), (4, 3));
+        assert_eq!(h.cell_grid(geom(30, 31)).unwrap(), (3, 4));
+        assert_eq!(h.cell_grid(geom(1, 1)).unwrap(), (1, 1));
+
+        // And the last column really is addressed by the last cell: an event at (303, 239) lands
+        // in cell (23, 30) of a 31-wide grid, inside the descriptor rather than past its end.
+        let last = [PixelEvent { t_s: 0.0, x: 303, y: 239, polarity: Polarity::On }];
+        let d = h.descriptor(atis, &last).unwrap();
+        assert_eq!(d.len(), 72912);
+        let cell = 23 * 31 + 30;
+        let centre = (cell * 2 + 1) * 49 + 3 * 7 + 3;
+        assert_eq!(d[centre], 1.0, "the bottom-right event did not reach the bottom-right cell");
+        assert_eq!(d.iter().filter(|v| **v != 0.0).count(), 1);
+        // The cell to its left is a different cell, which is what "30.4 cells" has to mean.
+        let left = [PixelEvent { t_s: 0.0, x: 299, y: 239, polarity: Polarity::On }];
+        let dl = h.descriptor(atis, &left).unwrap();
+        let centre_left = ((23 * 31 + 29) * 2 + 1) * 49 + 3 * 7 + 3;
+        assert_eq!(dl[centre_left], 1.0);
+        assert_eq!(dl[centre], 0.0, "x = 299 and x = 303 landed in the same cell");
+    }
+
+    /// **Mutation found: the neighbourhood test `|dx| > rho || |dy| > rho` widened to `>=`
+    /// survived every test.**
+    ///
+    /// That mutation permanently zeroes every bin on the *edge* of the neighbourhood: for the
+    /// paper's `rho = 3` that is 24 of the 49 bins per cell, roughly half the descriptor. It
+    /// survived because no test ever placed a neighbour further than one pixel from the event —
+    /// the radius-3 tests use offsets of 0 and +/-1, and the radius-1 tests use offset 0 only.
+    #[test]
+    fn hats_fills_the_outer_ring_of_its_neighbourhood() {
+        let g = geom(20, 20);
+        let h = Hats { cell_px: 10, radius: 3, tau_s: 0.05, window_s: 1.0, split_polarity: false };
+        let dt = 0.02;
+        let decay = (-dt / h.tau_s).exp();
+        let centre_bin = 3 * 7 + 3;
+        // Every pixel named below is inside cell 0, which spans x and y in 0..=9.
+        let pair = |x0: u16, y0: u16, x1: u16, y1: u16| {
+            h.descriptor(g, &[
+                PixelEvent { t_s: 0.0, x: x0, y: y0, polarity: Polarity::On },
+                PixelEvent { t_s: dt, x: x1, y: y1, polarity: Polarity::On },
+            ])
+            .unwrap()
+        };
+        // Straight out along -x, exactly on the ring: offset (-3, 0), bin (0 + 3) * 7 + 0 = 21.
+        let side = pair(1, 4, 4, 4);
+        assert!((side[21] - decay / 2.0).abs() < 1e-14, "the (-3, 0) bin holds {}", side[21]);
+        assert_eq!(side[centre_bin], 1.0);
+        assert_eq!(side.iter().filter(|v| **v != 0.0).count(), 2);
+        // The near corner of the ring, offset (-3, -3): bin 0, the very first entry of the cell.
+        let corner = pair(1, 1, 4, 4);
+        assert!((corner[0] - decay / 2.0).abs() < 1e-14, "the (-3, -3) bin holds {}", corner[0]);
+        // The far corner, offset (+3, +3): bin 6 * 7 + 6 = 48, the very last.
+        let opposite = pair(7, 7, 4, 4);
+        assert!(
+            (opposite[48] - decay / 2.0).abs() < 1e-14,
+            "the (+3, +3) bin holds {}",
+            opposite[48]
+        );
+        // Straight down, offset (0, +3): bin 6 * 7 + 3 = 45.
+        let down = pair(4, 7, 4, 4);
+        assert!((down[45] - decay / 2.0).abs() < 1e-14, "the (0, +3) bin holds {}", down[45]);
+        // And one pixel further out is OUTSIDE the neighbourhood and contributes nothing, which is
+        // what stops this test from passing for a detector that simply counts everything.
+        let outside = pair(0, 4, 4, 4);
+        assert_eq!(outside[centre_bin], 1.0);
+        assert_eq!(
+            outside.iter().filter(|v| **v != 0.0).count(),
+            1,
+            "a neighbour at |dx| = 4 was counted"
+        );
+    }
+
+    /// **The `HATS` divisor is the cell's TOTAL event count, not the plane's, and the consequence
+    /// is asserted rather than only described.**
+    ///
+    /// An `On`-dominated cell and a balanced cell with **identical `On` texture** produce different
+    /// `On` planes. That follows from the averaging step as this implementation reads it, it could
+    /// not be checked against an author-released reference, and it is now flagged on
+    /// [`Hats::descriptor`] for the same reason the `tau` reading is flagged on the type. With a
+    /// per-plane divisor every number below would be 1.0.
+    #[test]
+    fn hats_normalises_a_polarity_plane_by_the_cells_total() {
+        let g = geom(10, 10);
+        let h = Hats { cell_px: 10, radius: 1, tau_s: 1.0, window_s: 1.0, split_polarity: true };
+        // Plane 1 is `On`, nine bins per plane, centre of a 3x3 neighbourhood is index 4.
+        let on_centre = 9 + 4;
+        let on = PixelEvent { t_s: 0.0, x: 5, y: 5, polarity: Polarity::On };
+        let off = |t: f64, x: u16, y: u16| PixelEvent { t_s: t, x, y, polarity: Polarity::Off };
+
+        // One `On` event alone in the cell: its own contribution over a divisor of one.
+        assert_eq!(h.descriptor(g, &[on]).unwrap()[on_centre], 1.0);
+        // The SAME `On` texture with one `Off` event added elsewhere in the cell. The `On` plane's
+        // content has not changed; its divisor has.
+        let mixed = h.descriptor(g, &[on, off(0.01, 8, 8)]).unwrap();
+        assert_eq!(mixed[on_centre], 0.5, "the On plane was divided by its own count");
+        // Three `Off` events, and the same `On` plane is divided by four.
+        let mixed3 = h
+            .descriptor(g, &[on, off(0.01, 8, 8), off(0.02, 8, 0), off(0.03, 0, 8)])
+            .unwrap();
+        assert_eq!(mixed3[on_centre], 0.25);
+        // The `Off` plane of that last descriptor carries three own-contributions over four.
+        assert_eq!(mixed3[4], 0.75);
+    }
+
+    /// **Every `# Errors` branch below had no test at all.** Each of these mutations survived all
+    /// 60 tests: replacing `Motion::validate` with `Ok(())`; dropping `require_time_ordered`'s
+    /// finiteness check; dropping `warped_image`'s pre-warp bounds check; dropping either of
+    /// `EFast::with_arcs`'s guards, which were dead under test because no test ever called it with
+    /// a custom range; and dropping `Motion::RadialExpansion`'s `r == 0` guard, which no test could
+    /// reach because every expansion centre in this module is half-integer.
+    #[test]
+    fn the_refusals_the_error_docs_name_are_reachable() {
+        let g = geom(16, 16);
+        let ev = [PixelEvent { t_s: 0.0, x: 4, y: 4, polarity: Polarity::On }];
+        let still = Motion::Translation { vx: 0.0, vy: 0.0 };
+
+        // `Motion::validate`, on its own and through the two public entry points that call it.
+        for m in [
+            Motion::Translation { vx: f64::NAN, vy: 0.0 },
+            Motion::Translation { vx: 0.0, vy: f64::INFINITY },
+            Motion::Rotation { omega_rad_s: f64::NAN, cx: 0.0, cy: 0.0 },
+            Motion::Rotation { omega_rad_s: 1.0, cx: f64::NAN, cy: 0.0 },
+            Motion::Rotation { omega_rad_s: 1.0, cx: 0.0, cy: f64::NEG_INFINITY },
+            Motion::RadialExpansion { rate_px_s: f64::NAN, cx: 0.0, cy: 0.0 },
+            Motion::RadialExpansion { rate_px_s: 1.0, cx: f64::NAN, cy: 0.0 },
+            Motion::RadialExpansion { rate_px_s: 1.0, cx: 0.0, cy: f64::NAN },
+        ] {
+            assert!(matches!(m.validate(), Err(VisionError::NonFinite { .. })), "{m:?} validated");
+            assert!(
+                matches!(warped_image(g, &ev, 0.0, m), Err(VisionError::NonFinite { .. })),
+                "{m:?} warped"
+            );
+            assert!(matches!(
+                contrast(g, &ev, 0.0, m, Objective::Variance),
+                Err(VisionError::NonFinite { .. })
+            ));
+        }
+        // Finite motions of all three families pass, so the loop is not refusing everything.
+        for m in [
+            still,
+            Motion::Rotation { omega_rad_s: 1.0, cx: 8.0, cy: 8.0 },
+            Motion::RadialExpansion { rate_px_s: 1.0, cx: 8.0, cy: 8.0 },
+        ] {
+            assert!(m.validate().is_ok(), "{m:?} was refused");
+        }
+
+        // `warped_image`'s PRE-warp bounds check: an event off the lattice is an error ...
+        let off_lattice = [PixelEvent { t_s: 0.0, x: 16, y: 0, polarity: Polarity::On }];
+        assert!(matches!(
+            warped_image(g, &off_lattice, 0.0, still),
+            Err(VisionError::OutOfBounds { .. })
+        ));
+        // ... while an event that warps off the lattice is a `dropped`, which is the distinction
+        // the two branches exist to keep.
+        let far = warped_image(g, &ev, 1.0, Motion::Translation { vx: 1e6, vy: 0.0 }).unwrap();
+        assert_eq!((far.placed, far.dropped), (0, 1));
+        // And a bad timestamp or reference time is refused before either.
+        let nan_t = [PixelEvent { t_s: f64::NAN, x: 4, y: 4, polarity: Polarity::On }];
+        assert!(matches!(
+            warped_image(g, &nan_t, 0.0, still),
+            Err(VisionError::NonFinite { .. })
+        ));
+        assert!(matches!(
+            warped_image(g, &ev, f64::NAN, still),
+            Err(VisionError::NonFinite { .. })
+        ));
+
+        // `require_time_ordered`, both halves, directly and through `Hats::descriptor` — where
+        // without the finiteness check a single NaN silently poisons the whole descriptor.
+        let nan_stream = [ev[0], PixelEvent { t_s: f64::NAN, x: 5, y: 4, polarity: Polarity::On }];
+        assert!(matches!(
+            require_time_ordered(&nan_stream),
+            Err(VisionError::NonFinite { .. })
+        ));
+        assert!(matches!(
+            Hats::n_cars().descriptor(g, &nan_stream),
+            Err(VisionError::NonFinite { .. })
+        ));
+        let backwards = [
+            PixelEvent { t_s: 1.0, x: 4, y: 4, polarity: Polarity::On },
+            PixelEvent { t_s: 0.5, x: 5, y: 4, polarity: Polarity::On },
+        ];
+        assert!(matches!(
+            require_time_ordered(&backwards),
+            Err(VisionError::OutOfOrder { .. })
+        ));
+        assert!(require_time_ordered(&ev).is_ok());
+        assert!(require_time_ordered(&[]).is_ok());
+
+        // `EFast::with_arcs`: both `BadParameters` branches, in both directions.
+        for arcs in [(0usize, 6usize), (7, 3), (3, 16), (3, 20)] {
+            assert!(
+                matches!(
+                    EFast::with_arcs(g, arcs, EFast::OUTER_ARC),
+                    Err(VisionError::BadParameters { .. })
+                ),
+                "inner range {arcs:?} was accepted"
+            );
+        }
+        for arcs in [(0usize, 8usize), (9, 4), (4, 20), (4, 25)] {
+            assert!(
+                matches!(
+                    EFast::with_arcs(g, EFast::INNER_ARC, arcs),
+                    Err(VisionError::BadParameters { .. })
+                ),
+                "outer range {arcs:?} was accepted"
+            );
+        }
+        // A legal custom range builds, so neither loop is refusing everything.
+        assert!(EFast::with_arcs(g, (2, 5), (3, 7)).is_ok());
+        // And the paper's ranges, as literals: 3 to 6 of 16 and 4 to 8 of 20.
+        assert_eq!(EFast::INNER_ARC, (3, 6));
+        assert_eq!(EFast::OUTER_ARC, (4, 8));
+
+        // `Motion::RadialExpansion`'s centre guard. Without it `k = (r - rate * dt) / r` is 0/0 at
+        // the centre, the event warps to NaN, and it is silently counted as `dropped`.
+        let m = Motion::RadialExpansion { rate_px_s: 50.0, cx: 4.0, cy: 4.0 };
+        assert_eq!(m.warp(4.0, 4.0, 0.01), (4.0, 4.0));
+        assert_eq!(m.warp(4.0, 4.0, -0.01), (4.0, 4.0));
+        let at_centre = warped_image(g, &ev, 0.01, m).unwrap();
+        assert_eq!((at_centre.placed, at_centre.dropped), (1, 0));
+        assert_eq!(at_centre.frame.at(4, 4), Some(1.0));
+        // A pixel one away from the centre DOES move, so the guard is a special case of something.
+        let (wx, wy) = m.warp(5.0, 4.0, -0.01);
+        assert!((wx - 5.5).abs() < 1e-12 && (wy - 4.0).abs() < 1e-12, "({wx}, {wy})");
+    }
+
+    /// **Six public accessors that no test called.** Each could be replaced by a wrong constant and
+    /// all 60 tests still passed; [`Decay::scale_s`] is not called anywhere in the crate at all.
+    ///
+    /// Each is checked against the value its owner was *built* with, and where the accessor names
+    /// a quantity with a definition, against the definition too — the exponential is exactly `1/e`
+    /// at `scale_s`, the linear ramp exactly zero there.
+    #[test]
+    fn the_accessors_report_what_their_owners_were_built_with() {
+        assert_eq!(Decay::Exponential { tau_s: 0.007 }.scale_s(), 0.007);
+        assert_eq!(Decay::Linear { window_s: 0.13 }.scale_s(), 0.13);
+        let e = Decay::Exponential { tau_s: 0.007 };
+        assert!((e.value(e.scale_s()) - (-1.0f64).exp()).abs() < 1e-15);
+        let l = Decay::Linear { window_s: 0.13 };
+        assert_eq!(l.value(l.scale_s()), 0.0);
+        assert!(l.value(l.scale_s() / 2.0) > 0.0);
+
+        let g = geom(12, 9);
+        let decay = Decay::Exponential { tau_s: 0.004 };
+        let mut ts = TimeSurface::new(g, decay, true).unwrap();
+        assert_eq!(ts.decay(), decay);
+        assert_eq!(ts.decay().scale_s(), 0.004);
+        assert!(ts.is_split());
+        assert!(!TimeSurface::new(g, decay, false).unwrap().is_split());
+        // `now_s` is -inf before the first event, the last accepted time afterwards, and -inf
+        // again after `clear`.
+        assert_eq!(ts.now_s(), f64::NEG_INFINITY);
+        ts.update(PixelEvent { t_s: 0.25, x: 1, y: 1, polarity: Polarity::On }).unwrap();
+        assert_eq!(ts.now_s(), 0.25);
+        ts.update(PixelEvent { t_s: 0.75, x: 2, y: 1, polarity: Polarity::Off }).unwrap();
+        assert_eq!(ts.now_s(), 0.75);
+        ts.clear();
+        assert_eq!(ts.now_s(), f64::NEG_INFINITY);
+
+        let pf = PlaneFlow::new(g, 4, 0.021, Some(1e-3), 9).unwrap();
+        assert_eq!(pf.radius(), 4);
+        assert_eq!(pf.window_s(), 0.021);
+        // The surface it keeps is the LINEAR one its own window defines, and it is split — which
+        // is the wiring between the accessors rather than each one on its own.
+        assert_eq!(pf.surface().decay(), Decay::Linear { window_s: 0.021 });
+        assert!(pf.surface().is_split(), "the plane fit's SAE must keep the polarities apart");
+        assert_eq!(pf.surface().geometry(), g);
+        // A second estimator with different numbers, so neither reading is a coincidence.
+        let pf2 = PlaneFlow::new(g, 2, 0.05, None, 3).unwrap();
+        assert_eq!((pf2.radius(), pf2.window_s()), (2, 0.05));
+
+        let eh = EHarris::new(g, 3, 0.011, 0.05, 1.5).unwrap();
+        assert_eq!((eh.radius(), eh.window_s()), (3, 0.011));
+        assert_eq!(eh.surface().decay(), Decay::Linear { window_s: 0.011 });
+        assert!(!eh.surface().is_split(), "eHarris binarises without regard to polarity");
+        assert!(EFast::new(g).unwrap().surface().is_split());
+
+        let hots = Hots::with_centers(g, 2, 0.003, vec![vec![0.25; 25]]).unwrap();
+        assert_eq!(hots.radius(), 2);
+        assert_eq!(hots.centers().len(), 1);
+        assert_eq!(hots.counts(), &[0]);
+        assert_eq!(hots.surface().decay(), Decay::Exponential { tau_s: 0.003 });
+    }
+
+    /// **A panic reachable from the public API on an input the constructor accepted.**
+    ///
+    /// `EHarris::new(geom(64, 64), 32768, ..)` used to succeed, and the next `push` panicked at
+    /// `(2 * self.radius + 1) as usize` — that is `u16` arithmetic, so `2 * 32768` overflows in
+    /// debug and wraps to `0` in release, after which a length-1 buffer is indexed at 65536.
+    /// `TimeSurface::patch(4, 4, 32768, ..)` was the same defect with a caller-supplied radius and
+    /// no validation at all, and `Hots::learn` reached it through the same call. All three were
+    /// reproduced before this test was written.
+    ///
+    /// The arithmetic is `usize` now, and every constructor that stores a radius states a bound.
+    #[test]
+    fn a_neighbourhood_wider_than_the_sensor_is_refused_rather_than_overflowing() {
+        let g = geom(64, 64);
+        assert!(matches!(
+            EHarris::new(g, 32768, 1e-3, EHarris::K_HARRIS, 0.0),
+            Err(VisionError::BadParameters { .. })
+        ));
+        let mut ts = TimeSurface::new(g, Decay::Exponential { tau_s: 1e-3 }, true).unwrap();
+        ts.update(PixelEvent { t_s: 0.0, x: 4, y: 4, polarity: Polarity::On }).unwrap();
+        assert!(matches!(
+            ts.patch(4, 4, 32768, Polarity::On, 0.0),
+            Err(VisionError::BadParameters { .. })
+        ));
+        assert!(matches!(
+            Hots::with_centers(g, 32768, 1e-3, vec![vec![0.0; 9]]),
+            Err(VisionError::BadParameters { .. })
+        ));
+        assert!(matches!(
+            Hots::new(g, 32768, 1e-3, 2, &mut Rng::new(1)),
+            Err(VisionError::BadParameters { .. })
+        ));
+        assert!(matches!(
+            PlaneFlow::new(g, 32768, 1e-2, None, 8),
+            Err(VisionError::BadParameters { .. })
+        ));
+
+        // The bound is exactly the sensor's larger dimension, not a round number someone picked:
+        // one below it works and gives a full-size patch, and at it the call is refused.
+        let tall = geom(8, 20);
+        let mut ts = TimeSurface::new(tall, Decay::Linear { window_s: 1.0 }, false).unwrap();
+        ts.update(PixelEvent { t_s: 0.0, x: 3, y: 3, polarity: Polarity::On }).unwrap();
+        let p = ts.patch(3, 3, 19, Polarity::On, 0.0).unwrap();
+        assert_eq!(p.len(), 39 * 39);
+        // At that radius the patch already covers every pixel of the sensor from any centre, which
+        // is the whole reason the bound is where it is: one pixel has fired and the rest is pad.
+        assert_eq!(p.iter().filter(|v| **v != 0.0).count(), 1);
+        assert!(matches!(
+            ts.patch(3, 3, 20, Polarity::On, 0.0),
+            Err(VisionError::BadParameters { .. })
+        ));
+        // And the ordinary radii the rest of this module uses are untouched.
+        assert!(ts.patch(3, 3, 2, Polarity::On, 0.0).is_ok());
+        assert!(EHarris::new(g, 63, 1e-3, EHarris::K_HARRIS, 0.0).is_ok());
+        assert!(EHarris::new(g, 64, 1e-3, EHarris::K_HARRIS, 0.0).is_err());
+        assert!(PlaneFlow::new(g, 63, 1e-2, None, 8).is_ok());
+        assert!(PlaneFlow::new(g, 64, 1e-2, None, 8).is_err());
+
+        // `Hats` is the fourth member of the family and reaches the same hazard by a different
+        // road: its fields are public, so `(2 * radius + 1)^2` can be made to overflow a 32-bit
+        // `usize`, which on a release wasm32 build would wrap silently and then index out of
+        // bounds. `bins_per_cell` saturates and `descriptor_len` refuses.
+        let huge =
+            Hats { cell_px: 1, radius: 65535, tau_s: 1.0, window_s: 0.1, split_polarity: true };
+        let wide_sensor = geom(65535, 65535);
+        assert!(matches!(
+            huge.descriptor_len(wide_sensor),
+            Err(VisionError::BadParameters { .. })
+        ));
+        assert!(matches!(
+            huge.descriptor(wide_sensor, &[]),
+            Err(VisionError::BadParameters { .. })
+        ));
+        // `bins_per_cell` itself saturates rather than wrapping, checked in `u128` so the
+        // assertion is the same arithmetic on a 64-bit host and on `wasm32`.
+        let side = 2u128 * 65535 + 1;
+        assert_eq!(huge.bins_per_cell() as u128, (side * side).min(usize::MAX as u128));
+        // The paper's own configuration is nowhere near any of this.
+        assert_eq!(Hats::n_cars().bins_per_cell(), 49);
+        assert_eq!(Hats::n_cars().descriptor_len(geom(304, 240)).unwrap(), 72912);
+    }
+
+    /// **An unbounded loop reachable from the public API.**
+    ///
+    /// `rotating_bar` emitted one event per annulus pixel per half turn with nothing bounding the
+    /// count. Measured on a 3x3 sensor with four annulus pixels, `omega` of 1e3 to 1e6 gave 2548,
+    /// 25466, 254648 and 2546480 events — linear, with no ceiling — and `omega = 1e12` over one
+    /// second asks for about 1.3e12, roughly 30 TB. Worse, once `pi / omega` falls below
+    /// `duration / 2^53` the crossing counter `k` stops advancing in binary64 and the loop
+    /// **never terminates**: reproduced at `omega = 1e17`, which ran until it was killed.
+    ///
+    /// The count is computed first and refused against [`MAX_ROTATING_BAR_EVENTS`].
+    #[test]
+    fn rotating_bar_refuses_a_sweep_it_cannot_finish() {
+        let g = geom(3, 3);
+        let bar = |omega: f64, duration: f64| {
+            rotating_bar(g, (1.0, 1.0), omega, 0.0, 0.5, 1.5, duration, Polarity::On)
+        };
+        // The counts measured before the fix, unchanged: the cap refuses, it does not truncate.
+        assert_eq!(bar(1e3, 1.0).unwrap().len(), 2548);
+        assert_eq!(bar(1e4, 1.0).unwrap().len(), 25466);
+        assert_eq!(bar(1e5, 1.0).unwrap().len(), 254648);
+        // The cap bites exactly where it says, and this pair is deliberately the FIRST refusal
+        // asserted: eight annulus pixels at 127324 crossings each is 1018592 events and is
+        // produced, and 3183099 each is 25464792 and is refused. A disabled cap returns `Ok` here,
+        // in about half a second, which is what catches the mutation before anything downstream
+        // asks for the 30 TB the 1e12 case below would need.
+        assert_eq!(bar(4e6, 0.1).unwrap().len(), 1018592);
+        assert!(matches!(bar(1e7, 1.0), Err(VisionError::BadParameters { .. })));
+        // Far past the cap: a named refusal instead of an allocation nobody has the memory for.
+        assert!(matches!(bar(1e12, 1.0), Err(VisionError::BadParameters { .. })));
+        // The case that used to spin forever now returns, in bounded time.
+        assert!(matches!(bar(1e17, 1.0), Err(VisionError::BadParameters { .. })));
+        assert!(matches!(bar(f64::MAX, 1.0), Err(VisionError::BadParameters { .. })));
+        // The cap is on the EVENT count, not on omega: the same omega over a short enough
+        // recording is fine, and a modest omega over a large enough sensor is refused.
+        assert!(bar(1e6, 1e-3).is_ok());
+        assert!(matches!(
+            rotating_bar(geom(512, 512), (256.0, 256.0), 1e5, 0.0, 1.0, 400.0, 1.0, Polarity::On),
+            Err(VisionError::BadParameters { .. })
+        ));
+        // Right at the boundary the answer is still exact rather than clipped: four annulus pixels
+        // at one crossing each.
+        let one_turn = bar(1.0, 1e-9).unwrap();
+        assert!(one_turn.len() <= 4, "{} events in a billionth of a second", one_turn.len());
+        // The cap, as its doc states it.
+        assert_eq!(MAX_ROTATING_BAR_EVENTS, 10_000_000);
+    }
+
+    /// **A panic on a [`Frame`] the type lets you build.**
+    ///
+    /// All three fields are public — this module's own tests write images down as literals, which
+    /// is what makes their statistics checkable against arithmetic — so
+    /// `Frame { width: 4, height: 4, data: Vec::new() }` is constructible, and `at(0, 0)` on it
+    /// panicked with "index out of bounds", from a method documented as returning `None` off the
+    /// lattice. Reproduced before this test was written.
+    #[test]
+    fn a_frame_whose_data_is_short_reports_none_rather_than_panicking() {
+        let empty = Frame { width: 4, height: 4, data: Vec::new() };
+        assert!(!empty.is_consistent());
+        assert_eq!(empty.at(0, 0), None);
+        assert_eq!(empty.at(3, 3), None);
+        assert_eq!(empty.at(4, 0), None);
+        assert_eq!(empty.sum(), 0.0);
+        assert_eq!(empty.mean(), None);
+        assert_eq!(empty.variance(), None);
+        assert_eq!(empty.max(), None);
+        assert_eq!(empty.min(), None);
+
+        // A partial image: the pixels that exist read back, the rest are `None` rather than a panic
+        // or a zero somebody might plot.
+        let short = Frame { width: 4, height: 4, data: vec![1.0, 2.0, 3.0] };
+        assert!(!short.is_consistent());
+        assert_eq!(short.at(0, 0), Some(1.0));
+        assert_eq!(short.at(2, 0), Some(3.0));
+        assert_eq!(short.at(3, 0), None);
+        assert_eq!(short.at(0, 1), None);
+
+        // And everything this module PRODUCES is consistent, which is the invariant the `None` is
+        // standing in for.
+        let g = geom(7, 5);
+        assert!(Frame::zeros(g).is_consistent());
+        let evs = moving_edge(g, 0.0, 100.0, -2.0, 0.2, Polarity::On).unwrap();
+        assert!(!evs.is_empty());
+        assert!(accumulate_count(g, &evs).unwrap().is_consistent());
+        assert!(accumulate_polarity(g, &evs).unwrap().is_consistent());
+        assert!(
+            accumulate_decay(g, &evs, Decay::Exponential { tau_s: 0.01 }, 0.2)
+                .unwrap()
+                .is_consistent()
+        );
+        let ts = TimeSurface::new(g, Decay::Exponential { tau_s: 0.01 }, false).unwrap();
+        assert!(ts.render(Polarity::On, 0.0).unwrap().is_consistent());
+        assert!(
+            warped_image(g, &evs, 0.1, Motion::Translation { vx: 100.0, vy: 0.0 })
+                .unwrap()
+                .frame
+                .is_consistent()
+        );
+    }
+
+    /// **The tie-break `sort_events` documents, against a stream that has ties in two dimensions.**
+    ///
+    /// Its doc says ties break by `(y, x)` and that "fixing the order here is what makes a run
+    /// reproducible", but `the_whole_pipeline_is_bit_reproducible` only compares a run against
+    /// itself, so swapping the tie-break to `(x, y)` survived every test. An axis-aligned edge
+    /// cannot see the difference either: all its ties share one coordinate, and the two orders
+    /// agree there. Microsecond quantisation on a diagonal edge is what creates ties across
+    /// genuinely different pixels.
+    #[test]
+    fn the_stream_order_is_the_one_sort_events_documents() {
+        let g = geom(48, 48);
+        let evs = quantise_microseconds(
+            &moving_edge(g, 0.7, 1_000_000.0, -5.0, 1e-4, Polarity::On).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(evs.len(), g.pixels(), "the edge did not sweep the whole sensor");
+        let mut two_dimensional_ties = 0usize;
+        for w in evs.windows(2) {
+            let (a, b) = (w[0], w[1]);
+            assert!(a.t_s <= b.t_s, "the stream is not sorted by time");
+            if a.t_s == b.t_s {
+                assert!(
+                    (a.y, a.x) < (b.y, b.x),
+                    "a tie put ({}, {}) before ({}, {})",
+                    a.y,
+                    a.x,
+                    b.y,
+                    b.x
+                );
+                if a.x != b.x && a.y != b.y {
+                    two_dimensional_ties += 1;
+                }
+            }
+        }
+        // Without ties that move BOTH coordinates the assertion above cannot tell `(y, x)` from
+        // `(x, y)`, so the stimulus is required to produce them.
+        assert!(
+            two_dimensional_ties > 50,
+            "only {two_dimensional_ties} ties could see the tie-break at all"
+        );
+    }
+
+    /// **`warped_image`'s doc says "Polarity is **ignored** — every event votes `+1`", with a
+    /// paragraph justifying unsigned voting, and no mixed-polarity stream was ever warped.**
+    ///
+    /// Making the warp itself polarity-dependent — `m.warp(x, y, (t - t_ref) * e.polarity.sign())`
+    /// — survived all 60 tests.
+    #[test]
+    fn warping_ignores_the_polarity_of_the_events_it_warps() {
+        let g = geom(32, 32);
+        let mixed: Vec<PixelEvent> = (0..24u16)
+            .map(|k| PixelEvent {
+                t_s: f64::from(k) * 1e-3,
+                x: 4 + k,
+                y: 8 + k / 2,
+                polarity: if k % 3 == 0 { Polarity::Off } else { Polarity::On },
+            })
+            .collect();
+        assert!(mixed.iter().any(|e| e.polarity == Polarity::Off));
+        assert!(mixed.iter().any(|e| e.polarity == Polarity::On));
+        let recolour = |p: Polarity| -> Vec<PixelEvent> {
+            mixed.iter().map(|e| PixelEvent { polarity: p, ..*e }).collect()
+        };
+        let all_on = recolour(Polarity::On);
+        let all_off = recolour(Polarity::Off);
+        let t_ref = 0.012;
+        let still = Motion::Translation { vx: 0.0, vy: 0.0 };
+        let unwarped = warped_image(g, &mixed, t_ref, still).unwrap();
+
+        // Displacements below stay under two pixels, so nothing leaves the sensor and the image's
+        // total mass is exactly the number of events — which is what "every event votes +1" means.
+        for m in [
+            Motion::Translation { vx: 100.0, vy: 50.0 },
+            Motion::Rotation { omega_rad_s: 5.0, cx: 15.5, cy: 15.5 },
+            Motion::RadialExpansion { rate_px_s: 30.0, cx: 15.5, cy: 15.5 },
+        ] {
+            let a = warped_image(g, &mixed, t_ref, m).unwrap();
+            let b = warped_image(g, &all_on, t_ref, m).unwrap();
+            let c = warped_image(g, &all_off, t_ref, m).unwrap();
+            assert_eq!(a.frame, b.frame, "{m:?}: the warp depends on polarity");
+            assert_eq!(a.frame, c.frame, "{m:?}: the warp depends on polarity");
+            assert_eq!((a.placed, a.dropped), (b.placed, b.dropped));
+            assert_eq!((a.placed, a.dropped), (24, 0), "{m:?}: events left the sensor");
+            assert!(
+                (a.frame.sum() - 24.0).abs() < 1e-9,
+                "{m:?}: mass {} against 24 events",
+                a.frame.sum()
+            );
+            // And the warp is doing something, so the equalities above are not the identity.
+            assert_ne!(a.frame, unwarped.frame, "{m:?}: the warp moved nothing");
+        }
+        // The same for the accumulator that DOES read polarity, so the contrast above is real.
+        assert_ne!(
+            accumulate_polarity(g, &mixed).unwrap(),
+            accumulate_polarity(g, &all_on).unwrap()
+        );
+    }
+
+    /// **`k` and [`EHarris::K_HARRIS`] were both inert under test.** Hardcoding `0.04` inside
+    /// `harris_score` survived, and so did `K_HARRIS: 0.04 -> 0.06`. The sign theorem the module
+    /// asserts holds for any `k < 0.25`, which is exactly why it is a good test and exactly why it
+    /// cannot pin the constant.
+    ///
+    /// # The patch, and why its structure tensor is known without computing it
+    ///
+    /// Take `v(i, j) = i * j + i` over a 5x5 patch, `i` the column and `j` the row. `Sobel` is
+    /// separable, so on the 3x3 interior `gx = 8 * (j + 1)` and `gy = 8 * i`, and summing over
+    /// `i, j` in `1..=3` gives, exactly and in integers,
+    ///
+    /// ```text
+    /// Mxx = 64 * 3 * (4 + 9 + 16) = 5568      Myy = 64 * 3 * (1 + 4 + 9) = 2688
+    /// Mxy = 64 * 6 * 9            = 3456
+    /// det = 3022848                           trace = 8256
+    /// ```
+    ///
+    /// whose eigenvalues are `4128 +/- sqrt(1440^2 + 3456^2) = 4128 +/- 3744`, i.e. `7872` and
+    /// `384`: a ratio of exactly **20.5:1**. That sits between `rho_max(0.06) = 14.598` and
+    /// `rho_max(0.04) = 22.956`, so the response is positive at the paper's constant and negative
+    /// at the other end of `Harris`'s stated range — which is the doc's quantitative claim, as a
+    /// test. The doc used to say `0.04` admits "about 19:1"; that was wrong, and this is the check
+    /// that would have caught it.
+    #[test]
+    fn the_harris_constant_sets_the_eigenvalue_ratio_its_doc_names() {
+        let g = geom(32, 32);
+        let side = 5usize;
+        let mut patch = vec![0.0; side * side];
+        for j in 0..side {
+            for i in 0..side {
+                patch[j * side + i] = (i * j + i) as f64;
+            }
+        }
+        let score = |k: f64| {
+            EHarris::new(g, 4, 1e-3, k, 0.0).unwrap().score_of_patch(&patch, side).unwrap()
+        };
+        let trace_sq = 8256.0f64 * 8256.0;
+
+        // `k = 0` leaves det(M) alone, so the structure tensor is read off exactly.
+        assert_eq!(score(0.0), 3022848.0, "det(M) is not the value the derivation gives");
+        // The response is affine in `k` with slope -trace(M)^2, so a second point names the trace.
+        assert!((score(0.5) - (3022848.0 - 0.5 * trace_sq)).abs() < 1e-6, "{}", score(0.5));
+
+        // THE CLAIM. A 20.5:1 corner is a corner at 0.04 and is not one at 0.06.
+        assert_eq!(EHarris::K_HARRIS, 0.04, "not the constant the 1988 paper prints");
+        let at_04 = score(EHarris::K_HARRIS);
+        let at_06 = score(0.06);
+        assert!(at_04 > 0.0, "a 20.5:1 corner scored {at_04} at k = 0.04");
+        assert!(at_06 < 0.0, "a 20.5:1 corner scored {at_06} at k = 0.06");
+        // The literal values too, so a `k` that is used but transcribed wrongly is caught as well
+        // as a `k` that is ignored.
+        assert!((at_04 - (3022848.0 - 0.04 * trace_sq)).abs() < 1e-6, "{at_04}");
+        assert!((at_06 - (3022848.0 - 0.06 * trace_sq)).abs() < 1e-6, "{at_06}");
+        assert!((at_04 - at_06).abs() > 1.0, "score_of_patch ignored the detector's own k");
+
+        // And the boundary itself. `rho_max(k) = ((1 - 2k) + sqrt(1 - 4k)) / (2k)` inverts to
+        // `k_crit = rho / (1 + rho)^2`, which for 20.5 is 20.5 / 21.5^2 = 0.04434829637641969.
+        let k_crit = 20.5 / (21.5 * 21.5);
+        assert!(score(k_crit * 0.999) > 0.0, "{}", score(k_crit * 0.999));
+        assert!(score(k_crit * 1.001) < 0.0, "{}", score(k_crit * 1.001));
+        assert!(k_crit > 0.04 && k_crit < 0.06, "k_crit = {k_crit} is outside the bracket");
+        // The two ends of the closed form the doc prints, as numbers.
+        let rho_max = |k: f64| ((1.0 - 2.0 * k) + (1.0 - 4.0 * k).sqrt()) / (2.0 * k);
+        assert!((rho_max(0.04) - 22.9564392373896).abs() < 1e-12, "{}", rho_max(0.04));
+        assert!((rho_max(0.06) - 14.598164905901124).abs() < 1e-12, "{}", rho_max(0.06));
+        assert!(20.5 < rho_max(0.04) && 20.5 > rho_max(0.06), "the bracket does not contain 20.5");
+    }
+
+    /// **Three `eHarris` parameters were inert under test.**
+    ///
+    /// Every test constructs the detector with `threshold = 0.0`, so `if s > self.threshold`
+    /// weakened to `if s > 0.0` survived — a documented constructor parameter could have been
+    /// deleted. And the binarisation writes `1.0`; mutating it to `2.0` survived too, so
+    /// "binarised" was unpinned in the streaming path, where it scales the response by sixteen.
+    #[test]
+    fn the_eharris_threshold_and_binarisation_are_both_used() {
+        let g = geom(24, 24);
+        // A right-angle corner: the quadrant x >= 12 and y >= 12, inside the radius-2 window
+        // around (12, 12).
+        let shape: Vec<(u16, u16)> = (10..=14u16)
+            .flat_map(|y| (10..=14u16).map(move |x| (x, y)))
+            .filter(|&(x, y)| x >= 12 && y >= 12)
+            .collect();
+        let stream: Vec<PixelEvent> = shape
+            .iter()
+            .enumerate()
+            .map(|(n, &(x, y))| PixelEvent { t_s: n as f64 * 1e-4, x, y, polarity: Polarity::On })
+            .chain(core::iter::once(PixelEvent {
+                t_s: 1e-2,
+                x: 12,
+                y: 12,
+                polarity: Polarity::On,
+            }))
+            .collect();
+
+        // What the streaming path scores at the vertex ...
+        let mut probe = EHarris::new(g, 2, 1.0, EHarris::K_HARRIS, 0.0).unwrap();
+        for e in &stream {
+            probe.push(*e).unwrap();
+        }
+        let s = probe.score_at(12, 12, 1e-2).unwrap();
+        assert!(s > 0.0, "the corner scored {s}");
+
+        // ... is EXACTLY the response of the same quadrant as a 0/1 patch. This is where the value
+        // the binarisation writes is pinned: writing 2.0 scales every gradient by two and the
+        // response by sixteen, and nothing else in the module would notice.
+        let expect = probe.score_of_patch(&patch_of(5, |i, j| i >= 2 && j >= 2), 5).unwrap();
+        assert_eq!(s, expect, "the binarised patch is not 0/1 valued");
+
+        // The threshold is used, and the comparison is a STRICT `>` as the doc says: a score equal
+        // to the threshold does not fire.
+        let fire = |threshold: f64| {
+            let mut d = EHarris::new(g, 2, 1.0, EHarris::K_HARRIS, threshold).unwrap();
+            let mut last = None;
+            for e in &stream {
+                last = d.push(*e).unwrap();
+            }
+            last
+        };
+        assert!(fire(0.0).is_some(), "at threshold 0 the corner did not fire");
+        assert!(fire(s * 0.5).is_some(), "at half the score the corner did not fire");
+        assert!(fire(s).is_none(), "the score must EXCEED the threshold, not merely reach it");
+        assert!(fire(s * 2.0).is_none(), "at twice the score the corner fired anyway");
+        assert_eq!(fire(0.0).map(|c| (c.x, c.y)), Some((12, 12)));
+        assert!((fire(0.0).unwrap().score - s).abs() < 1e-12);
     }
 
 }

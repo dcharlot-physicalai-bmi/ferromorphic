@@ -38,7 +38,7 @@
 //! | Mechanism | What it does to the weight | Where it is |
 //! |---|---|---|
 //! | Conductance window | Bounds the representable range; the on/off ratio sets how much of the read current is signal | [`Window`], [`Mapping`] |
-//! | Device-to-device spread | A fixed per-cell offset that survives reprogramming | [`Variability::sigma_d2d_rel`] |
+//! | Device-to-device spread | A fixed per-cell **relative** factor that survives reprogramming | [`Variability::sigma_d2d_rel`] |
 //! | Cycle-to-cycle spread | A fresh error every time the cell is written | [`Variability::sigma_c2c_rel`] |
 //! | Conductance drift | A slow power-law decay after programming | [`Drift`] |
 //! | Retention | Thermally activated relaxation back toward the off state | [`Retention`] |
@@ -46,6 +46,13 @@
 //! | Read noise | A fresh error on every read, with a thermal floor | [`ReadNoise`] |
 //! | Finite states | The cell holds one of `n` levels, not a real number | [`Levels`] |
 //! | Wire resistance | The answer depends on **where** the cell is | [`Crossbar`] |
+//!
+//! ⚠ **Relative**, in that first row, is the whole of the distinction and it was wrong here for two
+//! releases: the frozen quantity is the factor `1 + sigma_d2d*z`, so the absolute offset
+//! `g * sigma_d2d * z` moves whenever the cell is reprogrammed to a different target, and only the
+//! fraction stays put. A test that reprograms the same weight vector twice cannot tell the two
+//! readings apart; `device_to_device_is_frozen_to_the_array_and_cycle_to_cycle_is_not` reprograms a
+//! **different** vector for that reason.
 //!
 //! Eight of those nine are per-cell, which is why [`DeviceModel::apply`] takes a flat slice of
 //! weights and never asks for the matrix's shape. The ninth is not, and that is the point of it:
@@ -162,7 +169,8 @@
 //! and the suite was asked to catch each. A thirty-fifth attempt turned out to be an algebraically
 //! equivalent rewrite of `exp(-x)` rather than a defect, and is not counted.
 //!
-//! **Nine survived the pass they were first tried in**, and what they were is the useful part:
+//! **Ten survived the pass they were first tried in** — nine gaps in the tests and one defect in
+//! the code — and what they were is the useful part:
 //!
 //! * **Three were documented decisions with no test at all** — the order retention and drift
 //!   compose in, the independence of the fault map from the programming offsets, and the fact that
@@ -185,11 +193,50 @@
 //! Each has a test now, named for what it pins, and the injected defect is named in that test's doc
 //! so the pairing survives a refactor.
 //!
-//! The ninth defect was in the code rather than the tests, and it is left visible:
+//! The tenth was in the code rather than the tests, and it is left visible:
 //! [`Mapping::BalancedDifferential`] shipped its first draft claiming **half the weight range** of
 //! the one-at-minimum scheme, with a matching `max_weight` and a test asserting it. It has the same
 //! range. The real trade is [`Mapping::common_mode_conductance`], and the wrong claim survived
 //! because the test was written from the doc instead of from the circuit.
+//!
+//! # The second pass, and what a fresh attacker found that the first missed
+//!
+//! Seventy-five mutations were then injected by a reader who had not written any of this. Fifty-three
+//! died. Four of the survivors were algebraically equivalent rewrites rather than defects. The rest
+//! were real, and they cluster in one place: **the mechanisms whose absence is invisible in the
+//! answer.** Each now has a test named for what it pins.
+//!
+//! * [`Variability::sigma_floor_s`] could be **deleted outright** with the suite green, because
+//!   every `Variability` built in the tests, and [`RRAM_VARIABILITY_PLACEHOLDER`] too, set it to
+//!   zero. The sentence above — "every mechanism here has at least one test" — was false for the
+//!   absolute noise floor, which is the one term that does not vanish at `g = 0`.
+//! * The two devices of a differential pair could share one device-to-device draw. Under a shared
+//!   draw the spread stops being a two-sided error and becomes a **per-cell multiplicative gain** a
+//!   single calibration scalar removes — precisely the too-good cancellation this module exists to
+//!   refuse, and it is guarded for drift and was not for programming spread.
+//! * [`DeviceModel::validate`] was a five-way hole: only the window branch was covered, because
+//!   every refusal test went through a **constructor**, and the fields are public so the
+//!   struct-literal case is the only one `validate` is for. [`Levels`] had no `validate` at all, and
+//!   a zero-level grid was accepted and silently programmed every weight to the off rail.
+//! * The documented snap-then-perturb order in [`DeviceModel::apply`] was unpinned, and reversing it
+//!   lands every cell exactly on a level however large the write error — which is the iterative
+//!   write-verify loop the "what this module does not do" section says is **not** modelled.
+//! * [`Drift::exponent_at`] had no test at all, so its clamp could be deleted and
+//!   [`Drift::apply`] would return a **negative** exponent — conductance growing with time — for any
+//!   cell above the window.
+//! * [`ReadNoise::distinguishable_levels`] returned `Some(4294967295)` for a very quiet read and
+//!   `Some(1)` — no analog information at all — for the numerically *unbounded* case.
+//! * [`ReadNoise::sigma_current`] returned `Some(NaN)` where its doc promised `None`, and
+//!   [`Programmed::read`] handed that back as `Ok([NaN, NaN])`.
+//! * [`Crossbar::solve`]'s tolerance was measured against the **ideal** column current, so its
+//!   documented "nine digits of the answer" was overstated by the exact factor the wires cost.
+//! * [`Programmed::stuck_devices`] could drop the entire minus half of every pair, and
+//!   [`ErrorStats::clamped`] the minus half of every clamp, because every counting test used
+//!   [`Mapping::SingleEnded`].
+//!
+//! The lesson they share is worth more than the list: **a mechanism that only ever runs with a
+//! coefficient of zero in the tests is not tested**, and neither is a branch reachable only through
+//! the half of a data structure the fixtures never populate.
 //!
 //! # Quickstart
 //!
@@ -251,9 +298,14 @@ const SALT_FAULT: u64 = 0xFA17_C0DE_51AB_0001;
 /// Everything that can be wrong with a device model or its inputs, named.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum DeviceError {
-    /// A parameter was `NaN` or infinite. `what` names the parameter.
+    /// A parameter — or a quantity computed from accepted parameters — was `NaN` or infinite.
+    ///
+    /// The second case is the one worth naming: [`Retention::tau_s`] takes an activation energy and
+    /// a temperature this module accepts and can still overflow to an infinite lifetime, and an
+    /// infinity that reaches a printed figure is indistinguishable from a very long one. `what`
+    /// names the parameter, or the quantity, by the name it has in this module.
     NonFinite {
-        /// Which parameter, by the name it has in this module.
+        /// Which parameter or computed quantity, by the name it has in this module.
         what: &'static str,
         /// The offending value, carried so a caller can print it.
         value: f64,
@@ -644,9 +696,19 @@ impl Mapping {
     /// [`DeviceModel::apply`] leaves it untouched by noise, drift and faults.
     ///
     /// Assumes `w` is inside the representable range; [`DeviceModel::apply`] checks that first.
+    ///
+    /// Both conductances are brought inside `window` before they are returned. That is not a
+    /// saturation — a weight the window cannot hold is **refused** by [`DeviceModel::apply`], never
+    /// clamped — it is the last-place rounding of the mapping's own arithmetic:
+    /// [`Mapping::BalancedDifferential`] writes `mid - w*beta/2`, and at full negative scale
+    /// `0.5*(g_off + g_on) - 0.5*(g_on - g_off)` is `g_off` in exact arithmetic and can miss it by
+    /// a fifth of a unit in the last place in `f64`. Unclamped, this module's own invariant —
+    /// every programmed conductance lies inside the window, [`Window::contains`] — was false for
+    /// exactly one weight per array, the full-scale one, and only when [`DeviceModel::levels`] and
+    /// [`DeviceModel::variability`] were both off, since either of those clamps on its own.
     #[must_use]
     pub fn program(&self, w: f64, window: &Window, beta: f64) -> (f64, f64) {
-        match self {
+        let (g_plus, g_minus) = match self {
             Self::SingleEnded => (window.g_off + w * beta, window.g_off),
             Self::Differential => {
                 if w >= 0.0 {
@@ -660,7 +722,8 @@ impl Mapping {
                 let h = 0.5 * w * beta;
                 (mid + h, mid - h)
             }
-        }
+        };
+        (window.clamp(g_plus), window.clamp(g_minus))
     }
 
     /// The weight a reader recovers from a conductance pair.
@@ -950,9 +1013,19 @@ impl Retention {
     /// [`DeviceError::NotPositive`] for a non-positive temperature and [`DeviceError::NonFinite`]
     /// for a non-finite one. There is no Arrhenius rate at or below absolute zero, and returning a
     /// large number for one would be a silent lie.
+    ///
+    /// Also [`DeviceError::NonFinite`] naming `tau_s` when the **result** overflows, which it does
+    /// for a large activation energy at a low temperature — `Ea = 15 eV` at `200 K` is `exp(870)`
+    /// and has no `f64`. Refused for the same reason [`Window::on_off_ratio`] refuses: an infinity
+    /// handed back as a lifetime reads as "very long" to every caller downstream, and it is not a
+    /// number this model computed, it is a number this model ran out of room for.
     pub fn tau_s(&self, temp_k: f64) -> Result<f64, DeviceError> {
         check_temperature(temp_k)?;
-        Ok(self.tau0_s * (self.ea_ev / (BOLTZMANN_EV_PER_K * temp_k)).exp())
+        let tau = self.tau0_s * (self.ea_ev / (BOLTZMANN_EV_PER_K * temp_k)).exp();
+        if !tau.is_finite() {
+            return Err(DeviceError::NonFinite { what: "tau_s", value: tau });
+        }
+        Ok(tau)
     }
 
     /// The acceleration factor between a use temperature and a stress temperature:
@@ -964,12 +1037,20 @@ impl Retention {
     ///
     /// # Errors
     ///
-    /// As [`Retention::tau_s`], for either temperature.
+    /// As [`Retention::tau_s`], for either temperature, including
+    /// [`DeviceError::NonFinite`] naming `acceleration` when the exponential overflows. Underflow
+    /// to exactly zero is **not** refused: a zero acceleration factor is a small number the
+    /// arithmetic could not hold, which is honest in the direction it errs, whereas an infinity is
+    /// not.
     pub fn acceleration(&self, t_use_k: f64, t_stress_k: f64) -> Result<f64, DeviceError> {
         check_temperature(t_use_k)?;
         check_temperature(t_stress_k)?;
         let k = self.ea_ev / BOLTZMANN_EV_PER_K;
-        Ok((k * (1.0 / t_use_k - 1.0 / t_stress_k)).exp())
+        let af = (k * (1.0 / t_use_k - 1.0 / t_stress_k)).exp();
+        if !af.is_finite() {
+            return Err(DeviceError::NonFinite { what: "acceleration", value: af });
+        }
+        Ok(af)
     }
 
     /// The fraction of the programmed excess conductance still present after `t_s` at `temp_k`.
@@ -1177,8 +1258,15 @@ impl ReadNoise {
     /// `sqrt(4 k_B T g B + (sigma_rel * g * v_read)^2)`: the two terms add in power, not in
     /// amplitude. Returns `None` for a negative conductance or a non-finite argument, because
     /// neither has a noise power.
+    ///
+    /// Also `None` for a **model** that does not pass [`ReadNoise::validate`]. The fields here are
+    /// public, and a negative `temp_k` makes the thermal term negative and its square root a `NaN`,
+    /// which this function used to hand back inside a `Some` — a plausible-looking wrong answer
+    /// where a refusal was documented. A negative temperature has no noise power for exactly the
+    /// reason a negative conductance does not.
     #[must_use]
     pub fn sigma_current(&self, g: f64, v_read: f64) -> Option<f64> {
+        self.validate().ok()?;
         if !g.is_finite() || !v_read.is_finite() || g < 0.0 {
             return None;
         }
@@ -1219,9 +1307,24 @@ impl ReadNoise {
     /// **top** of the window, where thermal noise is largest, so the answer is the conservative
     /// one.
     ///
-    /// `None` for a non-positive `v_read` or `separation`, for an invalid window, or when the noise
-    /// is exactly zero — in which case the number of levels is not large, it is unbounded, and this
-    /// module declines to print an infinity as an integer.
+    /// `None` for a non-positive `v_read` or `separation`, for an invalid window or an invalid
+    /// noise model, or whenever the count is **not bounded by the noise**: the number of levels is
+    /// then not large, it is unbounded, and this module declines to print an infinity as an
+    /// integer.
+    ///
+    /// "Not bounded by the noise" covers three arithmetically distinct cases that are one physical
+    /// case, and all three return `None`:
+    ///
+    /// * the noise is exactly zero;
+    /// * `separation * sigma` underflows to zero, so the quotient is an infinity. Routing that into
+    ///   the `Some(1)` branch — as an earlier draft did — reports **no analog information at all**
+    ///   for the array with the most of it, which is the numerical opposite of the truth;
+    /// * the count exceeds [`u32::MAX`]. A saturated count is indistinguishable from a real one to
+    ///   the caller, and `Levels::new(u32::MAX)` would then accept it and report 32 effective bits
+    ///   from a resistive cell — the same infinity printed as an integer, under another name.
+    ///
+    /// `Some(1)` is a different statement and is reserved for its opposite: noise so large that no
+    /// two conductances in the window are separable, so the cell carries no analog information.
     #[must_use]
     pub fn distinguishable_levels(
         &self,
@@ -1237,11 +1340,18 @@ impl ReadNoise {
         if !(sigma > 0.0) {
             return None;
         }
+        // A finite positive `separation` times a finite positive `sigma` can still UNDERFLOW to
+        // zero, and `span / 0.0` is an infinity. Splitting `!n.is_finite()` away from `n < 2.0` is
+        // the whole fix: the two used to share a branch that returned `Some(1)`, so the unbounded
+        // case was reported as the no-information one.
         let n = window.span() / (separation * sigma) + 1.0;
-        if !n.is_finite() || n < 2.0 {
+        if !n.is_finite() || n > f64::from(u32::MAX) {
+            return None;
+        }
+        if n < 2.0 {
             return Some(1);
         }
-        Some(n.floor().min(f64::from(u32::MAX)) as u32)
+        Some(n.floor() as u32)
     }
 }
 
@@ -1276,13 +1386,33 @@ impl Levels {
     ///
     /// [`DeviceError::BadLevels`] for fewer than two levels.
     pub fn new(n: u32, source: &'static str, evidence: Evidence) -> Result<Self, DeviceError> {
-        if n < 2 {
-            return Err(DeviceError::BadLevels { levels: n });
+        let l = Self { n, source, evidence };
+        l.validate()?;
+        Ok(l)
+    }
+
+    /// Check that this is a quantiser: at least two levels.
+    ///
+    /// Public for the same reason [`Window::validate`] is: the fields are public, so a `Levels`
+    /// built by struct literal can hold `n = 0`, and that grid quantises **every** conductance to
+    /// [`Window::g_off`] — a weight of 10 programmed as the off rail, with no error reported and
+    /// `bits()` of `-inf` available to print. [`DeviceModel::validate`] calls this, which is what
+    /// makes [`DeviceModel::apply`] refuse such a model rather than silently zeroing the array.
+    ///
+    /// # Errors
+    ///
+    /// [`DeviceError::BadLevels`] for fewer than two levels.
+    pub fn validate(&self) -> Result<(), DeviceError> {
+        if self.n < 2 {
+            return Err(DeviceError::BadLevels { levels: self.n });
         }
-        Ok(Self { n, source, evidence })
+        Ok(())
     }
 
     /// Spacing between adjacent levels, **siemens**: `span / (n - 1)`.
+    ///
+    /// The `n.max(2)` is a guard, not a rounding: [`Levels::validate`] refuses `n < 2`, and this
+    /// keeps a struct-literal grid from dividing by zero if one is ever reached anyway.
     #[must_use]
     pub fn step(&self, window: &Window) -> f64 {
         window.span() / f64::from(self.n.max(2) - 1)
@@ -1290,6 +1420,12 @@ impl Levels {
 
     /// Effective bits, `log2(n)`. Fractional on purpose: 20 levels is 4.32 bits, not 4, and
     /// rounding it down is how a device gets reported as worse than it is.
+    ///
+    /// Exactly `log2(n)` and nothing else, so an unvalidated `n = 0` gives `-inf` and `n = 1` gives
+    /// `0.0`. Both are the right answers to the question asked and neither is a grid:
+    /// [`Levels::validate`] is what refuses them, and it is not called from here because a
+    /// `#[must_use]` arithmetic accessor that silently substituted `n = 2` would report **one bit**
+    /// for a cell that holds no states at all.
     #[must_use]
     pub fn bits(&self) -> f64 {
         f64::from(self.n).log2()
@@ -1413,10 +1549,16 @@ pub const RRAM_VARIABILITY_PLACEHOLDER: Variability = Variability {
 /// ⛔ **A placeholder, on the same terms as [`RRAM_VARIABILITY_PLACEHOLDER`].** Fault rates around
 /// ten percent motivate the fault-tolerant training literature — Chen, Lin, Li et al., DATE 2017 is
 /// the usual entry point — and the rate is a property of a particular array at a particular
-/// maturity, so it varies by orders of magnitude between a research wafer and a product. The
-/// half-and-half split between stuck-on and stuck-off is a convention of this crate, not a
-/// measurement: the two failure mechanisms are unrelated and there is no reason for them to be
-/// equally likely.
+/// maturity, so it varies by orders of magnitude between a research wafer and a product.
+///
+/// ⛔ **The citation covers the mechanism and the order of magnitude. It does not cover
+/// [`StuckAt::p_at_on`].** The half-and-half split is a convention of this crate: the two failure
+/// mechanisms are unrelated, the fault-tolerance literature that motivates this rate reports
+/// **markedly asymmetric** stuck-off and stuck-on rates rather than an even split, and this review
+/// did not open that table to read the two numbers out of it — so it declines to transcribe them
+/// here, per this module's own grading rule. `0.5` is the neutral placeholder a reader must replace,
+/// not a figure from the cited work, and a reader who takes the citation as covering the whole
+/// struct takes a split that is wrong by a large factor in a named direction.
 pub const RRAM_STUCK_AT_PLACEHOLDER: StuckAt = StuckAt {
     rate: 0.10,
     p_at_on: 0.5,
@@ -1508,14 +1650,20 @@ impl DeviceModel {
         }
     }
 
-    /// Check the window, `beta`, and every enabled sub-model.
+    /// Check the window, `beta`, and every enabled sub-model — **all seven**, by the same census
+    /// [`DeviceModel::weakest_evidence`] folds.
+    ///
+    /// Every field of every sub-model is public, so a `DeviceModel` can carry a struct-literal
+    /// sub-model that its own constructor would have refused. That, and not the constructor, is the
+    /// case this function exists for: `bad_inputs_are_refused_by_name` exercises the constructors
+    /// and cannot see a fold that is missing a branch.
     ///
     /// # Errors
     ///
     /// Whatever the offending sub-model returns; see [`Window::validate`],
-    /// [`Variability::validate`], [`Drift::validate`], [`Retention::validate`],
-    /// [`StuckAt::validate`] and [`ReadNoise::validate`], plus [`DeviceError::NotPositive`] for a
-    /// non-positive `beta`.
+    /// [`Variability::validate`], [`Levels::validate`], [`Drift::validate`],
+    /// [`Retention::validate`], [`StuckAt::validate`] and [`ReadNoise::validate`], plus
+    /// [`DeviceError::NotPositive`] or [`DeviceError::NonFinite`] for a bad `beta`.
     pub fn validate(&self) -> Result<(), DeviceError> {
         self.window.validate()?;
         if !self.beta.is_finite() {
@@ -1526,6 +1674,9 @@ impl DeviceModel {
         }
         if let Some(v) = &self.variability {
             v.validate()?;
+        }
+        if let Some(l) = &self.levels {
+            l.validate()?;
         }
         if let Some(d) = &self.drift {
             d.validate()?;
@@ -1916,7 +2067,13 @@ impl Programmed {
     /// # Errors
     ///
     /// [`DeviceError::NotPositive`] or [`DeviceError::NonFinite`] for a `v_read` no conductance can
-    /// be inferred from.
+    /// be inferred from, plus anything [`DeviceModel::validate`] returns.
+    ///
+    /// The model is re-checked here and not assumed sound from [`DeviceModel::apply`], because
+    /// [`Programmed::model`] is a public field: a caller who installs a struct-literal
+    /// [`ReadNoise`] with a negative temperature used to get back `Ok([NaN, NaN])`, which is the
+    /// plausible-looking wrong answer [`DeviceError::NotConverged`]'s doc argues against, one
+    /// function along.
     pub fn read(&self, rng: &mut Rng, v_read: f64) -> Result<Vec<f64>, DeviceError> {
         if !v_read.is_finite() {
             return Err(DeviceError::NonFinite { what: "v_read", value: v_read });
@@ -1924,6 +2081,7 @@ impl Programmed {
         if !(v_read > 0.0) {
             return Err(DeviceError::NotPositive { what: "v_read", value: v_read });
         }
+        self.model.validate()?;
         let Some(noise) = &self.model.read_noise else {
             return Ok(self.weights());
         };
@@ -2073,6 +2231,27 @@ impl Crossbar {
         self.cols
     }
 
+    /// The wire model this crossbar was built with, provenance string and grade included.
+    #[must_use]
+    pub fn wires(&self) -> &Wires {
+        &self.wires
+    }
+
+    /// The evidence grade an IR-drop figure from this crossbar carries: [`Wires::evidence`].
+    ///
+    /// Named to match [`DeviceModel::weakest_evidence`] and reported **separately** from it on
+    /// purpose. That fold covers the eight per-cell mechanisms; wire resistance is the ninth, it is
+    /// not per cell, it does not live in a [`DeviceModel`], and it is the one the module doc singles
+    /// out as most often omitted. A caller reporting a figure that used [`Crossbar::solve`] has to
+    /// take the weaker of the two grades, and before this accessor existed the wire model's
+    /// provenance was carried, round-tripped through [`Wires::new`] and never readable at all.
+    ///
+    /// A crossbar carries no other model, so this is that one grade and not a fold.
+    #[must_use]
+    pub fn weakest_evidence(&self) -> Evidence {
+        self.wires.evidence
+    }
+
     /// The conductance at `(row, col)`, **siemens**, or `None` if either index is off the array.
     #[must_use]
     pub fn conductance(&self, row: usize, col: usize) -> Option<f64> {
@@ -2115,9 +2294,18 @@ impl Crossbar {
     /// at a time rather than node by node is what keeps the sweep count small on an array whose
     /// wire conductance is much larger than its cell conductance, which is the interesting regime.
     ///
-    /// `tol` is **relative to the largest ideal column current**, so `1e-9` means nine digits of
-    /// the answer. Convergence is measured as the worst Kirchhoff current residual at any node —
-    /// not as the change between sweeps, which can be small while the solution is still far away.
+    /// `tol` is **relative to the largest column current this solve actually returns**, so `1e-9`
+    /// means nine digits of the answer. Convergence is measured as the worst Kirchhoff current
+    /// residual at any node — not as the change between sweeps, which can be small while the
+    /// solution is still far away.
+    ///
+    /// ⚠ Normalising by the largest **ideal** current instead — which an earlier draft did — reads
+    /// identically in the regime where wires are negligible and overstates the accuracy by the
+    /// ratio `ideal / actual` in the regime this module exists to expose. That factor is unbounded
+    /// and is largest exactly where a caller most needs the bound: an 8x8 array of `1e-2 S` cells on
+    /// `100 ohm` wires delivers a twentieth of its ideal current, so `tol = 1e-9` bought `2e-8` of
+    /// the answer; at `g = 1e100 S` on `1e-6 ohm` wires the old target was `1e-9 * 4e299` and the
+    /// first sweep "converged" with a residual of `2e5 A`.
     ///
     /// ⚠ The target is additionally **floored at the arithmetic's own noise**, about
     /// `8 * eps * v_max / r_segment_ohm` amperes. A residual below that is not a property of the
@@ -2167,7 +2355,6 @@ impl Crossbar {
         }
 
         let gw = 1.0 / self.wires.r_segment_ohm;
-        let scale = ideal.iter().fold(0.0f64, |a, b| a.max(b.abs()));
         // A Kirchhoff residual is a difference of wire currents of magnitude `gw * v`, and those
         // cancel down to the cell current, so the residual cannot be driven below the rounding
         // noise of that cancellation however many sweeps are spent on it. Floor the target there.
@@ -2175,7 +2362,6 @@ impl Crossbar {
         // `Solution::residual_a` is reported so a caller can see which bound they stopped on.
         let v_max = v_in.iter().fold(0.0f64, |a, b| a.max(b.abs()));
         let noise_floor = 8.0 * f64::EPSILON * gw * v_max;
-        let target = (tol * scale).max(noise_floor).max(f64::MIN_POSITIVE);
 
         // Word-line node voltages `a` and bit-line node voltages `b`, both row-major.
         let mut a = vec![0.0f64; n * m];
@@ -2195,6 +2381,7 @@ impl Crossbar {
         let mut scratch = vec![0.0f64; line];
 
         let mut residual = f64::INFINITY;
+        let mut target = f64::MIN_POSITIVE;
         for sweep in 1..=max_sweeps {
             // Word lines: driven from the west by v_in[i], open at the east end.
             for i in 0..n {
@@ -2231,6 +2418,15 @@ impl Crossbar {
                 }
             }
 
+            // The scale the tolerance is measured against is the answer THIS sweep would return —
+            // the same expression `column_currents` is built from, so the two cannot disagree —
+            // and not the ideal current, which the wires are in the business of not delivering.
+            let mut scale = 0.0f64;
+            for j in 0..m {
+                scale = scale.max((gw * b[(n - 1) * m + j]).abs());
+            }
+            target = (tol * scale).max(noise_floor).max(f64::MIN_POSITIVE);
+
             residual = self.residual(&a, &b, v_in, gw);
             if residual <= target {
                 let mut column_currents = vec![0.0; m];
@@ -2256,7 +2452,20 @@ impl Crossbar {
         })
     }
 
-    /// Worst Kirchhoff current residual over every node, **amperes**.
+    /// Worst Kirchhoff current residual over every node, **amperes**, or [`f64::INFINITY`] if any
+    /// node's residual is not finite.
+    ///
+    /// The explicit non-finite check is load-bearing and is **not** what `f64::max` does:
+    /// `f64::max` returns the non-`NaN` operand, so an all-`NaN` node-voltage solution folded with
+    /// `worst.max(r.abs())` reports a worst residual of `0.0` and
+    /// [`Crossbar::solve`] declares it converged. Returning an infinity instead sends the same
+    /// state to [`DeviceError::NotConverged`], which is where it belongs.
+    ///
+    /// It is **one** check covering both of a node's residuals rather than one each, and that is
+    /// deliberate: the word-line and bit-line residuals share the term `g * (a - b)`, so a
+    /// non-finite node voltage poisons both, and an infinity in either — unlike a `NaN` — already
+    /// propagates through `f64::max` on its own. Two checks would be two branches with no input
+    /// between them, which is the shape this module spent an audit removing.
     fn residual(&self, a: &[f64], b: &[f64], v_in: &[f64], gw: f64) -> f64 {
         let (n, m) = (self.rows, self.cols);
         let mut worst = 0.0f64;
@@ -2269,14 +2478,17 @@ impl Crossbar {
                 if j + 1 < m {
                     r += gw * (a[k + 1] - a[k]);
                 }
-                worst = worst.max(r.abs());
 
                 let south = if i + 1 < n { b[k + m] } else { 0.0 };
                 let mut s = gw * (south - b[k]) + g * (a[k] - b[k]);
                 if i > 0 {
                     s += gw * (b[k - m] - b[k]);
                 }
-                worst = worst.max(s.abs());
+
+                if !r.is_finite() || !s.is_finite() {
+                    return f64::INFINITY;
+                }
+                worst = worst.max(r.abs()).max(s.abs());
             }
         }
         worst
@@ -2324,8 +2536,8 @@ mod tests {
     use super::{
         BOLTZMANN_EV_PER_K, BOLTZMANN_J_PER_K, Crossbar, DeviceError, DeviceModel, Drift,
         ErrorStats, Evidence, Fault, Levels, Mapping, PCM_DRIFT_AMORPHOUS,
-        RRAM_STUCK_AT_PLACEHOLDER, RRAM_VARIABILITY_PLACEHOLDER, ReadNoise, Retention, StuckAt,
-        THERMAL_READ_NOISE_300K, Variability, Window, Wires, normal,
+        RRAM_STUCK_AT_PLACEHOLDER, RRAM_VARIABILITY_PLACEHOLDER, ReadNoise, Retention, Solution,
+        StuckAt, THERMAL_READ_NOISE_300K, Variability, Window, Wires, normal, thomas,
     };
     use crate::rng::Rng;
 
@@ -2599,6 +2811,316 @@ mod tests {
         model.variability = Some(Variability::new(0.1, 0.0, 0.0, "d2d only", Evidence::Unstated).unwrap());
         let c = { let mut m = model; m.d2d_seed = 0xF00D; m.apply(&w, &mut Rng::new(1)).unwrap() };
         assert_ne!(a.g_plus, c.g_plus, "two different seeds gave the same array");
+
+        // FROZEN means a fixed per-cell RELATIVE factor, not a fixed offset in siemens — the module
+        // doc's catalogue said "offset" for two releases and nothing could tell the two readings
+        // apart, because every reprogramming above writes the SAME weight vector, where `g` does
+        // not move and `g * sigma * z` therefore does not either.
+        //
+        // So reprogram a DIFFERENT vector on the same array. The fraction has to survive it cell by
+        // cell; the offset in siemens has to move. Single-ended and mid-window so that `g_off` is
+        // not the target and no rail truncates the comparison.
+        let mut m2 = model;
+        m2.mapping = Mapping::SingleEnded;
+        m2.variability =
+            Some(Variability::new(0.05, 0.0, 0.0, "d2d only", Evidence::Unstated).unwrap());
+        let t1: Vec<f64> = (0..200).map(|k| 20.0 + 0.1 * f64::from(k)).collect();
+        let t2: Vec<f64> = t1.iter().map(|x| 2.0 * x).collect();
+        let first = m2.apply(&t1, &mut Rng::new(1)).unwrap();
+        let second = m2.apply(&t2, &mut Rng::new(7)).unwrap();
+        assert_eq!(first.clamped + second.clamped, 0, "a rail truncated the comparison");
+        let mut offset_moved = 0;
+        for k in 0..t1.len() {
+            let g1 = m2.window.g_off + t1[k] * m2.beta;
+            let g2 = m2.window.g_off + t2[k] * m2.beta;
+            let rel1 = first.g_plus[k] / g1 - 1.0;
+            let rel2 = second.g_plus[k] / g2 - 1.0;
+            assert!(
+                (rel1 - rel2).abs() < 1e-12,
+                "cell {k}: the frozen RELATIVE factor moved, {rel1} then {rel2}"
+            );
+            assert!(rel1.abs() > 1e-9, "cell {k} has no device-to-device offset to test");
+            let abs1 = first.g_plus[k] - g1;
+            let abs2 = second.g_plus[k] - g2;
+            if (abs1 - abs2).abs() > 1e-9 * g1 {
+                offset_moved += 1;
+            }
+        }
+        assert!(
+            offset_moved > t1.len() / 2,
+            "only {offset_moved} of {} cells moved their offset in siemens when the target \
+             doubled, so 'relative' and 'a fixed offset' are still indistinguishable here",
+            t1.len()
+        );
+    }
+
+    /// (A1) THE ABSOLUTE NOISE FLOOR, which could be deleted outright with the suite green because
+    /// every `Variability` built anywhere in this module — [`RRAM_VARIABILITY_PLACEHOLDER`]
+    /// included — passed `0.0` for it. A mechanism that only ever runs with a coefficient of zero
+    /// is not tested, and the module doc's claim that every mechanism here has one was false for
+    /// exactly this term.
+    ///
+    /// Three assertions, each of which the relative terms cannot satisfy:
+    ///
+    /// 1. the spread is the same number of SIEMENS at two targets a factor of four apart, which is
+    ///    what "absolute" means and what a relative term is definitionally not;
+    /// 2. relative-only noise vanishes at `g = 0` and the floor does not — the physical argument
+    ///    in [`Variability::sigma_floor_s`]'s own doc, asserted rather than asserted-in-prose;
+    /// 3. with all three on, the total is their quadrature sum, which is the struct doc's formula
+    ///    `g*(1 + s_d2d*z1 + s_c2c*z2) + s_floor*z3` read as a variance. Dropping the floor moves
+    ///    that closed form by 4.6% here, against a 2% band.
+    #[test]
+    fn the_absolute_noise_floor_is_a_term_of_its_own_and_does_not_vanish_at_zero() {
+        // A zero off-conductance, so a zero target really is a zero conductance and the relative
+        // terms have nothing to multiply.
+        let w = Window::new(0.0, 100e-6, "test fixture", Evidence::Unstated).unwrap();
+        let mut model = DeviceModel::ideal();
+        model.window = w;
+        model.beta = 1e-6;
+        model.mapping = Mapping::SingleEnded;
+        model.d2d_seed = 13;
+
+        // 1. The same sigma in siemens at 20 uS and at 80 uS.
+        let floor = 2e-6;
+        model.variability =
+            Some(Variability::new(0.0, 0.0, floor, "floor only", Evidence::Unstated).unwrap());
+        let mut spreads = Vec::new();
+        for target in [20.0f64, 80.0] {
+            let held = model.apply(&vec![target; 40_000], &mut Rng::new(2)).unwrap();
+            assert_eq!(held.clamped, 0, "a rail truncated the floor at target {target}");
+            let n = held.g_plus.len() as f64;
+            let mean = held.g_plus.iter().sum::<f64>() / n;
+            let sd = (held.g_plus.iter().map(|g| (g - mean) * (g - mean)).sum::<f64>() / n).sqrt();
+            assert!(
+                (sd / floor - 1.0).abs() < 0.02,
+                "target {target}: floor came out {sd} S, asked for {floor} S"
+            );
+            spreads.push(sd);
+        }
+        assert!(
+            (spreads[0] / spreads[1] - 1.0).abs() < 1e-12,
+            "the floor scaled with the target ({} S then {} S), so it is a relative term",
+            spreads[0],
+            spreads[1]
+        );
+
+        // 2. At g = 0 the relative terms have no effect and the floor is the whole of the noise.
+        model.variability =
+            Some(Variability::new(0.10, 0.10, 0.0, "relative only", Evidence::Unstated).unwrap());
+        let bare = model.apply(&vec![0.0; 1_000], &mut Rng::new(2)).unwrap();
+        assert!(
+            bare.g_plus.iter().all(|&g| g == 0.0),
+            "relative-only noise moved a cell programmed to exactly zero conductance"
+        );
+        model.variability =
+            Some(Variability::new(0.10, 0.10, floor, "with the floor", Evidence::Unstated).unwrap());
+        let floored = model.apply(&vec![0.0; 1_000], &mut Rng::new(2)).unwrap();
+        assert!(
+            floored.g_plus.iter().any(|&g| g > 0.0),
+            "the absolute floor did not place a single cell off zero, so it is not applied"
+        );
+
+        // 3. The three terms add in QUADRATURE, which is the struct doc's formula as a variance.
+        let (s_d2d, s_c2c, s_floor) = (0.05f64, 0.04f64, 1e-6f64);
+        model.variability =
+            Some(Variability::new(s_d2d, s_c2c, s_floor, "all three", Evidence::Unstated).unwrap());
+        let target = 50.0f64;
+        let held = model.apply(&vec![target; 40_000], &mut Rng::new(2)).unwrap();
+        assert_eq!(held.clamped, 0);
+        let n = held.g_plus.len() as f64;
+        let mean = held.g_plus.iter().sum::<f64>() / n;
+        let sd = (held.g_plus.iter().map(|g| (g - mean) * (g - mean)).sum::<f64>() / n).sqrt();
+        let g = target * model.beta;
+        let closed = ((g * s_d2d).powi(2) + (g * s_c2c).powi(2) + s_floor * s_floor).sqrt();
+        assert!(
+            (sd / closed - 1.0).abs() < 0.02,
+            "three independent terms gave {sd} S against a quadrature sum of {closed} S"
+        );
+        // Without the floor the closed form is 4.6% lower, which is what the band above bites on.
+        let no_floor = ((g * s_d2d).powi(2) + (g * s_c2c).powi(2)).sqrt();
+        assert!(
+            (closed / no_floor - 1.0) > 0.04,
+            "the floor contributes too little here to separate the two closed forms"
+        );
+    }
+
+    /// (A2) The two devices of a differential pair draw their device-to-device offsets
+    /// INDEPENDENTLY, and the pair-at-zero carries an error because of it.
+    ///
+    /// Sharing one draw between the two halves passes every other test in this module, and it is
+    /// not a small error: with a shared `z` the read is `(gp0 - gm0)(1 + sigma*z) / beta`, so the
+    /// spread stops being a two-sided programming error and becomes a per-cell **multiplicative
+    /// gain** that one calibration scalar removes. That is exactly the too-good cancellation this
+    /// module exists to refuse — `state_dependent_drift_does_not_cancel` guards it for drift and
+    /// nothing guarded it for programming spread.
+    ///
+    /// The discriminator is a pair holding a weight of exactly zero: under a shared draw the two
+    /// conductances are identical and the error is **exactly 0.0**.
+    #[test]
+    fn the_two_devices_of_a_pair_draw_their_offsets_independently() {
+        let w = win();
+        let sigma = 0.10;
+        let beta = 1e-6;
+        let mut model = DeviceModel::ideal();
+        model.window = w;
+        model.beta = beta;
+        model.d2d_seed = 9;
+        model.variability =
+            Some(Variability::new(sigma, 0.0, 0.0, "d2d only", Evidence::Unstated).unwrap());
+
+        // Balanced: both devices park at mid-window, ten sigma from either rail, so the closed form
+        // is untruncated. Two independent draws of relative sigma give a weight error of
+        // mid * sigma * sqrt(2) / beta.
+        model.mapping = Mapping::BalancedDifferential;
+        let held = model.apply(&vec![0.0; 40_000], &mut Rng::new(1)).unwrap();
+        assert_eq!(held.clamped, 0, "a rail truncated the pair and confounded the closed form");
+        let mid = w.mid();
+        let n = held.g_plus.len() as f64;
+        let xs: Vec<f64> = held.g_plus.iter().map(|g| g / mid - 1.0).collect();
+        let ys: Vec<f64> = held.g_minus.iter().map(|g| g / mid - 1.0).collect();
+        let mx = xs.iter().sum::<f64>() / n;
+        let my = ys.iter().sum::<f64>() / n;
+        let sx = (xs.iter().map(|x| (x - mx) * (x - mx)).sum::<f64>() / n).sqrt();
+        let sy = (ys.iter().map(|y| (y - my) * (y - my)).sum::<f64>() / n).sqrt();
+        let cov = xs.iter().zip(&ys).map(|(x, y)| (x - mx) * (y - my)).sum::<f64>() / n;
+        let rho = cov / (sx * sy);
+        assert!((sx / sigma - 1.0).abs() < 0.03, "the plus device's spread is {sx}");
+        assert!((sy / sigma - 1.0).abs() < 0.03, "the minus device's spread is {sy}");
+        assert!(
+            rho.abs() < 0.05,
+            "the two devices of a pair are correlated at {rho}; a shared draw gives exactly 1.0"
+        );
+        let rms = held.error().rms;
+        let closed = mid * sigma * 2.0f64.sqrt() / beta;
+        assert!(
+            (rms / closed - 1.0).abs() < 0.02,
+            "a pair of zero weights carried an rms error of {rms}, two independent draws say \
+             {closed}, and one shared draw says exactly 0"
+        );
+
+        // One-at-minimum: both devices sit ON the bottom rail for a zero weight, so half of each
+        // Gaussian is truncated there. The closed form is the difference of two independent
+        // half-normals: sigma * sqrt(2 * (1/2 - 1/(2 pi))). It is still not zero, which is the
+        // point — under a shared draw it is.
+        model.mapping = Mapping::Differential;
+        let held = model.apply(&vec![0.0; 40_000], &mut Rng::new(1)).unwrap();
+        let rms = held.error().rms;
+        let truncated = sigma * (2.0 * (0.5 - 1.0 / core::f64::consts::TAU)).sqrt();
+        assert!(
+            (rms / truncated - 1.0).abs() < 0.02,
+            "a one-at-minimum pair of zero weights gave {rms}, the truncated closed form says \
+             {truncated}"
+        );
+        assert!(rms > 0.0, "a differential array of zero weights carried no programming error");
+    }
+
+    /// (A4) The documented order in [`DeviceModel::apply`]: snap to the level grid FIRST, then
+    /// perturb. Reversing the two silently implements the iterative write-verify loop the module
+    /// doc says it does not model — every cell would land exactly on a level however large the
+    /// write error, so any error below half a step would disappear.
+    ///
+    /// `both_devices_of_a_pair_are_written_to_the_level_grid` is the only other test that touches
+    /// the grid and it configures no [`Variability`], where the two orders are identical.
+    #[test]
+    fn programming_is_one_noisy_shot_at_a_level_and_not_a_write_verify_loop() {
+        let w = win();
+        let levels = Levels::new(9, "test", Evidence::Unstated).unwrap();
+        let step = levels.step(&w);
+        let sigma_c2c = 0.05;
+        let mut model = DeviceModel::ideal();
+        model.window = w;
+        model.beta = 1e-6;
+        model.mapping = Mapping::SingleEnded;
+        model.levels = Some(levels);
+        model.variability =
+            Some(Variability::new(0.0, sigma_c2c, 0.0, "c2c only", Evidence::Unstated).unwrap());
+        let targets: Vec<f64> = (0..4_000).map(|k| 20.0 + 0.01 * f64::from(k)).collect();
+        let held = model.apply(&targets, &mut Rng::new(5)).unwrap();
+        assert_eq!(held.clamped, 0, "a rail truncated the write error");
+
+        // Not one cell is on the grid. Under the reversed order every one of them would be.
+        let off_grid = held
+            .g_plus
+            .iter()
+            .filter(|&&g| g != w.g_off + ((g - w.g_off) / step).round() * step)
+            .count();
+        assert_eq!(
+            off_grid,
+            targets.len(),
+            "{off_grid} of {} cells sit off the level grid; a perturb-then-snap order puts all of \
+             them on it",
+            targets.len()
+        );
+
+        // And the write error survives at FULL size rather than being swallowed by a re-snap: its
+        // rms against the level each cell was aiming at is the cycle-to-cycle sigma itself. Under
+        // the reversed order this collapses, because a deviation below half a step snaps back
+        // exactly and 98.7% of a 0.05-sigma error on a 12 uS step is below half a step.
+        let mut sq = 0.0f64;
+        let mut want_sq = 0.0f64;
+        for (k, &g) in held.g_plus.iter().enumerate() {
+            let aimed = levels.snap(w.g_off + targets[k] * model.beta, &w);
+            sq += (g - aimed) * (g - aimed);
+            want_sq += (sigma_c2c * aimed) * (sigma_c2c * aimed);
+        }
+        let ratio = (sq / want_sq).sqrt();
+        assert!(
+            (ratio - 1.0).abs() < 0.03,
+            "the write error came out {ratio} of the sigma asked for; a write-verify loop drives \
+             it toward zero"
+        );
+        assert!(0.5 * step > 2.0 * sigma_c2c * 50e-6, "the step is too fine to separate the orders");
+
+        // The complement, so the snap is not merely absent: with no variability every cell is ON
+        // the grid, exactly.
+        model.variability = None;
+        let clean = model.apply(&targets, &mut Rng::new(5)).unwrap();
+        for (k, &g) in clean.g_plus.iter().enumerate() {
+            assert!(
+                (g - (w.g_off + ((g - w.g_off) / step).round() * step)).abs() < 1e-18,
+                "cell {k} at {g} S is not on the 9-level grid"
+            );
+        }
+    }
+
+    /// (A14) [`ErrorStats::clamped`] counts the MINUS device of a pair, which no other test can
+    /// see: `clamping_at_a_rail_biases_the_mean_away_from_it` uses [`Mapping::SingleEnded`], where
+    /// the second element is a nominal reference that is never perturbed and never clamps.
+    ///
+    /// The construction isolates it. A window with a zero off-conductance and a full-scale NEGATIVE
+    /// one-at-minimum weight puts the plus device at exactly `0 S`, where a relative spread has
+    /// nothing to multiply and the clamp can never fire, and the minus device exactly on the top
+    /// rail, where it clamps for every positive draw. Every clamp counted here is a minus device.
+    #[test]
+    fn the_clamp_count_includes_the_minus_device_of_a_pair() {
+        let w = Window::new(0.0, 100e-6, "test fixture", Evidence::Unstated).unwrap();
+        let mut model = DeviceModel::ideal();
+        model.window = w;
+        model.beta = 1e-6;
+        model.mapping = Mapping::Differential;
+        model.d2d_seed = 3;
+        model.variability =
+            Some(Variability::new(0.30, 0.0, 0.0, "d2d only", Evidence::Unstated).unwrap());
+        let n = 20_000;
+        let held = model.apply(&vec![-model.max_weight(); n], &mut Rng::new(1)).unwrap();
+
+        assert!(
+            held.g_plus.iter().all(|&g| g == 0.0),
+            "the plus device moved off zero, so this test no longer isolates the minus device"
+        );
+        assert!(
+            held.g_minus.contains(&w.g_on),
+            "no minus device reached the top rail, so nothing was there to clamp"
+        );
+        // Half the Gaussian is above the rail, so half the pairs clamp: 4 binomial sigmas is 283.
+        let expect = 0.5 * n as f64;
+        let sd = (n as f64 * 0.25).sqrt();
+        assert!(
+            (held.clamped as f64 - expect).abs() < 4.0 * sd,
+            "{} clamps of {n} minus devices, expected {expect} +/- {sd}",
+            held.clamped
+        );
+        assert_eq!(held.error().clamped, held.clamped, "ErrorStats lost the count");
     }
 
     // ---------------------------------------------------------------- stuck-at faults
@@ -2792,6 +3314,177 @@ mod tests {
                 "{name} is not in the weakest-evidence fold"
             );
         }
+    }
+
+    /// (A9) [`StuckAt::rate`]'s doc claims a pair "has roughly twice the chance of being touched by
+    /// a fault, which is a real cost of the scheme and is not adjusted away here". That is a
+    /// number, and nothing checked it: every test that counts faults uses [`Mapping::SingleEnded`],
+    /// where `fault_minus` is [`Fault::Healthy`] by construction, so
+    /// [`Programmed::stuck_devices`] could drop its entire minus term with the suite green.
+    ///
+    /// The exact-sum assertion is the one that bites: a count that omits a half cannot equal the
+    /// two halves added up.
+    #[test]
+    fn a_differential_pair_costs_twice_the_exposure_to_stuck_at_faults() {
+        let rate = 0.10;
+        let n = 50_000usize;
+        let mut model = DeviceModel::ideal();
+        model.window = win();
+        model.beta = 1e-6;
+        model.d2d_seed = 5;
+        model.stuck = Some(StuckAt::new(rate, 0.5, "test", Evidence::Unstated).unwrap());
+        let weights = vec![10.0; n];
+
+        model.mapping = Mapping::SingleEnded;
+        let single = model.apply(&weights, &mut Rng::new(1)).unwrap();
+        model.mapping = Mapping::Differential;
+        let pair = model.apply(&weights, &mut Rng::new(1)).unwrap();
+
+        // One device per weight, one binomial: 4 sigma is 268 at this n and rate.
+        let sd = (n as f64 * rate * (1.0 - rate)).sqrt();
+        assert!(
+            (single.stuck_devices() as f64 - rate * n as f64).abs() < 4.0 * sd,
+            "{} stuck of {n} single-ended devices",
+            single.stuck_devices()
+        );
+        assert!(
+            single.fault_minus.iter().all(|f| !f.is_stuck()),
+            "a single-ended array broke a second device it does not have"
+        );
+
+        // Two devices per weight, so twice the exposure — the cost the doc names.
+        let plus = pair.fault_plus.iter().filter(|f| f.is_stuck()).count();
+        let minus = pair.fault_minus.iter().filter(|f| f.is_stuck()).count();
+        assert!(minus > 0, "not one minus device of {n} pairs was stuck at a rate of {rate}");
+        assert_eq!(
+            plus + minus,
+            pair.stuck_devices(),
+            "stuck_devices() reported {} against {plus} plus and {minus} minus: it is not \
+             counting both devices of a pair",
+            pair.stuck_devices()
+        );
+        assert!(
+            (minus as f64 - rate * n as f64).abs() < 4.0 * sd,
+            "{minus} of {n} minus devices stuck, expected {} +/- {sd}",
+            rate * n as f64
+        );
+        let sd2 = (2.0 * n as f64 * rate * (1.0 - rate)).sqrt();
+        assert!(
+            (pair.stuck_devices() as f64 - 2.0 * rate * n as f64).abs() < 4.0 * sd2,
+            "{} stuck of {} paired devices, expected {} +/- {sd2}",
+            pair.stuck_devices(),
+            2 * n,
+            2.0 * rate * n as f64
+        );
+        assert_eq!(pair.error().stuck_devices, pair.stuck_devices());
+    }
+
+    /// (A3) [`DeviceModel::validate`] is an EXACT CENSUS of all seven sub-models, in the same shape
+    /// as `the_weakest_evidence_is_an_exact_census_of_every_enabled_model` — and for the same
+    /// reason, because the same fold-with-a-missing-branch defect was found and repaired there and
+    /// the lesson was not carried across. Five of the seven branches could be deleted individually
+    /// with the suite green.
+    ///
+    /// Every row installs a **struct literal** the sub-model's own constructor would have refused.
+    /// That is the only case `validate` is for: `bad_inputs_are_refused_by_name` exercises the
+    /// constructors, which cannot reach a `DeviceModel` that carries a bad sub-model, and
+    /// [`Window::validate`]'s doc states the rationale — the fields are public.
+    ///
+    /// Each row names a DIFFERENT error variant or field, so deleting any one branch fails that row
+    /// and no other.
+    #[test]
+    fn every_sub_model_is_validated_by_an_exact_census() {
+        let base = || {
+            let mut d = DeviceModel::ideal();
+            d.window = Window::new(1e-6, 100e-6, "test", Evidence::Unstated).unwrap();
+            d.beta = 1e-6;
+            d.levels = Some(Levels::new(32, "test", Evidence::Unstated).unwrap());
+            d.variability = Some(Variability::new(0.01, 0.01, 0.0, "test", Evidence::Unstated).unwrap());
+            d.stuck = Some(StuckAt::new(0.01, 0.5, "test", Evidence::Unstated).unwrap());
+            d.drift = Some(Drift::uniform(0.01, 1.0, "test", Evidence::Unstated).unwrap());
+            d.retention = Some(Retention::new(1.0, 1e-12, "test", Evidence::Unstated).unwrap());
+            d.read_noise = Some(ReadNoise::new(300.0, 1e6, 0.0, "test", Evidence::Unstated).unwrap());
+            d
+        };
+        // The base has to be sound, or every row below passes for the wrong reason.
+        assert!(base().validate().is_ok());
+        assert!(base().apply(&[1.0], &mut Rng::new(1)).is_ok());
+        assert_eq!(base().enabled().len(), 6);
+
+        /// One row of the census: a name, the struct literal that breaks exactly one sub-model, and
+        /// the refusal it must produce.
+        type Break = (&'static str, fn(&mut DeviceModel), fn(&DeviceError) -> bool);
+        let census: [Break; 8] = [
+            (
+                "window",
+                |d| d.window = Window { g_off: 5.0, g_on: 1.0, ..d.window },
+                |e| matches!(e, DeviceError::BadWindow { .. }),
+            ),
+            (
+                "beta",
+                |d| d.beta = -1.0,
+                |e| matches!(e, DeviceError::NotPositive { what: "beta", .. }),
+            ),
+            (
+                "variability",
+                |d| d.variability = Some(Variability { sigma_d2d_rel: -1.0, ..d.variability.unwrap() }),
+                |e| matches!(e, DeviceError::Negative { what: "sigma_d2d_rel", .. }),
+            ),
+            (
+                "levels",
+                |d| d.levels = Some(Levels { n: 0, ..d.levels.unwrap() }),
+                |e| matches!(e, DeviceError::BadLevels { levels: 0 }),
+            ),
+            (
+                "stuck",
+                |d| d.stuck = Some(StuckAt { rate: 5.0, p_at_on: -2.0, ..d.stuck.unwrap() }),
+                |e| matches!(e, DeviceError::BadProbability { what: "rate", .. }),
+            ),
+            (
+                "drift",
+                |d| d.drift = Some(Drift { t0_s: 0.0, ..d.drift.unwrap() }),
+                |e| matches!(e, DeviceError::NotPositive { what: "t0_s", .. }),
+            ),
+            (
+                "retention",
+                |d| d.retention = Some(Retention { tau0_s: -1.0, ..d.retention.unwrap() }),
+                |e| matches!(e, DeviceError::NotPositive { what: "tau0_s", .. }),
+            ),
+            (
+                "read_noise",
+                |d| d.read_noise = Some(ReadNoise { bandwidth_hz: 0.0, ..d.read_noise.unwrap() }),
+                |e| matches!(e, DeviceError::NotPositive { what: "bandwidth_hz", .. }),
+            ),
+        ];
+        for (name, break_it, expected) in census {
+            let mut d = base();
+            break_it(&mut d);
+            let from_validate = d.validate().unwrap_err();
+            assert!(
+                expected(&from_validate),
+                "{name} is not in DeviceModel::validate's census: it returned {from_validate}"
+            );
+            // And `apply` refuses rather than producing a plausible array. A zero-level grid is the
+            // one that made this urgent: it programmed EVERY weight to the off rail and returned
+            // `Ok`, with `bits()` of -inf available to print beside it.
+            let from_apply = d.apply(&[1.0, -1.0], &mut Rng::new(1)).unwrap_err();
+            assert!(
+                expected(&from_apply),
+                "{name} reached DeviceModel::apply and it returned {from_apply}"
+            );
+        }
+
+        // The sub-model validators are public and refuse on their own terms too.
+        assert!(matches!(
+            Levels { n: 1, source: "one level is not a quantiser", evidence: Evidence::Unstated }
+                .validate(),
+            Err(DeviceError::BadLevels { levels: 1 })
+        ));
+        assert!(Levels::new(2, "the minimum", Evidence::Unstated).unwrap().validate().is_ok());
+        // `bits()` stays exactly log2(n) — the refusal lives in `validate`, not in the arithmetic,
+        // because a `bits()` that substituted n = 2 would report ONE bit for a cell with no states.
+        assert_eq!(Levels { n: 1, source: "", evidence: Evidence::Unstated }.bits(), 0.0);
+        assert!(Levels { n: 0, source: "", evidence: Evidence::Unstated }.bits().is_infinite());
     }
 
     // ---------------------------------------------------------------- drift and retention
@@ -3076,6 +3769,129 @@ mod tests {
         assert!(r.remaining_fraction(-1.0, 300.0).is_err());
     }
 
+    /// (A5) [`Drift::exponent_at`] had no test at all, and the [`Drift`] doc names FOUR properties
+    /// the interpolation is "chosen because" it has. Two of them were asserted, inside
+    /// `state_dependent_drift_does_not_cancel`, and two were prose.
+    ///
+    /// All four are here, each against a value written from the scheme rather than read back off
+    /// the struct:
+    ///
+    /// * **monotone** — strictly, across the window, in the direction the two exponents set;
+    /// * **reduces exactly to the uniform case** when the two are equal, `assert_eq!` on `f64`;
+    /// * **cannot produce a negative exponent from two non-negative ones** — the clamp, which is
+    ///   what makes this a fix and not a note. Without it [`Drift::apply`] returns a conductance
+    ///   that GROWS with time for any cell above the window, which is the one outcome the doc says
+    ///   the scheme cannot produce;
+    /// * **strictly between the two uniform bounds** inside the window.
+    #[test]
+    fn the_drift_exponent_interpolates_monotonically_and_never_goes_negative() {
+        let w = win();
+        let (nu_off, nu_on) = (0.15f64, 0.03f64);
+        let d = Drift::new(nu_off, nu_on, 1.0, "test", Evidence::Unstated).unwrap();
+
+        // The two rails are the two exponents, and the midpoint is their mean — the scheme's own
+        // arithmetic, written out here rather than recomputed by calling the same interpolation.
+        assert_eq!(d.exponent_at(w.g_off, &w), nu_off);
+        assert!((d.exponent_at(w.g_on, &w) - nu_on).abs() < 1e-15);
+        assert!((d.exponent_at(w.mid(), &w) - 0.5 * (nu_off + nu_on)).abs() < 1e-15);
+        // A quarter of the way up: 0.15 + 0.25 * (0.03 - 0.15) = 0.12.
+        let quarter = w.g_off + 0.25 * w.span();
+        assert!((d.exponent_at(quarter, &w) - 0.12).abs() < 1e-15, "{}", d.exponent_at(quarter, &w));
+
+        // Monotone, strictly, and strictly between the bounds inside the window.
+        let mut last = f64::INFINITY;
+        for k in 0..=200 {
+            let g = w.g_off + f64::from(k) / 200.0 * w.span();
+            let nu = d.exponent_at(g, &w);
+            assert!(nu < last, "exponent {nu} at {g} S did not fall below {last}");
+            assert!((nu_on..=nu_off).contains(&nu), "exponent {nu} escaped [{nu_on}, {nu_off}]");
+            last = nu;
+        }
+
+        // Equal exponents reduce to the single-exponent case EXACTLY, everywhere, including
+        // outside the window where the clamp is doing the work.
+        let u = Drift::uniform(0.07, 1.0, "test", Evidence::Unstated).unwrap();
+        for f in [-5.0f64, -1.0, 0.0, 0.3, 1.0, 2.0, 100.0] {
+            let g = w.g_off + f * w.span();
+            assert_eq!(u.exponent_at(g, &w), 0.07, "uniform exponent moved at f = {f}");
+        }
+
+        // THE CLAMP. Held flat outside the window in both directions, and never negative.
+        assert_eq!(d.exponent_at(w.g_off - 100.0 * w.span(), &w), d.exponent_at(w.g_off, &w));
+        assert_eq!(d.exponent_at(w.g_on + 100.0 * w.span(), &w), d.exponent_at(w.g_on, &w));
+        assert_eq!(d.exponent_at(-1.0, &w), nu_off);
+        assert_eq!(d.exponent_at(1.0, &w), d.exponent_at(w.g_on, &w));
+
+        // And the public consequence, which is the reason the clamp matters: unclamped, a cell
+        // above the window gets 0.1 + 2*(0.02 - 0.1) = -0.06 from PCM_DRIFT_AMORPHOUS, and a
+        // negative exponent means conductance that GROWS with time. Drift only ever loses.
+        let pcm = PCM_DRIFT_AMORPHOUS;
+        for f in [0.0f64, 0.5, 1.0, 1.25, 2.0, 10.0, 1e6] {
+            let g = w.g_off + f * w.span();
+            let nu = pcm.exponent_at(g, &w);
+            assert!(nu >= 0.0, "a non-negative pair of exponents gave {nu} at f = {f}");
+            let factor = pcm.factor(g, &w, 1e6);
+            assert!(
+                factor <= 1.0 && factor > 0.0,
+                "drift multiplied a cell at f = {f} by {factor}, so conductance grew with time"
+            );
+            assert!(pcm.apply(g, &w, 1e6) <= g, "drift raised a conductance at f = {f}");
+        }
+        // The unclamped value, written out, so the size of what the clamp prevents is on the page.
+        let unclamped = pcm.nu_at_off + 2.0 * (pcm.nu_at_on - pcm.nu_at_off);
+        assert!(unclamped < 0.0 && (unclamped + 0.06).abs() < 1e-15, "{unclamped}");
+
+        // A degenerate window falls back to the off-rail exponent rather than dividing by zero.
+        let flat = Window { g_off: 1e-6, g_on: 1e-6, source: "degenerate", evidence: Evidence::Unstated };
+        assert!(flat.validate().is_err());
+        assert_eq!(d.exponent_at(1e-6, &flat), nu_off);
+        assert_eq!(d.exponent_at(50e-6, &flat), nu_off);
+    }
+
+    /// (A16d) The module's stated discipline — [`Window::on_off_ratio`] and
+    /// [`ReadNoise::distinguishable_levels`] refuse rather than reporting an infinity — applied to
+    /// the two places that did not: a large activation energy at a low temperature overflows
+    /// [`Retention::tau_s`], and a wide temperature ratio overflows
+    /// [`Retention::acceleration`]. Both used to hand back `Ok(inf)` from **accepted** parameters.
+    #[test]
+    fn a_retention_model_refuses_an_infinite_lifetime_rather_than_reporting_one() {
+        // 15 eV at 200 K is exp(870). The parameters are unphysical and they validate, which is
+        // exactly the case: the refusal has to come from the result, not from the input.
+        let r = Retention::new(15.0, 1e-12, "unphysical but accepted", Evidence::Unstated).unwrap();
+        assert!(r.validate().is_ok());
+        assert!(
+            (15.0f64 / (BOLTZMANN_EV_PER_K * 200.0)).exp().is_infinite(),
+            "this parameter set no longer overflows, so the test below asserts nothing"
+        );
+        assert!(matches!(
+            r.tau_s(200.0),
+            Err(DeviceError::NonFinite { what: "tau_s", .. })
+        ));
+        // And it propagates: a fraction computed from an infinite lifetime is exactly 1.0, which
+        // reads as "nothing was lost" rather than as "this model ran out of room".
+        assert!(matches!(
+            r.remaining_fraction(1.0, 200.0),
+            Err(DeviceError::NonFinite { what: "tau_s", .. })
+        ));
+        // The same model at a temperature it CAN hold still works, so this is a ceiling and not a
+        // ban on large activation energies.
+        assert!(r.tau_s(2_000.0).unwrap().is_finite());
+
+        let one_ev = Retention::new(1.0, 1e-12, "test", Evidence::Unstated).unwrap();
+        assert!(matches!(
+            one_ev.acceleration(1.0, 1e30),
+            Err(DeviceError::NonFinite { what: "acceleration", .. })
+        ));
+        // Underflow the other way is NOT refused: a zero acceleration factor is a small number the
+        // arithmetic could not hold, which errs in the honest direction.
+        assert_eq!(one_ev.acceleration(1e30, 1.0).unwrap(), 0.0);
+        // The worked example still works, so the guard did not cost the ordinary case.
+        assert!((one_ev.acceleration(358.15, 398.15).unwrap() - 25.93).abs() < 0.05);
+        assert!(DeviceError::NonFinite { what: "tau_s", value: f64::INFINITY }
+            .to_string()
+            .contains("tau_s"));
+    }
+
     // ---------------------------------------------------------------- levels and read noise
 
     /// (f) Half a step, and the bound is REACHED — a `snap` that did nothing would satisfy the
@@ -3135,9 +3951,15 @@ mod tests {
         let wide = ReadNoise::new(300.0, 2e6, 0.0, "test", Evidence::Derived).unwrap();
         let ratio = wide.sigma_current(g, v).unwrap() / si;
         assert!((ratio - 2.0f64.sqrt()).abs() < 1e-12, "bandwidth scaling {ratio}");
+        // TWO-SIDED, and it was not: written without the `.abs()` this line could not fail for any
+        // change that made `si` LARGER — a factor of 8, an extra additive term, a bandwidth counted
+        // twice — because the difference simply went more negative. It shares
+        // `BOLTZMANN_J_PER_K` with the code under test, so it pins the SHAPE of the formula and the
+        // hand-computed literal two lines above is the independent anchor for the constant.
         assert!(
-            (4.0 * BOLTZMANN_J_PER_K * 300.0 * g * 1e6).sqrt() - si < 1e-24,
-            "the formula moved away from 4kTGB"
+            ((4.0 * BOLTZMANN_J_PER_K * 300.0 * g * 1e6).sqrt() - si).abs() < 1e-24,
+            "the formula moved away from 4kTGB: {si} against {}",
+            (4.0 * BOLTZMANN_J_PER_K * 300.0 * g * 1e6).sqrt()
         );
 
         // And the sampler actually delivers that spread.
@@ -3208,6 +4030,46 @@ mod tests {
         assert_eq!(slow.distinguishable_levels(&w, 0.2, 0.0), None);
         let bad = Window { g_off: 5.0, g_on: 1.0, source: "crossed", evidence: Evidence::Unstated };
         assert_eq!(slow.distinguishable_levels(&bad, 0.2, 6.0), None);
+
+        // THE SATURATION, and the three arithmetically different routes into the SAME physical
+        // statement — the count is not bounded by the noise. Every one of these returned a number
+        // before, and `Some(4294967295)` is the module's own "infinity printed as an integer"
+        // under another name: `Levels::new` accepts it and reports 32 effective bits from a
+        // resistive cell.
+        //
+        // The boundary is pinned from BOTH sides at a decade in bandwidth, so a `min` that
+        // saturated, or a check that refused every large count, fails one of the two.
+        let huge = ReadNoise::new(300.0, 1e-6, 0.0, "a 1 uHz read", Evidence::Derived).unwrap();
+        let over = ReadNoise::new(300.0, 1e-7, 0.0, "a 0.1 uHz read", Evidence::Derived).unwrap();
+        let counted = huge.distinguishable_levels(&w, 0.2, 6.0).unwrap();
+        assert!(
+            (2.0e9..3.0e9).contains(&f64::from(counted)),
+            "a 1 uHz read left {counted} levels, expected about 2.56e9 and below u32::MAX"
+        );
+        assert!(f64::from(counted) < f64::from(u32::MAX), "{counted} is not below the ceiling");
+        assert_eq!(
+            over.distinguishable_levels(&w, 0.2, 6.0),
+            None,
+            "a count above u32::MAX came back as a saturated integer"
+        );
+        // `separation * sigma` below the arithmetic's reach: the quotient is an infinity, which
+        // means UNBOUNDED. Routing it into `Some(1)` — no analog information at all — is the
+        // numerical opposite of the truth, and is what this line refuses.
+        let sigma = over.sigma_conductance(w.g_on, 0.2).unwrap();
+        assert!(sigma > 0.0);
+        assert_eq!(1e-320 * sigma, 0.0, "the product no longer underflows, so this asserts nothing");
+        assert_eq!(over.distinguishable_levels(&w, 0.2, 1e-320), None);
+        // The intermediate case, where the product is SUBNORMAL rather than zero and the quotient
+        // overflows instead: also unbounded, also `None`, by the other branch.
+        assert!(6e-300 * sigma > 0.0 && !(w.span() / (6e-300 * sigma)).is_finite());
+        assert_eq!(over.distinguishable_levels(&w, 0.2, 6e-300), None);
+        // A noise model that does not validate refuses here too, the same way an invalid window
+        // does. It did not: `sigma_current` handed back `Some(NaN)` and the comparisons below it
+        // all read false.
+        let nonsense =
+            ReadNoise { temp_k: -300.0, source: "negative kelvin", ..THERMAL_READ_NOISE_300K };
+        assert!(nonsense.validate().is_err());
+        assert_eq!(nonsense.distinguishable_levels(&w, 0.2, 6.0), None);
     }
 
     /// A read with no noise model is the noiseless read, exactly, and does not touch the generator.
@@ -3384,6 +4246,159 @@ mod tests {
         assert!(e.rms >= e.mean_signed.abs() * (1.0 - 1e-12));
     }
 
+    /// (A7) [`ReadNoise::sigma_current`]'s doc promises `None` "for a negative conductance or a
+    /// non-finite argument, because neither has a noise power". A negative TEMPERATURE has no noise
+    /// power for the identical reason, and it produced `Some(NaN)` — which
+    /// [`Programmed::read`] then handed back as `Ok([NaN, NaN])`.
+    ///
+    /// The inconsistency was inside one struct: [`ReadNoise::distinguishable_levels`] already
+    /// refused the same model, through `!(sigma > 0.0)` being false for a `NaN`. One entry point
+    /// treated it as a refusal case and three propagated it.
+    #[test]
+    fn a_read_noise_model_that_does_not_validate_refuses_instead_of_returning_a_nan() {
+        let w = win();
+        let cold = ReadNoise {
+            temp_k: -300.0,
+            source: "a negative kelvin, which no read path has",
+            ..THERMAL_READ_NOISE_300K
+        };
+        assert!(cold.validate().is_err());
+        // The NaN this refusal replaces, computed here so the failure mode is on the page.
+        let thermal = 4.0 * BOLTZMANN_J_PER_K * cold.temp_k * 1e-6 * cold.bandwidth_hz;
+        assert!(thermal < 0.0 && thermal.sqrt().is_nan(), "the square root of {thermal}");
+
+        assert_eq!(cold.sigma_current(1e-6, 0.2), None);
+        assert_eq!(cold.sigma_conductance(1e-6, 0.2), None);
+        assert_eq!(cold.sample(&mut Rng::new(1), 1e-6, 0.2), None);
+        assert_eq!(cold.distinguishable_levels(&w, 0.2, 6.0), None);
+        // A refused read leaves the stream where it was, which is the documented property of
+        // `sample` and is the one a caller cannot see in the answer.
+        let mut rng = Rng::new(7);
+        let before = rng;
+        assert_eq!(cold.sample(&mut rng, 1e-6, 0.2), None);
+        assert_eq!(rng, before, "a refused read consumed randomness");
+
+        // Every field `validate` covers, so the refusal is the whole census and not one branch.
+        for bad in [
+            ReadNoise { temp_k: 0.0, ..THERMAL_READ_NOISE_300K },
+            ReadNoise { temp_k: f64::NAN, ..THERMAL_READ_NOISE_300K },
+            ReadNoise { bandwidth_hz: 0.0, ..THERMAL_READ_NOISE_300K },
+            ReadNoise { bandwidth_hz: f64::INFINITY, ..THERMAL_READ_NOISE_300K },
+            ReadNoise { sigma_rel: -0.01, ..THERMAL_READ_NOISE_300K },
+            ReadNoise { sigma_rel: f64::NAN, ..THERMAL_READ_NOISE_300K },
+        ] {
+            assert!(bad.validate().is_err(), "{bad:?} validated");
+            assert_eq!(bad.sigma_current(1e-6, 0.2), None, "{bad:?} produced a sigma");
+        }
+        // And the sound model still answers, so this is a refusal and not a blanket None.
+        assert!(THERMAL_READ_NOISE_300K.sigma_current(1e-6, 0.2).unwrap() > 0.0);
+
+        // `Programmed::model` is a public field, so a caller can install one after programming.
+        // The read refuses by name instead of returning an array of NaN.
+        let mut model = DeviceModel::ideal();
+        model.window = w;
+        model.beta = 1e-6;
+        let mut held = model.apply(&[10.0, 20.0], &mut Rng::new(1)).unwrap();
+        held.model.read_noise = Some(cold);
+        assert!(matches!(
+            held.read(&mut Rng::new(1), 0.2),
+            Err(DeviceError::NotPositive { what: "temp_k", .. })
+        ));
+        // A sound model on the same array reads fine.
+        held.model.read_noise = Some(THERMAL_READ_NOISE_300K);
+        assert!(held.read(&mut Rng::new(1), 0.2).unwrap().iter().all(|x| x.is_finite()));
+    }
+
+    /// (A11) The invariant every mechanism in this module is supposed to respect and which was
+    /// asserted nowhere: **a programmed conductance lies inside the window**. [`Window::contains`]
+    /// is the predicate that says so and had no caller at all — its body could be replaced with
+    /// `true`.
+    ///
+    /// Two things ride on it. [`Window::mid`] could be mutated to `0.5 * g_on` with the suite
+    /// green, because [`Mapping::read`] SUBTRACTS the two devices and the midpoint cancels in every
+    /// answer — under that mutation a full-scale negative balanced weight is written BELOW `g_off`
+    /// and nothing notices. And [`Levels::snap`]'s final clamp could be dropped, because at 18
+    /// levels on this window `g_off + 17 * step` overshoots `g_on` by one unit in the last place.
+    #[test]
+    fn every_programmed_conductance_lies_inside_the_window() {
+        let w = win();
+        // The predicate itself, in both directions and at both rails.
+        assert!(w.contains(w.g_off) && w.contains(w.g_on) && w.contains(w.mid()));
+        assert!(!w.contains(w.g_off - 1e-18), "contains() accepted a conductance below the floor");
+        assert!(!w.contains(w.g_on + 1e-18), "contains() accepted a conductance above the ceiling");
+        assert!(!w.contains(f64::NAN) && !w.contains(f64::INFINITY));
+
+        // The midpoint, as a literal. 0.5 * (1 uS + 100 uS) = 50.5 uS.
+        assert_eq!(w.mid(), 50.5e-6);
+        assert_eq!(Window::new(1.0, 5.0, "binary", Evidence::Unstated).unwrap().mid(), 3.0);
+        // ... and the identity the BalancedDifferential doc derives its common mode from: "a zero
+        // weight here holds both devices at mid". The hard-coded `g_off + g_on` has to be 2 * mid.
+        assert_eq!(Mapping::BalancedDifferential.common_mode_conductance(&w), 2.0 * w.mid());
+        assert_eq!(Mapping::BalancedDifferential.program(0.0, &w, 1e-6), (w.mid(), w.mid()));
+        // A full-scale weight lands exactly on the rails, not past them — in BOTH directions,
+        // because the escape is in `g_minus` at `+full` and in `g_plus` at `-full`, so testing one
+        // sign leaves the other unguarded. With mid() wrong by half a span these land at 0.5 uS,
+        // under g_off, and no read can tell because the pair subtracts.
+        let full = Mapping::BalancedDifferential.max_weight(&w, 1e-6);
+        for signed in [full, -full] {
+            let (gp, gm) = Mapping::BalancedDifferential.program(signed, &w, 1e-6);
+            assert!(
+                w.contains(gp) && w.contains(gm),
+                "a weight of {signed} programmed to ({gp}, {gm}), outside [{}, {}]",
+                w.g_off,
+                w.g_on
+            );
+            let (lo, hi) = if signed > 0.0 { (gm, gp) } else { (gp, gm) };
+            assert_eq!(lo, w.g_off, "the low device of a full-scale pair is not on the floor");
+            assert_eq!(hi, w.g_on, "the high device of a full-scale pair is not on the ceiling");
+        }
+        // The same at full scale for the other two schemes, so the clamp covers all three.
+        for m in [Mapping::SingleEnded, Mapping::Differential] {
+            for signed in [full, m.min_weight(&w, 1e-6)] {
+                let (gp, gm) = m.program(signed, &w, 1e-6);
+                assert!(w.contains(gp) && w.contains(gm), "{m:?} at {signed}: ({gp}, {gm})");
+            }
+        }
+
+        // The invariant itself, over all three mappings with every per-cell mechanism on at once.
+        // Drift and retention are deliberately excluded: `Drift::apply` is documented as NOT
+        // clamped, because carrying a cell below its off-state is the failure retention
+        // engineering exists to bound.
+        let mut model = DeviceModel::ideal();
+        model.window = w;
+        model.beta = 1e-6;
+        model.d2d_seed = 4242;
+        model.levels = Some(Levels::new(18, "the awkward count below", Evidence::Unstated).unwrap());
+        model.variability =
+            Some(Variability::new(0.20, 0.10, 5e-6, "all three terms", Evidence::Unstated).unwrap());
+        model.stuck = Some(StuckAt::new(0.05, 0.5, "test", Evidence::Unstated).unwrap());
+        let targets: Vec<f64> = (0..500).map(|k| (f64::from(k) - 250.0) * 0.39).collect();
+        for m in [Mapping::SingleEnded, Mapping::Differential, Mapping::BalancedDifferential] {
+            model.mapping = m;
+            let inside: Vec<f64> =
+                targets.iter().copied().filter(|t| *t >= model.min_weight()).collect();
+            let held = model.apply(&inside, &mut Rng::new(88)).unwrap();
+            assert!(held.clamped > 0, "{m:?}: nothing clamped, so the rails are untested here");
+            for (k, (&gp, &gm)) in held.g_plus.iter().zip(&held.g_minus).enumerate() {
+                assert!(w.contains(gp), "{m:?} cell {k} plus at {gp} S is outside the window");
+                assert!(w.contains(gm), "{m:?} cell {k} minus at {gm} S is outside the window");
+            }
+        }
+
+        // `Levels::snap`'s final clamp, and the arithmetic that makes it load-bearing.
+        let l = Levels::new(18, "test", Evidence::Unstated).unwrap();
+        let top = w.g_off + f64::from(l.n - 1) * l.step(&w);
+        assert!(
+            top > w.g_on,
+            "18 levels no longer overshoot this window, so the clamp below is untested: \
+             {top:e} against {:e}",
+            w.g_on
+        );
+        assert_eq!(l.snap(w.g_on, &w), w.g_on, "the top level was written above the ceiling");
+        assert!(w.contains(l.snap(w.g_on, &w)));
+        assert!(w.contains(l.snap(1.0, &w)) && w.contains(l.snap(-1.0, &w)));
+    }
+
     // ---------------------------------------------------------------- the crossbar
 
     /// (d) part one: with ideal wires the crossbar IS the dot product, bit for bit, and every cell
@@ -3546,13 +4561,23 @@ mod tests {
                 "error grew by {ratio} for a tenfold wire resistance, not by 10: errors {errs:?}"
             );
         }
-        // And a realistic wire is not a rounding error: at 5 ohms a 6x6 array is already off by
-        // a percent, which is the point of the module.
+        // And a realistic wire is not a rounding error: at TEN ohms this 6x6 array is off by
+        // 0.76%, which is the point of the module. Both numbers here are the numbers in the code
+        // below — the comment used to say five ohms and a percent, and the code said ten ohms and
+        // a tenth of a percent, so neither figure a reader took away was the one being asserted.
+        //
+        // Bounded on BOTH sides, because `> 1e-3` is satisfied by an error an order of magnitude
+        // too large just as happily as by the right one, and the wrong topologies this whole
+        // section exists to catch overstate the drop as readily as they understate it.
         let xb =
             Crossbar::new(n, m, g, Wires::new(10.0, "test", Evidence::Unstated).unwrap()).unwrap();
         let ideal = xb.ideal_currents(&v).unwrap();
         let s = xb.solve(&v, 1e-10, 200_000).unwrap();
-        assert!(s.max_relative_error(&ideal).unwrap() > 1e-3);
+        let err = s.max_relative_error(&ideal).unwrap();
+        assert!(
+            (7.0e-3..8.5e-3).contains(&err),
+            "a 10 ohm 6x6 array came out {err} off the ideal, not the 0.76% this array has"
+        );
     }
 
     /// The solver refuses rather than handing back an unconverged iterate, and says by how much it
@@ -3584,6 +4609,287 @@ mod tests {
         assert!(Crossbar::new(2, 3, vec![-1e-6; 6], Wires::ideal()).is_err());
         assert!(Crossbar::new(2, 3, vec![f64::INFINITY; 6], Wires::ideal()).is_err());
         assert!(Wires::new(-1.0, "", Evidence::Unstated).is_err());
+    }
+
+    /// (A8) THE WIRE-DOMINATED REGIME, which this module's whole thesis is about and which no test
+    /// entered: every other crossbar test sits at `2*r*g <= 2e-5`, where wires are negligible.
+    ///
+    /// Here an 8x8 array of `1e-2 S` cells on `100 ohm` wires delivers a **twentieth** of its ideal
+    /// current. `tol` used to be measured against the IDEAL column current — the quantity this
+    /// module exists to show is wrong — so the doc's "`1e-9` means nine digits of the answer" was
+    /// overstated by the ratio of the two, which is unbounded and is largest exactly where a caller
+    /// most needs the bound.
+    #[test]
+    fn the_solve_tolerance_is_relative_to_the_current_it_actually_returns() {
+        let n = 8;
+        let xb = Crossbar::new(
+            n,
+            n,
+            vec![1e-2; n * n],
+            Wires::new(100.0, "test", Evidence::Unstated).unwrap(),
+        )
+        .unwrap();
+        let v = vec![0.2; n];
+        let ideal = xb.ideal_currents(&v).unwrap();
+        let tol = 1e-9;
+        let s = xb.solve(&v, tol, 200_000).unwrap();
+
+        // The regime, asserted: the wires cost 98% of the answer. That is correct physics for this
+        // array and it is what makes the two normalisations separable at all.
+        let err = s.max_relative_error(&ideal).unwrap();
+        assert!((0.95..1.0).contains(&err), "the wires cost {err} of the ideal current, not ~0.99");
+        let returned = s.column_currents.iter().fold(0.0f64, |a, &b| a.max(b.abs()));
+        let want = ideal.iter().fold(0.0f64, |a, &b| a.max(b.abs()));
+        assert!(returned < 0.1 * want, "returned {returned} A against an ideal {want} A");
+
+        // THE CLAIM: nine digits of the answer, where the answer is what came back.
+        assert!(
+            s.residual_a <= tol * returned,
+            "residual {} A against {} A, which is tol times the current actually returned",
+            s.residual_a,
+            tol * returned
+        );
+        // And the old normalisation would have stopped an order of magnitude earlier, so the
+        // assertion above is not satisfied by both.
+        assert!(
+            tol * want > 10.0 * s.residual_a,
+            "normalising by the ideal current is too close to normalising by the real one here"
+        );
+
+        // The unbounded version of the same overstatement. At `g = 1e100 S` on `1e-6 ohm` wires the
+        // ideal current is 4e299 A and the array delivers 2e-89 A, so a target of `1e-9 * 4e299`
+        // was met on the FIRST sweep with a Kirchhoff residual of 200 kA. Refused now.
+        let stiff = Crossbar::new(
+            2,
+            2,
+            vec![1e100; 4],
+            Wires::new(1e-6, "test", Evidence::Unstated).unwrap(),
+        )
+        .unwrap();
+        match stiff.solve(&[0.2, 0.2], tol, 10) {
+            Err(DeviceError::NotConverged { residual_a, target_a, sweeps }) => {
+                assert_eq!(sweeps, 10);
+                assert!(residual_a > target_a, "{residual_a} A against a target of {target_a} A");
+                assert!(target_a < 1e-6, "the target was {target_a} A, which is not a tolerance");
+            }
+            other => panic!("a solve normalised by the ideal current returned {other:?}"),
+        }
+    }
+
+    /// (A14) [`Solution::sweeps`] is a reported statistic and the only assertions on it were `== 0`
+    /// on the closed-form branch and `== 1` inside a [`DeviceError::NotConverged`] — never on an
+    /// iterative `Solution`, where `sweep + 1` passed the suite.
+    ///
+    /// Pinned two-sidedly, and without hard-coding a count: the number reported is the smallest
+    /// budget that converges. One fewer must fail and exactly that many must succeed, which an
+    /// off-by-one in either direction breaks. The iteration is `+ - * /` only, so this is exact on
+    /// every platform.
+    #[test]
+    fn the_reported_sweep_count_is_the_budget_the_solve_actually_needed() {
+        let n = 8;
+        let xb = Crossbar::new(
+            n,
+            n,
+            vec![1e-2; n * n],
+            Wires::new(100.0, "test", Evidence::Unstated).unwrap(),
+        )
+        .unwrap();
+        let v = vec![0.2; n];
+        let tol = 1e-9;
+        let s = xb.solve(&v, tol, 200_000).unwrap();
+        assert!(s.sweeps >= 2, "this array converged in {} sweeps, too few to pin", s.sweeps);
+        assert!(
+            xb.solve(&v, tol, s.sweeps).is_ok(),
+            "the {} sweeps reported were not enough to converge",
+            s.sweeps
+        );
+        assert!(
+            xb.solve(&v, tol, s.sweeps - 1).is_err(),
+            "it converged in fewer than the {} sweeps it reported",
+            s.sweeps
+        );
+        // The closed-form branch reports zero and does not iterate at all.
+        let ideal_wires = Crossbar::new(n, n, vec![1e-2; n * n], Wires::ideal()).unwrap();
+        assert_eq!(ideal_wires.solve(&v, tol, 1).unwrap().sweeps, 0);
+    }
+
+    /// (A10) [`Solution::max_relative_error`]'s documented normalisation — by the largest IDEAL
+    /// current over the array, not per column — with the near-zero column the doc argues about and
+    /// which no crossbar test constructs, since every one of them drives columns of similar
+    /// magnitude.
+    #[test]
+    fn max_relative_error_normalises_by_the_array_and_not_by_the_column() {
+        let one = |c: Vec<f64>| Solution {
+            column_currents: c,
+            cell_voltage: Vec::new(),
+            sweeps: 3,
+            residual_a: 0.0,
+        };
+        // One column carries the array; the other is a picoamp away from nothing. The second
+        // column is wrong by 100% of its own ideal current and by 4e-12 of the array's.
+        let s = one(vec![0.75, 0.0]);
+        assert_eq!(
+            s.max_relative_error(&[1.0, 1e-12]),
+            Some(0.25),
+            "per-column normalisation would report 1.0 here and say nothing about the array"
+        );
+        // The scale is the largest ABSOLUTE ideal current, so a negative column can set it.
+        assert_eq!(one(vec![0.0, 0.0]).max_relative_error(&[-4.0, 1.0]), Some(1.0));
+        // A perfect solve is exactly zero, not a rounding of it.
+        assert_eq!(one(vec![1.0, 1e-12]).max_relative_error(&[1.0, 1e-12]), Some(0.0));
+        // Refusals: a length mismatch, an empty array, and an ideal with no current in it at all —
+        // where a relative error is undefined rather than large.
+        assert_eq!(s.max_relative_error(&[1.0]), None);
+        assert_eq!(s.max_relative_error(&[]), None);
+        assert_eq!(one(Vec::new()).max_relative_error(&[]), None);
+        assert_eq!(one(vec![1e-9, 1e-9]).max_relative_error(&[0.0, 0.0]), None);
+        assert_eq!(one(vec![0.0, 0.0]).max_relative_error(&[0.0, -0.0]), None);
+    }
+
+    /// (A15) [`DeviceError::SingularLine`] is the module's own "visible rather than silent" branch
+    /// and nothing reached it, so the guard that produces it could be deleted with the suite green.
+    ///
+    /// It IS reachable from the public API, through a **subnormal** wire resistance: `Wires::new`
+    /// accepts it — finite and non-negative — and its reciprocal is an infinity, so every
+    /// tridiagonal diagonal is infinite. Note that [`f64::MIN_POSITIVE`] is NOT such a case; it is
+    /// the smallest NORMAL double and `1 / it` is `4.49e307`, which solves fine.
+    ///
+    /// The back-substitution guard and the residual's `NaN` handling are checked on the helpers
+    /// directly, because no crossbar this module builds can reach them and the alternative is
+    /// carrying two branches nobody has ever run.
+    #[test]
+    fn the_line_solve_refuses_a_degenerate_pivot_rather_than_producing_infinities() {
+        let subnormal = Wires::new(1e-310, "a subnormal segment", Evidence::Unstated).unwrap();
+        assert!(!(1.0 / subnormal.r_segment_ohm).is_finite(), "1e-310 is no longer subnormal here");
+        let xb = Crossbar::new(2, 2, vec![1e-6; 4], subnormal).unwrap();
+        assert!(matches!(
+            xb.solve(&[0.2, 0.2], 1e-9, 10),
+            Err(DeviceError::SingularLine),
+            ));
+        // The smallest NORMAL resistance still solves, so this is a guard and not a size limit.
+        assert!((1.0f64 / f64::MIN_POSITIVE).is_finite());
+        let tiny = Wires::new(f64::MIN_POSITIVE, "the smallest normal", Evidence::Unstated).unwrap();
+        assert!(Crossbar::new(2, 2, vec![1e-6; 4], tiny).unwrap().solve(&[0.2, 0.2], 1e-9, 10).is_ok());
+
+        // The Thomas solve itself. A well-posed system first, so the false cases below are not
+        // false for every input.
+        let (mut out, mut c) = ([0.0f64; 3], [0.0f64; 3]);
+        assert!(thomas(
+            &[0.0, -1.0, -1.0],
+            &[2.0, 2.0, 2.0],
+            &[-1.0, -1.0, 0.0],
+            &[1.0, 0.0, 1.0],
+            &mut out,
+            &mut c
+        ));
+        assert!(out.iter().all(|v| v.is_finite()));
+        // A non-finite right-hand side: every pivot stays sound and the OUTPUT is not finite, which
+        // is the case only the final `all(is_finite)` catches.
+        assert!(!thomas(
+            &[0.0, -1.0, -1.0],
+            &[2.0, 2.0, 2.0],
+            &[-1.0, -1.0, 0.0],
+            &[f64::INFINITY, 0.0, 0.0],
+            &mut out,
+            &mut c
+        ));
+        // A zero leading pivot, a non-finite one, an interior pivot that cancels to zero, and an
+        // empty system.
+        assert!(!thomas(&[0.0], &[0.0], &[0.0], &[1.0], &mut out[..1], &mut c[..1]));
+        assert!(!thomas(&[0.0], &[f64::NAN], &[0.0], &[1.0], &mut out[..1], &mut c[..1]));
+        // An INFINITE leading diagonal is the one case the leading-pivot check catches on its own:
+        // every other degenerate pivot poisons the output and is caught downstream, but
+        // `sup[0] / inf` and `rhs[0] / inf` are both a perfectly finite 0.0, so without this guard
+        // the solve returns `true` with a node voltage of zero and no complaint at all.
+        assert!(!thomas(&[0.0], &[f64::INFINITY], &[0.0], &[1.0], &mut out[..1], &mut c[..1]));
+        assert_eq!(1.0f64 / f64::INFINITY, 0.0, "the silent answer the guard above prevents");
+        assert!(!thomas(
+            &[0.0, -1.0],
+            &[1.0, 1.0],
+            &[-1.0, 0.0],
+            &[1.0, 1.0],
+            &mut out[..2],
+            &mut c[..2]
+        ));
+        // An INFINITE interior pivot, which is the interior check's own version of the case above:
+        // `sup/inf` and `(rhs - sub*out)/inf` are both finite zeros, the back substitution stays
+        // finite, and without this guard the solve returns `true` with `out = [1, 0]` — a
+        // plausible-looking node voltage for a line that has no solution.
+        assert!(!thomas(
+            &[0.0, -1.0],
+            &[1.0, f64::INFINITY],
+            &[-1.0, 0.0],
+            &[1.0, 1.0],
+            &mut out[..2],
+            &mut c[..2]
+        ));
+        assert!(!thomas(&[], &[], &[], &[], &mut out[..0], &mut c[..0]));
+
+        // And the residual, which folded with `f64::max` and therefore DROPPED a NaN: an all-NaN
+        // node-voltage solution was reported as converged with a residual of exactly 0.0.
+        assert!(!(0.0f64).max(f64::NAN).is_nan(), "f64::max no longer drops NaN");
+        let line = Crossbar::new(1, 2, vec![1e-6, 1e-6], Wires::new(1.0, "test", Evidence::Unstated).unwrap())
+            .unwrap();
+        let ok = line.residual(&[0.2, 0.2], &[0.0, 0.0], &[0.2], 1.0);
+        assert!(ok.is_finite() && ok > 0.0, "the sound case gave {ok}");
+
+        // Both node sets are in the fold, checked at exactly zero conductance so the two residuals
+        // decouple: with `g = 0` the word-line residual is `gw*(v_in - a)` alone and the bit-line
+        // residual is `-gw*b` alone. A fold that dropped either set would report 0.0 for one of
+        // these two — and `Crossbar::solve` calls this right after a bit-line pass, which leaves
+        // the bit-line equations satisfied by construction, so nothing downstream can see it.
+        let open = Crossbar::new(1, 1, vec![0.0], Wires::new(1.0, "test", Evidence::Unstated).unwrap())
+            .unwrap();
+        assert_eq!(open.residual(&[0.2], &[0.05], &[0.2], 1.0), 0.05, "the bit-line nodes are not folded in");
+        assert_eq!(open.residual(&[0.1], &[0.0], &[0.2], 1.0), 0.1, "the word-line nodes are not folded in");
+        assert_eq!(open.residual(&[0.2], &[0.0], &[0.2], 1.0), 0.0, "a satisfied array has no residual");
+        assert_eq!(line.residual(&[f64::NAN, f64::NAN], &[0.0, 0.0], &[0.2], 1.0), f64::INFINITY);
+        assert_eq!(line.residual(&[0.2, 0.2], &[f64::NAN, 0.0], &[0.2], 1.0), f64::INFINITY);
+        // An OVERFLOW needs no guard and gets one anyway: `f64::max` propagates an infinity, so
+        // these two would come back as `INFINITY` from the fold alone. They are here to record
+        // which half of the problem the guard is actually for — the `NaN` above, not these.
+        let mx = f64::MAX;
+        assert_eq!(line.residual(&[-mx, mx], &[0.0, 0.0], &[0.2], 1.0), f64::INFINITY);
+        let col = Crossbar::new(2, 1, vec![1e-6, 1e-6], Wires::new(1.0, "test", Evidence::Unstated).unwrap())
+            .unwrap();
+        assert!(col.residual(&[0.0, 0.0], &[1e-3, -1e-3], &[0.2, 0.2], 1.0).is_finite());
+        assert_eq!(col.residual(&[0.0, 0.0], &[mx, -mx], &[0.2, 0.2], 1.0), f64::INFINITY);
+        assert_eq!(0.0f64.max(f64::INFINITY), f64::INFINITY, "an infinity needs no guard");
+    }
+
+    /// (A16e) The one non-ideality that lives outside [`DeviceModel`]'s evidence fold carries a
+    /// grade a caller can actually read. [`Wires::evidence`] was carried, round-tripped through
+    /// [`Wires::new`] inside [`Crossbar::new`], and never read by anything — so the provenance of
+    /// the mechanism the module doc singles out as most often omitted was the only one that was
+    /// structurally unreportable.
+    #[test]
+    fn a_crossbar_reports_the_grade_of_the_wire_model_it_was_built_with() {
+        let wires = Wires::new(2.0, "a stated metal stack", Evidence::Simulated).unwrap();
+        let xb = Crossbar::new(2, 2, vec![1e-6; 4], wires).unwrap();
+        assert_eq!(xb.weakest_evidence(), Evidence::Simulated);
+        assert_eq!(xb.wires().r_segment_ohm, 2.0);
+        assert_eq!(xb.wires().source, "a stated metal stack");
+        assert_eq!(xb.wires().evidence, Evidence::Simulated);
+        // The reference case describes no array and says so.
+        let ideal = Crossbar::new(1, 1, vec![1e-6], Wires::ideal()).unwrap();
+        assert_eq!(ideal.weakest_evidence(), Evidence::Unstated);
+        assert_eq!(ideal.wires().r_segment_ohm, 0.0);
+
+        // And it is genuinely OUTSIDE `DeviceModel::weakest_evidence`, which is why it needs its
+        // own accessor: a `Measured` device model on a `Simulated` crossbar still grades `Measured`
+        // through the model, and a caller reporting an IR-drop figure has to take the weaker of the
+        // two themselves.
+        let mut model = DeviceModel::ideal();
+        model.window = Window::new(1e-6, 100e-6, "test", Evidence::Measured).unwrap();
+        model.beta = 1e-6;
+        assert_eq!(model.weakest_evidence(), Evidence::Measured);
+        let held = model.apply(&[1.0, 2.0, 3.0, 4.0], &mut Rng::new(1)).unwrap();
+        let from_array = held.crossbar(2, 2, true, Wires::new(2.0, "stack", Evidence::Simulated).unwrap()).unwrap();
+        assert_eq!(from_array.weakest_evidence(), Evidence::Simulated);
+        assert_eq!(
+            crate::ledger::weaker(model.weakest_evidence(), from_array.weakest_evidence()),
+            Evidence::Simulated
+        );
     }
 
     // ---------------------------------------------------------------- bookkeeping
@@ -3628,6 +4934,33 @@ mod tests {
         assert_eq!(RRAM_VARIABILITY_PLACEHOLDER.evidence, Evidence::Projected);
         assert_eq!(RRAM_STUCK_AT_PLACEHOLDER.evidence, Evidence::Projected);
         assert_eq!(THERMAL_READ_NOISE_300K.evidence, Evidence::Derived);
+
+        // Every published value, as a literal, so this crate cannot move one under a user without
+        // a test saying so. These four constants are the only numbers this module exports and a
+        // caller's result changes silently if any of them drifts.
+        assert_eq!(PCM_DRIFT_AMORPHOUS.nu_at_off, 0.1);
+        assert_eq!(PCM_DRIFT_AMORPHOUS.nu_at_on, 0.02);
+        assert_eq!(PCM_DRIFT_AMORPHOUS.t0_s, 1.0);
+        // The physics behind the two numbers, at compile time: the amorphous (high-resistance)
+        // state drifts FASTER, which is the reason `Drift` carries two exponents at all.
+        const { assert!(PCM_DRIFT_AMORPHOUS.nu_at_off > PCM_DRIFT_AMORPHOUS.nu_at_on) };
+        assert_eq!(RRAM_VARIABILITY_PLACEHOLDER.sigma_d2d_rel, 0.10);
+        assert_eq!(RRAM_VARIABILITY_PLACEHOLDER.sigma_c2c_rel, 0.05);
+        assert_eq!(RRAM_VARIABILITY_PLACEHOLDER.sigma_floor_s, 0.0);
+        assert_eq!(RRAM_STUCK_AT_PLACEHOLDER.rate, 0.10);
+        // 0.5 is this crate's NEUTRAL convention and is not the cited work's split, which is
+        // markedly asymmetric. The constant's own doc says so; this line is what makes a silent
+        // change to it visible, in either direction.
+        assert_eq!(RRAM_STUCK_AT_PLACEHOLDER.p_at_on, 0.5);
+        assert!(RRAM_STUCK_AT_PLACEHOLDER.source.contains("convention"));
+        assert_eq!(THERMAL_READ_NOISE_300K.temp_k, 300.0);
+        assert_eq!(THERMAL_READ_NOISE_300K.bandwidth_hz, 1e6);
+        assert_eq!(THERMAL_READ_NOISE_300K.sigma_rel, 0.0);
+        // And all four validate, which a struct-literal constant is not otherwise checked for.
+        assert!(PCM_DRIFT_AMORPHOUS.validate().is_ok());
+        assert!(RRAM_VARIABILITY_PLACEHOLDER.validate().is_ok());
+        assert!(RRAM_STUCK_AT_PLACEHOLDER.validate().is_ok());
+        assert!(THERMAL_READ_NOISE_300K.validate().is_ok());
     }
 
     /// Every boundary refusal, by name. Bad inputs must be refused rather than producing a plausible

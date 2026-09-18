@@ -96,7 +96,9 @@
 //! as a measurement, not as the paper's own argument. The honest summary is that **a reported
 //! e-prop-to-BPTT agreement is meaningless without the surrogate's gain beside it**, and this review
 //! did not locate that gain reported alongside such a comparison anywhere in the literature it read.
-//! `the_eprop_error_is_set_by_the_surrogates_peak` is the sweep.
+//! `the_eprop_error_is_set_by_the_surrogates_peak` is the sweep: **all three columns**, with every
+//! one of the twelve cells asserted against the literal printed above rather than against the row
+//! before it, so that the table is pinned and not merely the shape of its decline.
 //!
 //! One block of the gradient is exact in every row, and it is worth knowing which: the **readout
 //! weights**. `R[c][j]`'s gradient is a kappa-filtered spike trace times the error at the readout,
@@ -194,17 +196,24 @@ pub enum LearnError {
         /// What was empty, by its role.
         what: &'static str,
     },
-    /// A comparison against a reference gradient was asked for where that gradient is zero.
+    /// A comparison was asked for where one of the two gradients is exactly zero.
     ///
     /// The cosine between a vector and the zero vector is `0/0`. It is not "perfect agreement" and
-    /// it is not "no agreement", so [`compare_to_bptt`] refuses rather than reporting either.
+    /// it is not "no agreement", so [`compare_to_bptt`] refuses rather than reporting either. The
+    /// rule is applied to **both** sides: a zero e-prop gradient against a non-zero reference is the
+    /// same undefined angle, and reporting `0.0` for it would be the judgement this doc declines to
+    /// make. That second case is not known to be reachable — the two gradients share their readout
+    /// block, so an e-prop gradient of exactly zero forces a zero reference gradient too — and the
+    /// refusal is stated symmetrically regardless.
     ZeroGradient,
     /// The recursive-least-squares denominator `1 + rᵀPr` left the positive reals.
     ///
-    /// For a positive-definite `P` this quantity is at least one, so reaching here means `P` has
-    /// lost its definiteness to rounding — which happens when the regulariser is far too small for
-    /// the conditioning of the inputs. Reported with the update index so the run can be restarted
-    /// from before it.
+    /// Two ways in. In exact arithmetic this quantity is at least one for a positive-definite `P`,
+    /// so a value at or below zero means `P` has lost its definiteness to rounding — which happens
+    /// when the regulariser is far too small for the conditioning of the inputs. A non-finite value
+    /// needs no ill-conditioning at all: `rᵀPr` is a sum of squares and simply overflowed, which
+    /// `r = [1e200, 1e200, 1e200]` does against a fresh `P = I` on the very first update. Reported
+    /// with the update index so the run can be restarted from before it.
     Singular {
         /// How many updates had already been applied when the denominator failed.
         step: u64,
@@ -219,8 +228,42 @@ pub enum LearnError {
         /// The shared value, seconds.
         tau: f64,
     },
+    /// A time grid asked for more points than [`MAX_GRID_STEPS`].
+    ///
+    /// [`Tempotron::peak`] and [`SpikeProp::first_spike`] scan `0, dt, 2 dt, ...` up to `t_end`, and
+    /// both `dt` and `t_end` are validated only for being finite and strictly positive. That admits
+    /// `dt = f64::MIN_POSITIVE`, where `t_end / dt` is `1.8e19` and the float-to-integer cast
+    /// saturates rather than panicking — a loop of order `10^6` years with an inner pass over every
+    /// afferent spike, reported as neither an error nor a result. Refused instead.
+    GridTooFine {
+        /// `t_end / dt`, the number of intervals asked for. May be infinite.
+        steps: f64,
+        /// The ceiling that was exceeded, [`MAX_GRID_STEPS`].
+        max: usize,
+    },
     /// Something inside [`crate::surrogate`] refused first.
     Surrogate(SurrogateError),
+}
+
+/// The largest number of intervals [`Tempotron::peak`] and [`SpikeProp::first_spike`] will scan.
+///
+/// `2^26 = 67_108_864`, which at the ~2 ns per grid point those loops cost on a small pattern is
+/// about a tenth of a second — generous beside anything the time constants in this module make
+/// sense at (a 250 ms trial at 1 µs resolution is `250_000` points) and finite, which is the property
+/// that matters. Exceeding it is [`LearnError::GridTooFine`] rather than a truncated grid, because a
+/// silently shortened scan would report a peak, or a first spike, that is simply the wrong one.
+pub const MAX_GRID_STEPS: usize = 1 << 26;
+
+/// `Ok(steps)` for a grid of `t_end / dt` intervals that fits under [`MAX_GRID_STEPS`].
+///
+/// Both arguments are already known finite and strictly positive; this is the third condition, the
+/// one that is a property of the pair rather than of either.
+fn grid_steps(dt: f64, t_end: f64) -> Result<usize, LearnError> {
+    let steps = t_end / dt;
+    if !(steps <= MAX_GRID_STEPS as f64) {
+        return Err(LearnError::GridTooFine { steps, max: MAX_GRID_STEPS });
+    }
+    Ok(steps.floor() as usize)
 }
 
 impl core::fmt::Display for LearnError {
@@ -243,6 +286,9 @@ impl core::fmt::Display for LearnError {
             }
             Self::TimeConstantsEqual { tau } => {
                 write!(f, "tau and tau_s are both {tau}, where the kernel divides by their difference")
+            }
+            Self::GridTooFine { steps, max } => {
+                write!(f, "t_end / dt asks for {steps} grid intervals, above the ceiling of {max}")
             }
             Self::Surrogate(e) => write!(f, "{e}"),
         }
@@ -304,9 +350,12 @@ fn finite_slice(v: &[f64]) -> Result<(), LearnError> {
 /// it rather than against a previous online run.
 ///
 /// The decay factor is `exp(-dt / tau)`, computed once. The tempting alternative `1 - dt / tau` is
-/// the first two terms of that expansion and is wrong by 0.12% per step at `dt = tau / 20`, which
-/// compounds to 7.4% over a single time constant — small enough to look like a tuning difference
-/// and large enough to move every learned weight.
+/// the first two terms of that expansion, and because `1 - x < exp(-x)` for every `x > 0` it always
+/// decays **too fast** and reads **low** — never high. At `dt = tau / 20` the per-step factor is
+/// `0.95` against `0.9512294245`, low by 0.129%, and that compounds to **2.55% low after one time
+/// constant**, 7.47% after three and 22.8% after the ten that
+/// `an_eligibility_trace_decays_exactly_as_its_time_constant_says` sweeps — small enough at one
+/// constant to look like a tuning difference and large enough to move every learned weight.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Eligibility {
     /// Decay time constant, **seconds**. Strictly positive and finite.
@@ -428,7 +477,15 @@ impl Default for EpropConfig {
 ///
 /// The direct form `(1 - kappa^n) / (1 - kappa)` loses every significant digit as `kappa -> 1`,
 /// which is the regime of a long readout time constant. Written through `exp_m1` both numerator and
-/// denominator are computed as small differences directly, and the `kappa == 1` limit is `n`.
+/// denominator are computed as small differences directly, and the `kappa == 1` limit is `n` —
+/// `sum_{m=0}^{n-1} 1^m` is the number of terms.
+///
+/// `denom == 0.0` holds exactly when `kappa == 1.0`, and that is reachable rather than defensive:
+/// [`crate::surrogate::LifLayerSpec::build`] checks `tau_out` only for being finite and strictly
+/// positive, and `exp(-1e-3 / 1e300)` rounds to exactly one. Without the limit the denominator is
+/// zero and every gradient coordinate becomes `0/0`.
+/// `the_readout_filter_has_a_limit_at_a_unit_readout_decay` builds that layer and checks the block
+/// against the closed form written out by hand.
 fn geometric_sum(ln_kappa: f64, denom: f64, n: usize) -> f64 {
     if denom == 0.0 {
         return n as f64;
@@ -677,7 +734,12 @@ pub fn eprop_grad(
 /// Mean loss and mean e-prop gradient over a batch of `(input, target)` pairs.
 ///
 /// The mean rather than the sum, so a learning rate transfers between batch sizes — the same
-/// convention as [`crate::surrogate::LifLayer::batch_loss_and_grad`].
+/// convention as [`crate::surrogate::LifLayer::batch_loss_and_grad`]. Both halves of that, the loss
+/// and every gradient coordinate, are checked against the hand-accumulated mean of [`eprop_grad`]
+/// over the same batch by `eprop_batch_reports_the_mean_and_not_the_sum`. They need their own test
+/// because a scale-invariant optimiser cannot see the difference: multiplying every gradient by the
+/// batch size changes nothing [`crate::surrogate::Adam`] does, so the only caller that trains would
+/// still converge on a sum.
 ///
 /// # Errors
 ///
@@ -773,7 +835,7 @@ pub struct GradAgreement {
 ///
 /// # Errors
 ///
-/// [`LearnError::ZeroGradient`] when the BPTT gradient is exactly zero, where the cosine is `0/0`.
+/// [`LearnError::ZeroGradient`] when either gradient is exactly zero, where the cosine is `0/0`.
 /// Otherwise as [`eprop_grad_from_dlogits`] and [`crate::surrogate::LifLayer::backward`].
 pub fn compare_to_bptt(
     layer: &LifLayer,
@@ -803,13 +865,23 @@ pub fn compare_to_bptt(
     }
     let bptt_norm = nb2.sqrt();
     let eprop_norm = ne2.sqrt();
-    if !(bptt_norm > 0.0) {
+    // One refusal covering both sides, rather than a fallback on each. `compared == 0` says every
+    // coordinate of the reference gradient is zero, which is the same condition as `bptt_norm == 0`
+    // spelled without the squares — it is checked as well as the norm because a gradient of
+    // subnormals can square to zero while its coordinates are not. A zero *e-prop* gradient is
+    // refused for the reason [`LearnError::ZeroGradient`] gives for the reference one: `0/0` is
+    // neither agreement nor disagreement, and returning `cosine: 0.0` there would be exactly the
+    // judgement that variant's doc says this function declines to make. No input this review found
+    // reaches that third clause — the two gradients share their readout block, so a zero e-prop
+    // gradient forces a zero BPTT one and the first clause fires first — and it is written anyway
+    // so the policy is symmetric rather than symmetric-by-luck.
+    if compared == 0 || !(bptt_norm > 0.0) || !(eprop_norm > 0.0) {
         return Err(LearnError::ZeroGradient);
     }
     Ok(GradAgreement {
-        cosine: if eprop_norm > 0.0 { dot / (bptt_norm * eprop_norm) } else { 0.0 },
+        cosine: dot / (bptt_norm * eprop_norm),
         relative: diff2.sqrt() / bptt_norm,
-        sign_agreement: if compared > 0 { agree as f64 / compared as f64 } else { 0.0 },
+        sign_agreement: agree as f64 / compared as f64,
         bptt_norm,
         eprop_norm,
         n_compared: compared,
@@ -860,8 +932,12 @@ pub type Example = (Vec<Vec<f64>>, bool);
 /// every postsynaptic potential evaluated there is zero, and the update is therefore zero as well:
 /// the rule has a fixed point at the origin and cannot leave it. So the weights must be initialised
 /// away from zero, and [`Tempotron::new`] starting them at zero is a deliberate choice to make that
-/// the caller's decision rather than a hidden default. `a_correct_tempotron_decision_moves_no_weight`
-/// documents the trap in place.
+/// the caller's decision rather than a hidden default.
+/// `the_tempotron_cannot_bootstrap_from_a_silent_membrane` asserts every link in that sentence: the
+/// peak at `(0.0, 0.0)`, the postsynaptic potentials there at exactly zero, the weights bit-for-bit
+/// unmoved after an update, and [`Tempotron::train_once`] nonetheless reporting `Ok(true)` because
+/// the *decision* was wrong. The tie rule in [`Tempotron::peak`] is what puts the peak on the first
+/// grid point rather than the last, so it is load-bearing for the whole paragraph.
 ///
 /// # A discretisation this implementation does not hide
 ///
@@ -997,11 +1073,16 @@ impl Tempotron {
     /// The largest membrane potential on the grid `0, dt, 2 dt, ...` up to `t_end`, and where it
     /// occurred, as `(v_max, t_max)` in the weights' unit and seconds.
     ///
-    /// Ties go to the earliest time, deterministically.
+    /// Ties go to the earliest time, deterministically — and that rule is load-bearing rather than
+    /// cosmetic. At zero weights the membrane is flat, every grid point ties, and it is this rule
+    /// that puts the peak on the first one, where every postsynaptic potential is zero and the
+    /// update is therefore zero: the fixed point at the origin that this type's doc describes exists
+    /// because of it. `the_tempotron_cannot_bootstrap_from_a_silent_membrane` pins it.
     ///
     /// # Errors
     ///
-    /// [`LearnError::NotPositive`] for a non-positive or non-finite `dt` or `t_end`, plus anything
+    /// [`LearnError::NotPositive`] for a non-positive or non-finite `dt` or `t_end`;
+    /// [`LearnError::GridTooFine`] when `t_end / dt` exceeds [`MAX_GRID_STEPS`]; plus anything
     /// [`Tempotron::voltage`] returns.
     pub fn peak(
         &self,
@@ -1011,7 +1092,7 @@ impl Tempotron {
     ) -> Result<(f64, f64), LearnError> {
         let dt = positive("dt", dt)?;
         let t_end = positive("t_end", t_end)?;
-        let steps = (t_end / dt).floor() as usize;
+        let steps = grid_steps(dt, t_end)?;
         let mut best = (f64::NEG_INFINITY, 0.0);
         for k in 0..=steps {
             let t = k as f64 * dt;
@@ -1032,11 +1113,23 @@ impl Tempotron {
         Ok(self.peak(pattern, dt, t_end)?.0 >= self.theta)
     }
 
-    /// One tempotron update. Returns whether the weights moved.
+    /// One tempotron update. Returns whether the decision was **wrong**, and an update therefore
+    /// applied — which is not the same statement as "the weights moved", and the difference is not
+    /// hypothetical.
     ///
     /// **A correct decision changes nothing, exactly.** The rule is error-driven, so when the
     /// decision already matches `desired` this returns `Ok(false)` having touched nothing — not a
-    /// small update, not a rounded-to-zero update.
+    /// small update, not a rounded-to-zero update. That is the half of the contract that carries a
+    /// guarantee, and `a_correct_tempotron_decision_moves_no_weight` holds it to bit equality.
+    ///
+    /// **A wrong decision returns `Ok(true)` whatever the update turns out to be worth**, including
+    /// the one state where it is worth exactly nothing: with every weight at zero the membrane is
+    /// flat, the peak lands on the first grid point, every postsynaptic potential evaluated there is
+    /// zero, and the weights end up bit-for-bit where they started. See *It cannot start from
+    /// silence* on [`Tempotron`]; `the_tempotron_cannot_bootstrap_from_a_silent_membrane` pins both
+    /// halves. It is the decision and not the displacement that is reported because
+    /// [`Tempotron::train`] counts this return as one misclassification, and a zero-valued update
+    /// applied to a misclassified pattern is still a misclassified pattern.
     ///
     /// # Errors
     ///
@@ -1361,9 +1454,16 @@ impl SpikeProp {
     /// differentiated by finite differences in the test that validates
     /// [`SpikeProp::sensitivity`], and a grid-quantised root would make that derivative a staircase.
     ///
+    /// A membrane already at or above the threshold at `t = 0` returns `Some(0.0)` directly. There
+    /// is then no sub-threshold point to bracket the root with, and `0.0` *is* the first crossing on
+    /// `[0, t_end]`. That state is reachable with a presynaptic time before the trial, whose alpha
+    /// function has been rising since it arrived, and
+    /// `spikeprop_handles_a_crossing_at_zero_and_an_overflowing_slope` is where it is pinned.
+    ///
     /// # Errors
     ///
-    /// [`LearnError::NotPositive`] for a non-positive or non-finite `dt` or `t_end`, plus anything
+    /// [`LearnError::NotPositive`] for a non-positive or non-finite `dt` or `t_end`;
+    /// [`LearnError::GridTooFine`] when `t_end / dt` exceeds [`MAX_GRID_STEPS`]; plus anything
     /// [`SpikeProp::potential`] returns.
     pub fn first_spike(
         &self,
@@ -1373,7 +1473,7 @@ impl SpikeProp {
     ) -> Result<Option<f64>, LearnError> {
         let dt = positive("dt", dt)?;
         let t_end = positive("t_end", t_end)?;
-        let steps = (t_end / dt).floor() as usize;
+        let steps = grid_steps(dt, t_end)?;
         let mut lo = 0.0;
         let mut found = None;
         for k in 0..=steps {
@@ -1407,7 +1507,12 @@ impl SpikeProp {
     /// for the first time.
     ///
     /// `None` when the membrane's slope at `t_out` is not strictly positive — the crossing is then
-    /// not transversal and the spike time is not a differentiable function of the weights there.
+    /// not transversal and the spike time is not a differentiable function of the weights there —
+    /// and also when the slope is not **finite**. [`SpikeProp::w`] is a public field, so a weight
+    /// large enough to overflow the slope sum is one assignment away; dividing by that infinity
+    /// would report every synapse's sensitivity as `-0.0`, which reads as "moving this weight does
+    /// nothing" for the synapse that dominates the membrane.
+    /// `spikeprop_handles_a_crossing_at_zero_and_an_overflowing_slope` reaches it.
     ///
     /// # Errors
     ///
@@ -1549,6 +1654,18 @@ impl Force {
     ///
     /// Equal to `(ridge I + sum_j r_j r_jT)^-1` over every sample passed to [`Force::update`], which
     /// is an exact identity (Sherman–Morrison applied once per sample), not a limit.
+    ///
+    /// **Exactly symmetric, at every step and for every input**: `P[i][j]` and `P[j][i]` are bit
+    /// equal, not equal to a tolerance. That is a property of how [`Force::update`] writes them —
+    /// one subtrahend computed once and stored into both — and not of the algebra being symmetric,
+    /// which it also is. Forming them separately as `(c pr[i]) pr[j]` and `(c pr[j]) pr[i]` is the
+    /// same number in exact arithmetic and a different one in `f64`, and the gap accumulates at
+    /// about one unit in the last place per update. Measured over 3000 updates at `ridge = 1e-6`,
+    /// `n = 8`: `|P - P^T|_max = 1.46e-10` against `|P|_max = 1.02e-2`, a relative **1.4e-8** on a
+    /// correlated basis, and **5.7e-8** on independent draws — 14x and 57x the tolerance
+    /// `force_matches_the_closed_form_ridge_solution` holds `P` to against a Cholesky reference.
+    /// `the_inverse_correlation_matrix_stays_exactly_symmetric` is the first of those runs,
+    /// asserted as bit equality rather than to any tolerance at all.
     #[must_use]
     pub fn inverse_correlation(&self) -> &[f64] {
         &self.p
@@ -1583,8 +1700,14 @@ impl Force {
     ///
     /// [`LearnError::ShapeMismatch`] for a wrong-length `r`; [`LearnError::NonFiniteInput`] naming
     /// the first non-finite element of `r`; [`LearnError::NonFiniteParam`] for a non-finite
-    /// `target`; [`LearnError::Singular`] if `1 + rᵀPr` leaves the positive reals, which cannot
-    /// happen while `P` is positive definite and therefore reports that it is not.
+    /// `target`; [`LearnError::Singular`] if `1 + rᵀPr` leaves the positive reals, either because
+    /// `P` is no longer positive definite or because the quadratic form overflowed on finite input.
+    ///
+    /// That last refusal is the one whose absence would be silent rather than loud, so it is worth
+    /// naming what it prevents: with `denom = inf`, `c = 1 / denom` is zero, both the `P` update and
+    /// the `w` update subtract exactly zero, and the call would report a plausible a-priori error,
+    /// change nothing, increment [`Force::updates`] and return `Ok`.
+    /// `force_refuses_a_denominator_that_left_the_positive_reals` is the three-line reproduction.
     pub fn update(&mut self, r: &[f64], target: f64) -> Result<f64, LearnError> {
         if r.len() != self.n {
             return Err(LearnError::ShapeMismatch { what: "basis vector", got: r.len(), want: self.n });
@@ -1613,10 +1736,19 @@ impl Force {
         for i in 0..n {
             err += self.w[i] * r[i];
         }
+        // The rank-one downdate `P -= (P r)(P r)T / (1 + rT P r)` is symmetric, so each off-diagonal
+        // subtrahend is computed ONCE and stored into both entries. Computing `(i, j)` as
+        // `(c pr[i]) pr[j]` and `(j, i)` as `(c pr[j]) pr[i]` is the same number in exact arithmetic
+        // and a different one in `f64`; `P` then drifts asymmetric at about an ulp per update, to a
+        // relative 1.4e-8 after 3000 updates at `ridge = 1e-6`, n = 8. It also halves the
+        // multiplies.
         for i in 0..n {
             let ci = c * pr[i];
-            for j in 0..n {
-                self.p[i * n + j] -= ci * pr[j];
+            self.p[i * n + i] -= ci * pr[i];
+            for j in (i + 1)..n {
+                let d = ci * pr[j];
+                self.p[i * n + j] -= d;
+                self.p[j * n + i] -= d;
             }
             self.w[i] -= ci * err;
         }
@@ -1628,9 +1760,9 @@ impl Force {
 #[cfg(test)]
 mod tests {
     use super::{
-        AlphaPsp, Eligibility, EpropConfig, Example, Force, Jacobian, LearnError, ReSuMe, SpikeProp,
-        Tempotron, bptt_state_words, compare_to_bptt, eprop_batch, eprop_grad_from_dlogits,
-        eprop_state_words, logits_streaming,
+        AlphaPsp, Eligibility, EpropConfig, Example, Force, Jacobian, LearnError, MAX_GRID_STEPS,
+        ReSuMe, SpikeProp, Tempotron, bptt_state_words, compare_to_bptt, eprop_batch, eprop_grad,
+        eprop_grad_from_dlogits, eprop_state_words, grid_steps, logits_streaming,
     };
     use crate::plasticity::{Bounds, PairStdp, WeightRule};
     use crate::reservoir::cholesky;
@@ -1645,8 +1777,13 @@ mod tests {
     // -----------------------------------------------------------------------------------------
 
     /// (c) The trace must decay as `exp(-t / tau)`, not as `(1 - dt/tau)^k`, and the difference
-    /// between those two is exactly what this catches: at `dt = tau/20` over one time constant the
-    /// Euler form is 7.4% high, which is four orders of magnitude outside this tolerance.
+    /// between those two is exactly what this catches. At `dt = tau/20` the Euler form is 2.55%
+    /// **low** after one time constant — low, because `1 - x < exp(-x)` — and 22.8% low by the two
+    /// hundredth step this sweeps. Against a tolerance of `1e-12` that is eleven orders of
+    /// magnitude, not four.
+    ///
+    /// The Euler factor itself is written out below as a literal, so the assertion is against the
+    /// number this comment quotes rather than against whatever `Eligibility` happens to store.
     #[test]
     fn an_eligibility_trace_decays_exactly_as_its_time_constant_says() {
         let tau = 20e-3;
@@ -1665,6 +1802,27 @@ mod tests {
         let mut h = Eligibility::new(tau, dt).expect("positive");
         h.step(1.0);
         assert!((h.closed_form(tau * std::f64::consts::LN_2) - 0.5).abs() < 1e-15);
+
+        // The numbers this test's doc and `Eligibility`'s doc both quote, as literals, so that the
+        // prose cannot drift away from the arithmetic again. The Euler factor is BELOW the exact
+        // one — `1 - x < exp(-x)` for every `x > 0` — so the Euler trace always reads low.
+        let euler = 1.0 - dt / tau;
+        assert_eq!(euler, 0.95, "the Euler factor at dt = tau/20 is 0.95");
+        assert!(euler < e.decay(), "the Euler factor {euler} was not below exp(-dt/tau)");
+        assert!(
+            (100.0 * (euler - e.decay()) / e.decay() + 0.129_245_844_277_721_6).abs() < 1e-12,
+            "the per-step error is not the -0.129% the doc quotes"
+        );
+        for (steps, want_pct) in
+            [(20i32, -2.553_423_135_848_139_4), (60, -7.466_335_140_374_29), (200, -22.791_364_585_339_885)]
+        {
+            let exact = (-(f64::from(steps) * dt) / tau).exp();
+            let pct = 100.0 * (euler.powi(steps) - exact) / exact;
+            assert!(
+                (pct - want_pct).abs() < 1e-9,
+                "{steps} steps: the Euler form is {pct}% off, not the {want_pct}% the doc quotes"
+            );
+        }
     }
 
     /// Decay-then-add, not add-then-decay. A single input must leave the trace at exactly one, and
@@ -1805,22 +1963,48 @@ mod tests {
     #[test]
     fn the_eprop_error_is_set_by_the_surrogates_peak() {
         let x = xor_pattern();
-        let layer = spec(true, 16).build().expect("valid");
         assert_eq!(ArcTan::default().peak(), 1.0, "the reference surrogate's peak moved");
-        let mut prev = f64::INFINITY;
-        for gain in [1.0, 0.3, 0.1, 0.03] {
-            let sur = Scaled::new(Box::new(ArcTan::default()), gain).expect("positive gain");
-            let cfg = EpropConfig { jacobian: Jacobian::Leak, spike_fn: SpikeFn::Heaviside };
-            let a = compare_to_bptt(&layer, &sur, &x, 1, cfg).expect("non-zero gradient");
-            assert!(a.relative < prev, "gain {gain}: relative {} did not fall", a.relative);
-            // Roughly linear: a tenfold reduction in the peak must buy at least fivefold in the
-            // error, or the explanation in the module doc is not the right one.
-            if prev.is_finite() {
-                assert!(a.relative < 0.6 * prev, "gain {gain}: only {} from {prev}", a.relative);
+        let gains = [1.0, 0.3, 0.1, 0.03];
+        // All THREE columns of the module doc's second table, on the two layers its FIRST table
+        // names — so the gain-1.0 entry of each column is also that table's own figure, and the
+        // twelve cells between them are the whole claim. An earlier version of this test built
+        // `spec(true, 16)` once and swept `Jacobian::Leak` alone, which left eight of the twelve
+        // unasserted while the doc read as though all twelve were.
+        //
+        // Each cell is checked against the LITERAL printed in the doc, not against the cell above
+        // it: a sweep that only asserts "each row is smaller than the last" passes for any table
+        // that happens to decline, including one whose absolute scale has moved.
+        for (recurrent, n_rec, jacobian, want) in [
+            (false, 12, Jacobian::Leak, [3.381_652_9, 0.834_151_26, 0.172_530_83, 0.020_862_401]),
+            (true, 16, Jacobian::Full, [0.234_404_16, 0.094_497_331, 0.023_384_566, 0.003_021_409_8]),
+            (true, 16, Jacobian::Leak, [1.965_215_2, 0.456_681_47, 0.086_464_481, 0.009_982_330_4]),
+        ] {
+            let layer = spec(recurrent, n_rec).build().expect("valid");
+            let mut prev = f64::NAN;
+            for (k, &gain) in gains.iter().enumerate() {
+                let sur = Scaled::new(Box::new(ArcTan::default()), gain).expect("positive gain");
+                let cfg = EpropConfig { jacobian, spike_fn: SpikeFn::Heaviside };
+                let a = compare_to_bptt(&layer, &sur, &x, 1, cfg).expect("non-zero gradient");
+                let off = (a.relative - want[k]).abs() / want[k];
+                assert!(
+                    off < 1e-6,
+                    "recurrent {recurrent}, {jacobian:?}, gain {gain}: relative {} against the \
+                     doc's {}",
+                    a.relative,
+                    want[k]
+                );
+                if k > 0 {
+                    assert!(a.relative < prev, "gain {gain}: relative {} did not fall", a.relative);
+                    // Roughly linear: a tenfold reduction in the peak must buy at least fivefold in
+                    // the error, or the explanation in the module doc is not the right one. The
+                    // gain-1.0 row is not exempted from this by an infinite `prev` — it is pinned
+                    // by its own literal above, which is the stronger statement.
+                    assert!(a.relative < 0.6 * prev, "gain {gain}: only {} from {prev}", a.relative);
+                }
+                prev = a.relative;
             }
-            prev = a.relative;
+            assert!(prev < 0.03, "recurrent {recurrent}, {jacobian:?}: smallest surrogate {prev}");
         }
-        assert!(prev < 0.02, "the smallest surrogate still disagreed by {prev}");
     }
 
     /// (a), the approximate half — and the number the module doc reports.
@@ -2051,6 +2235,131 @@ mod tests {
         assert!(tr.spike_count() > 0.0, "the trained network is silent");
     }
 
+    /// The one contract [`super::eprop_batch`] exists to have, and the one nothing asserted.
+    ///
+    /// Both halves — the loss and every gradient coordinate — against the mean of `eprop_grad`
+    /// accumulated by hand over the same batch, AND against the sum, which is what a dropped
+    /// `1 / batch.len()` leaves behind. Replacing either `*= inv` with `*= 1.0` survived all
+    /// thirty-two tests in this module before this one existed, for a structural reason worth
+    /// stating: `eprop_learns_delayed_xor` is the only caller, its optimiser is `Adam`, and `Adam`
+    /// is scale-invariant — multiplying every gradient by four changes nothing it can see. Its two
+    /// loss bounds (`> 0.68` and `< 0.1`) both hold at four times the right answer, with 150x of
+    /// slack.
+    ///
+    /// The batch is four patterns, so the mean is a scaling by an exact power of two and the
+    /// comparison below is an equality rather than a tolerance.
+    #[test]
+    fn eprop_batch_reports_the_mean_and_not_the_sum() {
+        let task = DelayedXor::default();
+        let batch = task.patterns().expect("the windows fit");
+        assert_eq!(batch.len(), 4, "the batch size is what separates the mean from the sum");
+        let spec = LifLayerSpec {
+            n_in: task.n_in(),
+            n_rec: 8,
+            n_out: task.n_out(),
+            recurrent: true,
+            w_scale: 0.4,
+            b_init: 3e-3,
+            seed: 8,
+            ..LifLayerSpec::default()
+        };
+        let layer = spec.build().expect("valid spec");
+        let sur = ArcTan::default();
+        let cfg = EpropConfig::default();
+
+        let (loss, g) = eprop_batch(&layer, &sur, &batch, cfg).expect("non-empty");
+        let mut sum_loss = 0.0;
+        let mut sum_g = vec![0.0; layer.p.len()];
+        for (x, target) in &batch {
+            let (l, gi) = eprop_grad(&layer, &sur, x, *target, cfg).expect("valid");
+            sum_loss += l;
+            for (a, b) in sum_g.iter_mut().zip(gi.iter()) {
+                *a += *b;
+            }
+        }
+        let n = batch.len() as f64;
+
+        assert_eq!(loss, sum_loss / n, "the batch loss is not the mean of the per-pattern losses");
+        // Measured: mean 0.7046, sum 2.8182, so the two are 2.11 apart. A guard on the fixture,
+        // not on the rule — if a future seed made them close, the equality below would still hold
+        // for a sum and this test would stop discriminating.
+        assert!(
+            sum_loss - loss > 1.5,
+            "the sum {sum_loss} and the mean {loss} are too close to tell apart"
+        );
+
+        let mut worst = 0.0f64;
+        let mut worst_against_sum = 0.0f64;
+        let mut scale = 0.0f64;
+        for (k, &v) in g.iter().enumerate() {
+            worst = worst.max((v - sum_g[k] / n).abs());
+            worst_against_sum = worst_against_sum.max((v - sum_g[k]).abs());
+            scale = scale.max((sum_g[k] / n).abs());
+        }
+        assert!(scale > 0.1, "the batch gradient was numerically zero, so this compared nothing");
+        assert_eq!(worst, 0.0, "the batch gradient is not the mean of the per-pattern gradients");
+        assert!(
+            worst_against_sum > 1.0,
+            "the sum and the mean agreed to {worst_against_sum}, so the scale is not being tested"
+        );
+    }
+
+    /// The `kappa == 1` limit of the readout's backward filter — a branch the whole gradient
+    /// depends on, reachable from a spec `build()` accepts, and entered by nothing.
+    ///
+    /// `LifLayerSpec::tau_out` is checked only for being finite and strictly positive, and
+    /// `exp(-1e-3 / 1e300)` rounds to exactly one. `geometric_sum`'s denominator is then exactly
+    /// zero and, without the limit, every coordinate of the gradient is `0/0`.
+    ///
+    /// Pinned against the closed form written out here rather than against the function: at
+    /// `kappa == 1` the filter `sum_{m=0}^{n-1} kappa^m` is the number of terms, so
+    /// `gy_c[t] = d_logits[c] / T * (T - t)` with `T - t` counted directly. Replacing the limit's
+    /// `n as f64` with `0.0` leaves the readout block at zero against a non-zero expectation.
+    #[test]
+    fn the_readout_filter_has_a_limit_at_a_unit_readout_decay() {
+        let layer = LifLayerSpec {
+            n_rec: 6,
+            n_out: 2,
+            recurrent: true,
+            seed: 3,
+            tau_out: 1e300,
+            ..LifLayerSpec::default()
+        }
+        .build()
+        .expect("a finite positive tau_out");
+        assert_eq!(layer.kappa, 1.0, "tau_out = 1e300 no longer rounds kappa to exactly one");
+        let sur = ArcTan::default();
+        let x = xor_pattern();
+        let d = [0.3, -0.3];
+        let cfg = EpropConfig::default();
+        let g = eprop_grad_from_dlogits(&layer, &sur, &x, &d, cfg).expect("valid");
+        assert!(
+            g.iter().all(|v| v.is_finite()),
+            "the gradient at kappa == 1 left the finite numbers"
+        );
+
+        let tr = layer.forward(&sur, &x, cfg.spike_fn).expect("valid");
+        let mut worst = 0.0f64;
+        let mut scale = 0.0f64;
+        for c in 0..layer.n_out {
+            for j in 0..layer.n_rec {
+                let mut want = 0.0;
+                for t in 0..tr.t_steps {
+                    // sum_{m=0}^{T-t-1} 1^m is exactly the number of terms remaining.
+                    let filter = (tr.t_steps - t) as f64;
+                    want += d[c] / tr.t_steps as f64 * filter * tr.s[t * layer.n_rec + j];
+                }
+                worst = worst.max((g[layer.idx_r(c, j)] - want).abs());
+                scale = scale.max(want.abs());
+            }
+        }
+        assert!(scale > 1e-3, "the readout block was zero, so this compared nothing");
+        assert!(worst / scale < 1e-12, "readout block off by {worst} against scale {scale}");
+        // The rest of the gradient is alive too, so the finiteness above is not the finiteness of
+        // a vector of zeros.
+        assert!(g[layer.idx_b(0)].abs() > 1e-12, "the bias gradient at kappa == 1 was zero");
+    }
+
     #[test]
     fn eprop_refuses_a_malformed_call() {
         let layer = spec(true, 4).build().expect("valid");
@@ -2203,6 +2512,142 @@ mod tests {
         assert!(t.train_once(&firing.0, firing.1, 1e-3, 0.2).expect("valid"));
         assert_ne!(t.w, before, "a wrong decision left the weights alone");
         assert!(t.w.iter().all(|w| *w > 0.0), "the update did not potentiate");
+    }
+
+    /// The fixed point at the origin, which [`Tempotron`]'s doc builds a paragraph on and no test
+    /// reached — `a_correct_tempotron_decision_moves_no_weight` deliberately uses `0.05`, never
+    /// zero. Four statements, each broken by a different plausible mutation:
+    ///
+    /// - `peak` on a flat membrane returns the FIRST grid point. Flipping its `>` to `>=` returns
+    ///   the last one instead, where the postsynaptic potentials are not zero, the update is not
+    ///   zero, and the fixed point does not exist.
+    /// - the postsynaptic potentials at that first point are exactly zero.
+    /// - so the update adds exactly zero and the weights are bit-for-bit where they started.
+    /// - and `train_once` still reports `true`, because it reports that the decision was wrong and
+    ///   an update was applied — not that the weights moved. Returning `self.w != before` instead
+    ///   would make [`Tempotron::train`] score this pattern as correctly classified.
+    #[test]
+    fn the_tempotron_cannot_bootstrap_from_a_silent_membrane() {
+        let mut t = Tempotron::gutig_sompolinsky_2006(4, 5e-3).expect("valid");
+        assert!(t.w.iter().all(|w| *w == 0.0), "Tempotron::new no longer starts every weight at 0");
+        let pattern: Vec<Vec<f64>> = vec![vec![0.010, 0.050], vec![0.020], vec![0.030], vec![0.040]];
+        let (dt, t_end) = (1e-3, 0.2);
+
+        // Flat at exactly zero everywhere, so every grid point ties and the earliest wins.
+        assert_eq!(t.peak(&pattern, dt, t_end).expect("valid"), (0.0, 0.0));
+        // The tie is real: the far end of the trial holds the same voltage, so a `>=` rule would
+        // return it and this is not a maximum that happens to sit at the origin.
+        assert_eq!(t.voltage(&pattern, 0.199).expect("valid"), 0.0);
+
+        // At t = 0 every postsynaptic potential is zero, and at the far end they are not — which is
+        // the entire difference between a fixed point and an update.
+        let mut psp_first = 0.0;
+        let mut psp_last = 0.0;
+        for times in &pattern {
+            for &ts in times {
+                psp_first += t.kernel(0.0 - ts);
+                psp_last += t.kernel(0.199 - ts);
+            }
+        }
+        assert_eq!(psp_first, 0.0, "a postsynaptic potential was non-zero at the first grid point");
+        assert!(psp_last > 0.0, "the pattern contributes nothing at the end of the trial either");
+
+        let before = t.w.clone();
+        assert!(
+            t.train_once(&pattern, true, dt, t_end).expect("valid"),
+            "the decision was wrong and an update was applied, so train_once reports true"
+        );
+        assert_eq!(t.w, before, "the update moved a weight off the fixed point at the origin");
+
+        // Away from the origin the same call does move the weights, so the equality above is a
+        // property of zero rather than of `train_once` being inert on this pattern.
+        t.w.fill(1e-3);
+        let before = t.w.clone();
+        assert!(t.train_once(&pattern, true, dt, t_end).expect("valid"));
+        assert_ne!(t.w, before, "the same update from a non-zero start moved nothing either");
+    }
+
+    /// [`Tempotron::train`]'s error rate is measured **during** the pass — each pattern counted as
+    /// the decision found when it was visited, before its own update — which its doc argues at
+    /// length and nothing checked. Counting after the update instead is a one-line rewrite of the
+    /// loop that every other assertion in this module survives.
+    ///
+    /// One pattern, wrong when visited and right immediately after its single update, so the two
+    /// conventions differ by the whole range of the quantity: 1.0 against 0.0.
+    #[test]
+    fn the_tempotron_error_rate_is_measured_before_each_update_not_after() {
+        let mut t = Tempotron::gutig_sompolinsky_2006(1, 1.0).expect("valid");
+        t.w[0] = 0.5;
+        let set: Vec<Example> = vec![(vec![vec![0.010]], true)];
+        let (dt, t_end) = (1e-3, 0.1);
+
+        let (v_before, _) = t.peak(&set[0].0, dt, t_end).expect("valid");
+        assert!(
+            v_before < t.theta && v_before > 0.4 * t.theta,
+            "the membrane peaked at {v_before}, not just under the threshold of {}",
+            t.theta
+        );
+
+        let hist = t.train(&set, 2, dt, t_end).expect("non-empty");
+        // The update landed, and it was enough: counted AFTER itself the first pass would score 0.
+        let (v_after, _) = t.peak(&set[0].0, dt, t_end).expect("valid");
+        assert!(
+            v_after >= t.theta,
+            "the single update left the membrane at {v_after}, so the two conventions agree here \
+             and this test discriminates nothing"
+        );
+        assert_eq!(hist[0], 1.0, "the first pass's rate was not measured before its own update");
+        // The second pass is zero under either convention, which is what makes the first entry the
+        // discriminating one rather than the run as a whole.
+        assert_eq!(hist[1], 0.0);
+        assert_eq!(t.accuracy(&set, dt, t_end).expect("non-empty"), 1.0);
+    }
+
+    /// `dt` and `t_end` are each checked for being finite and strictly positive, and neither check
+    /// says anything about their RATIO — which is the quantity the scanning loop iterates over.
+    /// `(t_end / dt).floor() as usize` saturates rather than panicking, so `dt = f64::MIN_POSITIVE`
+    /// asked for `18_446_744_073_709_551_615` grid points, on the order of `10^6` years with an inner
+    /// pass over every afferent spike, reported as neither an error nor a result. Both scanning
+    /// loops in this module had that shape.
+    ///
+    /// Without the guard every line here hangs rather than failing, which is why the assertions are
+    /// on the refusal and not on a duration.
+    #[test]
+    fn a_grid_finer_than_the_ceiling_is_refused_rather_than_scanned() {
+        assert_eq!(MAX_GRID_STEPS, 67_108_864, "the documented ceiling is 2^26");
+        // The boundary first, through the shared helper — cheap, exact (`dt = 1.0` makes the
+        // division exact), and ORDERED first on purpose: a `grid_steps` that refuses nothing fails
+        // here in microseconds rather than hanging on the saturating calls below.
+        assert_eq!(grid_steps(1.0, MAX_GRID_STEPS as f64), Ok(MAX_GRID_STEPS));
+        assert!(matches!(
+            grid_steps(1.0, MAX_GRID_STEPS as f64 + 1.0),
+            Err(LearnError::GridTooFine { max: MAX_GRID_STEPS, .. })
+        ));
+        let t = Tempotron::gutig_sompolinsky_2006(2, 1e-3).expect("valid");
+        let pattern = vec![vec![0.01], vec![0.02]];
+        assert!(matches!(
+            t.peak(&pattern, f64::MIN_POSITIVE, 0.25),
+            Err(LearnError::GridTooFine { max: MAX_GRID_STEPS, .. })
+        ));
+        assert!(matches!(
+            t.peak(&pattern, 1e-3, f64::MAX),
+            Err(LearnError::GridTooFine { max: MAX_GRID_STEPS, .. })
+        ));
+        let net = SpikeProp::new(vec![0.3, 0.3], 7e-3, 1.0, 1e4).expect("valid");
+        assert!(matches!(
+            net.first_spike(&[0.0, 1e-3], f64::MIN_POSITIVE, 0.08),
+            Err(LearnError::GridTooFine { max: MAX_GRID_STEPS, .. })
+        ));
+        // A grid a caller would actually ask for is untouched: 250 ms at 1 ms is 250 intervals and
+        // the same trial at 1 microsecond is 250_000, both far under the ceiling.
+        assert!(t.peak(&pattern, 1e-3, 0.25).is_ok());
+        assert!(t.peak(&pattern, 1e-6, 0.25).is_ok());
+        assert!(net.first_spike(&[0.0, 1e-3], 1e-6, 0.08).is_ok());
+        // The message names what was asked for and what the ceiling is.
+        let err = t.peak(&pattern, 1e-3, f64::MAX).unwrap_err();
+        let text = format!("{err}");
+        assert!(text.contains("67108864"), "{text}");
+        assert!(text.contains("grid"), "{text}");
     }
 
     #[test]
@@ -2427,6 +2872,47 @@ mod tests {
         assert!(matches!(SpikeProp::new(vec![], 1e-3, 1.0, 1e-3), Err(LearnError::Empty { .. })));
     }
 
+    /// Two branches of [`SpikeProp`] that the fixture tests never enter, both reachable from the
+    /// public API and both silent if they go.
+    #[test]
+    fn spikeprop_handles_a_crossing_at_zero_and_an_overflowing_slope() {
+        // A presynaptic spike that arrived BEFORE the trial: its alpha function has been rising
+        // since then, so the membrane is already over the threshold at t = 0. There is no
+        // sub-threshold point to bracket the root with, and `0.0` IS the first crossing on
+        // `[0, t_end]` — not the first grid point above it, and not the bisection's answer.
+        let net = SpikeProp::new(vec![2.0, 2.0], 7e-3, 1.0, 1e4).expect("valid");
+        let early = [-7e-3, -7e-3];
+        // A lag of exactly tau is the alpha function's peak, which is exactly 1.0.
+        assert_eq!(net.potential(&early, 0.0).expect("valid"), 4.0);
+        assert!(net.potential(&early, 0.0).expect("valid") >= net.theta);
+        assert_eq!(net.first_spike(&early, 1e-5, 0.08).expect("valid"), Some(0.0));
+        // The same network with the spikes inside the trial crosses strictly after zero, so the
+        // branch above is about `t = 0` and not about this network always answering zero.
+        let inside = [1e-3, 1e-3];
+        let t_out = net.first_spike(&inside, 1e-5, 0.08).expect("valid").expect("it fires");
+        assert!(t_out > 0.0, "the shifted pattern also reported a crossing at zero");
+        assert!(t_out < 0.08);
+
+        // `w` is public, so a slope large enough to overflow its sum is one assignment away. The
+        // sensitivity would then be `-eval / inf` at every synapse, which is `-0.0`: a gradient
+        // reporting "moving this weight does nothing" for the synapse that dominates the membrane.
+        let huge = SpikeProp::new(vec![f64::MAX, f64::MAX], 7e-3, 1.0, 1e4).expect("valid");
+        let pre = [0.0, 0.0];
+        let t_out = 1e-4;
+        let mut slope = 0.0;
+        for i in 0..huge.w.len() {
+            slope += huge.w[i] * huge.psp.slope(t_out - pre[i]);
+        }
+        assert!(slope.is_infinite() && slope > 0.0, "the slope sum was {slope}, not an overflow");
+        assert!(!(!(slope > 0.0)), "the slope IS strictly positive, so only finiteness rejects it");
+        assert_eq!(huge.sensitivity(&pre, t_out).expect("valid"), None);
+        // ... and the same network at a weight the arithmetic can hold does return a gradient, so
+        // the `None` above is the overflow and not the shape of the call.
+        let sane = SpikeProp::new(vec![2.0, 2.0], 7e-3, 1.0, 1e4).expect("valid");
+        let g = sane.sensitivity(&pre, t_out).expect("valid").expect("transversal crossing");
+        assert!(g.iter().all(|v| *v < 0.0), "a sensitivity was non-negative: {g:?}");
+    }
+
     // -----------------------------------------------------------------------------------------
     // FORCE
     // -----------------------------------------------------------------------------------------
@@ -2551,6 +3037,87 @@ mod tests {
         assert!((got - want).abs() < 1e-8, "output {got} vs the generators' {want}");
     }
 
+    /// The one `Force` refusal whose absence is silent rather than loud, and the only one nothing
+    /// executed. `force_refuses_a_malformed_call` covers shape and non-finiteness, and
+    /// `errors_say_what_was_wrong` constructs [`LearnError::Singular`] by hand and formats it —
+    /// which proves the message, not the wiring.
+    ///
+    /// Reachable in three lines with finite input and a perfectly conditioned `P`: the quadratic
+    /// form is a sum of squares and `1e200` squared overflows. Delete the guard and `c = 1 / inf`
+    /// is zero, so both the `P` update and the `w` update subtract exactly zero — the call reports
+    /// a plausible a-priori error, changes nothing, counts itself, and returns `Ok`.
+    #[test]
+    fn force_refuses_a_denominator_that_left_the_positive_reals() {
+        let mut f = Force::new(3, 1.0).expect("valid");
+        // P starts as I / ridge with ridge = 1, so P r = r and 1 + rT P r is 1 + 3e400.
+        assert_eq!(
+            f.update(&[1e200, 1e200, 1e200], 1.0),
+            Err(LearnError::Singular { step: 0, value: f64::INFINITY })
+        );
+        // A refusal is a refusal: nothing was applied, so the state is exactly where it started.
+        assert_eq!(f.updates(), 0, "the refused update was counted");
+        assert_eq!(f.w, vec![0.0; 3], "the refused update moved the weights");
+        let fresh = Force::new(3, 1.0).expect("valid");
+        assert_eq!(f.inverse_correlation(), fresh.inverse_correlation(), "P was touched");
+        // Half the exponent goes through, so the bound is on the arithmetic and not on the call.
+        assert!(f.update(&[1e150, 1e150, 1e150], 1.0).is_ok());
+        assert_eq!(f.updates(), 1);
+        assert_ne!(f.inverse_correlation(), fresh.inverse_correlation());
+    }
+
+    /// `P` is an inverse correlation matrix, so it is symmetric — and
+    /// [`Force::inverse_correlation`]'s doc calls that an exact identity rather than a limit, which
+    /// makes it an equality to assert and not a tolerance.
+    ///
+    /// Writing the rank-one downdate as a full `n × n` sweep computes `(i, j)` as `(c pr[i]) pr[j]`
+    /// and `(j, i)` as `(c pr[j]) pr[i]`: the same number in exact arithmetic, a different one in
+    /// `f64`, and the gap accumulates at about an ulp per update. Reverting to that version and
+    /// running exactly the fixture below gives `|P - P^T|_max = 1.46e-10` against
+    /// `|P|_max = 1.02e-2` — a relative 1.4e-8, fourteen times the tolerance
+    /// `force_matches_the_closed_form_ridge_solution` holds `P` to, in a regime the constructor
+    /// allows and `force_recovers_the_weights_that_generated_its_target` runs harder still at
+    /// `ridge = 1e-9`.
+    #[test]
+    fn the_inverse_correlation_matrix_stays_exactly_symmetric() {
+        let n = 8;
+        let mut rng = Rng::new(42);
+        let mut f = Force::new(n, 1e-6).expect("valid");
+        for _ in 0..3_000 {
+            // A shared component plus a per-coordinate one, so the correlation matrix has a heavy
+            // off-diagonal rather than the near-diagonal one that independent draws produce. That
+            // is both the harder conditioning and the case where symmetry is a claim rather than a
+            // consequence of nothing having happened off the diagonal.
+            let shared = 2.0 * rng.next_f64() - 1.0;
+            let r: Vec<f64> =
+                (0..n).map(|_| shared + 0.3 * (2.0 * rng.next_f64() - 1.0)).collect();
+            let d = 2.0 * rng.next_f64() - 1.0;
+            f.update(&r, d).expect("well conditioned");
+        }
+        let p = f.inverse_correlation();
+        let mut scale = 0.0f64;
+        let mut off_diagonal = 0.0f64;
+        for i in 0..n {
+            for j in 0..n {
+                assert_eq!(
+                    p[i * n + j],
+                    p[j * n + i],
+                    "P({i},{j}) and P({j},{i}) drifted apart by {}",
+                    p[i * n + j] - p[j * n + i]
+                );
+                scale = scale.max(p[i * n + j].abs());
+                if i != j {
+                    off_diagonal = off_diagonal.max(p[i * n + j].abs());
+                }
+            }
+        }
+        assert!(scale > 1e-4, "P was numerically zero, so the equalities above compared nothing");
+        assert!(
+            off_diagonal > 0.1 * scale,
+            "the off-diagonal is {off_diagonal} against {scale} (measured 1.70e-3 against \
+             1.02e-2): P never left its diagonal start, where symmetry is free"
+        );
+    }
+
     #[test]
     fn force_refuses_a_malformed_call() {
         let mut f = Force::new(3, 1.0).expect("valid");
@@ -2599,5 +3166,3 @@ mod tests {
         assert!(format!("{err}").contains("non-finite"));
     }
 }
-
-

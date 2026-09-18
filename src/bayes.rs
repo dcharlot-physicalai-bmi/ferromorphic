@@ -53,11 +53,12 @@
 //! **Update order matters.** [`Scan::Random`] samples the target exactly; [`Scan::Parallel`], in
 //! which every neuron updates every tick as real neurons do, **does not** once the units are
 //! coupled. This implementation measures the gap rather than asserting either way: see
-//! `parallel_updates_are_exact_without_coupling_and_wrong_with_it`, where the same model and the
-//! same budget give a total-variation distance of ~0.001 under random scan and ~0.17 under
-//! parallel. The irony is worth the lesson: the biologically honest update is the statistically
-//! dishonest one, and it is also the only one whose spike train can be decoded with a fixed
-//! window ([`Recording::reconstruct`] refuses for the other).
+//! `parallel_updates_are_exact_without_coupling_and_wrong_with_it`, where the same model, the same
+//! seed and the same million ticks at `tau = 3` give a total-variation distance of **0.0031**
+//! under random scan and **0.092** under parallel — a factor of 30. The irony is worth the
+//! lesson: the biologically honest update is the statistically dishonest one, and it is also the
+//! only one whose spike train can be decoded with
+//! a fixed window ([`Recording::reconstruct`] refuses for the other).
 //!
 //! # The adjacent formalism
 //!
@@ -89,7 +90,7 @@
 //! compared to the **exactly enumerated** Boltzmann distribution by total-variation distance, on a
 //! system small enough to write down. There is no tolerance-shopping in that comparison — the
 //! companion test drops the `−ln tau` correction from the firing probability and measures the
-//! distance move from 0.001 to 0.36, so the threshold is known to discriminate.
+//! distance move from 0.0038 to 0.359, a factor of 93, so the threshold is known to discriminate.
 //!
 //! What is **not** re-derived here is the paper's general proof. Buesing et al. state the
 //! discrete-time theorem for the serial update; the `−ln tau` correction is derived from scratch in
@@ -469,6 +470,10 @@ impl Boltzmann {
     /// `z` is a bitmask, bit `k` for unit `k`. Returns `None` if any bit at or above `units` is
     /// set, rather than masking them away: a stray high bit means the caller's state encoding and
     /// this model's disagree, and silently ignoring it would make the two disagree forever.
+    ///
+    /// The sum is reported as computed, so a model whose finite biases and couplings add past
+    /// `f64::MAX` gives `Some(±inf)` here. [`Boltzmann::exact`] refuses such a model rather than
+    /// turning the infinity into a `NaN` distribution.
     #[must_use]
     pub fn energy(&self, z: u64) -> Option<f64> {
         (self.units == MAX_UNITS || z >> self.units == 0).then(|| self.energy_of(z))
@@ -504,10 +509,16 @@ impl Boltzmann {
     ///
     /// Computed by subtracting the largest energy before exponentiating, so a model with couplings
     /// of a few hundred nats normalises rather than returning a vector of infinities and `NaN`.
+    /// That trick handles large **finite** energies and nothing else: [`Boltzmann::new`] checks
+    /// that its inputs are finite, which does not stop `E(z)` itself from overflowing when the
+    /// inputs are near `f64::MAX`, and `inf − inf` is `NaN`. An energy that is not finite is
+    /// therefore refused here rather than normalised into a vector a caller would compare with
+    /// `<` and silently get `false` from.
     ///
     /// # Errors
     ///
-    /// [`BayesError::TooLarge`] past [`MAX_ENUMERABLE_UNITS`].
+    /// [`BayesError::TooLarge`] past [`MAX_ENUMERABLE_UNITS`], and [`BayesError::NonFinite`]
+    /// naming the first configuration whose energy overflowed.
     pub fn exact(&self) -> Result<Vec<f64>, BayesError> {
         let n = self.configurations().ok_or(BayesError::TooLarge {
             what: "units to enumerate",
@@ -518,6 +529,9 @@ impl Boltzmann {
         let mut top = f64::NEG_INFINITY;
         for z in 0..n {
             let v = self.energy_of(z as u64);
+            if !v.is_finite() {
+                return Err(BayesError::NonFinite { what: "energy", index: z });
+            }
             top = top.max(v);
             e.push(v);
         }
@@ -558,6 +572,9 @@ impl Boltzmann {
 /// algebra was typed correctly. A `Target` can carry interactions of any order, and
 /// [`PairwiseFit::residual`] then measures how far its conditional log-odds is from anything a
 /// linear synaptic integrator could produce.
+///
+/// The invariant, and it holds for **both** constructors: every log-weight is finite, so every
+/// conditional log-odds this type reports is a difference of two finite numbers.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Target {
     units: usize,
@@ -595,9 +612,14 @@ impl Target {
 
     /// The target a [`Boltzmann`] defines, enumerated.
     ///
+    /// Runs the same finiteness gate as [`Target::from_log_weights`], so the two constructors
+    /// leave the type with one invariant and not two: a model whose energies overflow to `±inf` is
+    /// refused here exactly as its log-weights would be if they were passed in by hand.
+    ///
     /// # Errors
     ///
-    /// [`BayesError::TooLarge`] past [`MAX_ENUMERABLE_UNITS`].
+    /// [`BayesError::TooLarge`] past [`MAX_ENUMERABLE_UNITS`], and [`BayesError::NonFinite`]
+    /// naming the first configuration whose energy overflowed.
     pub fn of_boltzmann(b: &Boltzmann) -> Result<Self, BayesError> {
         let n = b.configurations().ok_or(BayesError::TooLarge {
             what: "units to enumerate",
@@ -605,6 +627,7 @@ impl Target {
             limit: MAX_ENUMERABLE_UNITS,
         })?;
         let log_w: Vec<f64> = (0..n).map(|z| b.energy_of(z as u64)).collect();
+        finite(&log_w, "log_w")?;
         Ok(Self { units: b.units(), log_w })
     }
 
@@ -658,6 +681,18 @@ impl Target {
 /// the size of the missing term when it is not — see
 /// `the_computability_condition_fails_for_a_third_order_target`, where a deliberately planted
 /// three-way interaction of 0.8 nats is recovered as a residual of 0.8 to floating-point noise.
+///
+/// **There is no symmetry defect to report.** Expanding the two readings,
+///
+/// ```text
+/// W_kj = [w(e_k+e_j) − w(e_j)] − [w(e_k) − w(0)]
+/// W_jk = [w(e_j+e_k) − w(e_k)] − [w(e_j) − w(0)]
+/// ```
+///
+/// are the same four log-weights with the same signs, so `W_kj − W_jk` is identically zero for
+/// **any** target, third-order terms included. A field reporting it would be a check that no input
+/// could move — the symmetry is a property of where the fit reads the conditionals, and
+/// `the_fitted_coupling_is_symmetric_because_of_where_the_fit_reads_it` is what defends it.
 #[derive(Debug, Clone, PartialEq)]
 pub struct PairwiseFit {
     /// Bias implied by the target's conditionals, nats, one per unit.
@@ -670,11 +705,6 @@ pub struct PairwiseFit {
     /// residual of `r` nats means some conditional the network must compute is off by `r`, and a
     /// tenth of a nat is already a 10% error in an odds ratio.
     pub residual: f64,
-    /// Largest `|W_kj − W_jk|` in the implied coupling, nats.
-    ///
-    /// A pairwise target gives a symmetric matrix automatically; a nonzero defect means the
-    /// implied "coupling" is not an interaction at all, and reports it rather than symmetrising.
-    pub symmetry_defect: f64,
 }
 
 impl PairwiseFit {
@@ -711,13 +741,7 @@ impl PairwiseFit {
                 residual = residual.max((t.conditional_log_odds(z, k)? - fitted).abs());
             }
         }
-        let mut symmetry_defect = 0.0f64;
-        for k in 0..n {
-            for j in (k + 1)..n {
-                symmetry_defect = symmetry_defect.max((coupling[k * n + j] - coupling[j * n + k]).abs());
-            }
-        }
-        Ok(Self { bias, coupling, residual, symmetry_defect })
+        Ok(Self { bias, coupling, residual })
     }
 }
 
@@ -734,8 +758,10 @@ pub enum Scan {
     /// One unit, drawn uniformly, updates per tick.
     ///
     /// **This is the mode that samples the target.** It is the serial update Buesing et al. state
-    /// their discrete-time theorem for, and `the_sampled_distribution_matches_the_exact_boltzmann`
-    /// measures a total-variation distance of ~0.001 against the enumerated answer.
+    /// their discrete-time theorem for, and
+    /// `the_sampled_distribution_matches_the_exact_boltzmann_distribution` measures a
+    /// total-variation distance of 0.0014 to 0.0040 against the enumerated answer, over refractory
+    /// windows of 1, 2, 5 and 20 ticks and 1.8 million post-burn-in samples each.
     ///
     /// Its cost is that a unit's refractory countdown advances only on the ticks where that unit is
     /// selected, so `z_k` stays high for a random number of ticks — negative binomial, mean
@@ -744,11 +770,12 @@ pub enum Scan {
     Random,
     /// Every unit updates every tick, from a snapshot of the state at the start of the tick.
     ///
-    /// **This does not sample a coupled target**, and the error is not small: the same model and
-    /// budget that give 0.001 under [`Scan::Random`] give ~0.17 under this one, which is a fifth of
-    /// the maximum a total-variation distance can be. With zero coupling it *is* exact, because
-    /// there is then nothing for the simultaneous updates to disagree about — the pair of
-    /// measurements is `parallel_updates_are_exact_without_coupling_and_wrong_with_it`.
+    /// **This does not sample a coupled target**, and the error is not small: the same model, seed
+    /// and budget that give 0.0031 under [`Scan::Random`] give 0.092 under this one at `tau = 3`
+    /// — a tenth of the maximum a total-variation distance can be. With zero coupling it *is*
+    /// exact, because there is then nothing for the simultaneous
+    /// updates to disagree about — the pair of measurements is
+    /// `parallel_updates_are_exact_without_coupling_and_wrong_with_it`.
     ///
     /// It is here because it is what a network of real neurons does — every cell integrates on
     /// every millisecond — and because it is the only mode whose spike train decodes with a fixed
@@ -778,8 +805,8 @@ pub enum Scan {
 ///
 /// and solving gives `q = e^u / (tau + e^u) = logistic(u − ln tau)`. **The `−ln tau` is the whole
 /// correction**, and it is not cosmetic: dropping it moves the sampled distribution from a
-/// total-variation distance of 0.001 off the target to 0.36 off it, measured in
-/// `dropping_the_log_tau_correction_moves_the_distribution_three_hundred_fold`.
+/// total-variation distance of 0.0038 off the target to 0.359 off it — a factor of 93 — measured
+/// in `dropping_the_log_tau_correction_moves_the_distribution_a_hundredfold`.
 ///
 /// The derivation above is elementary for one unit. For coupled units it is Theorem 3 of Buesing et
 /// al. (2011); this implementation confirms it numerically against the enumerated distribution
@@ -1232,7 +1259,9 @@ impl Recording {
 ///
 /// Both bars are carried because the wrong one is what a reader will otherwise compute. [`sem`] is
 /// the one to report; [`naive_sem`] is here so that [`understatement`] can say by how much a chain
-/// would have lied.
+/// would have lied. For an anti-correlated series `τ_int < 1`, the effective sample size is
+/// *larger* than the raw count and [`understatement`] comes back below 1 — the naive bar was too
+/// wide, not too narrow, and the type does not hide that either.
 ///
 /// [`sem`]: Estimate::sem
 /// [`naive_sem`]: Estimate::naive_sem
@@ -1245,13 +1274,20 @@ pub struct Estimate {
     pub sd: f64,
     /// Number of samples the mean was taken over. **Not** the number of independent ones.
     pub n: usize,
-    /// Integrated autocorrelation time, in samples. At least `1.0` by construction of the
-    /// estimator (see [`integrated_autocorrelation_time`]), and equal to `(1+φ)/(1−φ)` for an
-    /// `AR(1)` chain of coefficient `φ`.
+    /// Integrated autocorrelation time, in samples: `(1+φ)/(1−φ)` for an `AR(1)` chain of
+    /// coefficient `φ`, which is **below 1 for a negative `φ`**. See
+    /// [`integrated_autocorrelation_time`]; `1.0` exactly, with [`Estimate::floored`] set, is the
+    /// one value that is a fallback rather than a measurement.
     pub iact: f64,
-    /// Effective sample size, `n / iact`. Never larger than `n`.
+    /// Effective sample size, `n / iact`.
+    ///
+    /// Larger than `n` when `iact < 1`, which is the honest answer for an anti-correlated series:
+    /// its mean really is better determined than `n` independent draws would give.
     pub ess: f64,
     /// Standard error of the mean, `sd / sqrt(ess)`. **This is the one to report.**
+    ///
+    /// A **lower bound** rather than an estimate when [`Estimate::truncated_at_cap`] is set, and a
+    /// naive bar wearing this field's name when [`Estimate::floored`] is set.
     pub sem: f64,
     /// Standard error the raw count would have given, `sd / sqrt(n)`.
     ///
@@ -1261,9 +1297,17 @@ pub struct Estimate {
     pub naive_sem: f64,
     /// Highest lag the autocorrelation sum reached before truncating, in samples.
     ///
-    /// A value at the estimator's cap means the sum never turned negative and `iact` is a lower
-    /// bound rather than an estimate — the series is more correlated than the window can see.
+    /// Odd whenever anything was summed, because Geyer's pairs end on an odd lag.
     pub lags: usize,
+    /// [`Iact::truncated_at_cap`], carried through: the correlation outlasted the lag window, so
+    /// `iact` is a lower bound, `ess` an upper bound, and `sem` **still too narrow**.
+    ///
+    /// The cap is `min(max_lag, n/2)` and is not on this struct, which is exactly why the flag has
+    /// to be: `lags` alone cannot be compared against a number the caller does not hold.
+    pub truncated_at_cap: bool,
+    /// [`Iact::floored`], carried through: the raw estimate was non-positive and `iact` is the
+    /// fallback `1.0`, so `sem` is the naive bar under another name.
+    pub floored: bool,
 }
 
 impl Estimate {
@@ -1284,6 +1328,10 @@ impl Estimate {
     }
 
     /// The interval a raw-count error bar would have claimed, for comparison.
+    ///
+    /// The same `1.96` normal quantile as [`Estimate::half_width95`], applied to
+    /// [`Estimate::naive_sem`] — so the two intervals differ only by the effective sample size and
+    /// not by the quantile, which is what makes their ratio `sqrt(iact)`.
     #[must_use]
     pub fn naive_ci95(&self) -> (f64, f64) {
         let h = 1.96 * self.naive_sem;
@@ -1291,7 +1339,7 @@ impl Estimate {
     }
 
     /// How many times too narrow the raw-count error bar is: `sem / naive_sem`, which is
-    /// `sqrt(iact)`.
+    /// `sqrt(iact)`. Below 1 for an anti-correlated series, where the naive bar was too wide.
     ///
     /// Returns `None` when the naive bar is zero, which happens only for a series whose sample
     /// variance is zero — and [`estimate`] refuses those before they reach here.
@@ -1304,10 +1352,17 @@ impl Estimate {
 /// An integrated autocorrelation time and the window it was measured over.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Iact {
-    /// `1 + 2 Σ ρ_l` over the initial positive sequence, in samples. At least `1.0`.
+    /// `−1 + 2 Σ_{k=0}^{K} Γ_k` over Geyer's initial positive sequence, in samples.
+    ///
+    /// Equivalently `1 + 2 Σ_{l=1}^{2K+1} ρ_l`. **It is not floored at 1**: an anti-correlated
+    /// series has an integrated autocorrelation time genuinely below one — an `AR(1)` chain of
+    /// coefficient `φ` has exactly `(1+φ)/(1−φ)`, which is `0.0526` at `φ = −0.9` — and reporting
+    /// `1.0` there would be a claim about the estimator rather than about the chain. The one
+    /// exception is [`Iact::floored`].
     pub value: f64,
-    /// Highest lag included in the sum, in samples. `0` means the sum truncated immediately —
-    /// the series is uncorrelated as far as this estimator can tell.
+    /// Highest lag included in the sum, in samples, which is `2K+1` and therefore **odd** whenever
+    /// anything was included. `0` means even `Γ_0 = 1 + ρ_1` came out non-positive, which needs a
+    /// series that alternates almost perfectly.
     pub lags: usize,
     /// Whether the sum reached the estimator's lag cap without turning negative.
     ///
@@ -1315,35 +1370,72 @@ pub struct Iact {
     /// the real effective sample size is smaller than the one reported and the error bar is still
     /// too narrow, just less so.
     pub truncated_at_cap: bool,
+    /// Whether the raw sum came out non-positive and [`Iact::value`] is the fallback `1.0`.
+    ///
+    /// Geyer's Theorem 3.1 makes every `Γ_k` strictly positive for a reversible chain, and the
+    /// *infinite* sum then satisfies `2 Σ Γ_k > γ_0`, so the exact-arithmetic answer is positive.
+    /// A **truncated** sum can fall short of `γ_0/2` on a strongly anti-correlated series —
+    /// perfect alternation is the extreme, where every `Γ_k` is `1/n` — and `−1 + 2 Σ` is then
+    /// negative. A negative time would make `n / value` a negative effective sample size and
+    /// `sd / sqrt(ess)` a `NaN`, so `1.0` is reported instead: the independent-samples time, which
+    /// is the conservative direction because the error bar it implies is the naive one and never
+    /// narrower. `true` says the number is that fallback and not a measurement.
+    pub floored: bool,
 }
 
 /// The default ceiling on the lag window, in samples.
 ///
-/// The initial-positive-sequence sum also stops at `n/2`, and for a mean-centred series that bound
-/// is nearly always the one that never binds: the sample autocovariances of a centred series sum to
-/// exactly `−c(0)/2`, so the estimates must go negative somewhere, and in practice they do so well
-/// before half the series length. This constant is therefore a cost ceiling rather than a
-/// statistical one — it bounds the estimator at `O(n · 4096)` for a pathologically slow chain — and
-/// [`Iact::truncated_at_cap`] reports when it binds.
+/// This constant is a **cost** ceiling — it bounds the estimator at `O(n · 4096)` for a
+/// pathologically slow chain — and [`Iact::truncated_at_cap`] reports when it binds. The separate
+/// `n/2` ceiling inside the estimator is a **statistical** one and is not redundant with it:
+/// `the_geyer_window_on_a_perfectly_alternating_series_is_hand_computable` is an eight-sample
+/// series whose pairs stay positive to lag 7, so dropping the `n/2` clamp there changes both the
+/// reported lag and the truncation flag.
+///
+/// For the chains anyone actually runs the `n/2` ceiling does not bind, and there is a reason: the
+/// sample autocovariances of a mean-centred series satisfy `Σ_{l} (1 − |l|/n) c_l = 0` exactly, so
+/// the estimates must go negative somewhere, and in practice they do so well before half the
+/// series length.
 pub const DEFAULT_MAX_LAG: usize = 4096;
 
 /// Integrated autocorrelation time by Geyer's initial positive sequence.
 ///
 /// Geyer, *Practical Markov Chain Monte Carlo*, Statistical Science 7(4):473–483, 1992. The
 /// autocorrelation estimates `ρ_l` are noise beyond a few correlation times, and summing them all
-/// adds variance without adding signal. Geyer's observation is that for a reversible chain the
-/// **pairs** `Γ_m = ρ_{2m−1} + ρ_{2m}` are positive and decreasing in exact arithmetic, so the
-/// first pair that comes out negative marks where the estimates have become noise. The sum stops
-/// there.
+/// adds variance without adding signal. Geyer's Theorem 3.1 is that for a reversible chain the
+/// pairs
 ///
-/// Because the sum only ever adds non-negative terms, `value ≥ 1` automatically — there is no clamp
-/// here, and none is needed. The estimator has a small positive bias; measured against the `AR(1)`
-/// closed form `(1+φ)/(1−φ)` in
-/// `the_autocorrelation_time_of_an_ar1_chain_matches_its_closed_form`, it runs about 1.5% high at
-/// `φ = 0.9` over 20 000 samples.
+/// ```text
+/// Γ_k = γ_{2k} + γ_{2k+1}        k = 0, 1, 2, …
+/// ```
 ///
-/// Lags are computed one at a time and the loop stops at the first negative pair, so the cost is
-/// `O(n · lags)` rather than `O(n²)`.
+/// are strictly positive, strictly decreasing and strictly convex in exact arithmetic, so the first
+/// pair that comes out non-positive marks where the estimates have become noise. The sum stops
+/// there, and `σ² = −γ_0 + 2 Σ_{k=0}^{K} Γ_k` gives
+///
+/// ```text
+/// τ_int = −1 + 2 Σ_{k=0}^{K} (ρ_{2k} + ρ_{2k+1})  =  1 + 2 Σ_{l=1}^{2K+1} ρ_l
+/// ```
+///
+/// **The pairing starts at lag 0 and the theorem is about that pairing.** Pairing the other way —
+/// `ρ_1 + ρ_2`, `ρ_3 + ρ_4`, … — gives the same infinite sum and a different *truncation*, and the
+/// positivity theorem does not cover it: `Γ_0 = 1 + ρ_1 ≥ 0` always, so Geyer's sequence cannot
+/// truncate before it has added anything, while the shifted one can and does. On a reversible chain
+/// with one fast anti-correlated mode and one slow positive one — `ρ_l = 0.95·(−0.5)^l +
+/// 0.05·(0.99)^l`, integrated time 10.267 — the shifted pairing's first pair is
+/// `ρ_1 + ρ_2 = −0.139`, it truncates at once, and it calls a chain worth 10 samples per
+/// independent draw an independent sequence. That is
+/// `a_chain_with_a_fast_negative_mode_and_a_slow_positive_one_is_not_called_independent`.
+///
+/// `value` is therefore **not** floored at 1: an anti-correlated chain has an integrated time below
+/// one, and the estimator tracks the `AR(1)` closed form `(1+φ)/(1−φ)` at `φ = −0.9` (`0.0526`) as
+/// well as at `φ = 0.9` (`19`) — both in
+/// `the_autocorrelation_time_of_an_ar1_chain_matches_its_closed_form`, where the bias runs about
+/// 2.5% high at `φ = 0.9` and 5% low at `φ = −0.9` over 20 000 samples. The single exception is
+/// [`Iact::floored`], for a truncated sum that comes out non-positive.
+///
+/// Lags are computed one at a time and the loop stops at the first non-positive pair, so the cost
+/// is `O(n · lags)` rather than `O(n²)`.
 ///
 /// # Errors
 ///
@@ -1356,19 +1448,23 @@ pub fn integrated_autocorrelation_time(x: &[f64]) -> Result<Iact, BayesError> {
 
 /// Integrated autocorrelation time with an explicit ceiling on the lag window.
 ///
-/// The sum stops at `min(max_lag, n/2)`, and [`Iact::truncated_at_cap`] says whether it stopped
-/// because the window ran out rather than because the autocorrelations turned negative. A caller
-/// with a fixed time budget sets this; a caller who does not care uses
+/// The highest lag the sum may reach is `min(max_lag, n/2)`, and [`Iact::truncated_at_cap`] says
+/// whether it stopped because the window ran out rather than because the autocorrelations turned
+/// negative. A caller with a fixed time budget sets this; a caller who does not care uses
 /// [`integrated_autocorrelation_time`] and its [`DEFAULT_MAX_LAG`].
 ///
 /// **A truncated estimate is a lower bound**, so the effective sample size it implies is an upper
 /// bound and the error bar built on it is still too narrow — less so than the raw-count bar, but
-/// not enough. That is why the flag is on the struct rather than in a log line.
+/// not enough. That is why the flag is on the struct rather than in a log line, and why
+/// [`Estimate`] carries it too.
+///
+/// `max_lag == 1` is accepted and does real work: it admits `Γ_0 = 1 + ρ_1` and nothing else, so
+/// the answer is `1 + 2ρ_1`, the lag-one correction on its own.
 ///
 /// # Errors
 ///
 /// As [`integrated_autocorrelation_time`], plus [`BayesError::OutOfRange`] for `max_lag == 0`,
-/// which would make every series look uncorrelated.
+/// which admits no pair at all and would make every series look uncorrelated.
 pub fn integrated_autocorrelation_time_within(
     x: &[f64],
     max_lag: usize,
@@ -1401,26 +1497,39 @@ pub fn integrated_autocorrelation_time_within(
     };
     // n/2 because an autocorrelation at lag n/2 is an average of n/2 products and is already
     // mostly noise; beyond it the estimate is not informative at any n. `max_lag` is the caller's
-    // cost ceiling on top of that.
+    // cost ceiling on top of that. Neither bound is what makes the loop terminate — `rho(lag)` is
+    // an empty sum and therefore 0 for `lag >= n`, so the pair would be non-positive — but the
+    // `n/2` bound does bind, and visibly: see
+    // `the_geyer_window_on_a_perfectly_alternating_series_is_hand_computable`.
     let cap = max_lag.min(n / 2);
+    // Geyer's pairing, Theorem 3.1: Γ_k = ρ_{2k} + ρ_{2k+1}, k = 0, 1, 2, …, starting at LAG ZERO.
     let mut sum = 0.0;
     let mut lags = 0usize;
-    let mut m = 1usize;
+    let mut k = 0usize;
     let mut truncated_at_cap = true;
-    while 2 * m <= cap {
-        let g = rho(2 * m - 1) + rho(2 * m);
+    loop {
+        // The pair spans lags `2k` and `2k+1`; the higher of the two is what has to fit the cap.
+        let hi = 2 * k + 1;
+        if hi > cap {
+            break;
+        }
+        let g = rho(2 * k) + rho(hi);
         if g <= 0.0 {
             truncated_at_cap = false;
             break;
         }
         sum += g;
-        lags = 2 * m;
-        m += 1;
+        lags = hi;
+        k += 1;
     }
-    Ok(Iact { value: 1.0 + 2.0 * sum, lags, truncated_at_cap })
+    let raw = -1.0 + 2.0 * sum;
+    let floored = !(raw > 0.0);
+    Ok(Iact { value: if floored { 1.0 } else { raw }, lags, truncated_at_cap, floored })
 }
 
 /// Mean and chain-aware error bar for a series of samples from a Markov chain.
+///
+/// Uses [`DEFAULT_MAX_LAG`]; [`estimate_within`] takes the ceiling explicitly.
 ///
 /// # Errors
 ///
@@ -1429,7 +1538,21 @@ pub fn integrated_autocorrelation_time_within(
 /// rather than reported with a zero error bar, because a marginal of exactly 0 with an uncertainty
 /// of exactly 0 is a claim the sample cannot support.
 pub fn estimate(x: &[f64]) -> Result<Estimate, BayesError> {
-    let iact = integrated_autocorrelation_time(x)?;
+    estimate_within(x, DEFAULT_MAX_LAG)
+}
+
+/// Mean and chain-aware error bar, with an explicit ceiling on the lag window.
+///
+/// Every flag [`integrated_autocorrelation_time_within`] sets is carried onto the returned
+/// [`Estimate`] — [`Estimate::truncated_at_cap`] and [`Estimate::floored`] — because the type that
+/// carries the error bar is the one that has to say the bar is a lower bound.
+///
+/// # Errors
+///
+/// As [`integrated_autocorrelation_time_within`], including [`BayesError::OutOfRange`] for
+/// `max_lag == 0`.
+pub fn estimate_within(x: &[f64], max_lag: usize) -> Result<Estimate, BayesError> {
+    let iact = integrated_autocorrelation_time_within(x, max_lag)?;
     let n = x.len();
     let mean = x.iter().sum::<f64>() / n as f64;
     let var = x.iter().map(|v| (v - mean) * (v - mean)).sum::<f64>() / (n as f64 - 1.0);
@@ -1444,6 +1567,8 @@ pub fn estimate(x: &[f64]) -> Result<Estimate, BayesError> {
         sem: sd / ess.sqrt(),
         naive_sem: sd / (n as f64).sqrt(),
         lags: iact.lags,
+        truncated_at_cap: iact.truncated_at_cap,
+        floored: iact.floored,
     })
 }
 
@@ -1882,7 +2007,8 @@ impl Hypervector {
     /// and it is what a set, a superposition or an unordered record is represented by. The
     /// similarity it achieves is not a free parameter: [`bundle_similarity`] gives it in closed
     /// form as a function of the number of components only, and this implementation is checked
-    /// against that form to within 5e-4 at 8192 bits.
+    /// against that form at 8192 bits over `k = 2, 3, 5, 9, 25`, where the worst disagreement is
+    /// 6.1e-4 (at `k = 25`) against an asserted bound of 1e-3.
     ///
     /// Ties are only possible for an even number of components, and `rng` is drawn from **only**
     /// on a tie — so bundling an odd number of vectors consumes no randomness and is a pure
@@ -1946,8 +2072,10 @@ impl Hypervector {
 /// sim(k) = 1 − 2·d(k)
 /// ```
 ///
-/// which gives 1, ½, ½, ⅜, ⅜, 0.3125 for `k = 1…7` and approaches `√(2/(πk))` — the ratio is within
-/// 0.3% by `k = 25` and 0.03% by `k = 1000`. Two consequences worth knowing:
+/// which gives 1, ½, ½, ⅜, ⅜, 0.3125, 0.3125 for `k = 1…7` and approaches `√(2/(πk))` from above —
+/// the ratio is 1.0047% high at `k = 25`, 0.248% at `k = 101`, 0.0250% at `k = 1001` and 0.0025%
+/// at `k = 10 001`. For odd `k = 2m+1` the value is exactly `C(2m, m) / 2^{2m}`, so
+/// `sim(25) = 2 704 156 / 16 777 216`. Two consequences worth knowing:
 ///
 /// - **An even bundle is worth exactly the odd one below it.** `sim(2j) = sim(2j+1)` identically,
 ///   so bundling a fourth vector into a bundle of three buys nothing at all. The proof is
@@ -2012,10 +2140,10 @@ pub fn random_similarity_sd(dim: usize) -> Option<f64> {
 /// grows with dimension and falls with the number of items bundled, and recovery survives while
 /// this stays above roughly 4.
 ///
-/// Measured in `recovery_from_a_bundle_degrades_where_the_capacity_bound_says_it_does`: at
-/// `dim = 1024` against a 512-item codebook, `k = 5` scores 12.0 and recovers everything, `k = 25`
-/// scores 5.2 and still recovers everything, `k = 125` scores 2.3 and recovers about three
-/// quarters.
+/// Measured in `recovery_from_a_bundle_degrades_where_the_capacity_bound_says_it_does`, over
+/// twelve independently drawn codebooks: at `dim = 1024` against a 512-item codebook, `k = 5`
+/// scores 12.0 and recovers everything, `k = 25` scores 5.2 and recovers 0.983 — **not**
+/// everything — and `k = 125` scores 2.3 and recovers 0.797.
 ///
 /// Returns `None` when [`bundle_similarity`] does, or for `dim == 0`.
 #[must_use]
@@ -2154,11 +2282,11 @@ impl Codebook {
 #[cfg(test)]
 mod tests {
     use super::{
-        BayesError, Boltzmann, Codebook, Confidence, Estimate, Histogram, Hypervector, Hypothesis,
-        KANERVA_DIM, NeuralSampler, PairwiseFit, Scan, Target, bundle_similarity, bundle_z_score,
-        estimate, integrated_autocorrelation_time, integrated_autocorrelation_time_within,
-        logistic, population_log_odds, poisson_kl,
-        random_similarity_sd, sample_population,
+        BayesError, Boltzmann, Codebook, Confidence, DEFAULT_MAX_LAG, Estimate, Histogram,
+        Hypervector, Hypothesis, KANERVA_DIM, MAX_UNITS, NeuralSampler, PairwiseFit, Scan, Target,
+        bundle_similarity, bundle_z_score, estimate, estimate_within,
+        integrated_autocorrelation_time, integrated_autocorrelation_time_within, logistic,
+        poisson_kl, population_log_odds, random_similarity_sd, sample_population,
     };
     use crate::rng::Rng;
 
@@ -2189,6 +2317,48 @@ mod tests {
     /// An `AR(1)` chain with unit stationary variance and zero mean: `x_t = φ x_{t-1} + √(1−φ²) ε`.
     /// Its integrated autocorrelation time is `(1+φ)/(1−φ)` exactly, which is what makes it the
     /// closed form the effective-sample-size machinery is checked against.
+    /// The sample autocorrelation at one lag, with the same `1/n` normalisation the estimator
+    /// uses. Test-local and deliberately independent of the estimator's own inner closure, so that
+    /// a test can look at the pairs the estimator is deciding on without going through it.
+    fn sample_rho(x: &[f64], lag: usize) -> f64 {
+        let n = x.len();
+        let mean = x.iter().sum::<f64>() / n as f64;
+        let c0 = x.iter().map(|v| (v - mean) * (v - mean)).sum::<f64>() / n as f64;
+        let mut s = 0.0;
+        for t in 0..(n - lag) {
+            s += (x[t] - mean) * (x[t + lag] - mean);
+        }
+        s / (n as f64) / c0
+    }
+
+    /// A reversible chain with a FAST ANTI-CORRELATED mode and a SLOW POSITIVE one: the sum of two
+    /// independent `AR(1)` processes with coefficients `−0.5` and `0.99`, carrying 0.95 and 0.05 of
+    /// the variance. Its autocorrelation is `ρ_l = 0.95·(−0.5)^l + 0.05·(0.99)^l` and its
+    /// integrated autocorrelation time is [`TWO_MODE_TAU`]. This is the shape a Gibbs-type sampler
+    /// with one strongly coupled pair has, and it is the family in which the two candidate pair
+    /// truncations disagree completely.
+    fn two_mode(rng: &mut Rng, n: usize, burn: usize) -> Vec<f64> {
+        let (p1, p2) = (-0.5f64, 0.99f64);
+        let (a, b) = (0.95f64.sqrt(), 0.05f64.sqrt());
+        let (s1, s2) = ((1.0 - p1 * p1).sqrt(), (1.0 - p2 * p2).sqrt());
+        let (mut y, mut w) = (0.0, 0.0);
+        for _ in 0..burn {
+            y = p1 * y + s1 * gaussian(rng);
+            w = p2 * w + s2 * gaussian(rng);
+        }
+        (0..n)
+            .map(|_| {
+                y = p1 * y + s1 * gaussian(rng);
+                w = p2 * w + s2 * gaussian(rng);
+                a * y + b * w
+            })
+            .collect()
+    }
+
+    /// `1 + 2 Σ_{l≥1} ρ_l` for [`two_mode`], written out rather than computed by the code under
+    /// test: `1 + 2[0.95·(−0.5)/(1 + 0.5) + 0.05·0.99/(1 − 0.99)] = 1 + 2(−19/60 + 99/20)`.
+    const TWO_MODE_TAU: f64 = 10.266_666_666_666_667;
+
     fn ar1(rng: &mut Rng, phi: f64, n: usize, burn: usize) -> Vec<f64> {
         let s = (1.0 - phi * phi).sqrt();
         let mut x = 0.0;
@@ -2282,6 +2452,46 @@ mod tests {
         }
     }
 
+    /// ⭐ A model whose inputs are all finite can still have energies that are not: `Boltzmann::new`
+    /// checks the bias and coupling, and nothing stopped `E(z) = Σ b_k z_k + …` from overflowing to
+    /// `+inf` on the way. `exact()` then computed `exp(inf − inf)` and returned `Ok` on a vector of
+    /// `NaN`, which `<` and `>` compare `false` against silently — and `exact_marginals()` is the
+    /// ground truth every sampler test in this module compares itself to.
+    ///
+    /// The same model also had to be refused by `Target::of_boltzmann`, which built its log-weights
+    /// straight into the struct and skipped the finiteness gate that `Target::from_log_weights`
+    /// runs on the identical numbers. Two constructors, one type, two invariants.
+    #[test]
+    fn an_energy_that_overflows_is_refused_rather_than_normalised_into_nan() {
+        let huge = Boltzmann::new(&[1e308, 1e308], &[0.0; 4]).expect("finite inputs are accepted");
+        assert_eq!(huge.energy(0b11), Some(f64::INFINITY), "the energy really does overflow");
+        assert!(matches!(
+            huge.exact(),
+            Err(BayesError::NonFinite { what: "energy", index: 3 })
+        ));
+        assert!(matches!(huge.exact_marginals(), Err(BayesError::NonFinite { .. })));
+        assert!(
+            matches!(Target::of_boltzmann(&huge), Err(BayesError::NonFinite { what: "log_w", index: 3 })),
+            "of_boltzmann accepted weights that from_log_weights refuses"
+        );
+        // …and the two constructors now agree on the identical numbers.
+        let by_hand = [0.0, 1e308, 1e308, f64::INFINITY];
+        assert!(matches!(
+            Target::from_log_weights(2, &by_hand),
+            Err(BayesError::NonFinite { what: "log_w", index: 3 })
+        ));
+        // The negative tail overflows too, and is caught at the first configuration that reaches it.
+        let low = Boltzmann::new(&[-1e308, -1e308], &[0.0; 4]).expect("valid");
+        assert!(matches!(low.exact(), Err(BayesError::NonFinite { what: "energy", .. })));
+
+        // The regime the max-subtraction IS for — large but finite — still normalises, so this is
+        // a refusal of the impossible case and not a retreat from the hard one.
+        let big = Boltzmann::new(&[800.0, 800.0], &[0.0, 900.0, 900.0, 0.0]).expect("valid");
+        let p = big.exact().expect("finite energies");
+        assert!(p.iter().all(|v| v.is_finite()) && (p.iter().sum::<f64>() - 1.0).abs() < 1e-12);
+        assert!(Target::of_boltzmann(&big).is_ok());
+    }
+
     /// A state with bits set above the model's width is refused, not masked. A masked read would
     /// silently alias unit 4 onto unit 0 and produce an energy for a state that does not exist.
     #[test]
@@ -2312,7 +2522,6 @@ mod tests {
         // And the same thing said through the fit, which also recovers the parameters.
         let fit = PairwiseFit::of(&t).expect("small");
         assert!(fit.residual < 1e-13, "residual {}", fit.residual);
-        assert!(fit.symmetry_defect < 1e-13, "defect {}", fit.symmetry_defect);
         for k in 0..4 {
             assert!((fit.bias[k] - m.bias()[k]).abs() < 1e-13, "bias {k}");
             for j in 0..4 {
@@ -2354,6 +2563,50 @@ mod tests {
         }
     }
 
+    /// The fitted coupling is symmetric, and it is symmetric for a reason that has nothing to do
+    /// with the target being pairwise: `W_kj` and `W_jk` expand to the same four log-weights with
+    /// the same signs, so their difference is identically zero for **any** target. A field
+    /// reporting that difference would be a check no input could move — which is what
+    /// `PairwiseFit::symmetry_defect` was, asserted at `< 1e-13` on a model where it could not be
+    /// anything else.
+    ///
+    /// What can move is *where the fit reads the conditionals*. Asserted on a third-order target,
+    /// because that is the case where a fit reading the pair at any background other than the
+    /// empty one would come back asymmetric, and on the pairwise one, where symmetry also has to
+    /// agree with the model's own matrix.
+    #[test]
+    fn the_fitted_coupling_is_symmetric_because_of_where_the_fit_reads_it() {
+        let m = coupled();
+        let pairwise = Target::of_boltzmann(&m).expect("small");
+        let third: Vec<f64> = (0..16u64)
+            .map(|z| m.energy(z).expect("in range") + if z & 0b1011 == 0b1011 { 1.7 } else { 0.0 })
+            .collect();
+        let third = Target::from_log_weights(4, &third).expect("valid");
+        assert!(PairwiseFit::of(&third).expect("small").residual > 1.6, "the planted term is not there");
+
+        for (name, t) in [("pairwise", &pairwise), ("third-order", &third)] {
+            let fit = PairwiseFit::of(t).expect("small");
+            let mut worst = 0.0f64;
+            for k in 0..4 {
+                for j in (k + 1)..4 {
+                    worst = worst.max((fit.coupling[k * 4 + j] - fit.coupling[j * 4 + k]).abs());
+                }
+                assert!(fit.coupling[k * 4 + k] == 0.0, "{name}: self-coupling {k} is not zero");
+            }
+            assert!(worst < 1e-13, "{name}: the fitted coupling is asymmetric by {worst} nats");
+        }
+        // And on the pairwise target the symmetric matrix is the model's own.
+        let fit = PairwiseFit::of(&pairwise).expect("small");
+        for k in 0..4 {
+            for j in 0..4 {
+                assert!(
+                    (fit.coupling[k * 4 + j] - m.coupling()[k * 4 + j]).abs() < 1e-13,
+                    "coupling {k},{j}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn a_target_refuses_a_wrong_length_a_nan_and_too_many_units() {
         assert!(matches!(
@@ -2383,9 +2636,11 @@ mod tests {
     /// refractory windows. Total variation bounds the error of **every** statement about the
     /// system at once, so there is no summary statistic a wrong sampler could match its way past.
     ///
-    /// The threshold is 0.02 and the measurements come in near 0.002. That gap is not slack — the
-    /// sampling floor at this budget is around 0.002 and the companion mutation test shows a real
-    /// defect lands at 0.36, so 0.02 sits with two decades of margin on each side.
+    /// The threshold is 0.02 and the measurements come in between 0.0014 (`tau = 1`) and 0.0040
+    /// (`tau = 20`). That gap is not slack, but it is not symmetric either: 0.02 sits a factor of
+    /// 5 above the worst honest measurement and a factor of 18 below the 0.359 the companion
+    /// mutation test lands at — about a decade above the defect's floor and half a decade above
+    /// the sampler's.
     #[test]
     fn the_sampled_distribution_matches_the_exact_boltzmann_distribution() {
         let m = coupled();
@@ -2408,8 +2663,8 @@ mod tests {
     /// ⭐ The anti-vacuity test for the one above. The `−ln tau` correction in the firing
     /// probability is dropped — the single most plausible thing to get wrong in this sampler,
     /// since without it the update is exactly Gibbs sampling and looks right — and the same
-    /// comparison is run. The distance moves from ~0.002 to ~0.36, so the 0.02 threshold is known
-    /// to discriminate rather than assumed to.
+    /// comparison is run. The distance moves from 0.0038 to 0.359, a factor of 93, so the 0.02
+    /// threshold is known to discriminate rather than assumed to.
     #[test]
     fn dropping_the_log_tau_correction_moves_the_distribution_a_hundredfold() {
         let m = coupled();
@@ -2456,7 +2711,16 @@ mod tests {
         let tv_bad = h.total_variation(&exact).expect("same width");
 
         assert!(tv_good < 0.02, "correct sampler {tv_good}");
-        assert!(tv_bad > 0.2, "the mutant should be obviously wrong, got {tv_bad}");
+        // Two-sided, because the doc prints 0.359 for this mutant and a one-sided `> 0.2` would
+        // let that number drift anywhere above the floor without a test noticing.
+        assert!(
+            tv_bad > 0.34 && tv_bad < 0.38,
+            "the mutant's distance moved off the documented 0.359: {tv_bad}"
+        );
+        assert!(
+            tv_good > 0.003 && tv_good < 0.005,
+            "the correct sampler moved off the documented 0.0038: {tv_good}"
+        );
         assert!(
             tv_bad > 50.0 * tv_good,
             "the threshold does not discriminate: good {tv_good}, mutant {tv_bad}"
@@ -2535,6 +2799,10 @@ mod tests {
 
         assert!(tv_ser < 0.02, "random scan {tv_ser}");
         assert!(tv_par > 0.05, "coupled parallel should be visibly wrong, got {tv_par}");
+        // Two-sided on both, because the two module docs print 0.0031 and 0.092 for exactly this
+        // model, seed and budget.
+        assert!(tv_par < 0.12, "parallel moved off the documented 0.092: {tv_par}");
+        assert!(tv_ser > 0.002 && tv_ser < 0.004, "random scan moved off the documented 0.0031: {tv_ser}");
         assert!(tv_par > 20.0 * tv_ser, "serial {tv_ser}, parallel {tv_par}");
     }
 
@@ -2573,6 +2841,112 @@ mod tests {
         }
         let mid = s.record(&mut rng, 100).expect("runs");
         assert!(mid.reconstruct(0).is_none(), "a mid-refractory start must refuse");
+    }
+
+    /// The accessors, `reset`, `Recording::histogram` and the error messages — six public items
+    /// that no other test in this module touches, and one of them carries a documented guarantee.
+    ///
+    /// `reset` is the one that matters: [`super::Recording::reconstruct`] refuses a recording that
+    /// began mid-refractory, and `reset`'s doc says the way back is to return the sampler to
+    /// quiescence. Nothing asserted that it does. A `reset` that forgot to clear the counters would
+    /// leave every later recording undecodable, and the only symptom is a `None` that the caller
+    /// has already been told to expect.
+    #[test]
+    fn reset_restores_the_decodable_state_and_the_accessors_report_the_model_they_were_given() {
+        let m = coupled();
+        let mut s = NeuralSampler::new(m.clone(), 5, Scan::Parallel).expect("valid");
+        assert_eq!(s.tau(), 5);
+        assert_eq!(s.scan(), Scan::Parallel);
+        assert_eq!(s.model(), &m, "the sampler reported a different model from the one it was given");
+        assert_eq!(s.state(), 0, "a fresh sampler is quiescent");
+
+        // Step into the middle of a refractory period: a recording from here cannot be decoded.
+        let mut rng = Rng::new(2_026);
+        let mut fired = 0;
+        while fired == 0 {
+            fired = s.step(&mut rng);
+        }
+        assert_ne!(s.state(), 0, "the chain did not leave quiescence");
+        let mid = s.record(&mut rng, 200).expect("runs");
+        assert!(mid.reconstruct(0).is_none(), "a mid-refractory recording must refuse");
+
+        // …and `reset` is what makes it decodable again, bit for bit against the trace.
+        s.reset();
+        assert_eq!(s.state(), 0, "reset left a unit high");
+        let rec = s.record(&mut rng, 5_000).expect("runs");
+        assert_eq!(rec.units(), 4);
+        for k in 0..4 {
+            let from_spikes = rec.reconstruct(k).expect("reset, parallel");
+            assert_eq!(from_spikes, rec.indicator(k).expect("unit exists"), "unit {k}");
+        }
+
+        // `Recording::histogram` is the same tally as the trace, one observation per tick.
+        let h = rec.histogram().expect("four units");
+        assert_eq!(h.units(), 4);
+        assert_eq!(h.samples(), rec.states().len() as u64);
+        assert_eq!(h.counts().iter().sum::<u64>(), 5_000);
+        let marg = h.marginals().expect("has samples");
+        for k in 0..4 {
+            let mean = rec.indicator(k).expect("unit").iter().sum::<f64>() / 5_000.0;
+            assert!((marg[k] - mean).abs() < 1e-12, "unit {k}: histogram {} vs trace {mean}", marg[k]);
+        }
+    }
+
+    /// The enumeration ceiling and the representation ceiling are different numbers, and both are
+    /// public. A 21-unit model is legal — [`super::MAX_UNITS`] is 64 — and simply cannot be
+    /// enumerated; a 65-unit one cannot be represented at all.
+    #[test]
+    fn the_enumeration_ceiling_and_the_representation_ceiling_are_enforced_separately() {
+        let wide = Boltzmann::independent(&[0.1; 21]).expect("21 units is within MAX_UNITS");
+        assert_eq!(wide.units(), 21);
+        assert_eq!(wide.configurations(), None, "21 units must not offer an enumeration");
+        assert!(matches!(
+            wide.exact(),
+            Err(BayesError::TooLarge { got: 21, limit: 20, .. })
+        ));
+        assert!(matches!(Target::of_boltzmann(&wide), Err(BayesError::TooLarge { .. })));
+        assert!(wide.membrane(0b101, 20).is_some(), "the model itself still works at 21 units");
+
+        let edge = Boltzmann::independent(&[0.1; 20]).expect("valid");
+        assert_eq!(edge.configurations(), Some(1 << 20), "20 units is the last enumerable width");
+        let tiny = Boltzmann::independent(&[0.1, -0.2, 0.3]).expect("valid");
+        assert_eq!(tiny.configurations(), Some(8));
+        assert_eq!(tiny.exact().expect("enumerable").len(), 8);
+
+        let full = Boltzmann::independent(&[0.0; MAX_UNITS]).expect("64 units is the ceiling");
+        assert_eq!(full.units(), MAX_UNITS);
+        assert!(full.energy(u64::MAX).is_some(), "at 64 units every bit pattern is a state");
+        assert_eq!(full.configurations(), None);
+        assert!(matches!(
+            Boltzmann::independent(&[0.0; MAX_UNITS + 1]),
+            Err(BayesError::TooLarge { got: 65, limit: 64, .. })
+        ));
+    }
+
+    /// Every refusal names the quantity and the number that made it refuse — which is the whole
+    /// claim [`super::BayesError`]'s doc makes, and a `Display` that printed only the variant name
+    /// would satisfy nothing else in this file.
+    #[test]
+    fn every_error_message_names_the_number_that_made_it_refuse() {
+        let cases: [(BayesError, &[&str]); 6] = [
+            (BayesError::NonFinite { what: "bias", index: 3 }, &["bias", "3"]),
+            (BayesError::Asymmetric { i: 1, j: 2, w_ij: 0.5, w_ji: -0.25 }, &["1", "2", "0.5", "-0.25"]),
+            (BayesError::SelfCoupling { unit: 7, value: 1.5 }, &["7", "1.5"]),
+            (BayesError::NoVariation { n: 64, value: 2.5 }, &["64", "2.5"]),
+            (BayesError::TooLarge { what: "units", got: 21, limit: 20 }, &["units", "21", "20"]),
+            (BayesError::NotNormalised { mass: 1.75 }, &["1.75"]),
+        ];
+        for (e, needles) in cases {
+            let text = e.to_string();
+            for needle in needles {
+                assert!(text.contains(needle), "{e:?} printed {text:?}, missing {needle:?}");
+            }
+        }
+        // …and the real ones, from the call that produced them.
+        let text = Boltzmann::new(&[0.0, 0.0], &[0.0, 1.0, 2.0, 0.0]).expect_err("asymmetric").to_string();
+        assert!(text.contains('1') && text.contains('2'), "{text}");
+        let text = estimate(&[2.5; 64]).expect_err("constant").to_string();
+        assert!(text.contains("64") && text.contains("2.5"), "{text}");
     }
 
     #[test]
@@ -2639,24 +3013,122 @@ mod tests {
     // ---------------------------------------------------------------------------------------
 
     /// ⭐ The integrated autocorrelation time of an `AR(1)` chain is `(1+φ)/(1−φ)` exactly. The
-    /// estimator is checked against that at three coefficients spanning two decades of correlation
-    /// — `φ = 0` where the answer is 1, and `φ = 0.9` where it is 19 — so a sweep pinned to the one
-    /// value where an estimator cannot break is not what is happening here.
+    /// estimator is checked against that at five coefficients spanning **both signs** — 0.0526 at
+    /// `φ = −0.9`, 1 at `φ = 0`, 19 at `φ = 0.9`.
+    ///
+    /// The negative half is not decoration. Every `ρ_l` of a non-negative `AR(1)` is positive, so
+    /// that is the one family in which Geyer's pairing `ρ_0+ρ_1, ρ_2+ρ_3, …` and the shifted
+    /// pairing `ρ_1+ρ_2, ρ_3+ρ_4, …` **cannot** disagree about where to stop: a sweep over
+    /// `φ ≥ 0` alone is a sweep pinned to the one family where the truncation rule cannot break.
+    /// At `φ = −0.5` the shifted pairing's first term is `ρ_1 + ρ_2 = −0.5 + 0.25 = −0.25`, it
+    /// truncates before adding anything, and it returns 1.0 where the closed form is 1/3.
     #[test]
     fn the_autocorrelation_time_of_an_ar1_chain_matches_its_closed_form() {
-        for (phi, seed) in [(0.0f64, 100u64), (0.5, 200), (0.9, 300)] {
+        for (phi, n, seed) in [
+            (-0.9f64, 50_000usize, 400u64),
+            (-0.5, 20_000, 500),
+            (0.0, 20_000, 100),
+            (0.5, 20_000, 200),
+            (0.9, 20_000, 300),
+        ] {
             let want = (1.0 + phi) / (1.0 - phi);
             let mut got = 0.0;
             let reps = 24u32;
             for r in 0..reps {
                 let mut rng = Rng::new(seed + u64::from(r));
-                let x = ar1(&mut rng, phi, 20_000, 2_000);
-                got += integrated_autocorrelation_time(&x).expect("valid").value;
+                let x = ar1(&mut rng, phi, n, 2_000);
+                let i = integrated_autocorrelation_time(&x).expect("valid");
+                assert!(!i.floored, "phi = {phi} rep {r}: value {} is the fallback, not a measurement", i.value);
+                assert!(!i.truncated_at_cap, "phi = {phi} rep {r}: the lag window ran out at {}", i.lags);
+                assert!(i.lags % 2 == 1, "phi = {phi} rep {r}: Geyer's pairs end on an odd lag, got {}", i.lags);
+                got += i.value;
             }
             got /= f64::from(reps);
             let rel = (got - want).abs() / want;
             assert!(rel < 0.08, "phi = {phi}: iact {got}, closed form {want} ({:.1}% off)", rel * 100.0);
         }
+
+        // The slowest coefficient the sweep this test replaces covered, at eight reps rather than
+        // twenty-four because the estimator costs `O(n * lags)` and this chain's window runs past
+        // lag 1000. The closed form is 199, and the initial-positive-sequence estimator's upward
+        // bias is largest here — which is why the band is two-sided and not just an upper one.
+        let mut got = 0.0;
+        for r in 0..8u32 {
+            let mut rng = Rng::new(700 + u64::from(r));
+            let x = ar1(&mut rng, 0.99, 20_000, 2_000);
+            let i = integrated_autocorrelation_time(&x).expect("valid");
+            assert!(!i.floored && !i.truncated_at_cap, "phi = 0.99 rep {r}: {i:?}");
+            assert!(i.lags > 100, "phi = 0.99 rep {r}: the sum stopped at lag {}", i.lags);
+            got += i.value;
+        }
+        got /= 8.0;
+        assert!(
+            got > 170.0 && got < 240.0,
+            "phi = 0.99: iact {got}, closed form 199"
+        );
+    }
+
+    /// ⭐⭐ The failure Geyer's pairing exists to prevent, on a chain built to produce it and
+    /// measured against a closed form written out as a literal.
+    ///
+    /// [`two_mode`] is a reversible chain with one fast anti-correlated mode and one slow positive
+    /// one, `ρ_l = 0.95·(−0.5)^l + 0.05·(0.99)^l`, integrated time `TWO_MODE_TAU = 10.2667`. Its
+    /// first *shifted* pair is `ρ_1 + ρ_2 = −0.4255 + 0.2865 = −0.1390`, negative — so the pairing
+    /// this module used to implement truncates before adding a single term and reports exactly
+    /// 1.0: *these samples are independent, the naive bar was fine*, for a chain worth ten ticks
+    /// per independent draw, with `truncated_at_cap` false so there is no flag either. The
+    /// reported standard error is then 3.2× too narrow and nothing says so.
+    ///
+    /// Geyer's first pair is `ρ_0 + ρ_1 = 1 − 0.4255 = 0.5745`, positive — as Theorem 3.1 says it
+    /// must be for a reversible chain, `Γ_0 = 1 + ρ_1 ≥ 0` being unconditional.
+    #[test]
+    fn a_chain_with_a_fast_negative_mode_and_a_slow_positive_one_is_not_called_independent() {
+        // The closed form, from the two coefficients, before any sample is drawn.
+        let rho1: f64 = 0.95 * (-0.5) + 0.05 * 0.99;
+        let rho2: f64 = 0.95 * 0.25 + 0.05 * 0.99 * 0.99;
+        assert!((rho1 - (-0.4255)).abs() < 1e-12, "rho(1) = {rho1}");
+        assert!((rho2 - 0.286_505).abs() < 1e-12, "rho(2) = {rho2}");
+        assert!(rho1 + rho2 < -0.13, "the shifted pairing's first term is not negative: {}", rho1 + rho2);
+        assert!(1.0 + rho1 > 0.57, "Geyer's first pair is not positive: {}", 1.0 + rho1);
+        assert!(
+            (TWO_MODE_TAU - (1.0 + 2.0 * (0.95 * (-1.0 / 3.0) + 0.05 * 99.0))).abs() < 1e-12,
+            "the stated integrated time is not the one the two modes give"
+        );
+
+        let mut total = 0.0;
+        let seeds = [1u64, 2, 3];
+        for seed in seeds {
+            let mut rng = Rng::new(seed);
+            let x = two_mode(&mut rng, 200_000, 5_000);
+
+            // The trap is live in THIS series, not only in the closed form: the first shifted pair
+            // really is negative here, so an estimator paired that way would stop at once.
+            let (r1, r2) = (sample_rho(&x, 1), sample_rho(&x, 2));
+            assert!(r1 + r2 < 0.0, "seed {seed}: shifted first pair {} is not negative", r1 + r2);
+            assert!(1.0 + r1 > 0.0, "seed {seed}: Geyer's first pair {} is not positive", 1.0 + r1);
+
+            let i = integrated_autocorrelation_time(&x).expect("valid");
+            assert!(!i.floored && !i.truncated_at_cap, "seed {seed}: {i:?}");
+            assert!(
+                i.value > 5.0,
+                "seed {seed}: iact {} — a chain of integrated time {TWO_MODE_TAU} was called all but independent",
+                i.value
+            );
+            assert!(i.lags > 100, "seed {seed}: the sum stopped at lag {}", i.lags);
+            total += i.value;
+
+            // …and the error bar the estimate carries is several times the naive one, which is the
+            // whole consequence: the naive bar on this chain is sqrt(10.27) = 3.2 times too narrow.
+            let e = estimate(&x).expect("valid");
+            assert!(
+                e.understatement().expect("nonzero") > 2.2,
+                "seed {seed}: the naive bar was only {}x too narrow",
+                e.understatement().expect("nonzero")
+            );
+        }
+        let mean = total / seeds.len() as f64;
+        let rel = (mean - TWO_MODE_TAU).abs() / TWO_MODE_TAU;
+        assert!(rel < 0.2, "mean iact {mean}, closed form {TWO_MODE_TAU} ({:.1}% off)", rel * 100.0);
     }
 
     /// The effective sample size is smaller than the raw count for a correlated chain and about
@@ -2668,7 +3140,12 @@ mod tests {
         let indep = ar1(&mut rng, 0.0, 20_000, 100);
         let e = estimate(&indep).expect("valid");
         assert!(e.ess > 0.8 * e.n as f64, "independent chain lost samples: ess {} of {}", e.ess, e.n);
-        assert!(e.ess <= e.n as f64, "ess {} exceeds n {}", e.ess, e.n);
+        // Two-sided, because `ess <= n` is no longer a construction guarantee: the estimator is not
+        // floored at `iact = 1`, so an independent chain can land a little either side of it and a
+        // one-sided assertion would no longer be measuring the estimator at all.
+        assert!(e.ess < 1.25 * e.n as f64, "ess {} far exceeds n {}", e.ess, e.n);
+        assert!((e.iact - 1.0).abs() < 0.1, "an independent chain should give iact ~ 1, got {}", e.iact);
+        assert!(!e.floored, "an independent chain should not need the fallback");
 
         let corr = ar1(&mut rng, 0.9, 20_000, 2_000);
         let c = estimate(&corr).expect("valid");
@@ -2747,6 +3224,17 @@ mod tests {
             assert!(e.ess < e.n as f64, "unit {k} claimed {} independent samples of {}", e.ess, e.n);
             worst_understatement = worst_understatement.max(e.understatement().expect("nonzero"));
         }
+        // The truncation flag on a series THIS MODULE'S OWN SAMPLER produced, not only on a
+        // synthetic one: an eight-lag window on a chain whose correlation runs past lag 20 is
+        // truncated, the bar built on it is narrower than the honest one, and the `Estimate`
+        // carries the flag that says so.
+        let x = rec.indicator(0).expect("unit exists");
+        let tight = estimate_within(&x, 8).expect("valid");
+        let honest = estimate(&x).expect("valid");
+        assert!(tight.truncated_at_cap, "a real chain truncated at 8 lags without saying so");
+        assert!(!honest.truncated_at_cap, "the default window should suffice here");
+        assert!(tight.iact < honest.iact && tight.sem < honest.sem, "{tight:?} vs {honest:?}");
+
         assert!(
             worst_understatement > 2.0,
             "the naive bar was only {worst_understatement}x too narrow; this chain is barely correlated"
@@ -2771,11 +3259,25 @@ mod tests {
         assert!((e.half_width95() - 1.96 * e.sem).abs() < 1e-15);
         let (lo, hi) = e.ci95();
         assert!((hi - lo - 2.0 * e.half_width95()).abs() < 1e-15);
+        // The naive interval uses the SAME 1.96 normal quantile, pinned as a literal here because
+        // every other use of `naive_ci95` in this module only ever compares its width against the
+        // honest one — a comparison a narrower quantile would satisfy more easily, not less.
+        let (nlo, nhi) = e.naive_ci95();
+        assert!((nhi - nlo - 2.0 * 1.96 * e.naive_sem).abs() < 1e-15, "naive interval width");
+        assert!((nlo - (e.mean - 1.96 * e.naive_sem)).abs() < 1e-15);
+        assert!(
+            ((nhi - nlo) / (hi - lo) - 1.0 / e.iact.sqrt()).abs() < 1e-14,
+            "the two intervals must differ only by sqrt(iact)"
+        );
     }
 
     #[test]
     fn the_estimator_refuses_a_short_series_a_constant_one_and_a_nan() {
         assert!(matches!(estimate(&[1.0; 4]), Err(BayesError::TooShort { got: 4, want: 8 })));
+        assert!(matches!(
+            estimate_within(&[1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0], 0),
+            Err(BayesError::OutOfRange { what: "max_lag", .. })
+        ));
         assert!(matches!(
             estimate(&[2.5; 64]),
             Err(BayesError::NoVariation { n: 64, value: 2.5 })
@@ -2791,38 +3293,117 @@ mod tests {
         assert!(rec.marginal(9).is_err());
     }
 
-    /// The initial-positive-sequence sum can only add non-negative terms, so `iact >= 1` without
-    /// any clamp — and a clamp is exactly the kind of thing that panics later when its bounds
-    /// cross. Asserted over a sweep of coefficients including strongly anti-correlated chains,
-    /// where a naive sum would go below 1 and a careless clamp would be doing the work.
+    /// ⭐ An anti-correlated chain has an integrated autocorrelation time **below one**, and this
+    /// estimator reports it rather than a floor.
+    ///
+    /// The version of this test that shipped before asserted `iact < 1.2` for `φ < 0` and passed
+    /// because the estimator truncated at once and returned exactly 1.0 for every one of them — it
+    /// asserted the wrong answer was the right one, and the type's doc presented the 1.0 as a
+    /// property rather than as early truncation. The closed forms are 0.0526 at `φ = −0.9`,
+    /// 0.3333 at `φ = −0.5` and 0.6667 at `φ = −0.2`, and those are what is asserted now.
+    ///
+    /// The consequence carries through to [`super::Estimate`]: `ess > n` and `understatement < 1`,
+    /// because the naive bar on an anti-correlated chain is too **wide**, not too narrow.
     #[test]
-    fn the_autocorrelation_time_is_never_below_one_including_for_anticorrelated_chains() {
-        for (phi, seed) in [(-0.9f64, 11u64), (-0.5, 12), (0.0, 13), (0.99, 14)] {
-            let mut rng = Rng::new(seed);
-            let x = ar1(&mut rng, phi, 8_000, 1_000);
-            let i = integrated_autocorrelation_time(&x).expect("valid");
-            assert!(i.value >= 1.0, "phi {phi}: iact {}", i.value);
-            assert!(i.value.is_finite());
-            if phi < 0.0 {
-                assert!(i.value < 1.2, "phi {phi}: an anti-correlated chain should sum to ~1, got {}", i.value);
+    fn an_anticorrelated_chain_reports_the_time_below_one_that_its_closed_form_gives() {
+        for (phi, seed) in [(-0.9f64, 611u64), (-0.5, 612), (-0.2, 613)] {
+            let want = (1.0 + phi) / (1.0 - phi);
+            let reps = 8u32;
+            let mut got = 0.0;
+            for r in 0..reps {
+                let mut rng = Rng::new(seed + u64::from(r));
+                let x = ar1(&mut rng, phi, 50_000, 2_000);
+                let i = integrated_autocorrelation_time(&x).expect("valid");
+                assert!(i.value > 0.0 && i.value.is_finite(), "phi {phi}: iact {}", i.value);
+                assert!(!i.floored, "phi {phi} rep {r}: floored to the fallback");
+                assert!(i.value < 0.9, "phi {phi} rep {r}: iact {} is not below one", i.value);
+                got += i.value;
             }
+            got /= f64::from(reps);
+            let rel = (got - want).abs() / want;
+            assert!(rel < 0.15, "phi {phi}: iact {got}, closed form {want} ({:.1}% off)", rel * 100.0);
         }
+        // What that means for the error bar, on one of those chains.
+        let mut rng = Rng::new(614);
+        let x = ar1(&mut rng, -0.5, 50_000, 2_000);
+        let e = estimate(&x).expect("valid");
+        assert!(e.iact < 0.9 && e.iact > 0.0, "iact {}", e.iact);
+        assert!(e.ess > e.n as f64, "ess {} should exceed n {} for an anti-correlated chain", e.ess, e.n);
+        assert!(e.sem < e.naive_sem, "the honest bar {} is not narrower than the naive {}", e.sem, e.naive_sem);
+        let under = e.understatement().expect("nonzero");
+        assert!(under < 1.0, "understatement {under} should be below 1 when the naive bar was too wide");
+        assert!((under - e.iact.sqrt()).abs() < 1e-12, "understatement {under} vs sqrt(iact)");
     }
 
-    /// A chain correlated past the lag window reports it, and the number it reports is a LOWER
-    /// bound — which is the whole content of [`super::Iact::truncated_at_cap`]. Checked by giving
-    /// the same `phi = 0.9` chain a window far too short and comparing against the full estimate:
-    /// the short window returns a smaller `iact`, and it says so.
+    /// ⭐ Geyer's window on a series whose every autocorrelation can be written down by hand, which
+    /// pins three separate mechanisms at once: the **pairing**, the **`n/2` clamp** and the
+    /// **floor**.
     ///
-    /// Worth recording why the flag needs an explicit window to be reachable at all: the sample
-    /// autocovariances of a mean-centred series sum to exactly `-c(0)/2`, so they must turn
-    /// negative somewhere, and for the chains anyone actually runs they do so long before `n/2`.
-    /// A flag that only the default path could set would be a field that never fires.
+    /// For `x = [1,0,1,0,1,0,1,0]` the mean is ½, `c(0) = ¼`, and with the estimator's `1/n`
+    /// normalisation `ρ_l = (−1)^l (8 − l)/8` exactly. So:
+    ///
+    /// - Geyer's pairs are `Γ_k = ρ_{2k} + ρ_{2k+1} = (8−2k)/8 − (7−2k)/8 = 1/8` — **all four of
+    ///   them positive**, which is the theorem's guarantee and which the shifted pairing does not
+    ///   get: `ρ_1 + ρ_2 = −7/8 + 6/8 = −1/8`, negative at the first term.
+    /// - `cap = min(4096, n/2) = 4`, so only `Γ_0` and `Γ_1` fit and the window truncates at lag 3
+    ///   with the flag set. Without the `n/2` clamp the loop would run to lag 7 and the flag would
+    ///   come back false — which is what makes that clamp a live mechanism rather than dead code.
+    /// - The truncated sum is `2 × (1/8 + 1/8) = 1/2`, so the raw value is `−1 + 1/2 = −1/2`. A
+    ///   negative time would give a negative effective sample size and a `NaN` standard error, so
+    ///   `1.0` is reported and [`super::Iact::floored`] says the number is the fallback.
+    #[test]
+    fn the_geyer_window_on_a_perfectly_alternating_series_is_hand_computable() {
+        let x: Vec<f64> = (0..8).map(|i| f64::from(u8::from(i % 2 == 0))).collect();
+        // The autocorrelations, against the hand-derived form.
+        for lag in 0..8usize {
+            let want = if lag % 2 == 0 { 1.0 } else { -1.0 } * (8.0 - lag as f64) / 8.0;
+            assert!((sample_rho(&x, lag) - want).abs() < 1e-15, "rho({lag})");
+        }
+        assert!((sample_rho(&x, 1) + sample_rho(&x, 2) - (-0.125)).abs() < 1e-15);
+        for k in 0..4usize {
+            let g = sample_rho(&x, 2 * k) + sample_rho(&x, 2 * k + 1);
+            assert!((g - 0.125).abs() < 1e-15, "Geyer pair {k} = {g}, not 1/8");
+        }
+
+        let i = integrated_autocorrelation_time(&x).expect("eight samples, varying");
+        assert_eq!(i.lags, 3, "the n/2 clamp should have stopped the sum at lag 3, not {}", i.lags);
+        assert!(i.truncated_at_cap, "the window ran out; the flag must say so");
+        assert!(i.floored, "the raw sum is -1/2 and must be reported as floored");
+        assert!((i.value - 1.0).abs() < 1e-15, "the fallback is 1.0, got {}", i.value);
+
+        // The floor is what keeps the error bar real rather than NaN.
+        let e = estimate(&x).expect("valid");
+        assert!(e.floored && e.truncated_at_cap, "the flags must reach the estimate: {e:?}");
+        assert!((e.iact - 1.0).abs() < 1e-15);
+        assert!(e.sem.is_finite() && e.sem > 0.0, "sem {}", e.sem);
+        assert!((e.sem - e.naive_sem).abs() < 1e-15, "a floored estimate is the naive bar exactly");
+    }
+
+    /// ⭐ A chain correlated past the lag window reports it, the number it reports is a LOWER
+    /// bound — the whole content of [`super::Iact::truncated_at_cap`] — and **the flag reaches the
+    /// type that carries the error bar**. It did not: `estimate` computed the `Iact`, kept its
+    /// `value` and `lags`, and dropped the flag, so `Estimate::sem` was a lower bound with nothing
+    /// on the struct saying so and no cap on the struct to compare `lags` against.
+    ///
+    /// Checked by giving the same `phi = 0.9` chain a window far too short and comparing against
+    /// the full estimate: the short window returns a smaller `iact`, a larger `ess` and a narrower
+    /// `sem`, and every one of those is flagged.
+    ///
+    /// Worth recording why the flag needs an explicit window to be reachable on a well-behaved
+    /// chain: the sample autocovariances of a mean-centred series sum to exactly `-c(0)/2`, so they
+    /// must turn negative somewhere, and for the chains anyone actually runs they do so long before
+    /// `n/2`. A flag that only the default path could set would be a field that never fires.
     #[test]
     fn a_lag_window_too_short_for_the_chain_reports_a_lower_bound() {
         let mut rng = Rng::new(15);
         let x = ar1(&mut rng, 0.9, 20_000, 2_000);
         let full = integrated_autocorrelation_time(&x).expect("valid");
+        // The default path really is `DEFAULT_MAX_LAG` and not some other number compiled in.
+        assert_eq!(
+            full,
+            integrated_autocorrelation_time_within(&x, DEFAULT_MAX_LAG).expect("valid"),
+            "the default estimator does not use DEFAULT_MAX_LAG"
+        );
         assert!(!full.truncated_at_cap, "the default window should suffice at phi = 0.9");
         assert!(full.lags > 8, "the full sum only reached lag {}", full.lags);
 
@@ -2835,11 +3416,45 @@ mod tests {
             short.value,
             full.value
         );
-        assert!(short.value >= 1.0);
+        // …and the truncated number is exactly the partial sum it claims to be, `1 + 2 Σ_{l=1}^{7} ρ_l`,
+        // rather than merely "smaller". A lag dropped from either end of the window moves this.
+        let partial: f64 = (1..=7).map(|l| sample_rho(&x, l)).sum();
+        assert!(
+            (short.value - (1.0 + 2.0 * partial)).abs() < 1e-12,
+            "an 8-lag window gave {} where lags 1..=7 sum to {}",
+            short.value,
+            1.0 + 2.0 * partial
+        );
+        assert_eq!(short.lags, 7, "an 8-lag cap admits Geyer pairs up to lag 7");
         assert!(matches!(
             integrated_autocorrelation_time_within(&x, 0),
             Err(BayesError::OutOfRange { what: "max_lag", .. })
         ));
+
+        // The flag on the ESTIMATE, which is the object a caller reports from.
+        let e_short = estimate_within(&x, 8).expect("valid");
+        let e_full = estimate(&x).expect("valid");
+        assert!(e_short.truncated_at_cap, "the estimate dropped the truncation flag");
+        assert!(!e_full.truncated_at_cap, "the full estimate should not claim truncation");
+        assert!(!e_short.floored && !e_full.floored);
+        assert_eq!(e_short.lags, short.lags);
+        assert!((e_short.iact - short.value).abs() < 1e-15);
+        assert!(
+            e_short.sem < e_full.sem,
+            "the truncated bar {} is not narrower than the honest one {} — nothing to flag",
+            e_short.sem,
+            e_full.sem
+        );
+        assert!(e_short.ess > e_full.ess);
+
+        // `max_lag == 1` is refused's neighbour and is NOT inert: it admits Geyer's first pair
+        // `Γ_0 = 1 + ρ_1` and nothing else, so the answer is exactly `1 + 2ρ_1`.
+        let one = integrated_autocorrelation_time_within(&x, 1).expect("valid");
+        assert_eq!(one.lags, 1, "max_lag = 1 admitted no pair at all");
+        assert!(one.truncated_at_cap);
+        let want = 1.0 + 2.0 * sample_rho(&x, 1);
+        assert!((one.value - want).abs() < 1e-12, "max_lag = 1 gave {} not 1 + 2 rho(1) = {want}", one.value);
+        assert!(one.value > 2.7 && one.value < 2.8, "1 + 2 rho(1) = {} on this chain", one.value);
     }
 
     // ---------------------------------------------------------------------------------------
@@ -2866,6 +3481,14 @@ mod tests {
         let c = Confidence::from_log_odds(got);
         assert!((c.probability_a - logistic(want)).abs() < 1e-15);
         assert_eq!(c.favours, if want >= 0.0 { Hypothesis::A } else { Hypothesis::B });
+        // The documented tie-break, which the assertion above can never reach because `want` is
+        // never zero: an exact tie favours `A`, arbitrarily and documentedly, and a `>` in place of
+        // the `>=` would move it to `B` with nothing to notice.
+        let tie = Confidence::from_log_odds(0.0);
+        assert_eq!(tie.favours, Hypothesis::A, "an exact tie must favour A");
+        assert!((tie.probability_a - 0.5).abs() < 1e-16);
+        assert_eq!(Confidence::from_log_odds(-0.0).favours, Hypothesis::A, "negative zero is a tie");
+        assert_eq!(Confidence::from_log_odds(-1e-300).favours, Hypothesis::B);
         // Identical hypotheses carry no evidence whatever the counts, which is the offset term
         // doing its job: the two ln-ratios are zero and the two offsets cancel.
         assert!(population_log_odds(&counts, &a, &a, t, 0.0).expect("valid").abs() < 1e-13);
@@ -3112,7 +3735,10 @@ mod tests {
                 }
             }
             let got = acc / f64::from(n);
-            assert!((got - want).abs() < 0.005, "k = {k}: measured {got}, closed form {want}");
+            // 1e-3, not the 5e-3 that shipped: the worst disagreement over these five bundle sizes
+            // at this dimension and seed is 6.01e-4 (at k = 25), so a 5e-3 bound left a factor of
+            // eight of unclaimed room and the doc claimed 5e-4, which is below what is measured.
+            assert!((got - want).abs() < 1e-3, "k = {k}: measured {got}, closed form {want}");
             // Requirement (c): components stay closer than random, with the margin measured.
             assert!(
                 worst_margin > 6.0,
@@ -3127,7 +3753,19 @@ mod tests {
     /// simulation would ever reveal, and it exercises both parities of the tie-handling branch.
     #[test]
     fn an_even_bundle_is_worth_exactly_the_odd_one_below_it() {
-        assert!((bundle_similarity(1).expect("k=1") - 1.0).abs() < 1e-15);
+        // The first seven values, as literals from the binomial rather than read back off the
+        // function. For odd `k = 2m+1` the disagreeing votes carry the bit exactly when more than
+        // half of `Bin(2m, ½)` do, so `sim(2m+1) = C(2m, m) / 2^{2m}`: 1, 1/2, 3/8, 5/16.
+        let want = [1.0, 0.5, 0.5, 0.375, 0.375, 0.3125, 0.3125];
+        for (i, &w) in want.iter().enumerate() {
+            let got = bundle_similarity(i + 1).expect("small k");
+            assert!((got - w).abs() < 1e-15, "sim({}) = {got}, closed form {w}", i + 1);
+        }
+        assert!((bundle_similarity(7).expect("k=7") - 20.0 / 64.0).abs() < 1e-15, "C(6,3)/2^6");
+        assert!(
+            (bundle_similarity(25).expect("k=25") - 2_704_156.0 / 16_777_216.0).abs() < 1e-15,
+            "sim(25) should be C(24,12)/2^24"
+        );
         for j in 1..200usize {
             let even = bundle_similarity(2 * j).expect("valid");
             let odd = bundle_similarity(2 * j + 1).expect("valid");
@@ -3140,10 +3778,26 @@ mod tests {
             assert!(s < last, "k = {k} did not decrease");
             last = s;
         }
-        for k in [101usize, 1_001, 10_001] {
+        // The approach to `sqrt(2/(pi k))`, from ABOVE and at the rates the doc prints. Two-sided
+        // per `k`, because a one-sided "within 1%" band starting at k = 101 is what let the doc
+        // claim 0.3% at k = 25 when the true figure is 1.0047% — the k the claim was about was the
+        // one k the test did not visit.
+        for (k, lo, hi) in [
+            (25usize, 0.0100f64, 0.0101f64),
+            (101, 0.00247, 0.00249),
+            (1_001, 0.000249, 0.000251),
+            (10_001, 0.0000249, 0.0000251),
+        ] {
             let s = bundle_similarity(k).expect("valid");
             let asym = (2.0 / (core::f64::consts::PI * k as f64)).sqrt();
-            assert!((s / asym - 1.0).abs() < 0.01, "k = {k}: {s} vs asymptote {asym}");
+            let excess = s / asym - 1.0;
+            assert!(
+                excess > lo && excess < hi,
+                "k = {k}: {s} is {:.6}% above the asymptote {asym}, expected {:.4}%..{:.4}%",
+                excess * 100.0,
+                lo * 100.0,
+                hi * 100.0
+            );
         }
         assert!(bundle_similarity(0).is_none());
         assert!(bundle_similarity((1 << 16) + 1).is_none());
@@ -3151,28 +3805,49 @@ mod tests {
 
     /// ⭐ Requirement (d): recovery degrades where the capacity bound says it does. At 1024 bits
     /// against a 512-item cleanup memory, `k = 5` scores 12 standard deviations and recovers
-    /// everything, `k = 25` scores 5.2 and still does, `k = 125` scores 2.3 and loses a quarter of
-    /// the items. The assertions are tied to the `z`-score, so this is a check of the bound rather
-    /// than a recording of three numbers.
+    /// everything, `k = 25` scores 5.2 and recovers 0.983, `k = 125` scores 2.3 and recovers 0.797.
+    /// The assertions are tied to the `z`-score, so this is a check of the bound rather than a
+    /// recording of three numbers.
+    ///
+    /// **Each rep draws its own codebook.** The version that shipped drew one codebook outside the
+    /// loop and bundled `cb.vectors()[..k]` twelve times; all three `k` are odd, so
+    /// [`super::Hypervector::bundle`] never reaches a tie, never touches the stream, and is a pure
+    /// function of a slice that does not change — the twelve reps were twelve copies of one
+    /// measurement, and the three headline numbers were each a single draw averaged with itself.
+    /// `distinct` below is asserted directly so that regression cannot come back silently.
     #[test]
     fn recovery_from_a_bundle_degrades_where_the_capacity_bound_says_it_does() {
         let dim = 1_024;
         let entries = 512;
-        let mut rng = Rng::new(31_337);
-        let cb = Codebook::random(&mut rng, dim, entries).expect("valid");
         let mut results = Vec::new();
         for k in [5usize, 25, 125] {
             let z = bundle_z_score(dim, k).expect("valid");
-            let mut recall = 0.0;
             let reps = 12;
+            let mut rng = Rng::new(31_337);
+            let mut per_rep: Vec<f64> = Vec::with_capacity(reps);
             for _ in 0..reps {
+                let cb = Codebook::random(&mut rng, dim, entries).expect("valid");
                 let parts: Vec<Hypervector> = cb.vectors()[..k].to_vec();
                 let bundle = Hypervector::bundle(&parts, &mut rng).expect("valid");
                 let ranked = cb.rank(&bundle).expect("non-empty");
                 let hits = ranked[..k].iter().filter(|(i, _)| *i < k).count();
-                recall += hits as f64 / k as f64;
+                per_rep.push(hits as f64 / k as f64);
             }
-            recall /= f64::from(reps);
+            let recall = per_rep.iter().sum::<f64>() / per_rep.len() as f64;
+            let distinct = {
+                let mut v = per_rep.clone();
+                v.sort_by(|a, b| a.partial_cmp(b).expect("finite"));
+                v.dedup();
+                v.len()
+            };
+            // Below the clear regime the reps MUST disagree with one another: a `distinct` of 1
+            // there is the frozen-fixture bug, whatever the mean happens to be.
+            if z < 8.0 {
+                assert!(
+                    distinct > 1,
+                    "k = {k}: all {reps} reps returned {recall} — the reps are copies of one draw"
+                );
+            }
             results.push((k, z, recall));
         }
         // The signal has to beat the LOUDEST of the distractors, not a typical one. The maximum
@@ -3188,7 +3863,13 @@ mod tests {
             } else if z > floor + 1.0 {
                 marginal += 1;
                 assert!(recall > 0.80, "k = {k} scores {z} sigma but recalled only {recall}");
-                assert!(recall < 1.0 + 1e-12);
+                // The point of the marginal band: it does NOT recover everything. `recall` is
+                // `hits/k` with `hits <= k`, so the `recall < 1.0 + 1e-12` that shipped here was
+                // unfailable by construction and this is the claim it was reaching for.
+                assert!(
+                    recall < 1.0,
+                    "k = {k} at {z} sigma recovered everything; the marginal band is not marginal"
+                );
             } else if z < floor - 1.0 {
                 lost += 1;
                 assert!(recall < 0.95, "k = {k} scores only {z} sigma yet recalled {recall}");
@@ -3307,6 +3988,50 @@ mod tests {
         assert!((cb.nearest(&a).expect("valid").1 - 1.0).abs() < 1e-15);
         assert!(cb.cleanup(&a, f64::NAN).is_err());
         assert!(Codebook::random(&mut rng, 64, 0).is_err());
+    }
+
+    /// The two documented edges of the cleanup memory, neither of which any other test reaches:
+    /// [`super::Codebook::rank`] breaks ties **by index**, and [`super::Codebook::cleanup`] accepts
+    /// a similarity **equal** to the threshold.
+    ///
+    /// A genuine tie needs two entries that are equal, which no other test in this module builds —
+    /// every codebook here is independent random vectors, and at 128 bits two of those tie with
+    /// probability `2^-128`. Reversing the tie-break comparator, or turning the `>=` into a `>`,
+    /// survives every other assertion in the file.
+    #[test]
+    fn the_cleanup_memory_breaks_ties_by_index_and_accepts_the_threshold_exactly() {
+        let mut rng = Rng::new(9_191);
+        let dim = 128;
+        let v = Hypervector::random(&mut rng, dim).expect("valid");
+        let w = Hypervector::random(&mut rng, dim).expect("valid");
+        let mut cb = Codebook::new(dim).expect("valid");
+        cb.add("first", w.clone()).expect("same dim");
+        cb.add("tie-a", v.clone()).expect("same dim");
+        cb.add("tie-b", v.clone()).expect("same dim");
+        cb.add("last", w).expect("same dim");
+
+        let ranked = cb.rank(&v).expect("non-empty");
+        assert!((ranked[0].1 - 1.0).abs() < 1e-15 && (ranked[1].1 - 1.0).abs() < 1e-15, "{ranked:?}");
+        assert!((ranked[0].1 - ranked[1].1).abs() < 1e-15, "the top two are not a genuine tie");
+        assert_eq!(ranked[0].0, 1, "the tie must resolve to the LOWER index");
+        assert_eq!(ranked[1].0, 2);
+        assert_eq!(cb.nearest(&v).expect("non-empty").0, 1);
+        // The rest of the ranking is still sorted, so the tie-break did not disturb the order.
+        assert!(ranked[2].1 <= ranked[1].1 && ranked[3].1 <= ranked[2].1, "{ranked:?}");
+        assert_eq!(ranked.len(), 4);
+
+        // `cleanup` keeps a similarity EQUAL to the threshold. The probe is an entry of the
+        // codebook, so the best similarity is exactly 1.0 and the boundary is hit exactly rather
+        // than approached: `>` in place of `>=` turns the answer into `None`.
+        let (i, s) = cb.nearest(&v).expect("non-empty");
+        assert!((s - 1.0).abs() < 1e-15, "the boundary case needs an exact similarity, got {s}");
+        assert_eq!(cb.cleanup(&v, s).expect("valid"), Some((i, s)), "s >= threshold must accept s == threshold");
+        let next = s - 2.0 / dim as f64;
+        assert!(cb.cleanup(&v, next).expect("valid").is_some());
+        assert!(
+            cb.cleanup(&v, s + 1e-12).expect("valid").is_none(),
+            "a threshold above the best similarity must return None"
+        );
     }
 
     /// Bundling an odd number of vectors draws no randomness and is therefore a pure function of
