@@ -1,6 +1,6 @@
 [package]
 name = "ferromorphic"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 # A POLICY floor, deliberately above the technical one, stated that way so nobody later "corrects"
 # it downward on the grounds that an older toolchain happens to work.
@@ -13,10 +13,13 @@ edition = "2024"
 # What is NOT claimed: that 1.98 is the lowest version that works. Nobody has bisected it. The line
 # says "verified here", which is the direction that cannot break a user.
 rust-version = "1.98"
-description = "Neuromorphic computing in pure Rust: spiking neuron models verified against their closed forms, sparse event-driven networks, spike encoders that state what they cost, the published SNN-vs-ANN crossover thresholds as a check your workload can run, and a joules ledger that charges for synapse MEMORY TRAFFIC and refuses to report a figure when the device's prices are unstated. std-only, zero dependencies, wasm-clean, deterministic by seed."
+description = "Neuromorphic computing in pure Rust, the open corpus in one library: Hodgkin-Huxley, AdEx/EIF/QIF/theta, synapse kernels and short-term plasticity, STDP through reward-modulated learning, surrogate gradients and BPTT, ANN-to-SNN conversion, reservoir computing, every neural code, standard topologies, hardware constraint models, NIR, AEDAT/EVT3 decoders, NeuroBench metrics, teaching tasks, and a joules ledger that charges for synapse memory traffic. Zero dependencies, std-only, wasm-clean, deterministic by seed."
 license = "Apache-2.0"
 repository = "https://github.com/dcharlot-physicalai-bmi/ferromorphic"
-homepage = "https://energy.physicalai-bmi.org/neuromorphic"
+# The site page for this crate does not exist yet, and a homepage that 404s is worse
+# than none: it is a broken promise on the crates.io card. Points at the repository until
+# energy.physicalai-bmi.org/neuromorphic is published, as its thermodynamic sibling already is.
+homepage = "https://github.com/dcharlot-physicalai-bmi/ferromorphic"
 documentation = "https://docs.rs/ferromorphic"
 readme = "README.md"
 keywords = ["neuromorphic", "spiking", "snn", "event-driven", "energy"]

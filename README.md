@@ -1,16 +1,43 @@
 # ferromorphic
 
-Neuromorphic computing in pure Rust. Spiking neuron models checked against their closed forms,
-sparse event-driven networks with per-synapse delays, spike encoders that state what they cost, and
-a first-class joules ledger that **charges for the memory traffic a synaptic operation needs** —
-zero dependencies, std-only, wasm-clean, deterministic by seed.
+**Neuromorphic computing in pure Rust — the open corpus in one library.** Spiking neuron models from
+Hodgkin-Huxley to `AdEx`, synapse kernels, plasticity rules, surrogate-gradient training, ANN-to-SNN
+conversion, reservoir computing, every neural code, the standard topologies, hardware constraint
+models, NIR, event-camera decoders, benchmark metrics, teaching tasks — and a joules ledger that
+charges for the memory traffic a synaptic operation needs.
 
-The neuroscience is open and old: Lapicque's integrate-and-fire (1907), Hodgkin and Huxley (1952),
-Mead's *Neuromorphic Electronic Systems* (1990), Mahowald's address-event representation (1992),
-Izhikevich (2003), spike-timing-dependent plasticity (Bi and Poo, 1998). What a neuromorphic chip
-accelerates is exactly these loops; what it charges for is moving the weights. Both belong in the
-open commons, runnable on every compute fabric: CPU today, GPU and wasm in the browser, event-driven
-silicon where there is silicon anyone can get.
+**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 583 tests.**
+
+The Institute's position is that in the era of AI a group should build one source of truth, not a
+constellation of thin wrappers. So this is an ingestion, not a sampler: what is open, public and
+academic in neuromorphic computing belongs in one auditable codebase that a student can read end to
+end and a robot can run on any fabric.
+
+The science is old and open — Lapicque 1907, Hodgkin & Huxley 1952, Mead 1990, Mahowald 1992,
+Bi & Poo 1998, Maass 2002, Izhikevich 2003, Brette & Gerstner 2005. What a neuromorphic chip
+accelerates is exactly these loops; what it charges for is moving the weights.
+
+## What is in it
+
+| module | what it carries |
+|---|---|
+| `neuron` | LIF, integrate-and-fire, adaptive LIF, Izhikevich |
+| `hh` | Hodgkin-Huxley, full four-variable squid axon, with the ionic currents exposed |
+| `exponential` | EIF, `AdEx` with the Naud firing-pattern taxonomy, QIF, theta |
+| `synapse` | delta / exponential / alpha / bi-exponential kernels, CUBA vs COBA, AMPA / GABA / NMDA with the magnesium block, Tsodyks-Markram short-term plasticity |
+| `plasticity` | pair and triplet STDP, Hebbian, Oja, BCM, reward-modulated three-factor, homeostatic scaling |
+| `surrogate` | surrogate gradients (`SuperSpike`, arctan, triangular, boxcar, straight-through) and a working BPTT path |
+| `convert` | ANN-to-SNN: threshold balancing, percentile normalisation, reset-by-subtraction vs reset-to-zero |
+| `reservoir` | liquid state machines and echo state networks, with a pure-Rust ridge solve and power iteration |
+| `encode`, `coding` | rate, latency, delta; population, rank-order, phase, burst, BSA/HSA, temporal contrast — and their decoders |
+| `topology` | Erdős-Rényi, Watts-Strogatz, Barabási-Albert, distance-dependent, layered, winner-take-all, Dale's law |
+| `hardware` | constraint models for Loihi, Loihi 2, `TrueNorth`, `NorthPole`, Akida, `SpiNNaker`, Xylo, Speck, ODIN, DYNAP and more — every field graded and provenanced |
+| `nir` | the Neuromorphic Intermediate Representation graph, validation, and a bridge to this crate's networks |
+| `aer` | AEDAT and Prophesee EVT2/EVT3 decoders, total and panic-free, with rollover-correct timestamps |
+| `metrics` | `NeuroBench` complexity metrics: activation sparsity, effective MACs and ACs, footprint |
+| `ledger`, `crossover` | joules with the fetch term, and the published SNN-vs-ANN thresholds as a runnable check |
+| `tasks` | deterministic teaching problems: temporal XOR, coincidence detection, delayed match-to-sample, synthetic event streams |
+| `sim`, `net`, `spike`, `rng` | the event-driven simulator, sparse connectivity, spike trains, seeded PCG32 |
 
 ## Use it
 
@@ -175,7 +202,7 @@ Every neuron model here has a test that runs it against an analytic solution.
 - **A sub-threshold current returns `None`, not a large number.** "Fires rarely" and "does not fire"
   are different statements and a rate-coded readout cannot recover the difference later.
 
-74 unit tests and two doctests, `cargo clippy --all-targets -- -D warnings` clean, `#![forbid(unsafe_code)]`,
+583 unit tests and ten doctests, `cargo clippy --all-targets -- -D warnings` clean, `#![forbid(unsafe_code)]`,
 and `cargo build --target wasm32-unknown-unknown` compiles the library unchanged.
 
 ## What the encoders cost, on the page
@@ -219,7 +246,7 @@ be reproduced cannot be checked against anything, including itself.
 
 ## Status
 
-**0.3.0.** The core is real and tested; the crate family is not built yet. Planned siblings, each
+**0.4.0.** The core is real and tested; the crate family is not built yet. Planned siblings, each
 following the same rule that a dependency lives outside the core:
 
 | crate | what it would add | why separate |

@@ -96,14 +96,28 @@
 
 #![forbid(unsafe_code)]
 
+pub mod aer;
+pub mod coding;
+pub mod convert;
 pub mod crossover;
 pub mod encode;
+pub mod exponential;
+pub mod hardware;
+pub mod hh;
 pub mod ledger;
+pub mod metrics;
 pub mod net;
 pub mod neuron;
+pub mod nir;
+pub mod plasticity;
+pub mod reservoir;
 pub mod rng;
 pub mod sim;
 pub mod spike;
+pub mod surrogate;
+pub mod synapse;
+pub mod tasks;
+pub mod topology;
 
 pub use crossover::{Crossover, Verdict};
 pub use ledger::{Bill, Evidence, Ledger, Prices};
