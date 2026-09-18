@@ -616,19 +616,45 @@ pub struct OffsetFit {
     /// Median absolute deviation of those differences, seconds. A robust spread: the cluster's
     /// width, not the search window's.
     pub mad_s: f64,
+    /// How many distinct `a` events contributed to those differences — the number of independent
+    /// things the median was estimated from, which is smaller than [`OffsetFit::pairs`] whenever a
+    /// neighbouring source event also fell inside the refinement window.
+    pub events: usize,
 }
 
 impl OffsetFit {
-    /// A rough standard error of the offset, seconds: `mad_s / sqrt(pairs)`.
+    /// Standard error of the offset, seconds: `2 · mad_s / sqrt(events)`.
     ///
-    /// **An approximation, and stated as one.** The exact asymptotic standard error of a median is
-    /// `1 / (2 * f(0) * sqrt(n))`, which needs the density at the centre; `mad_s` stands in for it
-    /// under the assumption that the difference distribution is roughly triangular, where the two
-    /// agree to about 25%. For a heavily contaminated window it understates. `None` when there were
-    /// no pairs.
+    /// # The closed form, and its bound
+    ///
+    /// The asymptotic standard error of a median over `n` independent samples is
+    /// `1 / (2 · f(0) · √n)`, which needs the density at the centre. `2 · mad_s` stands in for
+    /// `1 / (2 f(0))`, and the substitution is exact for a uniform difference and conservative for
+    /// the peaked shapes: relative to the exact expression it is **1.00** (uniform), **1.17**
+    /// (triangular — two uniform jitters), **1.08** (normal). It never under-reports for a symmetric
+    /// shape, which is the direction an error bar must err in.
+    ///
+    /// `events`, not `pairs`, is the `n`: the extra differences a neighbouring source event
+    /// contributes are consequences of the same events, not independent draws.
+    ///
+    /// # What it measured as, and why it is not exactly 1
+    ///
+    /// Under the protocol that found the previous formula wrong — 20 Hz Poisson source, 1 ms
+    /// jitter, 0.1 ms ticks, 60 s, 5 ms lag, 300 seeds, backgrounds of 0, 1 and 5 Hz — this figure
+    /// is **1.2 to 1.3 times** the true seed-to-seed scatter of the estimate. The excess is
+    /// identified: the measured `mad_s` (7.8e-4 s) is 1.27 × the pure-triangular value
+    /// `(2 − √2)·J`, inflated by the cross-pair differences that share the window. Over by that
+    /// much, for that reason, in the safe direction. The calibration test asserts the band.
+    ///
+    /// # What shipped before
+    ///
+    /// `mad_s / sqrt(pairs)`, with a doc claiming `mad_s ≈ 1/(2 f(0))` "to about 25%". For a
+    /// triangular difference `mad_s = 0.586 J` against an exact `1.0 J` — 41% low before anything
+    /// else — and `pairs` over-counted the independent sample by ~32%. Measured: **0.37** of the true
+    /// scatter, and nothing in the suite could see the formula. `None` when no event contributed.
     #[must_use]
     pub fn standard_error_s(&self) -> Option<f64> {
-        if self.pairs == 0 { None } else { Some(self.mad_s / (self.pairs as f64).sqrt()) }
+        if self.events == 0 { None } else { Some(2.0 * self.mad_s / (self.events as f64).sqrt()) }
     }
 }
 
@@ -679,9 +705,24 @@ impl OffsetEstimator {
 
     /// Every pairwise difference `t_b - t_a` inside the search window, in sweep order.
     fn differences(&self, a: &[f64], b: &[f64]) -> Result<Vec<f64>, FusionError> {
+        Ok(self.differences_indexed(a, b)?.into_iter().map(|(_, d)| d).collect())
+    }
+
+    /// As [`Self::differences`], each difference tagged with the index of the `a` event that
+    /// produced it. Contiguous by that index, because the sweep emits every partner of one `a`
+    /// event before moving to the next.
+    ///
+    /// The tag is what makes an honest error bar possible. One source event yields one true pair
+    /// and, whenever a neighbouring source event falls inside the refinement window — for a
+    /// Poisson source at 20 Hz and an 8 ms window, about 15% of the time in each direction — one
+    /// or more cross-pairs as well. Those extra differences are not independent draws; they are
+    /// deterministic consequences of the same events, and any resampling that treats them as
+    /// independent under-reports the median's scatter. Resampling by `a` index resamples the
+    /// events, which is the unit that actually varies from recording to recording.
+    fn differences_indexed(&self, a: &[f64], b: &[f64]) -> Result<Vec<(usize, f64)>, FusionError> {
         let mut out = Vec::new();
         let (mut lo, mut hi) = (0usize, 0usize);
-        for &ta in a {
+        for (i, &ta) in a.iter().enumerate() {
             while lo < b.len() && b[lo] < ta - self.search_half_s {
                 lo += 1;
             }
@@ -695,7 +736,7 @@ impl OffsetEstimator {
                 return Err(FusionError::TooManyPairs { cap: self.max_pairs });
             }
             for &tb in &b[lo..hi] {
-                out.push(tb - ta);
+                out.push((i, tb - ta));
             }
         }
         Ok(out)
@@ -750,12 +791,40 @@ impl OffsetEstimator {
         }
         // `min_pairs` is a `pub` field and may legally be zero, so an empty refinement window is
         // reachable and is refused here rather than unwrapped.
-        let (Some(offset_s), true) = (median(&near), !near.is_empty()) else {
+        let (Some(first), true) = (median(&near), !near.is_empty()) else {
             return Err(FusionError::TooFewPairs { found: near.len(), needed: 1 });
         };
-        let dev: Vec<f64> = near.iter().map(|d| (d - offset_s).abs()).collect();
+
+        // ⛔ RE-CENTRE, AND TAKE THE MEDIAN AGAIN. The window above is centred on a histogram
+        // bin, so it sits up to `bin_s / 2` off the true lag by an amount that depends on which
+        // bin the peak happened to land in. That is harmless for the cluster itself, which is far
+        // narrower than the window, but the cross-pair differences from neighbouring source events
+        // are spread across the whole window, and an off-centre window admits more of them on one
+        // side than the other — biasing the median by an amount that varies from recording to
+        // recording. Measured under the calibration protocol below: re-centring cuts the
+        // seed-to-seed scatter of the estimate to 0.67 (no background), 0.60 (1 Hz) and 0.56
+        // (5 Hz) of what a single pass gives, and brings it within 19% of the closed form
+        // `J / √n`. The improvement grows with contamination because the mechanism is
+        // contamination.
+        let indexed = self.differences_indexed(&ta, &tb)?;
+        let near_ix: Vec<(usize, f64)> =
+            indexed.into_iter().filter(|(_, d)| (d - first).abs() <= self.refine_half_s).collect();
+        let vals: Vec<f64> = near_ix.iter().map(|(_, d)| *d).collect();
+        let Some(offset_s) = median(&vals) else {
+            return Err(FusionError::TooFewPairs { found: 0, needed: 1 });
+        };
+        let dev: Vec<f64> = vals.iter().map(|d| (d - offset_s).abs()).collect();
         let mad_s = median(&dev).unwrap_or(0.0);
-        Ok(OffsetFit { offset_s, coarse_s, pairs: near.len(), mad_s })
+        // Contiguous by `a` index, so a change of index is a new event.
+        let mut events = 0usize;
+        let mut last: Option<usize> = None;
+        for (i, _) in &near_ix {
+            if last != Some(*i) {
+                events += 1;
+                last = Some(*i);
+            }
+        }
+        Ok(OffsetFit { offset_s, coarse_s, pairs: vals.len(), mad_s, events })
     }
 
     /// Estimate offset **and** drift by measuring the offset on each half of the record.
@@ -2658,6 +2727,55 @@ mod tests {
     /// median absolute deviation is the jitter; two independent streams give a flat background
     /// filling the refinement window, and the estimator's `offset_s` is then meaningless even
     /// though it is a number.
+    /// ⛔ THE ERROR BAR AGAINST THE SCATTER IT CLAIMS TO DESCRIBE. This is the test the previous
+    /// formula never had: `mad_s / sqrt(pairs)` reported 0.37 of the true seed-to-seed standard
+    /// deviation of the estimate, and the only assertion touching it was scale-free in `n`, so
+    /// deleting the `sqrt` entirely passed 52/52.
+    ///
+    /// The protocol is the one that found it: 20 Hz Poisson source, 1 ms jitter, 0.1 ms ticks,
+    /// 60 s, 5 ms lag, backgrounds of 0 and 5 Hz. The reported standard error, averaged over
+    /// seeds, is compared with the actual standard deviation of the reported offsets across those
+    /// seeds. The band is `[1.0, 1.5]`: below 1 is under-reporting, which the shape bound says
+    /// cannot happen for a symmetric difference and which every previous defect produced; above
+    /// 1.5 is further than the identified mechanism (MAD inflated 1.27× by cross-pairs) can carry
+    /// it. Measured at 1.2–1.3 when written. 100 seeds put the ratio's own uncertainty near 7%.
+    ///
+    /// Not asserted at 240 s: with 4,800 events the median locks to the 0.1 ms tick grid and the
+    /// seed-to-seed scatter collapses to roundoff, which is a fact about the protocol's
+    /// quantisation and not about the estimator.
+    #[test]
+    fn the_standard_error_matches_the_scatter_it_describes() {
+        let est = estimator();
+        for &bg in &[0.0f64, 5.0] {
+            let src = two_sensors(5e-3, 1e-3, 0.0, bg, 60.0);
+            let seeds = 100u64;
+            let mut offsets = Vec::with_capacity(seeds as usize);
+            let mut se_sum = 0.0;
+            for seed in 0..seeds {
+                let g = generate(&src, 1000 + seed);
+                let fit = est.estimate(&g.streams[0], &g.streams[1]).unwrap();
+                offsets.push(fit.offset_s);
+                se_sum += fit.standard_error_s().unwrap();
+                // The independent-event count is the true event count, not the pair count.
+                let n_true = 60.0 * src.source_rate_hz;
+                assert!(
+                    (fit.events as f64) < 1.2 * n_true && (fit.events as f64) > 0.8 * n_true,
+                    "seed {seed}: {} events against {n_true} source events", fit.events
+                );
+                assert!(fit.pairs >= fit.events, "pairs {} < events {}", fit.pairs, fit.events);
+            }
+            let k = seeds as f64;
+            let mean = offsets.iter().sum::<f64>() / k;
+            let sd = (offsets.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / (k - 1.0)).sqrt();
+            let ratio = (se_sum / k) / sd;
+            println!("CALIBRATION bg={bg:.0}Hz: reported {:.3e}, actual {sd:.3e}, ratio {ratio:.3}", se_sum / k);
+            assert!(
+                (1.0..=1.5).contains(&ratio),
+                "bg {bg} Hz: reported SE is {ratio:.3} of the actual scatter; the band is [1.0, 1.5]"
+            );
+        }
+    }
+
     #[test]
     fn independent_streams_are_distinguishable_by_their_spread() {
         let src = two_sensors(0.0, 1e-3, 0.0, 0.0, 60.0);
@@ -2987,6 +3105,36 @@ mod tests {
         let want0 = (1.0 / truth[0]) / (1.0 / truth[0] + 1.0 / truth[1]);
         assert!((w[0] - want0).abs() < 0.01, "learned weight {} against {want0}", w[0]);
         assert_eq!(gate.dominant(), Some(0));
+    }
+
+    /// ⛔ THE ABSOLUTE CALIBRATION OF `from_residuals`, which `the_gate_recovers_the_variances`
+    /// above cannot see: it checks a weight (a ratio) and `dominant()` (an ordering), both
+    /// scale-invariant, so multiplying every measured variance by ten passed it — and so did
+    /// dividing by `n` instead of `n − 1`, despite that choice having its own paragraph of
+    /// justification. Two checks: the fused variance against its closed form on a large sample,
+    /// and `n` against `n − 1` on the smallest sample where they differ by a factor of two.
+    #[test]
+    fn from_residuals_measures_the_variance_it_was_shown_in_absolute_terms() {
+        let truth: [f64; 2] = [0.09, 2.25];
+        let mut rng = Rng::new(17);
+        let residuals: Vec<Vec<f64>> = truth
+            .iter()
+            .map(|s2| (0..20_000).map(|_| gaussian(&mut rng) * s2.sqrt()).collect())
+            .collect();
+        let gate = PrecisionGate::from_residuals(&residuals).unwrap();
+        // 1/(1/0.09 + 1/2.25) = 1/11.5556 = 0.086538..., written out rather than recomputed
+        // through the gate. 20,000 samples put the sample variance within ~1% of truth.
+        let want = 0.086_538_461_538;
+        let got = gate.fused_variance().unwrap();
+        assert!((got - want).abs() / want < 0.02, "fused variance {got} against {want}");
+        let tp = gate.total_precision().unwrap();
+        assert!((1.0 / tp - want).abs() / want < 0.02, "1/total_precision {} against {want}", 1.0 / tp);
+
+        // n − 1, not n. Two residuals at ±1 have sample variance exactly 2 (n − 1 = 1) and
+        // population variance exactly 1 (n = 2): the two conventions differ by a factor of two
+        // here, and only one of them is what the doc promises.
+        let tiny = PrecisionGate::from_residuals(&[vec![-1.0, 1.0]]).unwrap();
+        assert_eq!(tiny.fused_variance().unwrap(), 2.0, "sample variance with n − 1 must be exactly 2");
     }
 
     #[test]
