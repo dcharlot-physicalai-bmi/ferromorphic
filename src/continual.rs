@@ -1733,6 +1733,183 @@ pub struct Cascade {
     pub x: f64,
 }
 
+/// TEST-ONLY independent oracle: solve `π P = π`, `Σπ = 1` by Gaussian elimination on the exact
+/// generator `g = P − I`, verified against `m = P`. Kept so the flux-balance recursion that
+/// replaced it can be checked against a second algorithm rather than against itself; it is not
+/// used at runtime because it loses precision past depth ~48 (see `stationary_by_flux_balance`).
+///
+/// Takes `A = Gᵀ`, replaces the last row with ones (the normalisation) and solves `A π = e_n`
+/// by Gaussian elimination with partial pivoting. For an irreducible chain `Pᵀ − I` has rank
+/// `n − 1` and every row is minus the sum of the others, so replacing any one row with the
+/// normalisation gives a nonsingular system; the last row is chosen for no deeper reason.
+///
+/// Returns `None` — rather than a number — when the system is singular, which is what a reducible
+/// chain produces (an absorbing state is a structurally zero column), or when the solution fails
+/// its own check: every entry non-negative to roundoff and the stationarity residual
+/// `‖πP − π‖₁` below `1e-9`. The second guard is the one that matters: a solve that returned a
+/// non-stationary vector for any reason at all is caught here regardless of why.
+/// Solve `A y = rhs` for `A = Gᵀ`, `G = P − I` supplied exactly, with its last row replaced by ones, by Gauss-Jordan with
+/// partial pivoting. `None` on an exactly-zero pivot, which is the structurally singular
+/// (reducible) case. Factored out of [`stationary_direct`] so that iterative refinement can call it
+/// again on a residual right-hand side.
+#[cfg(test)]
+fn solve_normalised(g: &[f64], n: usize, rhs: &[f64]) -> Option<Vec<f64>> {
+    let w = n + 1;
+    let mut a = vec![0.0f64; n * w];
+    for i in 0..n {
+        for j in 0..n {
+            // A = Gᵀ where G = P − I is already exact; no subtraction from 1 happens here.
+            a[i * w + j] = g[j * n + i];
+        }
+        a[i * w + n] = rhs[i];
+    }
+    for j in 0..n {
+        a[(n - 1) * w + j] = 1.0;
+    }
+    a[(n - 1) * w + n] = rhs[n - 1];
+
+    // A structurally zero column has NO nonzero candidate and yields an exactly-zero pivot, which
+    // is the reducible case; the threshold sits far below any genuine entry (the deepest fusi
+    // transition at depth 60 is ~1e-18) so it can only fire on that structural zero.
+    for c in 0..n {
+        let mut p = c;
+        for r in c + 1..n {
+            if a[r * w + c].abs() > a[p * w + c].abs() {
+                p = r;
+            }
+        }
+        if a[p * w + c].abs() < 1e-200 {
+            return None;
+        }
+        if p != c {
+            for k in 0..w {
+                a.swap(c * w + k, p * w + k);
+            }
+        }
+        let piv = a[c * w + c];
+        for k in 0..w {
+            a[c * w + k] /= piv;
+        }
+        for r in 0..n {
+            if r != c {
+                let f = a[r * w + c];
+                if f != 0.0 {
+                    for k in 0..w {
+                        a[r * w + k] -= f * a[c * w + k];
+                    }
+                }
+            }
+        }
+    }
+    Some((0..n).map(|i| a[i * w + n]).collect())
+}
+
+/// `‖πP − π‖₁`, the stationarity residual of a candidate distribution.
+fn stationarity_residual(m: &[f64], n: usize, pi: &[f64]) -> f64 {
+    let mut residual = 0.0;
+    for j in 0..n {
+        let mut acc = 0.0;
+        for i in 0..n {
+            acc += pi[i] * m[i * n + j];
+        }
+        residual += (acc - pi[j]).abs();
+    }
+    residual
+}
+
+/// Solve `π P = π`, `Σπ = 1` directly for a row-stochastic `m` (row-major, `n × n`).
+///
+/// Builds `A = Pᵀ − I`, replaces the last row with ones (the normalisation) and solves `A π = e_n`.
+/// For an irreducible chain `Pᵀ − I` has rank `n − 1` and every row is minus the sum of the
+/// others, so replacing any one row with the normalisation gives a nonsingular system; the last
+/// row is chosen for no deeper reason.
+///
+/// # Iterative refinement, and why
+///
+/// One elimination gives `π` to roundoff **amplified by the matrix's conditioning**, and the fusi
+/// chain's entries span from `1` down to `2^−(d−1)`. At depth 23 a single solve left `‖πP − π‖₁`
+/// near `1e-12`, which is invisible in `learning_probability` (a sum of large entries) but shows
+/// up in `signal_after(0)` — that is `mass₊ − mass₋`, two halves near `0.5` cancelling to `0.083`,
+/// which multiplies the absolute error by about six. So the solution is polished: compute the
+/// residual `r = e_n − Aπ`, solve `Aδ = r`, add `δ`, and repeat while the stationarity residual
+/// keeps falling. Two rounds are typically enough to reach the `1e-15` the old iteration reached
+/// where it worked, at every depth where it did not.
+///
+/// Returns `None` — rather than a number — when the system is singular, which is what a reducible
+/// chain produces, or when the solution fails its own check: every entry non-negative to roundoff
+/// and the stationarity residual below `1e-9`. The second guard is the one that matters: a solve
+/// that returned a non-stationary vector for any reason at all is caught here regardless of why.
+#[cfg(test)]
+fn stationary_direct(g: &[f64], m: &[f64], n: usize) -> Option<Vec<f64>> {
+    if n == 0 {
+        return None;
+    }
+    let mut rhs = vec![0.0f64; n];
+    rhs[n - 1] = 1.0;
+    let mut pi = solve_normalised(g, n, &rhs)?;
+    let mut best = stationarity_residual(m, n, &pi);
+
+    // Refine: residual of the NORMALISED system, i.e. rows 0..n-1 of Gᵀπ and Σπ − 1 last.
+    for _ in 0..4 {
+        let mut r = vec![0.0f64; n];
+        for i in 0..n - 1 {
+            let mut acc = 0.0;
+            for j in 0..n {
+                acc += g[j * n + i] * pi[j];
+            }
+            r[i] = -acc;
+        }
+        r[n - 1] = 1.0 - pi.iter().sum::<f64>();
+        let Some(delta) = solve_normalised(g, n, &r) else { break };
+        let cand: Vec<f64> = pi.iter().zip(&delta).map(|(a, b)| a + b).collect();
+        let res = stationarity_residual(m, n, &cand);
+        if res < best {
+            pi = cand;
+            best = res;
+        } else {
+            break;
+        }
+    }
+
+    // ⛔ PROJECT ONTO THE SYMMETRIC SUBSPACE. `transition_matrix` gives the two stimulus signs
+    // equal probability, so the chain is invariant under swapping polarity and its stationary
+    // distribution is EXACTLY polarity-symmetric: `π[k] == π[d + k]`. The slowest eigenmode — the
+    // deepest level's flip — is antisymmetric, and it is precisely along that direction that f64
+    // cannot resolve stationarity: at depth 23 the spectral gap is 2.4e-7, so an error of 1e-9
+    // along it changes the residual by less than machine epsilon and refinement converged to an
+    // exactly-stationary vector with a 2.9e-11 asymmetry. Averaging the two halves removes the
+    // ill-conditioned component by construction rather than by tolerance.
+    let d = n / 2;
+    if n.is_multiple_of(2) {
+        for k in 0..d {
+            let avg = 0.5 * (pi[k] + pi[d + k]);
+            pi[k] = avg;
+            pi[d + k] = avg;
+        }
+    }
+
+    // Verify before trusting: non-negative to roundoff, and actually stationary.
+    if pi.iter().any(|&x| !x.is_finite() || x < -1e-9) {
+        return None;
+    }
+    for x in &mut pi {
+        if *x < 0.0 {
+            *x = 0.0;
+        }
+    }
+    let sum: f64 = pi.iter().sum();
+    if !(0.5..1.5).contains(&sum) {
+        return None;
+    }
+    for x in &mut pi {
+        *x /= sum;
+    }
+    if stationarity_residual(m, n, &pi) > 1e-9 {
+        return None;
+    }
+    Some(pi)
+}
+
 impl Cascade {
     /// The parameterisation this module uses for its figures: `q0 = p0 = 1.0`, `x = 0.5`.
     ///
@@ -1798,9 +1975,33 @@ impl Cascade {
         let d = self.depth;
         let n = 2 * d;
         let mut t = vec![0.0; n * n];
+        // ⛔ A RATE THIS MATRIX CANNOT HOLD IS REFUSED, NOT ROUNDED AWAY. Each row's diagonal is
+        // `0.5·(1 − flip) + 0.5·(1 − deepen)`, and `1 − rate` is computed first, just below 1.0
+        // where the spacing is 2^−53. Once a nonzero rate is at or below 2^−54 that subtraction
+        // returns exactly 1.0 — depth 55 for the fusi parameters, whose deepest rate is 2^−(d−1)
+        // — and the transition ceases to exist in the returned matrix. The stationary
+        // distribution of THAT matrix is then wrong by whole percent (5.5e-4 in the learning
+        // probability at depth 60) while every solver reports it as exactly stationary, because it
+        // is: of the wrong chain. A rate that is zero because `q0`, `p0` or `x` is zero is a
+        // different, legitimate thing (a reducible chain) and passes through.
         for k in 0..d {
             let flip = self.q0 * self.x.powi(k as i32);
             let deep = if k + 1 == d { 0.0 } else { self.p0 * self.x.powi(k as i32) };
+            for rate in [flip, deep] {
+                // This is the subtraction the matrix performs to store the rate, tested on the
+                // rate itself: doubles just below 1.0 are spaced 2^−53, so `1 − rate` rounds
+                // to 1.0 once `rate ≤ 2^−54` (ties-to-even) and the transition has left this
+                // matrix. `generator_matrix` keeps it; only the dynamics that multiply by `P`
+                // are affected.
+                if rate > 0.0 && 1.0 - rate == 1.0 {
+                    return Err(ContinualError::OutOfRange {
+                        what: "depth (the deepest transition rate has rounded to zero in f64)",
+                        value: d as f64,
+                        low: 1.0,
+                        high: k as f64,
+                    });
+                }
+            }
             // Potentiating stimulus, probability 1/2.
             // (+, k): deepen, or stay.
             t[k * n + k] += 0.5 * (1.0 - deep);
@@ -1821,21 +2022,154 @@ impl Cascade {
         Ok(t)
     }
 
-    /// The stationary distribution over the `2 * depth` states under stimuli of random sign.
+    /// `P − I`, row-major, built **exactly** from the rates rather than by subtracting `I` from
+    /// [`Cascade::transition_matrix`].
     ///
-    /// Found by power iteration from the uniform distribution, which converges here because every
-    /// state has a self-loop and the chain is therefore aperiodic. For `x == 0` the deepest level
-    /// is absorbing and the chain is **reducible**, so what comes back is the limit from the
-    /// uniform start — a well-defined number, and not the only stationary distribution.
+    /// The difference is not cosmetic. `transition_matrix` stores each diagonal as
+    /// `0.5·(1 − flip) + 0.5·(1 − deepen)`, a number near `1.0` whose ulp is `2^−52`; a deep
+    /// rate of `2^−51` survives in it with one bit of precision and `2^−52` does not survive at
+    /// all. Here the off-diagonals are `0.5·rate` — exact dyadic fractions for the fusi
+    /// parameters — and each diagonal is `−(flip + deepen)/2`, also tiny and exact. Every entry is
+    /// representable to full precision at any depth where the rates themselves are, which is
+    /// depth ~1,000 before `2^−(d−1)` underflows. The stationary solve uses this; the dynamics
+    /// still multiply by `P` and are protected by `transition_matrix`'s refusal.
     ///
     /// # Errors
     ///
-    /// As [`Cascade::validate`], plus [`ContinualError::NoStationary`] if the residual has not
-    /// fallen below `1e-15` within a million iterations. This implementation has not observed that
-    /// for any valid parameter set, and reports it rather than assuming it away.
+    /// As [`Cascade::validate`].
+    pub fn generator_matrix(&self) -> Result<Vec<f64>, ContinualError> {
+        self.validate()?;
+        let d = self.depth;
+        let n = 2 * d;
+        let mut g = vec![0.0; n * n];
+        for k in 0..d {
+            let flip = self.q0 * self.x.powi(k as i32);
+            let deep = if k + 1 == d { 0.0 } else { self.p0 * self.x.powi(k as i32) };
+            // Off-diagonals exactly as `transition_matrix` places them; the diagonal is minus the
+            // row's outgoing mass, computed from the SAME rates rather than from `1 − rate`.
+            if k + 1 < d {
+                g[k * n + k + 1] += 0.5 * deep;
+                g[(d + k) * n + (d + k + 1)] += 0.5 * deep;
+            }
+            g[(d + k) * n] += 0.5 * flip;
+            g[k * n + d] += 0.5 * flip;
+            g[k * n + k] = -0.5 * (deep + flip);
+            g[(d + k) * n + (d + k)] = -0.5 * (deep + flip);
+        }
+        Ok(g)
+    }
+
+    /// The stationary distribution over the `2 * depth` states under stimuli of random sign.
+    ///
+    /// Solved **exactly**, by flux balance across the cuts between levels — see
+    /// [`Cascade::stationary_by_flux_balance`] — in `O(d)`, with no cancellation and therefore no
+    /// loss of precision at any representable depth. Verified against the transition matrix before
+    /// it is returned.
+    ///
+    /// # ⛔ Why it is not power iteration any more
+    ///
+    /// It was, from the uniform distribution with a fixed absolute residual threshold of `1e-15`
+    /// and a million-iteration cap, and that was wrong in two different ways at once. The chain's
+    /// slowest mode is the deepest level's flip rate, `q0·x^(d−1)` — `2^−(d−1)` for
+    /// [`Cascade::fusi_2005`] — so iterations-to-converge grows like `2^d`:
+    ///
+    /// | depth | what the iteration returned |
+    /// |---|---|
+    /// | 1..=15 | correct, `2/(d+1)` |
+    /// | 16..=45 | `Err(NoStationary)` after 0.7–6.2 s of CPU, for a chain with an exactly computable answer |
+    /// | ≥ 46 | **`Ok` with the wrong distribution, silently**: `2/d` instead of `2/(d+1)` |
+    ///
+    /// Past `d ≈ 46` the slowest mode's rate `2^−(d−1)` is itself below `1e-15`, so successive
+    /// iterates differed by less than the threshold while the distribution was still far from
+    /// stationary. The guard was quiet exactly where the answer was wrong and loud where it was
+    /// nearly right. `Cascade::fusi_2005(46).lifetime(0.01, 1000)` returned `Some(7)` against
+    /// `Some(40)` at depth 15 — nonsense, from the model whose entire claim is that depth buys
+    /// retention. There is no single threshold that fixes this; `1e-9` breaks the shallow depths
+    /// instead. The direct solve has no threshold.
+    ///
+    /// The exact answer at depth 46 is `2/47 = 0.042553191489362…`, confirmed by solving the same
+    /// system in exact rational arithmetic outside this crate.
+    ///
+    /// # The reducible case
+    ///
+    /// For `x == 0` every level past the first is absorbing, the chain is **reducible**, and the
+    /// stationary distribution is not unique: the linear system is singular (an absorbing state
+    /// contributes a structurally zero column to `Pᵀ − I`). That case falls back to the limit of
+    /// the iteration from the uniform start — a well-defined number, and not the only stationary
+    /// distribution — which converges quickly there because nothing slow is left in the chain.
+    ///
+    /// # Errors
+    ///
+    /// As [`Cascade::validate`], plus [`ContinualError::NoStationary`] only on the reducible
+    /// fallback path, if its residual has not fallen below `1e-15` within a million iterations.
     pub fn stationary(&self) -> Result<Vec<f64>, ContinualError> {
         let m = self.transition_matrix()?;
         let n = 2 * self.depth;
+        if let Some(pi) = self.stationary_by_flux_balance() {
+            // Verified against the matrix the dynamics actually use before it is trusted.
+            if stationarity_residual(&m, n, &pi) <= 1e-9 {
+                return Ok(pi);
+            }
+        }
+        Self::stationary_by_iteration(&m, n)
+    }
+
+    /// The stationary distribution by flux balance across each cut between levels — exact, `O(d)`,
+    /// and free of cancellation.
+    ///
+    /// Stimuli are equiprobable in sign, so the chain is symmetric under polarity and reduces to a
+    /// quotient on the `d` levels: from level `k` a synapse deepens to `k + 1` with probability
+    /// `deepen_k / 2` or flips to level `0` with probability `flip_k / 2`. Only the deepening step
+    /// crosses the cut between `k` and `k + 1` upward, and every flip from a level above `k`
+    /// crosses it downward on its way to `0`, so at equilibrium
+    ///
+    /// ```text
+    /// π_k · deepen_k  =  Σ_{j > k} π_j · flip_j
+    /// ```
+    ///
+    /// Set `π_{d−1} = 1` and walk down: each `π_k` is a sum of positive terms divided by a positive
+    /// rate. Nothing is subtracted, so nothing cancels, and the result is exact to roundoff at any
+    /// depth where the rates are representable — which is what Gaussian elimination on the same
+    /// system could not deliver past depth ~48, where the symmetric subspace's own slow mode
+    /// `2^−(d−2)` reaches machine epsilon and the deep-level balance equations become numerically
+    /// empty (learning probability wrong by `3.9e-10` at depth 50 and `1.6e-5` at depth 52).
+    ///
+    /// `None` when some `deepen_k` for `k < d − 1` is zero — `p0 == 0` or `x == 0` — because the
+    /// division is then `0/0`: the chain is reducible and has no unique stationary distribution.
+    fn stationary_by_flux_balance(&self) -> Option<Vec<f64>> {
+        let d = self.depth;
+        if d == 0 {
+            return None;
+        }
+        let flip = |k: usize| self.q0 * self.x.powi(k as i32);
+        let deep = |k: usize| self.p0 * self.x.powi(k as i32);
+        for k in 0..d.saturating_sub(1) {
+            if !(deep(k) > 0.0) {
+                return None;
+            }
+        }
+        let mut level = vec![0.0f64; d];
+        level[d - 1] = 1.0;
+        let mut above = level[d - 1] * flip(d - 1);
+        for k in (0..d.saturating_sub(1)).rev() {
+            level[k] = above / deep(k);
+            above += level[k] * flip(k);
+        }
+        let total: f64 = 2.0 * level.iter().sum::<f64>();
+        if !(total.is_finite() && total > 0.0) {
+            return None;
+        }
+        let mut pi = vec![0.0f64; 2 * d];
+        for k in 0..d {
+            pi[k] = level[k] / total;
+            pi[d + k] = level[k] / total;
+        }
+        Some(pi)
+    }
+
+    /// The former implementation, kept for the reducible chain and nothing else. See
+    /// [`Cascade::stationary`] for why it is not the primary path.
+    fn stationary_by_iteration(m: &[f64], n: usize) -> Result<Vec<f64>, ContinualError> {
         let mut v = vec![1.0 / n as f64; n];
         let mut next = vec![0.0; n];
         let mut residual = f64::INFINITY;
@@ -2640,15 +2974,88 @@ mod tests {
     /// sequence immediately.
     #[test]
     fn the_stationary_learning_probability_is_two_over_depth_plus_one() {
-        for depth in 1..=10 {
+        // ⛔ 1..=10 ONCE. The power iteration this replaced was correct to depth 15, returned
+        // `Err` from 16 to 45 (after seconds of CPU), and returned the WRONG answer silently from
+        // 46 — `2/d` instead of `2/(d+1)` — and a sweep that stopped at 10 could not see any of
+        // it. This runs to 54 — every depth `transition_matrix` can represent for these
+        // parameters — and at depth 46 the exact value `2/47` was independently confirmed in
+        // rational arithmetic. Depth 55 is where the deepest rate rounds away in `1 − rate` and
+        // `transition_matrix` refuses; that boundary has its own test below.
+        // 1e-14, not the 1e-11 this carried under the power iteration: the flux-balance solve
+        // measures at 4e-17 or better across the whole range, and a tolerance three orders
+        // looser than the solver's own error is one a regression can hide inside.
+        for depth in 1..=54 {
             let got = Cascade::fusi_2005(depth).learning_probability().unwrap();
             let want = 2.0 / (depth as f64 + 1.0);
-            assert!((got - want).abs() < 1e-11, "depth {depth}: {got} vs {want}");
+            assert!((got - want).abs() < 1e-14, "depth {depth}: {got} vs {want}");
             // And it is the signal at t = 0, which is what makes the two columns of the trade
             // commensurable.
             let s0 = Cascade::fusi_2005(depth).signal_after(0).unwrap();
-            assert!((s0 - got).abs() < 1e-12, "depth {depth}: signal(0) {s0} vs lp {got}");
+            assert!((s0 - got).abs() < 1e-14, "depth {depth}: signal(0) {s0} vs lp {got}");
         }
+    }
+
+    /// The flux-balance recursion against an INDEPENDENT algorithm. Gaussian elimination on the
+    /// exact generator is a different computation with different roundoff, kept under `cfg(test)`
+    /// for exactly this purpose; agreement to 1e-12 is the check that neither is verifying itself.
+    ///
+    /// The fusi depths stop at 15 because the ORACLE is what degrades: its worst-entry error was
+    /// measured at 1.3e-11 at depth 23 (the symmetric subspace's slow mode reaching machine
+    /// epsilon), while the recursion sits at 2.8e-17 there against the closed form. Past 15 the
+    /// recursion is pinned by `2/(d+1)` instead, at 1e-14. The two non-fusi chains are the point
+    /// of this test: they have no closed form, so a second algorithm is the only independent check
+    /// they get.
+    #[test]
+    fn the_flux_balance_solution_matches_gaussian_elimination() {
+        for depth in [1usize, 2, 3, 7, 10, 15] {
+            let c = Cascade::fusi_2005(depth);
+            let n = 2 * depth;
+            let m = c.transition_matrix().unwrap();
+            let g = c.generator_matrix().unwrap();
+            let recursion = c.stationary().unwrap();
+            let elimination = super::stationary_direct(&g, &m, n).expect("irreducible");
+            let worst = recursion.iter().zip(&elimination).map(|(a, b)| (a - b).abs()).fold(0.0, f64::max);
+            assert!(worst < 1e-12, "depth {depth}: the two solves differ by {worst:.2e}");
+        }
+        // Non-fusi parameterisations, so the agreement is not a property of q0 = p0 = 1 and
+        // x = 1/2 — these have no closed form, and this is their only independent check.
+        for c in [
+            Cascade { depth: 12, q0: 0.3, p0: 0.8, x: 0.6 },
+            Cascade { depth: 9, q0: 0.9, p0: 0.2, x: 0.85 },
+        ] {
+            let n = 2 * c.depth;
+            let m = c.transition_matrix().unwrap();
+            let g = c.generator_matrix().unwrap();
+            let a = c.stationary().unwrap();
+            let b = super::stationary_direct(&g, &m, n).unwrap();
+            let worst = a.iter().zip(&b).map(|(x, y)| (x - y).abs()).fold(0.0, f64::max);
+            assert!(worst < 1e-12, "{c:?}: the two solves differ by {worst:.2e}");
+        }
+    }
+
+    /// The representable limit is a REFUSAL, not a wrong number. For the fusi parameters the
+    /// deepest flip rate is `2^−(d−1)`; at depth 55 that is `2^−54`, exactly half the spacing of
+    /// doubles just below 1.0, and `1 − 2^−54` rounds to 1.0 under ties-to-even. Before this guard,
+    /// depth 60 returned a learning probability wrong by 5.5e-4 (1.7%) while reporting an exactly
+    /// stationary distribution, because it was: of the chain the matrix could actually hold.
+    #[test]
+    fn a_depth_the_matrix_cannot_represent_is_refused_by_name() {
+        assert!(Cascade::fusi_2005(54).transition_matrix().is_ok(), "54 is representable");
+        let err = Cascade::fusi_2005(55).transition_matrix().unwrap_err();
+        match err {
+            ContinualError::OutOfRange { what, value, .. } => {
+                assert!(what.contains("depth"), "{what}");
+                assert!(what.contains("rounded"), "{what}");
+                assert_eq!(value, 55.0);
+            }
+            other => panic!("wrong refusal: {other:?}"),
+        }
+        // And everything that routes through the matrix refuses the same way rather than
+        // computing on the wrong chain.
+        assert!(Cascade::fusi_2005(60).stationary().is_err());
+        assert!(Cascade::fusi_2005(60).learning_probability().is_err());
+        // A legitimately zero rate — a reducible chain — is not this error and still passes.
+        assert!(Cascade { x: 0.0, ..Cascade::fusi_2005(5) }.transition_matrix().is_ok());
     }
 
     /// THE CLOSED FORM FOR THE IMPORTANCE ESTIMATOR. A zero-initialised two-class readout gives
@@ -2878,8 +3285,22 @@ mod tests {
         assert_eq!(Cascade::fusi_2005(3).deepen_probability(2), Some(0.0));
         assert_eq!(Cascade::fusi_2005(3).deepen_probability(3), None);
         // A memory that has not decayed inside the observation window has a lifetime nobody
-        // measured, and `None` says so.
-        assert_eq!(Cascade { depth: 4, q0: 1e-9, p0: 1.0, x: 0.5 }.lifetime(1e-12, 5).unwrap(), None);
+        // measured, and `None` says so. With deepening certain and flipping at 1e-9, nearly all
+        // mass sits at the deepest level; the potentiating stimulus flips its `1.25e-10` share to
+        // level 0, and deepening preserves polarity, so the signal starts at ~1.25e-10 and stays
+        // there — far above a 1e-12 floor after five stimuli.
+        //
+        // ⛔ THIS ASSERTION WAS RIGHT ALL ALONG, AND WAS BRIEFLY CHANGED TO `Some(0)` ON THE BASIS
+        // OF A WRONG NUMBER. An intermediate stationary solver (Gaussian elimination, refined but
+        // not yet symmetrised) carried an antisymmetric error of ~1e-11, which swamped a level-0
+        // mass of order 1e-10 and produced a signal below the floor. The exact flux-balance
+        // solution restores the original answer, and the magnitude is now pinned so that the
+        // difference between 1e-10 and 1e-18 can never again read as a passing test.
+        let slow = Cascade { depth: 4, q0: 1e-9, p0: 1.0, x: 0.5 };
+        let s0 = slow.signal_after(0).unwrap();
+        assert!(s0 > 1e-12 && s0 < 1e-9, "signal(0) = {s0}; expected order 1e-10");
+        assert_eq!(slow.lifetime(1e-12, 5).unwrap(), None);
+        assert_eq!(Cascade { depth: 4, q0: 0.5, p0: 0.5, x: 0.5 }.lifetime(1e-12, 5).unwrap(), None);
         assert!(matches!(
             CascadeEnsemble::new(Cascade::fusi_2005(2), 0, 1),
             Err(ContinualError::Empty { .. })

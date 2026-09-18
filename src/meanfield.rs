@@ -2191,6 +2191,60 @@ mod tests {
     use core::f64::consts::PI;
 
     /// Brunel's own single-neuron parameters, in SI, with rest at 0 V so that his millivolt figures
+    /// ⛔ `from_current`'s UNIT CONVERSION, pinned against literals rather than against itself.
+    ///
+    /// The conversion `mu = v_rest + r_m·i_mean`, `sigma = r_m·i_noise/sqrt(tau_m)` was reachable
+    /// from exactly two tests, one at `i_noise = 0.0` and one that only checked a refusal — so the
+    /// `sqrt(tau_m)` divisor was never evaluated at a value any assertion could see. Three mutations
+    /// survived all 54 tests in this module:
+    ///
+    /// | mutation | effect on the module doc's own operating point |
+    /// |---|---|
+    /// | `/ sqrt(tau_m)` becomes `* sqrt(tau_m)` | 9.4608 Hz becomes 2.59e-1083 Hz |
+    /// | the divisor deleted | 9.4608 Hz becomes 3.81e-20 Hz |
+    /// | `v_rest +` dropped from `mu` | silent, because the only fixture has `v_rest = 0` |
+    ///
+    /// Every one of those is a catastrophically wrong firing rate returned without an error. This
+    /// test uses a **non-zero** noise current and a **non-zero** resting potential, and writes both
+    /// expected values out as arithmetic on the parameters rather than calling the conversion again.
+    #[test]
+    fn from_current_converts_amperes_the_way_its_doc_says() {
+        // v_rest deliberately non-zero: the crate's own `Lif::default()` rests at -65 mV, and a
+        // fixture at 0 V cannot see a dropped resting term at all.
+        let lif = Lif { v_rest: -60e-3, ..brunel_lif() };
+        let i_mean = 8.0e-9;
+        let i_noise = 1.5e-9;
+
+        // Written from the doc, as literals in the units the doc states.
+        let want_mu: f64 = -60e-3 + 10e6 * 8.0e-9; // -60 mV + 80 mV = +20 mV
+        let want_sigma = 10e6 * 1.5e-9 / (20e-3f64).sqrt(); // 15 mV / sqrt(0.02)
+        assert!((want_mu - 20e-3).abs() < 1e-15, "mu literal: {want_mu}");
+
+        let got = SiegertInput::from_current(&lif, i_mean, i_noise).expect("finite, i_noise >= 0");
+        assert!((got.mu - want_mu).abs() < 1e-15, "mu {} vs {want_mu}", got.mu);
+        assert!(
+            (got.sigma - want_sigma).abs() < 1e-15,
+            "sigma {} vs r_m·i_noise/sqrt(tau_m) = {want_sigma}",
+            got.sigma
+        );
+
+        // And the divisor is not 1: if `sqrt(tau_m)` were dropped, sigma would be 15 mV exactly,
+        // and if it were multiplied it would be ~2.1 mV. Asserting the RATIO pins the direction as
+        // well as the magnitude, which a tolerance on sigma alone does not.
+        let ratio = got.sigma / (10e6 * 1.5e-9);
+        let want_ratio = 1.0 / (20e-3f64).sqrt(); // 7.0710678...
+        assert!(
+            (ratio - want_ratio).abs() < 1e-12,
+            "sigma/(r_m·i_noise) = {ratio}, expected 1/sqrt(tau_m) = {want_ratio}"
+        );
+        assert!(ratio > 7.0 && ratio < 7.1, "the divisor is the wrong way round: {ratio}");
+
+        // The rate that follows must be finite and ordinary — each surviving mutation drove it to
+        // 1e-1083 or 1e-20, so a plain magnitude check separates all three from the truth.
+        let rate = got.rate().expect("a supra-threshold mean with real noise fires");
+        assert!(rate > 1.0 && rate < 1000.0, "rate {rate} Hz is not a physical firing rate");
+    }
+
     /// read directly: 20 ms membrane, 20 mV threshold, 10 mV reset, 2 ms refractory.
     fn brunel_lif() -> Lif {
         Lif {
