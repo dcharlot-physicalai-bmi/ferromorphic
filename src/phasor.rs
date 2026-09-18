@@ -318,7 +318,9 @@ pub struct Retrieval {
     /// The largest phase movement on the last iteration, radians: how far from a fixed point the
     /// state still is when `converged` is false.
     pub last_move: f64,
-    /// Elements silenced by the threshold on the last iteration.
+    /// Elements silenced by the threshold on the last iteration. A silenced element is reported
+    /// with phase zero, because [`Phasor`] carries phases only; a caller reading a similarity off
+    /// a state with silenced elements should discount up to `2 · silent / D` for them.
     pub silent: usize,
 }
 
@@ -587,7 +589,10 @@ mod tests {
         assert!(r.state.similarity(&patterns[0]).unwrap() > 0.95);
         let r = strict.retrieve(&cue, 50).unwrap();
         assert!(r.silent <= d / 100, "a cue with 80% of its phases right has a field near 0.8 D; {} elements fell under", r.silent);
-        assert!(r.state.similarity(&patterns[3]).unwrap() > 0.95);
+        // A silenced element has no phase; this type carries none, so it reads as phase zero and
+        // costs the similarity up to 2/D each. The bound is the arithmetic of that, not a knob.
+        let sim = r.state.similarity(&patterns[3]).unwrap();
+        assert!(sim > 0.95 - 2.0 * r.silent as f64 / d as f64, "similarity {sim} with {} silenced", r.silent);
         assert!(matches!(Tpam::new(d, 1.0), Err(PhasorError::OutOfRange { what: "threshold", .. })));
         assert!(matches!(Tpam::new(d, 0.5).unwrap().field(&noise), Err(PhasorError::Empty { what: "patterns" })));
     }
