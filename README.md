@@ -9,7 +9,7 @@ hardware constraint models, analog device non-idealities, NIR, event-camera deco
 metrics, teaching tasks — and a joules ledger that charges for the memory traffic a synaptic
 operation needs.
 
-**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 50 modules, 1,622 tests.**
+**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 52 modules, 1,636 tests.**
 
 Run it in a browser without installing anything:
 **[energy.physicalai-bmi.org/neuromorphic](https://energy.physicalai-bmi.org/neuromorphic)** — the
@@ -60,7 +60,7 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 | `device` | analog non-idealities: what a weight becomes when it is a physical conductance |
 | `compress` | pruning, quantisation, distillation and the rate-budget trade, to fit the part you can buy |
 | `mapping` | placing a network on cores: partitioning, multicast trees, fabric hops, and where the energy goes |
-| `nef` | the Neural Engineering Framework: tuning curves, least-squares decoders, factorised weights, and dynamics through a synapse — Nengo's three principles, each against its closed form |
+| `nef` | the Neural Engineering Framework: tuning curves, least-squares decoders, factorised weights, PES decoder learning with its exact contraction factor, and dynamics through a synapse — Nengo's three principles, each against its closed form |
 | `vsa` | vector symbolic architectures / hyperdimensional computing: bipolar, binary and holographic models, codebooks, sequences, and a resonator network, with the bundle capacity as a binomial |
 | `sparse` | sparse coding by local competition: the LCA and its spiking form, checked against the LASSO's own optimality conditions |
 | `resonate` | resonate-and-fire neurons stepped by the exact complex exponential, and the Legendre Memory Unit as a delay line in `d` numbers |
@@ -74,6 +74,8 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 | `predictive` | predictive coding: inference as the relaxation of error units onto the Bayesian posterior, local learning as the gradient of the free energy, and the limit — a weakly clamped output, not a small error — in which it becomes backpropagation |
 | `graph` | graph algorithms done by spikes: a shortest path as the arrival time of a wavefront, exact against Bellman–Ford with the spikes counted, and boundary-value problems by random walkers against gambler's ruin |
 | `attractor` | the ring attractor: a bump of activity that holds a heading after the cue is gone, with its width and height in closed form |
+| `equilibrium` | equilibrium propagation: the gradient of a loss from the difference between two relaxations of one energy-based network, checked against the gradient obtained without it — first order in the nudge, second order when nudged both ways |
+| `localise` | sound localisation by coincidence: the Jeffress delay-line array against the path-difference geometry, the half-spacing quantisation bound, the aliasing frequency and the coincidence probability under spike jitter |
 | `sim`, `net`, `spike`, `rng` | the event-driven simulator, sparse connectivity, spike trains, seeded PCG32 |
 
 ## Use it
@@ -239,7 +241,7 @@ Every neuron model here has a test that runs it against an analytic solution.
 - **A sub-threshold current returns `None`, not a large number.** "Fires rarely" and "does not fire"
   are different statements and a rate-coded readout cannot recover the difference later.
 
-1,622 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
+1,636 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
 `#![forbid(unsafe_code)]`, and `cargo build --target wasm32-unknown-unknown` compiles the library
 unchanged. Three of the `examples/` are verification gates that exit non-zero when a closed form
 disagrees with the simulator.
@@ -285,11 +287,13 @@ be reproduced cannot be checked against anything, including itself.
 
 ## Status
 
-**0.8.0.** Fifty modules, every one audited by mutation: thirty-six by an adversarial auditor in
-0.5.0 and 0.6.0, the ten of the third wave by hand in this release (156 mutations, 36 survivors,
-every one now caught — see below), and the four new in this release (`oscillator`, `predictive`,
-`graph`, `attractor`) mutated as they were written, 83 mutations and 2 survivors closed before they
-shipped. The crate family is not built yet. Planned
+**0.9.0.** Fifty-two modules, every one audited by mutation: thirty-six by an adversarial auditor
+in 0.5.0 and 0.6.0, the ten of the third wave by hand in 0.8.0 (156 mutations, 36 survivors, every
+one now caught — see below), and everything since mutated as it was written — `oscillator`,
+`predictive`, `graph`, `attractor` in 0.8.0 and `equilibrium`, `localise` and `nef`'s PES rule in
+this release: 131 mutations, 2 survivors closed before they shipped and 1 that is equivalent by a
+stated argument (where the nudged relaxation starts, when the fixed point is unique — which a test
+asserts). The crate family is not built yet. Planned
 siblings, each following the same rule that a dependency lives outside the core:
 
 | crate | what it would add | why separate |
@@ -402,6 +406,16 @@ output, and the module now says which. `attractor`'s first bump reported every n
 Euler decay stalls on a denormal (`4 × 5e-324 × 0.9` rounds back to itself), so a silent neuron is
 never silent until sub-normal rates are flushed. `graph`'s path reconstruction walked a corrupted
 parent record for ever and was killed for the memory; it now refuses.
+
+0.9.0 added `equilibrium`, `localise` and PES learning in `nef` the same way, and three more first
+drafts did not survive their own tests. Equilibrium propagation's symmetric estimator is second
+order in the nudge — but read between `β = 0.3` and `0.03` the ratio is 111, not 100, because the
+`β⁴` term is 9% of the `β²` one out there; the test now measures the law where it holds and asserts
+the far reading separately. The Jeffress array flagged an ambiguous reading only on an exact tie
+between peaks, which cannot happen: on `N` cycles an alias peak is exactly one coincidence short of
+the true one, so it now counts peaks at half maximum. And PES "within 3× of least squares after
+400 sweeps" was a number with nothing behind it — measured, 3.6× — replaced by what is exact (it
+never beats the least-squares floor) and what is measured and falsifiable (it keeps closing, slowly).
 
 ## Not here, and said so
 

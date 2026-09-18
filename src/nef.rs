@@ -59,6 +59,10 @@
 //!   decoded value from spike counts matches the rate-mode decode.
 //! - Decoding error falls with `N`, monotonically, across an eightfold sweep.
 //! - The integrator holds a value and the oscillator holds its frequency, against the ideal system.
+//! - **PES** ([`Pes`]): on a fixed input every update multiplies the decoding error by exactly
+//!   `1 − κ|a|²/n`; the rule is stable iff `κ < 2n/|a|²`, at which the error neither shrinks nor
+//!   grows but alternates; and what it learns over a sample set can approach, and never beat, the
+//!   least-squares decoders' error on that set.
 //!
 //! # What this module has NOT reproduced
 //!
@@ -67,8 +71,8 @@
 //! - Nengo's exact random-number stream: encoders, intercepts and maximum rates are drawn from
 //!   this crate's generator, so a population built here with the same seed as a Nengo model is
 //!   *statistically* the same population and not the same neurons.
-//! - Learning rules on the decoders (PES). Those belong beside [`crate::plasticity`] when they
-//!   come.
+//! - PES on SPIKING activities with a filtered error, as Nengo runs it; [`Pes`] here takes rates.
+//!   The voja and BCM rules of the same family are not here.
 
 use core::fmt;
 
@@ -861,6 +865,97 @@ impl RateLoop {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Learning the decoders
+// ---------------------------------------------------------------------------------------------
+
+/// The Prescribed Error Sensitivity rule (`MacNeil` and Eliasmith, *Fine-tuning and the stability of
+/// recurrent neural networks*, `PLoS` ONE 6(9):e22885, 2011; Bekolay, Kolbeck and Eliasmith, *Simultaneous
+/// unsupervised and supervised learning of cognitive functions in biologically plausible spiking
+/// neural networks*, `CogSci` 2013): `Δd_i = −(κ/n) a_i E`, with `E = x̂ − target` the decoded error
+/// broadcast to the population. It is Widrow–Hoff least-mean-squares on the decoders — local to
+/// the neuron, given a broadcast error, which is the form a chip's learning engine can run.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Pes {
+    /// Learning rate `κ`. With rates in hertz the stable range is `κ < 2n/|a|²`, which is small:
+    /// fifty neurons at a hundred hertz put it at `2e-4`.
+    pub kappa: f64,
+}
+
+/// What one PES update saw and did.
+#[derive(Debug, Clone, PartialEq)]
+pub struct PesStep {
+    /// The decoded error `x̂ − target` BEFORE the update, one entry per output dimension.
+    pub error: Vec<f64>,
+    /// Decoder entries written: active neurons × output dimensions. A silent neuron's decoders do
+    /// not move, and are not touched.
+    pub touched: usize,
+}
+
+impl Pes {
+    /// Build.
+    ///
+    /// # Errors
+    ///
+    /// [`NefError::OutOfRange`] for a non-positive or non-finite `kappa`.
+    pub fn new(kappa: f64) -> Result<Self, NefError> {
+        in_range("kappa", kappa, f64::MIN_POSITIVE, f64::MAX)?;
+        Ok(Self { kappa })
+    }
+
+    /// The factor `1 − κ|a|²/n` the decoding error is multiplied by when the same activities are
+    /// presented again. Inside `(−1, 1)` the rule converges on that input.
+    #[must_use]
+    pub fn contraction(&self, rates: &[f64]) -> f64 {
+        let energy: f64 = rates.iter().map(|a| a * a).sum();
+        1.0 - self.kappa * energy / rates.len().max(1) as f64
+    }
+
+    /// The learning rate at which the rule stops converging on these activities, `2n/|a|²`.
+    /// `None` for a silent population, which no rate can destabilise — or teach.
+    #[must_use]
+    pub fn stability_limit(rates: &[f64]) -> Option<f64> {
+        let energy: f64 = rates.iter().map(|a| a * a).sum();
+        if energy > 0.0 && energy.is_finite() { Some(2.0 * rates.len() as f64 / energy) } else { None }
+    }
+
+    /// One update of `decoders` from the activities `rates` toward `target`.
+    ///
+    /// # Errors
+    ///
+    /// [`NefError::Dimension`] if `rates` does not match the decoders' population or `target`
+    /// their output dimension; [`NefError::NonFinite`] for a bad rate or target.
+    pub fn update(&self, decoders: &mut Decoders, rates: &[f64], target: &[f64]) -> Result<PesStep, NefError> {
+        len("rates", rates.len(), decoders.n)?;
+        len("target", target.len(), decoders.out_dim)?;
+        finite("rates", rates)?;
+        finite("target", target)?;
+        let out = decoders.out_dim;
+        let mut error = vec![0.0f64; out];
+        for (i, &a) in rates.iter().enumerate() {
+            if a != 0.0 {
+                for (j, e) in error.iter_mut().enumerate() {
+                    *e += a * decoders.d[i * out + j];
+                }
+            }
+        }
+        for (e, t) in error.iter_mut().zip(target) {
+            *e -= t;
+        }
+        let scale = self.kappa / decoders.n as f64;
+        let mut touched = 0;
+        for (i, &a) in rates.iter().enumerate() {
+            if a != 0.0 {
+                for (j, e) in error.iter().enumerate() {
+                    decoders.d[i * out + j] -= scale * a * e;
+                }
+                touched += out;
+            }
+        }
+        Ok(PesStep { error, touched })
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
 // Spiking
 // ---------------------------------------------------------------------------------------------
 
@@ -948,7 +1043,7 @@ impl SpikingEnsemble {
 #[cfg(test)]
 mod tests {
     use super::{
-        Decoders, Ensemble, EnsembleSpec, LifRate, Lowpass, NefError, RateLoop, SpikingEnsemble,
+        Decoders, Ensemble, EnsembleSpec, LifRate, Lowpass, NefError, Pes, RateLoop, SpikingEnsemble,
         connection_traffic, dynamics_transform, factorisation_break_even, full_weights,
     };
     use crate::neuron::Lif;
@@ -1244,9 +1339,102 @@ mod tests {
         assert!(matches!(SpikingEnsemble::new(ens, other), Err(NefError::OutOfRange { .. })));
     }
 
+    /// PES on a fixed input is a geometric sequence with a ratio you can compute beforehand, and
+    /// its stability limit is the learning rate at which that ratio is −1.
+    #[test]
+    fn pes_contracts_the_error_by_exactly_its_closed_form() {
+        let ens = Ensemble::new(&EnsembleSpec::default_for(40, 2, 31)).unwrap();
+        let rates = ens.rates(&[0.3, -0.5]).unwrap();
+        let active = rates.iter().filter(|a| **a != 0.0).count();
+        assert!(active > 5 && active < 40, "{active} of 40 active: the silent-neuron path needs both kinds");
+        let limit = Pes::stability_limit(&rates).unwrap();
+        assert!((limit - 80.0 / rates.iter().map(|a| a * a).sum::<f64>()).abs() < 1e-18);
+        let pes = Pes::new(0.25 * limit).unwrap();
+        assert!((pes.contraction(&rates) - 0.5).abs() < 1e-12, "a quarter of the limit halves the error");
+        let mut dec = Decoders { d: vec![0.0; 80], n: 40, out_dim: 2 };
+        let target = [0.7, -0.2];
+        for k in 0..20 {
+            let step = pes.update(&mut dec, &rates, &target).unwrap();
+            // From zero decoders the first error is −target, and each update halves it.
+            for j in 0..2 {
+                let want = -target[j] * 0.5f64.powi(k);
+                assert!((step.error[j] - want).abs() < 1e-12 * target[j].abs(), "update {k}, output {j}: {} vs {want}", step.error[j]);
+            }
+            assert_eq!(step.touched, 2 * active);
+        }
+        // A silent neuron's decoders were never written.
+        for (i, &a) in rates.iter().enumerate() {
+            if a == 0.0 {
+                assert_eq!(dec.d[2 * i..2 * i + 2], [0.0, 0.0]);
+            }
+        }
+        // AT the limit the error alternates at constant size; past it, it grows.
+        let edge = Pes::new(limit).unwrap();
+        assert!((edge.contraction(&rates) + 1.0).abs() < 1e-12);
+        let mut dec = Decoders { d: vec![0.0; 80], n: 40, out_dim: 2 };
+        let errors: Vec<f64> = (0..6).map(|_| edge.update(&mut dec, &rates, &target).unwrap().error[0]).collect();
+        for pair in errors.windows(2) {
+            assert!((pair[0] + pair[1]).abs() < 1e-9, "{errors:?}");
+        }
+        let over = Pes::new(1.5 * limit).unwrap();
+        let mut dec = Decoders { d: vec![0.0; 80], n: 40, out_dim: 2 };
+        let first = over.update(&mut dec, &rates, &target).unwrap().error[0].abs();
+        let mut last = first;
+        for _ in 0..5 {
+            last = over.update(&mut dec, &rates, &target).unwrap().error[0].abs();
+        }
+        assert!((last / first - 2.0f64.powi(5)).abs() < 1e-6, "past the limit the error doubles each update: {first} → {last}");
+        assert_eq!(Pes::stability_limit(&[0.0, 0.0]), None);
+        assert_eq!(Pes::stability_limit(&[]), None);
+    }
+
+    /// Over a sample set PES approaches the least-squares decoders' error from above: least
+    /// squares is the optimum on that set, so PES can match it and cannot beat it.
+    #[test]
+    fn pes_learns_toward_the_least_squares_optimum_and_not_past_it() {
+        let ens = Ensemble::new(&EnsembleSpec::default_for(60, 1, 77)).unwrap();
+        let mut rng = Rng::new(3);
+        let samples = ens.sample_points(200, &mut rng);
+        let targets: Vec<Vec<f64>> = samples.iter().map(|x| vec![x[0] * x[0]]).collect();
+        let optimum = ens.decoders(&samples, &targets, 0.0).unwrap();
+        let floor = ens.rmse(&optimum, &samples, &targets).unwrap();
+        let all_rates: Vec<Vec<f64>> = samples.iter().map(|x| ens.rates(x).unwrap()).collect();
+        let tightest = all_rates.iter().filter_map(|a| Pes::stability_limit(a)).fold(f64::INFINITY, f64::min);
+        let pes = Pes::new(0.5 * tightest).unwrap();
+        let mut learned = Decoders { d: vec![0.0; 60], n: 60, out_dim: 1 };
+        let untrained = ens.rmse(&learned, &samples, &targets).unwrap();
+        let mut at = Vec::new();
+        for sweep in 1..=400 {
+            for (a, t) in all_rates.iter().zip(&targets) {
+                pes.update(&mut learned, a, t).unwrap();
+            }
+            if sweep == 100 || sweep == 400 {
+                at.push(ens.rmse(&learned, &samples, &targets).unwrap());
+            }
+        }
+        let (early, late) = (at[0], at[1]);
+        assert!(late >= floor * (1.0 - 1e-9), "PES beat the least-squares optimum: {late} < {floor}");
+        assert!(early < 0.05 * untrained, "a hundred sweeps took the error from {untrained} only to {early}");
+        // It keeps closing on the optimum and does so SLOWLY — least-mean-squares converges along
+        // each direction of the activity covariance at that direction's own rate, and the weak
+        // ones take long. Measured here: 3.6× the optimum after 400 sweeps. The first draft of this
+        // test asserted "within 3×", a number with nothing behind it, and failed on it.
+        assert!(late < early, "sweeps 100 → 400 did not improve: {early} → {late}");
+        assert!(late > 1.5 * floor, "PES is already at the optimum ({late} vs {floor}): the slow-direction remark above is stale");
+    }
+
     /// Every refusal names the problem.
     #[test]
     fn the_refusals_name_the_problem() {
+        assert!(matches!(Pes::new(0.0), Err(NefError::OutOfRange { what: "kappa", .. })));
+        assert!(matches!(Pes::new(f64::NAN), Err(NefError::OutOfRange { what: "kappa", .. })));
+        let pes = Pes::new(1e-6).unwrap();
+        let mut two = Decoders { d: vec![0.0; 4], n: 2, out_dim: 2 };
+        assert!(matches!(pes.update(&mut two, &[1.0], &[0.0, 0.0]), Err(NefError::Dimension { what: "rates", .. })));
+        assert!(matches!(pes.update(&mut two, &[1.0, 1.0], &[0.0]), Err(NefError::Dimension { what: "target", .. })));
+        assert!(matches!(pes.update(&mut two, &[1.0, f64::NAN], &[0.0, 0.0]), Err(NefError::NonFinite { what: "rates", .. })));
+        assert!(matches!(pes.update(&mut two, &[1.0, 1.0], &[0.0, f64::INFINITY]), Err(NefError::NonFinite { what: "target", .. })));
+        assert_eq!(two.d, vec![0.0; 4], "a refused update wrote nothing");
         let spec = EnsembleSpec::default_for(0, 1, 1);
         assert!(matches!(Ensemble::new(&spec), Err(NefError::Empty { what: "neurons" })));
         let spec = EnsembleSpec::default_for(10, 0, 1);
