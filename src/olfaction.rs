@@ -2582,4 +2582,52 @@ mod tests {
         assert_eq!(a.mean_self, b.mean_self);
         assert_eq!(a.mean_best_other, b.mean_best_other);
     }
+
+    /// ⛔ `granule_ceiling()` at its CALL SITE. The accessor is pinned exactly (12), but `+ 1.0` at
+    /// the one place it is used rescaled every delivered inhibition by 12/13 with 24 tests green.
+    /// A broad pool driven flat out — thresholds at zero, a gain that saturates every cell at its
+    /// refractory ceiling — has `a_broad = 1` exactly, so the inhibition every mitral cell
+    /// integrates is `i_broad` to the last bit. Under the rescaling it is `12/13 · i_broad`.
+    #[test]
+    fn a_saturated_broad_pool_delivers_exactly_i_broad() {
+        let p = EplParams {
+            broad_theta_lo: 0.0,
+            broad_theta_hi: 0.0,
+            granule_gain: 1e-6,
+            i_specific: 0.0,
+            ..small()
+        };
+        assert!(p.i_broad > 0.0);
+        let mut epl = Epl::new(p.clone()).unwrap();
+        let odour = OdourGenerator::new(9, p.mitral, 0.35).unwrap().next_odour().unwrap();
+        let cycles = 3;
+        let shown = epl.present(&odour, cycles).unwrap();
+        // `a_broad` recomputed from the train: the broad pool's spikes in the cycle BEFORE the
+        // final one (that is what the final cycle integrates), over `n_broad · granule_ceiling()`
+        // with the accessor's value typed in here. A saturated cell fires every `t_ref + dt`
+        // rather than every `t_ref` — the tick after the refractory period ends is spent
+        // reaching threshold — so `a_broad` is 9/12 here, not 1, and the point is the DENOMINATOR:
+        // under `granule_ceiling() + 1.0` at the call site the code divides by 13 while this test
+        // divides by 12.
+        let per_cycle = epl.ticks_per_cycle() as u64;
+        let (from, to) = (per_cycle * (cycles as u64 - 2), per_cycle * (cycles as u64 - 1));
+        let broad_lo = p.mitral as u32;
+        let broad_hi = (p.mitral + p.broad_granule) as u32;
+        let broad_spikes = shown
+            .train
+            .spikes()
+            .iter()
+            .filter(|s| s.t >= from && s.t < to && s.source >= broad_lo && s.source < broad_hi)
+            .count();
+        let a_broad = broad_spikes as f64 / (p.broad_granule as f64 * epl.granule_ceiling());
+        assert!(a_broad > 0.5, "the pool was not driven hard: a_broad {a_broad}");
+        assert!(a_broad <= 1.0, "more spikes than the ceiling allows: {a_broad}");
+        for (m, inh) in shown.inhibition.iter().enumerate() {
+            let want = p.i_broad * a_broad;
+            assert!(
+                (inh - want).abs() <= 1e-15 * want,
+                "cell {m}: integrated {inh:e} against i_broad * a_broad = {want:e}"
+            );
+        }
+    }
 }

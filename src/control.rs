@@ -334,6 +334,18 @@ impl SigmaDeltaEncoder {
 /// `2^64` as an `f64`: a non-negative `f64` strictly below it converts to `u64` exactly.
 const U64_EXACT: f64 = 18_446_744_073_709_551_616.0;
 
+/// The most steps [`Matsuoka::run`] and [`HalfCentre::run`] will record: `2^25`, which is 537 MB
+/// of `f64` samples across the two returned traces. Both take a caller-supplied `usize` and used
+/// to hand it straight to `Vec::with_capacity`, the one unguarded allocation in the module.
+pub const MAX_RUN_STEPS: usize = 1 << 25;
+
+fn check_run_length(steps: usize) -> Result<(), ControlError> {
+    if steps > MAX_RUN_STEPS {
+        return Err(ControlError::NotFinite { what: "steps (past MAX_RUN_STEPS)", value: steps as f64 });
+    }
+    Ok(())
+}
+
 /// A push-pull pair of encoders: one for the positive part of a signal, one for the negative.
 ///
 /// A spike carries no sign, so a signed quantity needs two channels. This is how the nervous
@@ -576,7 +588,9 @@ impl SpikingPid {
     ///
     /// [`ControlError::NotPositive`] for a non-positive `gain`, `tau_p`, `tau_fast`, `tau_slow` or
     /// `u_limit`; [`ControlError::NotFinite`] for a non-finite weight;
-    /// [`ControlError::NotOrdered`] unless `tau_fast < tau_slow`.
+    /// [`ControlError::NotOrdered`] unless `tau_fast < tau_slow` — except that a spec built by
+    /// [`SpikingPidSpec::from_gains`] with `tau_fast == tau_slow` and a non-zero `kd` has an
+    /// infinite `a_d`, and the `NotFinite` check runs first.
     pub fn new(spec: SpikingPidSpec) -> Result<Self, ControlError> {
         need_positive("gain", spec.gain)?;
         need_positive("tau_p", spec.tau_p)?;
@@ -823,8 +837,9 @@ impl FirstOrder {
         self.p_only_steady_state_error_checked(setpoint, kp).unwrap_or(f64::NAN)
     }
 
-    /// Seconds for the closed-loop step response to fall within `frac` of its final value, for the
-    /// **open-loop** plant: `tau · ln(1/frac)`.
+    /// Seconds for the plant's **open-loop** step response to fall within `frac` of its final
+    /// value: `tau · ln(1/frac)`. (This line used to say "closed-loop ... for the open-loop plant",
+    /// which contradicts itself; the formula is the open-loop plant's.)
     ///
     /// `None` unless `0 < frac < 1`.
     #[must_use]
@@ -892,7 +907,8 @@ impl Pendulum {
     ///
     /// # Errors
     ///
-    /// [`ControlError::NotPositive`] for a negative or non-finite value. Zero is accepted.
+    /// [`ControlError::NotFinite`] for a non-finite value, [`ControlError::NotPositive`] for a
+    /// negative one. Zero is accepted.
     pub fn with_damping(mut self, b: f64) -> Result<Self, ControlError> {
         need_finite("damping", b)?;
         if b < 0.0 {
@@ -1178,10 +1194,13 @@ impl Matsuoka {
 
     /// Run for `steps` steps of `dt`, returning both rectified outputs sampled every step.
     ///
+    /// Refuses `steps` above [`MAX_RUN_STEPS`] rather than attempting the allocation.
+    ///
     /// # Errors
     ///
     /// [`ControlError::NotPositive`] for a non-positive `dt`.
     pub fn run(&mut self, dt: f64, steps: usize) -> Result<[Vec<f64>; 2], ControlError> {
+        check_run_length(steps)?;
         let mut a = Vec::with_capacity(steps);
         let mut b = Vec::with_capacity(steps);
         for _ in 0..steps {
@@ -1407,6 +1426,7 @@ impl HalfCentre {
     ///
     /// [`ControlError::NotPositive`] for a non-positive `dt`.
     pub fn run(&mut self, dt: f64, steps: usize) -> Result<HalfCentreRun, ControlError> {
+        check_run_length(steps)?;
         let mut env = [Vec::with_capacity(steps), Vec::with_capacity(steps)];
         let mut spikes = [0u64; 2];
         for _ in 0..steps {
@@ -3245,5 +3265,52 @@ mod tests {
             (mean_x - mean_z).abs() < 0.005,
             "estimate {mean_x} against the mean of its own decoded measurements {mean_z}"
         );
+    }
+
+    /// The trace's deposit-after-decay convention, pinned. From a non-zero state a deposit lands
+    /// AFTER the decay: `x·e^{-dt/tau} + n/tau`, not `(x + n/tau)·e^{-dt/tau}`. The two differ by
+    /// one factor of the decay on the new spike, which is the `dt/(2·tau)` bias two test comments
+    /// name and neither pinned the sign of.
+    #[test]
+    fn a_deposit_lands_after_the_decay_not_before() {
+        let tau = 10e-3;
+        let dt = 1e-3;
+        let mut t = Trace::new(tau).unwrap();
+        assert_eq!(t.step(dt, 1).unwrap(), 1.0 / tau, "from empty the first deposit is exactly 1/tau");
+        let x0 = t.value();
+        let after = t.step(dt, 1).unwrap();
+        let want_after = x0 * (-dt / tau).exp() + 1.0 / tau;
+        let want_before = (x0 + 1.0 / tau) * (-dt / tau).exp();
+        assert!((after - want_after).abs() < 1e-15, "{after} vs {want_after}");
+        assert!((after - want_before).abs() > 1e-3, "the two conventions coincide here; the test is blind");
+    }
+
+    /// A run length past the bound is refused, not allocated.
+    #[test]
+    fn a_run_past_the_step_bound_is_refused() {
+        let mut m = Matsuoka::new(0.1, 0.2, 2.5, 2.5, 1.0).unwrap();
+        assert!(matches!(m.run(1e-3, super::MAX_RUN_STEPS + 1), Err(ControlError::NotFinite { .. })));
+        assert!(m.run(1e-3, 10).is_ok());
+        let mut hc = HalfCentre::locomotor().unwrap();
+        assert!(matches!(hc.run(1e-4, super::MAX_RUN_STEPS + 1), Err(ControlError::NotFinite { .. })));
+        assert!(hc.run(1e-4, 10).is_ok());
+    }
+
+    /// `duration_s` rounds to the nearest nanosecond, as its doc says: `.floor()` in its place was
+    /// green because no test used a non-integral nanosecond.
+    #[test]
+    fn the_budget_rounds_its_duration_to_the_nearest_nanosecond() {
+        let b = ControlBudget::new(1, 1.5e-9, 1, 2, 3, Mode::Clocked);
+        assert_eq!(b.duration_s(), 2e-9);
+        let c = ControlBudget::new(1, 1.4e-9, 1, 2, 3, Mode::Clocked);
+        assert_eq!(c.duration_s(), 1e-9);
+        assert!(matches!(
+            Pendulum::new(1.0, 1.0).unwrap().with_damping(f64::NAN),
+            Err(ControlError::NotFinite { .. })
+        ));
+        assert!(matches!(
+            Pendulum::new(1.0, 1.0).unwrap().with_damping(-1.0),
+            Err(ControlError::NotPositive { .. })
+        ));
     }
 }

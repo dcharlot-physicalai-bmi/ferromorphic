@@ -328,9 +328,13 @@ impl Pruned {
     }
 
     /// How many entries survived.
+    ///
+    /// Every field of this record is public, so a caller who sets `n_removed` past `w.len()` gets
+    /// a `usize` underflow here. The record's own constructors cannot produce that state, and the
+    /// consistency test over both of them is what guarantees it.
     #[must_use]
     pub fn n_kept(&self) -> usize {
-        self.w.len() - self.n_removed
+        self.w.len().saturating_sub(self.n_removed)
     }
 
     /// Whether every removed magnitude is strictly below every kept one.
@@ -1170,6 +1174,13 @@ pub fn fit_power_law(ticks: &[u64], error: &[f64]) -> Option<f64> {
 ///
 /// This is the experiment the module doc's `1/sqrt(T)` claim rests on, and it is run against
 /// [`rate_rms`]'s closed form rather than against a previous run of itself.
+///
+/// # Cost
+///
+/// `trials · sum(ticks)` random draws. Nothing bounds it: `ticks = [1_000_000_000]` at 4000 trials
+/// is 4e12 draws, and this function will attempt them. Stated rather than refused, because the
+/// budgets a caller wants to measure are the caller's; the sweep in this module's tests runs
+/// 8 to 1024 ticks at 4000 trials.
 ///
 /// # Errors
 ///
@@ -2720,6 +2731,19 @@ mod tests {
         assert!(rate_error_vs_ticks(0.5, &[4, 0], 10, &mut Rng::new(1)).is_err());
         assert!(rate_error_vs_ticks(0.5, &[4], 0, &mut Rng::new(1)).is_err());
         assert!(rate_error_vs_ticks(-0.1, &[4], 1, &mut Rng::new(1)).is_err());
+        // Guards that were deletable with every test green.
+        let shape = ModelShape { parameters: 1000, state_values: 64, state_bits: 32 };
+        let plan = Plan::new(0.75, 4, 16, Storage::Dense).expect("valid plan");
+        assert!(matches!(Point::new(plan, &shape, 100, -1.0), Err(CompressError::BadValue { .. })));
+        assert!(matches!(Point::new(plan, &shape, 100, f64::NAN), Err(CompressError::BadValue { .. })));
+        assert!(Storage::Dense.parameter_bits(10, 5, 65).is_none(), "a 65-bit width");
+        assert!(Storage::Sparse { index_bits: 0 }.parameter_bits(10, 5, 8).is_none());
+        assert!(Storage::Sparse { index_bits: 0 }.break_even_sparsity(4).is_none());
+        assert!(Storage::Bitmask.break_even_sparsity(0).is_none());
+        assert_eq!(Storage::Dense.break_even_sparsity(4), None, "dense cannot beat itself");
+        let mut record = prune_magnitude(&[1.0, 2.0], 0.5).expect("valid");
+        record.n_removed = 9;
+        assert_eq!(record.n_kept(), 0, "a corrupted public record saturates rather than underflows");
         // And the Display impl names the numbers, for every variant this module defines and for
         // the two wrapped errors it can build here. This comment used to say "for every variant"
         // above two of fourteen.
@@ -2776,6 +2800,7 @@ mod tests {
         let a = rate_error_vs_ticks(0.35, &ticks, 200, &mut Rng::new(5150)).expect("valid");
         let b = rate_error_vs_ticks(0.35, &ticks, 200, &mut Rng::new(5150)).expect("valid");
         assert_eq!(a, b, "same seed, same numbers");
+        assert_eq!((a.trials, a.p, a.ticks.as_slice()), (200, 0.35, &ticks[..]), "the sweep records what it ran");
         let c = rate_error_vs_ticks(0.35, &ticks, 200, &mut Rng::new(5151)).expect("valid");
         assert_ne!(a.rms_error, c.rms_error, "a different seed is a different realisation");
     }

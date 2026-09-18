@@ -454,8 +454,11 @@ impl Fabric {
     /// The displacement a triangular-torus route takes, chosen among the four wrap representatives.
     ///
     /// Tie-break, in order: shortest distance, then smallest `|x| + |y|`, then smallest `|x|`, then
-    /// non-negative `x`, then non-negative `y`. Deterministic, which the crate requires, and a
-    /// function of the endpoints alone, which is what makes [`multicast_tree`] able to union routes.
+    /// non-negative `x`, then non-negative `y`. Determinism comes from the strict `<` on the key
+    /// and holds under any total order; the four lower levels are a convention that makes the
+    /// chosen representative a function of the endpoints alone, not a correctness requirement —
+    /// collapsing them to the distance alone leaves every hop, route, diameter and spanning-tree
+    /// test green, which is the honest statement of what they carry.
     fn tri_vector(&self, a: u32, b: u32) -> Option<(i64, i64)> {
         let (cols, rows) = self.dims()?;
         if cols == 0 || rows == 0 {
@@ -3637,5 +3640,20 @@ mod tests {
         }
         assert!(shipped >= 8, "only {shipped} placements shipped; the sweep barely runs");
         assert!(refined >= 4, "only {refined} placements were actually refined; the guard was never asked");
+    }
+
+    /// The streaming tie-break — emptier core first, then lower index — on a network with no
+    /// synapses, where every score is zero and only the tie-break decides. It must alternate;
+    /// "lower index first" would pile every neuron onto core 0, which the doc says it prevents.
+    #[test]
+    fn the_stream_tie_break_spreads_a_zero_signal_prefix() {
+        let net = NetBuilder::new(11).build();
+        let plan = partition_greedy(&net, &CoreLimits::UNLIMITED, 3, 0).unwrap();
+        let mut count = [0usize; 3];
+        for &c in &plan.partition.core_of {
+            count[c as usize] += 1;
+        }
+        assert_eq!(count, [4, 4, 3], "eleven silent neurons over three cores, round-robin");
+        assert_eq!(plan.partition.used_cores(), 3);
     }
 }

@@ -4213,4 +4213,34 @@ mod tests {
         m.step(1e-4, 0.0);
         assert!(m.q.is_nan(), "a NaN pool came back as {}", m.q);
     }
+
+    /// The AGC on the Meddis arm. No test combined `Transduction::Meddis` with a loop, so the AGC
+    /// could be deleted from that arm with every test green. A loud tone through the hair cell
+    /// with and without the loop: the loop must lower the sustained count.
+    #[test]
+    fn the_agc_acts_on_the_meddis_arm_too() {
+        let build = |agc: Option<Agc>| {
+            Filterbank::erb_bank(FS, 500.0, 2000.0, 6, Transduction::Meddis(Meddis::default()))
+                .expect("a valid bank")
+                .with_agc(agc)
+                .expect("a valid loop")
+        };
+        // Loud in the hair cell's own units: the Meddis permeability half-saturates at B = 300, so
+        // a unit-amplitude tone barely leaves the spontaneous rate and an AGC on it changes nothing
+        // (measured: 246 sustained spikes with and without). At 300 the loop's gain of
+        // 1/(1 + 20·level) pulls the cell off its saturated branch.
+        let loud = tone(FS, 1000.0, 300.0, 0.3).expect("a valid tone");
+        let sustained = |bank: &mut Filterbank| -> usize {
+            let train = bank.spike_train(&loud).expect("finite");
+            train
+                .spikes()
+                .iter()
+                .filter(|s| matches!(bank.decode_source(s.source), Some((ChannelKind::Sustained, _))))
+                .count()
+        };
+        let plain = sustained(&mut build(None));
+        let gained = sustained(&mut build(Some(Agc::new(20e-3, 20.0).expect("valid"))));
+        assert!(plain > 0, "the hair cell was silent under a unit tone");
+        assert!(gained < plain, "with the AGC the Meddis arm fired {gained} against {plain} without");
+    }
 }

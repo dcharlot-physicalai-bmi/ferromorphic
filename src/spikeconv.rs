@@ -785,7 +785,10 @@ impl Conv2d {
     /// `the_separable_tap_count_agrees_with_the_loop` checks them against each other across a
     /// sweep of shapes.
     ///
-    /// `None` on overflow or when no window fits.
+    /// `None` on overflow, when no window fits, or when the count would take more than
+    /// [`MAX_TAP_SWEEP`] iterations on either axis — the sweep is `outputs × taps` per axis, and
+    /// nothing bounds `pad`, so a `pad_h` of `5e7` on a `1x1` input used to spend 2.6 s here with
+    /// no allocation to fail first.
     #[must_use]
     pub fn in_bounds_taps(&self, in_h: usize, in_w: usize) -> Option<u64> {
         let (oh, ow) = self.spec.out_shape(in_h, in_w)?;
@@ -907,8 +910,14 @@ fn src_coord(o: usize, stride: usize, k: usize, dilation: usize, pad: usize, n: 
     if i >= n { None } else { Some(i) }
 }
 
+/// The most `outputs × taps` iterations [`Conv2d::in_bounds_taps`] will sweep on one axis: `2^26`.
+pub const MAX_TAP_SWEEP: u64 = 1 << 26;
+
 /// In-bounds taps summed over all output indices on one axis.
 fn axis_in_bounds(o_n: usize, n: usize, kernel: usize, pad: usize, stride: usize, dilation: usize) -> Option<u64> {
+    if (o_n as u64).checked_mul(kernel as u64)? > MAX_TAP_SWEEP {
+        return None;
+    }
     let mut total: u64 = 0;
     for o in 0..o_n {
         for k in 0..kernel {
@@ -1614,6 +1623,12 @@ pub struct SpikingConv2d<N: Neuron> {
     pub units: Vec<N>,
     /// Exact counters for [`crate::ledger`], accumulated across every [`SpikingConv2d::step`] since
     /// the last [`SpikingConv2d::clear_counts`]. Not cleared by [`SpikingConv2d::reset`].
+    ///
+    /// `neuron_updates_idle` means the unit's **summed drive was exactly zero** this step, not that
+    /// it received nothing: two deliveries of `+20 mV` and `-20 mV` cancel to an idle update while
+    /// `syn_ops` counts both, and a bias of one picovolt makes every unit driven every step. The
+    /// idle fraction is therefore a statement about membrane arithmetic an event-driven core could
+    /// skip; the synaptic traffic is in `syn_ops` and `syn_fetches`, which do not cancel.
     pub ledger: Ledger,
     /// `NeuroBench` synaptic-operation counts, accumulated alongside the ledger.
     pub ops: SynOps,
@@ -1696,6 +1711,11 @@ impl<N: Neuron> SpikingConv2d<N> {
         if now != self.out_shape() || self.units.len() != dims_len(now.0, now.1, now.2)? {
             return Err(ConvError::ShapeMismatch { what: "spiking conv units", a: now, b: self.out_shape() });
         }
+        // `conv.weights` and `conv.bias` are public too. One NaN weight, set after construction,
+        // poisons every membrane downstream with `Ok` on every step — the exact failure the
+        // `NonFinite` variant's doc describes — so they are re-checked here, once per step.
+        check_finite(&self.conv.weights, "conv weights")?;
+        check_finite(&self.conv.bias, "conv bias")?;
         let (drive, dense, effective) = self.conv.convolve(input)?;
         let step_ops = match kind {
             ActivationKind::Spiking => SynOps { dense, effective_macs: 0, effective_acs: effective },
@@ -2055,6 +2075,8 @@ impl<N: Neuron> ResidualBlock<N> {
             });
         }
         let s1 = self.first.step(x, kind)?;
+        check_finite(&self.second.weights, "conv weights")?;
+        check_finite(&self.second.bias, "conv bias")?;
         // The first layer's output is always binary — it came from a spiking neuron — so the second
         // convolution is charged accumulates regardless of what the block's own input was.
         let (drive, dense, effective) = self.second.convolve(&s1)?;
@@ -3398,5 +3420,114 @@ mod tests {
         let train: Vec<f64> =
             (0..6).map(|_| layer.step(&x, ActivationKind::Spiking).expect("fits").data[0]).collect();
         assert_eq!(train, vec![0., 1., 0., 0., 0., 1.]);
+    }
+
+    /// `neuron_updates_idle` is "zero net drive", and the doc now says so: two cancelling
+    /// deliveries are two synaptic operations and one idle update. Pinned so the semantics cannot
+    /// drift silently in either direction.
+    #[test]
+    fn idle_means_zero_net_drive_not_no_deliveries() {
+        let spec = Conv2dSpec::new(2, 1, 1, 1).expect("valid");
+        let conv = Conv2d::new(spec, vec![20e-3, -20e-3], vec![0.0]).expect("valid");
+        let mut layer = SpikingConv2d::new(conv, 1, 1, Lif::default(), 1e-3).expect("valid");
+        let both = t(2, 1, 1, &[1.0, 1.0]);
+        let out = layer.step(&both, ActivationKind::Spiking).expect("fits");
+        assert_eq!(out.data, vec![0.0]);
+        assert_eq!(layer.ledger.syn_ops, 2, "two deliveries happened");
+        assert_eq!(layer.ledger.neuron_updates_idle, 1, "and they cancelled to an idle update");
+        assert_eq!(layer.ledger.neuron_updates_driven, 0);
+        // A bias of one picovolt is a drive.
+        let conv = Conv2d::new(spec, vec![0.0, 0.0], vec![1e-12]).expect("valid");
+        let mut biased = SpikingConv2d::new(conv, 1, 1, Lif::default(), 1e-3).expect("valid");
+        biased.step(&t(2, 1, 1, &[0.0, 0.0]), ActivationKind::Spiking).expect("fits");
+        assert_eq!((biased.ledger.neuron_updates_driven, biased.ledger.syn_ops), (1, 0));
+    }
+
+    /// A NaN written into a public weight after construction is refused at the next step, not
+    /// propagated as `Ok`.
+    #[test]
+    fn a_weight_poisoned_after_construction_is_refused_at_the_next_step() {
+        let spec = Conv2dSpec::same_padding(1, 1, 3, 3).expect("valid");
+        let mut l = SpikingConv2d::new(Conv2d::zeros(spec).expect("valid"), 3, 3, Lif::default(), 1e-3)
+            .expect("valid");
+        let x = Tensor3::zeros(1, 3, 3).expect("valid");
+        assert!(l.step(&x, ActivationKind::Spiking).is_ok());
+        l.conv.weights[4] = f64::NAN;
+        assert!(matches!(
+            l.step(&x, ActivationKind::Spiking),
+            Err(ConvError::NonFinite { what: "conv weights", index: 4, .. })
+        ));
+        let mut b = ResidualBlock::new(
+            Conv2d::zeros(spec).expect("valid"),
+            Conv2d::zeros(spec).expect("valid"),
+            3,
+            3,
+            Lif::default(),
+            1e-3,
+            ResidualStyle::SewAdd,
+            0.0,
+        )
+        .expect("valid");
+        b.second.bias[0] = f64::INFINITY;
+        assert!(matches!(
+            b.step(&x, ActivationKind::Spiking),
+            Err(ConvError::NonFinite { what: "conv bias", .. })
+        ));
+        // And the block's own input-shape check, which only the layer's was exercised.
+        let mut ok = ResidualBlock::new(
+            Conv2d::zeros(spec).expect("valid"),
+            Conv2d::zeros(spec).expect("valid"),
+            3,
+            3,
+            Lif::default(),
+            1e-3,
+            ResidualStyle::SewAdd,
+            0.0,
+        )
+        .expect("valid");
+        assert!(matches!(
+            ok.step(&Tensor3::zeros(1, 4, 4).expect("valid"), ActivationKind::Spiking),
+            Err(ConvError::ShapeMismatch { what: "residual block input", .. })
+        ));
+    }
+
+    /// The tap sweep is bounded: a padding of 5e7 on a 1x1 input answers `None` at once instead of
+    /// spending seconds, and a `SpikingMaxPool` whose window cannot fit is refused at construction.
+    #[test]
+    fn unbounded_geometry_is_refused_rather_than_swept() {
+        let mut spec = Conv2dSpec::new(1, 1, 3, 3).expect("valid");
+        spec.pad_h = 50_000_000;
+        let c = Conv2d::zeros(spec).expect("valid");
+        assert_eq!(c.in_bounds_taps(1, 1), None);
+        let mut small = Conv2dSpec::new(1, 1, 3, 3).expect("valid");
+        small.pad_h = 1;
+        small.pad_w = 1;
+        assert_eq!(Conv2d::zeros(small).expect("valid").in_bounds_taps(2, 2), Some(16));
+        assert!(matches!(
+            SpikingMaxPool::new(PoolSpec::new(5, 5).expect("valid"), MaxPolicy::Instant, 1, 4, 4),
+            Err(ConvError::ImpossibleShape { .. })
+        ));
+        let mut bn = TdBn::new(1, 1.0).expect("valid");
+        bn.gain = vec![1.0; 3];
+        assert!(matches!(
+            bn.eval_forward(&t(1, 1, 1, &[1.0])),
+            Err(ConvError::BadShape { what: "gain", got: 3, want: 1 })
+        ));
+    }
+
+    /// The two-pass variance, on the input where the one-pass shortcut cancels catastrophically:
+    /// values of 1e8 ± 1 have a variance of exactly 1, and `E[x²] − E[x]²` in f64 does not get it.
+    /// Also the fixed accumulation order: over three input channels with weights `[1e16, -1e16, 1]`
+    /// the channel-major sum is `(1e16 − 1e16) + 1 = 1`; reversed it is `(1 − 1e16) + 1e16 = 0`.
+    #[test]
+    fn the_numerics_the_docs_promise_are_the_numerics_that_run() {
+        let frames = vec![t(1, 1, 2, &[1e8 + 1.0, 1e8 - 1.0])];
+        let (mean, var, _) = channel_moments(&frames, 1).expect("valid");
+        assert_eq!(mean[0], 1e8);
+        assert!((var[0] - 1.0).abs() < 1e-9, "variance {} — the shortcut would cancel", var[0]);
+        let spec = Conv2dSpec::new(3, 1, 1, 1).expect("valid");
+        let conv = Conv2d::new(spec, vec![1e16, -1e16, 1.0], vec![0.0]).expect("valid");
+        let out = conv.forward(&t(3, 1, 1, &[1.0, 1.0, 1.0])).expect("valid");
+        assert_eq!(out.data, vec![1.0], "the accumulation order is channel-major, bit for bit");
     }
 }
