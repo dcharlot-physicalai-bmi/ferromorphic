@@ -735,4 +735,14 @@ mod tests {
             assert!(!e.to_string().is_empty());
         }
     }
+
+
+    /// A transition INTO state `states` is one past the end; `>` for `≥` in that guard survived
+    /// the second mutation sweep because every refusal tested was far past it.
+    #[test]
+    fn a_transition_to_one_past_the_last_state_is_refused() {
+        let task = Task::new(2, 1, vec![2, 0], vec![0.0, 0.0], vec![false, false], 0.9);
+        assert_eq!(task.unwrap_err(), ReinforceError::Index { what: "next state", index: 2, count: 2 });
+        assert!(Task::new(2, 1, vec![1, 0], vec![0.0, 0.0], vec![false, false], 0.9).is_ok());
+    }
 }

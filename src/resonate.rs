@@ -718,4 +718,19 @@ mod tests {
             assert!(!e.to_string().is_empty());
         }
     }
+
+
+    /// `≥`, not `>`: a membrane that lands EXACTLY on the threshold fires. Undamped and a quarter
+    /// turn per step, `(x, 0)` goes to `(0, x)` with no rounding — `sin(π/2)` is `1.0` in `f64`.
+    #[test]
+    fn a_membrane_that_lands_exactly_on_the_threshold_fires() {
+        let mut n = ResonateAndFire::new(0.0, core::f64::consts::FRAC_PI_2, 1.0, (0.0, 0.0), 0.0).unwrap();
+        n.x = 1.0;
+        n.y = 0.0;
+        assert!(n.step(1.0, 0.0).unwrap(), "y reached the threshold exactly and the neuron stayed silent");
+        let mut below = ResonateAndFire::new(0.0, core::f64::consts::FRAC_PI_2, 1.0, (0.0, 0.0), 0.0).unwrap();
+        below.x = 1.0 - f64::EPSILON;
+        assert!(!below.step(1.0, 0.0).unwrap());
+        assert_eq!(below.y, 1.0 - f64::EPSILON);
+    }
 }

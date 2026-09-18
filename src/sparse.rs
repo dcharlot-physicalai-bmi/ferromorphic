@@ -940,4 +940,24 @@ mod tests {
             assert!(!e.to_string().is_empty());
         }
     }
+
+
+    /// The ledger's two blind spots from the second mutation sweep. A neuron whose drive has gone
+    /// but whose membrane still holds charge is DRIVEN — it is decaying, and a chip pays for that
+    /// update — and a tick long enough to hold many spikes is charged for every one of them.
+    #[test]
+    fn a_decaying_membrane_is_not_idle_and_a_burst_is_every_spike() {
+        let mut lca = SpikingLca::new(Dictionary::identity(3).unwrap(), 0.5, 10e-3, 10e-3, 1000.0, Threshold::Soft).unwrap();
+        lca.step(1e-3, &[0.4, 0.0, 0.0]).unwrap();
+        assert_eq!((lca.ledger.neuron_updates_driven, lca.ledger.neuron_updates_idle), (1, 2));
+        assert!(lca.u[0] > 0.0 && lca.ledger.spikes_out == 0, "sub-threshold: charged, silent");
+        lca.step(1e-3, &[0.0, 0.0, 0.0]).unwrap();
+        assert_eq!((lca.ledger.neuron_updates_driven, lca.ledger.neuron_updates_idle), (2, 4));
+        // u = 5 (1 − e^{−5}) = 4.9663; T_λ(u) = 4.4663; × 1000 /s × 50 ms = 223.3 → 223 spikes,
+        // from ONE neuron in ONE tick, each delivered to the one other neuron.
+        let mut burst = SpikingLca::new(Dictionary::identity(2).unwrap(), 0.5, 10e-3, 10e-3, 1000.0, Threshold::Soft).unwrap();
+        assert_eq!(burst.step(50e-3, &[5.0, 0.0]).unwrap(), 1, "one neuron fired");
+        assert_eq!(burst.spikes, vec![223, 0]);
+        assert_eq!((burst.ledger.spikes_out, burst.ledger.syn_ops, burst.ledger.syn_fetches), (223, 223, 223));
+    }
 }

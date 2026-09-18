@@ -342,7 +342,8 @@ impl GraphColouring {
         if colours == 0 {
             return Err(OptimiseError::Empty { what: "colours" });
         }
-        let vars = vertices * colours;
+        // Saturating: a product that WRAPPED would come back small and be accepted.
+        let vars = vertices.saturating_mul(colours);
         if vars > 64 {
             return Err(OptimiseError::OutOfRange { what: "vertices × colours", value: vars as f64, low: 1.0, high: 64.0 });
         }
@@ -784,5 +785,48 @@ mod tests {
         ] {
             assert!(!e.to_string().is_empty());
         }
+    }
+
+
+    /// The second mutation sweep's survivors here: the 64-variable wall one past its edge, a state
+    /// with two colours on one vertex, a flip counter that counted visits, and restart totals
+    /// that lost the work of the restarts that did not win. It also found, by reading, that the
+    /// wall multiplied two `usize` without checking: a product that wrapped was accepted.
+    #[test]
+    fn the_sixty_four_variable_wall_and_the_counters() {
+        assert!(GraphColouring::new(16, 4, &[], 1.0, 1.0).is_ok());
+        assert!(matches!(GraphColouring::new(13, 5, &[], 1.0, 1.0), Err(OptimiseError::OutOfRange { what: "vertices × colours", .. })));
+        assert!(matches!(GraphColouring::new(usize::MAX / 2 + 1, 2, &[], 1.0, 1.0), Err(OptimiseError::OutOfRange { what: "vertices × colours", .. })));
+        let gc = GraphColouring::new(2, 2, &[(0, 1)], 1.0, 1.0).unwrap();
+        let bit = |v: usize, c: usize| 1u64 << gc.var(v, c);
+        assert_eq!(gc.decode(bit(0, 0) | bit(1, 1)), Some(vec![0, 1]));
+        // Two colours on vertex 0 — and chosen so that taking EITHER of them alone would be a proper
+        // colouring against vertex 1's colour 0 or 1, so only the one-hot check can refuse it.
+        // (The first version of this line put colour 1 on vertex 1, where keeping the last colour
+        // seen collides on the edge and is refused for the wrong reason: the mutation survived.)
+        assert_eq!(gc.decode(bit(0, 0) | bit(0, 1) | bit(1, 0)), None, "two colours on vertex 0");
+        let lone = GraphColouring::new(1, 2, &[], 1.0, 1.0).unwrap();
+        assert_eq!(lone.decode(0b11), None, "two colours on the only vertex, and no edge to object");
+        assert_eq!(gc.decode(bit(0, 0)), None, "vertex 1 has no colour");
+        assert_eq!(gc.decode(bit(0, 0) | bit(1, 0)), None, "both ends of the edge are colour 0");
+        // A sweep that changes nothing reports no flips; one that turns every bit on reports n.
+        let mut q = Qubo::zeros(4).unwrap();
+        for i in 0..4 {
+            q.add(i, i, -100.0).unwrap();
+        }
+        let mut rng = Rng::new(8);
+        let mut ann = Annealer::new(q);
+        ann.state = 0b1111;
+        assert_eq!(ann.sweep(10.0, &mut rng).unwrap(), (4, 0));
+        ann.state = 0;
+        assert_eq!(ann.sweep(10.0, &mut rng).unwrap(), (4, 4));
+        assert_eq!(ann.state, 0b1111);
+        // Thirty hot one-sweep restarts on a six-ring: whichever restart wins, the bill is all
+        // thirty — 30 × 1 sweep × 6 variables.
+        let ring: Vec<(usize, usize)> = (0..6).map(|i| (i, (i + 1) % 6)).collect();
+        let mut ann = Annealer::new(Qubo::max_cut(6, &ring).unwrap());
+        let (best, hits) = ann.anneal_restarts(0.05, 0.1, 1, 30, &mut rng).unwrap();
+        assert_eq!(best.evaluations, 30 * 6);
+        assert!(hits >= 1 && best.flips <= best.evaluations);
     }
 }

@@ -647,4 +647,41 @@ mod tests {
             assert!(!e.to_string().is_empty());
         }
     }
+
+
+    /// The round defaults have `g_D = g_L`, and with them four mutations survived the second sweep:
+    /// the two conductances swapped in the prediction, their ratio inverted in the dendritic
+    /// target, the sign of the prediction error, and a learning step that ignored `dt`. A coupling
+    /// of half the leak tells the two conductances apart.
+    #[test]
+    fn a_coupling_that_is_not_the_leak_shows_which_conductance_is_which() {
+        let soma = TwoCompartment { g_d: 25e-9, ..TwoCompartment::round_defaults() };
+        let v_d = -50e-3;
+        // Four operations on potentials of at most 70 mV: four ulps of that.
+        let ulps = 4.0 * f64::EPSILON * 70e-3;
+        assert!((soma.prediction(v_d) - (50e-9 * -70e-3 + 25e-9 * v_d) / 75e-9).abs() < ulps);
+        let phi = RateFunction::new(100.0, -55e-3, 5e-3).unwrap();
+        let mut learner = DendriticLearner::new(soma, phi, vec![1e-3, -2e-3], 1e-2).unwrap();
+        // V_d = V_T + (g_L/g_D)(V_T − E_L) = −60 + 2·10 = −40 mV.
+        assert!((learner.dendrite_for_target(-60e-3).unwrap() - -40e-3).abs() < ulps);
+        // And that dendrite does predict the target: the two closed forms agree with each other.
+        assert!((soma.prediction(-40e-3) - -60e-3).abs() < ulps);
+        // A soma ABOVE what its dendrite predicts is a positive error.
+        learner.soma.v = -50e-3;
+        assert!(learner.prediction_error(&[0.0, 0.0]).unwrap() > 0.0);
+        learner.soma.v = -75e-3;
+        assert!(learner.prediction_error(&[0.0, 0.0]).unwrap() < 0.0);
+        // One step moves each weight by η·dt·(φ(V) − φ(V*))·φ′(V*)·psp — with the dt.
+        learner.soma.v = -50e-3;
+        let psp = [2.0, 5.0];
+        let before = learner.w.clone();
+        let dt = 1e-4;
+        let (v, v_star) = learner.step(dt, &psp, 0.0, 0.0).unwrap();
+        let gain = 1e-2 * dt * (phi.rate(v) - phi.rate(v_star)) * phi.slope(v_star);
+        assert!(gain.abs() > 1e-9, "the step taught nothing, so it would match any rule: {gain}");
+        for i in 0..2 {
+            let moved = learner.w[i] - before[i];
+            assert!((moved / (gain * psp[i]) - 1.0).abs() < 1e-9, "weight {i} moved {moved}, the rule says {}", gain * psp[i]);
+        }
+    }
 }

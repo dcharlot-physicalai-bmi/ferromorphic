@@ -1337,4 +1337,23 @@ mod tests {
         }
         assert!(noise_sd(0).is_nan());
     }
+
+
+    /// Two things the second mutation sweep found untested: a resonator asked for zero iterations
+    /// still runs one, and the HRR bundle's `normalise` flag does what it says — which no test
+    /// had called with either value.
+    #[test]
+    fn a_resonator_runs_at_least_once_and_the_hrr_bundle_honours_its_flag() {
+        let mut rng = Rng::new(4);
+        let bp = Bipolar::new(64).unwrap();
+        let books = vec![Codebook::random_bipolar(&bp, 3, &mut rng).unwrap(), Codebook::random_bipolar(&bp, 3, &mut rng).unwrap()];
+        assert_eq!(Resonator::new(bp, books, 0).unwrap().max_iters, 1);
+        let hrr = Hrr::new(4).unwrap();
+        let mut meter = Meter::default();
+        let (a, b) = (vec![3.0, 0.0, 0.0, 0.0], vec![0.0, 4.0, 0.0, 0.0]);
+        assert_eq!(hrr.bundle(&[a.clone(), b.clone()], false, &mut meter).unwrap(), vec![3.0, 4.0, 0.0, 0.0]);
+        assert_eq!(meter.bundles, 8, "two members of dimension four");
+        assert_eq!(hrr.bundle(&[a, b], true, &mut meter).unwrap(), vec![0.6, 0.8, 0.0, 0.0]);
+        assert_eq!(meter.bundles, 8 + 12, "and the rescaling is a third pass");
+    }
 }

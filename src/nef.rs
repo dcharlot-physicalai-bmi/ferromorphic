@@ -1288,4 +1288,17 @@ mod tests {
             assert!(!e.to_string().is_empty());
         }
     }
+
+
+    /// The second mutation sweep accepted a maximum rate AT the refractory bound: nothing had asked
+    /// for one. The bound itself is a rate no current reaches, so the spec refuses it by name.
+    #[test]
+    fn a_maximum_rate_at_the_refractory_bound_is_refused_by_the_spec() {
+        let mut spec = EnsembleSpec::default_for(20, 1, 5);
+        let bound = spec.neuron.max_rate_bound();
+        spec.max_rate = (0.5 * bound, bound);
+        assert!(matches!(Ensemble::new(&spec), Err(NefError::OutOfRange { what: "max_rate range", .. })));
+        spec.max_rate = (0.5 * bound, 0.99 * bound);
+        assert!(Ensemble::new(&spec).is_ok(), "just inside the bound is a legal population");
+    }
 }

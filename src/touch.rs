@@ -818,4 +818,39 @@ mod tests {
             assert!(!e.to_string().is_empty());
         }
     }
+
+
+    /// Four survivors of the second mutation sweep, all bookkeeping: the SA1 adaptation state must
+    /// RECOVER when contact is lost (or a second touch is felt as faintly as the end of the
+    /// first), an afferent's spike counter counts spikes, a lone afferent sits mid-way along its
+    /// line, and the fingertip's tick counter counts ticks.
+    #[test]
+    fn adaptation_recovers_off_contact_and_the_counters_count() {
+        let fs = 1000.0;
+        let mut sa = Afferent::sa1(4e-6, 0.6, 0.1, cell()).unwrap();
+        let hold = Contact { depth: 1e-3, velocity: 0.0, acceleration: 0.0 };
+        let mut fired = 0u64;
+        for _ in 0..1000 {
+            fired += u64::from(sa.step(fs, &hold).unwrap());
+        }
+        // Ten time constants: 0.6·e^{−10} = 2.7e-5 short of the full adaptation.
+        assert!((sa.adapted - 0.6).abs() < 1e-4, "adapted to {}", sa.adapted);
+        assert!(fired > 0);
+        assert_eq!(sa.spikes, fired);
+        let off = Contact { depth: 0.0, velocity: 0.0, acceleration: 0.0 };
+        for _ in 0..1000 {
+            sa.step(fs, &off).unwrap();
+        }
+        assert!(sa.adapted < 1e-4, "one second off contact and still adapted by {}", sa.adapted);
+        let lone = Fingertip::line(1, 10e-3, 2e-3, &sa).unwrap();
+        assert_eq!(lone.positions, vec![5e-3]);
+        let mut tip = Fingertip::line(3, 10e-3, 2e-3, &sa).unwrap();
+        assert_eq!(tip.positions, vec![0.0, 5e-3, 10e-3]);
+        for _ in 0..7 {
+            tip.step(fs, &hold, 5e-3).unwrap();
+        }
+        assert_eq!(tip.ticks, 7);
+        tip.reset();
+        assert_eq!((tip.ticks, tip.total_spikes()), (0, 0));
+    }
 }

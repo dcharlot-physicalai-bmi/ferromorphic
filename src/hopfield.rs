@@ -192,7 +192,11 @@ pub struct Recall {
     /// Energy before and after.
     pub energy: (f64, f64),
     /// The largest energy increase seen on any single neuron update: zero for a correct
-    /// implementation of a symmetric network.
+    /// implementation of a symmetric network. For [`Classical`] this is a measurement — the update
+    /// rule never consults the energy, and an asymmetric `w` makes it positive. For [`Dense`] it is
+    /// zero BY CONSTRUCTION, because a flip is only taken when it lowers the energy; what is
+    /// checkable there is that the incrementally maintained final energy equals
+    /// [`Dense::energy`] of the final state.
     pub worst_increase: f64,
 }
 
@@ -864,5 +868,43 @@ mod tests {
         ] {
             assert!(!e.to_string().is_empty());
         }
+    }
+
+
+    /// The second mutation sweep blinded the energy monitor and nothing noticed, because on a
+    /// symmetric network it never has anything to report. It does on an asymmetric one.
+    #[test]
+    fn the_energy_monitor_fires_on_an_asymmetric_network() {
+        let mut net = Classical::new(2).unwrap();
+        net.w = vec![0.0, 2.0, -1.0, 0.0];
+        // From (1, 1): neuron 0 sees +2 and stays, neuron 1 sees −1 and flips, and
+        // E = −½ Σ h_i x_i goes from −½ to +½.
+        let r = net.recall(&[1.0, 1.0], 6).unwrap();
+        assert_eq!(r.worst_increase, 1.0);
+        assert!(!r.converged && r.sweeps == 6, "an asymmetric pair chases itself forever");
+    }
+
+    /// The rectified energy is FLAT wherever every overlap is negative, and a flip is taken only
+    /// when it strictly lowers the energy — so the anti-pattern of a lone stored pattern is a
+    /// fixed point, reached in one sweep. `≤` in that comparison survived the second sweep.
+    #[test]
+    fn the_dense_plateau_is_a_fixed_point_and_the_running_energy_is_the_energy() {
+        let p = vec![1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, -1.0];
+        let mut dense = Dense::new(8, 3).unwrap();
+        dense.store(&p).unwrap();
+        let anti: Vec<f64> = p.iter().map(|x| -x).collect();
+        let r = dense.recall(&anti, 5).unwrap();
+        assert_eq!(r.state, anti);
+        assert!(r.converged && r.sweeps == 1);
+        assert_eq!(r.energy, (0.0, 0.0));
+        // Two wrong bits: recalled, and the energy carried through the flips is the energy of
+        // the state it ended on — 8³ below zero.
+        let mut cue = p.clone();
+        cue[0] = -cue[0];
+        cue[5] = -cue[5];
+        let r = dense.recall(&cue, 5).unwrap();
+        assert_eq!(r.state, p);
+        assert_eq!(r.energy.1, dense.energy(&r.state).unwrap());
+        assert_eq!(r.energy, (-64.0, -512.0));
     }
 }

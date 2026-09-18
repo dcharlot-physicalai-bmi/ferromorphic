@@ -623,4 +623,18 @@ mod tests {
             assert!(!e.to_string().is_empty());
         }
     }
+
+
+    /// `rem_euclid` of a tiny negative angle rounds UP to a full turn, which is not in `[0, 2π)`;
+    /// the guard that folds it to zero was removed by the second mutation sweep and nothing
+    /// noticed.
+    #[test]
+    fn wrap_never_returns_a_full_turn() {
+        let tau = core::f64::consts::TAU;
+        assert_eq!((-1e-20f64).rem_euclid(tau), tau, "the premise: rem_euclid does round up");
+        assert_eq!(super::wrap(-1e-20), 0.0);
+        assert_eq!(super::wrap(tau), 0.0);
+        assert_eq!(super::wrap(-core::f64::consts::PI), core::f64::consts::PI);
+        assert_eq!(super::wrap(0.25), 0.25);
+    }
 }
