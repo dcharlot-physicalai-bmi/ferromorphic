@@ -9,7 +9,7 @@ hardware constraint models, analog device non-idealities, NIR, event-camera deco
 metrics, teaching tasks — and a joules ledger that charges for the memory traffic a synaptic
 operation needs.
 
-**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 40 modules, 1,544 tests.**
+**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 43 modules, 1,565 tests.**
 
 Run it in a browser without installing anything:
 **[energy.physicalai-bmi.org/neuromorphic](https://energy.physicalai-bmi.org/neuromorphic)** — the
@@ -42,7 +42,7 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 | `topology` | Erdős-Rényi, Watts-Strogatz, Barabási-Albert, distance-dependent, layered, winner-take-all, Dale's law |
 | `hardware` | constraint models for Loihi, Loihi 2, `TrueNorth`, `NorthPole`, Akida, `SpiNNaker`, Xylo, Speck, ODIN, DYNAP and more — every field graded and provenanced |
 | `nir` | the Neuromorphic Intermediate Representation graph, validation, and a bridge to this crate's networks |
-| `aer` | AEDAT and Prophesee EVT2/EVT3 decoders, total and panic-free, with rollover-correct timestamps |
+| `aer` | AEDAT, Prophesee EVT2/EVT3 and N-MNIST decoders, total and panic-free, with rollover-correct timestamps |
 | `metrics` | `NeuroBench` complexity metrics: activation sparsity, effective MACs and ACs, footprint |
 | `ledger`, `crossover` | joules with the fetch term, and the published SNN-vs-ANN thresholds as a runnable check |
 | `tasks` | deterministic teaching problems: temporal XOR, coincidence detection, delayed match-to-sample, synthetic event streams |
@@ -64,6 +64,9 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 | `vsa` | vector symbolic architectures / hyperdimensional computing: bipolar, binary and holographic models, codebooks, sequences, and a resonator network, with the bundle capacity as a binomial |
 | `sparse` | sparse coding by local competition: the LCA and its spiking form, checked against the LASSO's own optimality conditions |
 | `resonate` | resonate-and-fire neurons stepped by the exact complex exponential, and the Legendre Memory Unit as a delay line in `d` numbers |
+| `hopfield` | associative memory as an energy landscape: classical, dense (Krotov-Hopfield) and modern continuous Hopfield networks, with the crosstalk, the 0.138 load and the one-step retrieval each measured |
+| `dendrite` | two compartments: the soma's conductance-weighted steady state, learning by the dendritic prediction of somatic firing, and the XOR a point neuron provably cannot compute |
+| `touch` | SA1, RA and Pacinian afferents as spiking cells driven by depth, velocity and vibration; a fingertip that locates a contact by its spike centroid and reports slip |
 | `sim`, `net`, `spike`, `rng` | the event-driven simulator, sparse connectivity, spike trains, seeded PCG32 |
 
 ## Use it
@@ -229,7 +232,7 @@ Every neuron model here has a test that runs it against an analytic solution.
 - **A sub-threshold current returns `None`, not a large number.** "Fires rarely" and "does not fire"
   are different statements and a rate-coded readout cannot recover the difference later.
 
-1,544 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
+1,565 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
 `#![forbid(unsafe_code)]`, and `cargo build --target wasm32-unknown-unknown` compiles the library
 unchanged. Three of the `examples/` are verification gates that exit non-zero when a closed form
 disagrees with the simulator.
@@ -275,9 +278,9 @@ be reproduced cannot be checked against anything, including itself.
 
 ## Status
 
-**0.6.0, with the third wave landing.** Thirty-six modules audited and repaired, four more since
-(`nef`, `vsa`, `sparse`, `resonate`) written against closed forms and not yet audited by mutation;
-the crate family is not built yet. Planned
+**0.6.0, with the third wave landing.** Thirty-six modules audited and repaired, seven more since
+(`nef`, `vsa`, `sparse`, `resonate`, `hopfield`, `dendrite`, `touch`) written against closed forms
+and not yet audited by mutation; the crate family is not built yet. Planned
 siblings, each following the same rule that a dependency lives outside the core:
 
 | crate | what it would add | why separate |

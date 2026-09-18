@@ -2654,6 +2654,98 @@ impl TrainMap {
     }
 }
 
+
+// ---------------------------------------------------------------------------------------------
+// N-MNIST / N-Caltech101 records
+// ---------------------------------------------------------------------------------------------
+
+/// The five-byte event record of the N-MNIST and N-Caltech101 datasets (Orchard, Jayawant, Cohen
+/// and Thakor, *Converting static image datasets to spiking neuromorphic datasets using saccades*,
+/// Frontiers in Neuroscience 9:437, 2015), as their distribution's README states it:
+///
+/// | bits | field |
+/// |---|---|
+/// | 39–32 | column `x`, pixels |
+/// | 31–24 | row `y`, pixels |
+/// | 23 | polarity, `1` for ON |
+/// | 22–0 | timestamp, microseconds |
+///
+/// Big-endian within the record. A 23-bit microsecond timestamp wraps at 8.39 s; the dataset's
+/// samples are a third of a second, and this decoder does **not** unwrap — a decrease is reported
+/// as [`DecodeError::NonMonotonicTimestamp`], because a wrap and a corrupt record are the same
+/// bytes and only the caller knows which it has.
+///
+/// The record carries no geometry. N-MNIST is 34 × 34 (an MNIST digit with a 3-pixel border after
+/// the saccade); N-Caltech101 frames are up to 240 × 180. The coordinates are returned as read and
+/// range-checked against nothing, and [`TrainMap`] is where a caller states the width.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct NMnist {
+    /// Events in file order.
+    pub events: Vec<AerEvent>,
+}
+
+impl NMnist {
+    /// Bytes per record.
+    pub const RECORD_SIZE: usize = 5;
+    /// The largest timestamp the 23-bit field holds, microseconds.
+    pub const MAX_TIMESTAMP: u64 = (1 << 23) - 1;
+
+    /// Decode a file.
+    ///
+    /// # Errors
+    ///
+    /// [`DecodeError::Truncated`] if the length is not a multiple of five — the partial record at
+    /// the end is named by offset; [`DecodeError::NonMonotonicTimestamp`] if a timestamp is below
+    /// its predecessor.
+    pub fn decode(bytes: &[u8]) -> Result<Self, DecodeError> {
+        let n = bytes.len() / Self::RECORD_SIZE;
+        let rem = bytes.len() % Self::RECORD_SIZE;
+        if rem != 0 {
+            return Err(DecodeError::Truncated { offset: n * Self::RECORD_SIZE, need: Self::RECORD_SIZE, have: rem });
+        }
+        let mut events = Vec::with_capacity(n);
+        let mut previous: Option<u64> = None;
+        for k in 0..n {
+            let at = k * Self::RECORD_SIZE;
+            let r = slice_at(bytes, at, Self::RECORD_SIZE)?;
+            let x = u16::from(r[0]);
+            let y = u16::from(r[1]);
+            let polarity = if r[2] & 0x80 != 0 { Polarity::On } else { Polarity::Off };
+            let t = (u64::from(r[2] & 0x7F) << 16) | (u64::from(r[3]) << 8) | u64::from(r[4]);
+            if let Some(p) = previous {
+                if t < p {
+                    return Err(DecodeError::NonMonotonicTimestamp { offset: at, previous: p, found: t });
+                }
+            }
+            previous = Some(t);
+            events.push(AerEvent { t, x, y, polarity });
+        }
+        Ok(Self { events })
+    }
+
+    /// Encode events in the same layout. Every coordinate must fit a byte and every timestamp the
+    /// 23-bit field; the result decodes bit-exactly.
+    ///
+    /// Returns `None`, naming nothing, when a coordinate is past 255 or a timestamp past
+    /// [`NMnist::MAX_TIMESTAMP`]: the format has no room for it and no way to say so.
+    #[must_use]
+    pub fn encode(events: &[AerEvent]) -> Option<Vec<u8>> {
+        let mut out = Vec::with_capacity(events.len() * Self::RECORD_SIZE);
+        for e in events {
+            if e.x > 255 || e.y > 255 || e.t > Self::MAX_TIMESTAMP {
+                return None;
+            }
+            let p: u8 = if e.polarity == Polarity::On { 0x80 } else { 0 };
+            out.push(e.x as u8);
+            out.push(e.y as u8);
+            out.push(p | ((e.t >> 16) as u8 & 0x7F));
+            out.push((e.t >> 8) as u8);
+            out.push(e.t as u8);
+        }
+        Some(out)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -4418,5 +4510,40 @@ mod tests {
         assert_eq!(Evt3::decode(&plain).unwrap().events, events);
         assert_eq!(Evt3::decode(&vect).unwrap().events, events);
         assert!(vect.len() < plain.len(), "vect {} vs plain {}", vect.len(), plain.len());
+    }
+
+    /// The N-MNIST record against its README's bit table, on hand-built bytes: `x = 17`,
+    /// `y = 22`, polarity ON, `t = 0x123456` microseconds is `[0x11, 0x16, 0x92, 0x34, 0x56]`.
+    /// Then a round trip, a partial record, and a timestamp that goes backwards.
+    #[test]
+    fn nmnist_records_match_the_published_bit_table() {
+        let bytes = [0x11u8, 0x16, 0x92, 0x34, 0x56, 0x21, 0x00, 0x12, 0x34, 0x57];
+        let d = super::NMnist::decode(&bytes).expect("two records");
+        assert_eq!(d.events.len(), 2);
+        assert_eq!(d.events[0], super::AerEvent { t: 0x12_3456, x: 17, y: 22, polarity: super::Polarity::On });
+        assert_eq!(d.events[1], super::AerEvent { t: 0x12_3457, x: 33, y: 0, polarity: super::Polarity::Off });
+        assert_eq!(super::NMnist::encode(&d.events).expect("in range"), bytes.to_vec());
+        assert_eq!(super::NMnist::MAX_TIMESTAMP, 8_388_607, "23 bits of microseconds is 8.39 s");
+        assert!(matches!(
+            super::NMnist::decode(&bytes[..7]),
+            Err(super::DecodeError::Truncated { offset: 5, need: 5, have: 2 })
+        ));
+        let mut back = bytes;
+        back[9] = 0x55; // t = 0x123455 < 0x123456
+        assert!(matches!(
+            super::NMnist::decode(&back),
+            Err(super::DecodeError::NonMonotonicTimestamp { offset: 5, previous: 0x12_3456, found: 0x12_3455 })
+        ));
+        assert!(super::NMnist::decode(&[]).expect("empty is empty").events.is_empty());
+        // Out of the format's range: refused rather than truncated.
+        let wide = super::AerEvent { t: 0, x: 256, y: 0, polarity: super::Polarity::On };
+        assert_eq!(super::NMnist::encode(&[wide]), None);
+        let late = super::AerEvent { t: 1 << 23, x: 0, y: 0, polarity: super::Polarity::On };
+        assert_eq!(super::NMnist::encode(&[late]), None);
+        // The polarity bit does not leak into the timestamp: t = 0x7FFFFF with polarity OFF.
+        let top = super::AerEvent { t: 0x7F_FFFF, x: 1, y: 2, polarity: super::Polarity::Off };
+        let enc = super::NMnist::encode(&[top]).unwrap();
+        assert_eq!(enc[2], 0x7F);
+        assert_eq!(super::NMnist::decode(&enc).unwrap().events[0], top);
     }
 }
