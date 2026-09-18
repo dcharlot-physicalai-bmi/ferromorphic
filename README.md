@@ -8,6 +8,12 @@ charges for the memory traffic a synaptic operation needs.
 
 **Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 792 tests.**
 
+Run it in a browser without installing anything:
+**[energy.physicalai-bmi.org/neuromorphic](https://energy.physicalai-bmi.org/neuromorphic)** — the
+same gates this crate runs, on your own machine. It refuses to report a number until the simulator
+reproduces the closed-form inter-spike interval, produces exactly nothing below threshold, and gets
+the same spike train from both simulation modes.
+
 The Institute's position is that in the era of AI a group should build one source of truth, not a
 constellation of thin wrappers. So this is an ingestion, not a sampler: what is open, public and
 academic in neuromorphic computing belongs in one auditable codebase that a student can read end to
