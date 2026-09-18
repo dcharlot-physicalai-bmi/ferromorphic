@@ -1,12 +1,15 @@
 # ferromorphic
 
 **Neuromorphic computing in pure Rust — the open corpus in one library.** Spiking neuron models from
-Hodgkin-Huxley to `AdEx`, synapse kernels, plasticity rules, surrogate-gradient training, ANN-to-SNN
-conversion, reservoir computing, every neural code, the standard topologies, hardware constraint
-models, NIR, event-camera decoders, benchmark metrics, teaching tasks — and a joules ledger that
-charges for the memory traffic a synaptic operation needs.
+Hodgkin-Huxley to `AdEx`, synapse kernels, plasticity rules, surrogate-gradient and local learning,
+ANN-to-SNN conversion, reservoir computing, every neural code, the standard topologies, spiking
+convolutions and attention, a silicon cochlea and an olfactory bulb, event-based vision and
+multimodal fusion, spiking control, mean-field theory, model compression and core mapping,
+hardware constraint models, analog device non-idealities, NIR, event-camera decoders, benchmark
+metrics, teaching tasks — and a joules ledger that charges for the memory traffic a synaptic
+operation needs.
 
-**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 792 tests.**
+**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 36 modules, 1,497 tests.**
 
 Run it in a browser without installing anything:
 **[energy.physicalai-bmi.org/neuromorphic](https://energy.physicalai-bmi.org/neuromorphic)** — the
@@ -43,6 +46,20 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 | `metrics` | `NeuroBench` complexity metrics: activation sparsity, effective MACs and ACs, footprint |
 | `ledger`, `crossover` | joules with the fetch term, and the published SNN-vs-ANN thresholds as a runnable check |
 | `tasks` | deterministic teaching problems: temporal XOR, coincidence detection, delayed match-to-sample, synthetic event streams |
+| `spikeconv` | spiking convolutional networks — the architecture almost all deployed spiking vision runs — with tdBN, `SEW` residual blocks and pooling |
+| `attention` | spiking attention and spiking transformers, with an honest count of what is actually spiking |
+| `eprop` | local learning rules: training forward in time without storing the past |
+| `continual` | learning without forgetting, on-chip, with the forgetting measured first |
+| `meanfield` | mean-field theory: what a spiking network does in aggregate, in closed form |
+| `bayes` | spikes as samples: Bayesian inference by firing |
+| `vision` | event-based vision: the algorithms that consume what an event camera emits |
+| `cochlea` | the silicon cochlea: gammatone bank, Meddis hair cell, gain control, onset and offset channels, every stage against its closed form |
+| `olfaction` | the olfactory bulb's external plexiform layer, learning an odour from one presentation |
+| `fusion` | multimodal fusion in spikes: the clock offset and drift between event streams, with an error bar calibrated against the scatter it describes |
+| `control` | closing a loop with spikes: a spiking PID, Matsuoka and half-centre pattern generators, a Kalman and a population estimator, and the plants to check them against |
+| `device` | analog non-idealities: what a weight becomes when it is a physical conductance |
+| `compress` | pruning, quantisation, distillation and the rate-budget trade, to fit the part you can buy |
+| `mapping` | placing a network on cores: partitioning, multicast trees, fabric hops, and where the energy goes |
 | `sim`, `net`, `spike`, `rng` | the event-driven simulator, sparse connectivity, spike trains, seeded PCG32 |
 
 ## Use it
@@ -208,8 +225,10 @@ Every neuron model here has a test that runs it against an analytic solution.
 - **A sub-threshold current returns `None`, not a large number.** "Fires rarely" and "does not fire"
   are different statements and a rate-coded readout cannot recover the difference later.
 
-792 unit tests and ten doctests, `cargo clippy --all-targets -- -D warnings` clean, `#![forbid(unsafe_code)]`,
-and `cargo build --target wasm32-unknown-unknown` compiles the library unchanged.
+1,497 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
+`#![forbid(unsafe_code)]`, and `cargo build --target wasm32-unknown-unknown` compiles the library
+unchanged. Three of the `examples/` are verification gates that exit non-zero when a closed form
+disagrees with the simulator.
 
 ## What the encoders cost, on the page
 
@@ -252,8 +271,8 @@ be reproduced cannot be checked against anything, including itself.
 
 ## Status
 
-**0.5.0.** The core is real and tested; the crate family is not built yet. Planned siblings, each
-following the same rule that a dependency lives outside the core:
+**0.6.0.** Thirty-six modules, all audited, all repaired; the crate family is not built yet. Planned
+siblings, each following the same rule that a dependency lives outside the core:
 
 | crate | what it would add | why separate |
 |---|---|---|
@@ -287,10 +306,50 @@ deleting an assertion — and a second pass diffed every test module against the
 Where a repairer believed the auditor wrong, they were asked to say so with evidence rather than
 "fix" correct code; 39 findings were refused that way.
 
+### The second wave, 0.6.0
+
+0.5.0 to 0.6.0 added fourteen modules — from `spikeconv` and `attention` to the `cochlea` and the
+olfactory bulb — and the same adversarial audit was run on every one of them, this time by
+**mutation**: each auditor edited the module under test one line at a time and re-ran the suite,
+so a "finding" is a specific edit that left every test green. Tests went from 792 to 1,497, and
+every test added in the repair was itself run against the mutation it exists to catch before it
+was kept.
+
+What the mutations found, the ones that changed a number rather than a comment:
+
+- **`fusion`'s error bar reported 0.37 of the true scatter.** `mad / sqrt(pairs)` stood in for
+  `1/(2f(0)·sqrt(n))` under a doc that said the two agree "to about 25%"; for a triangular
+  difference they disagree by 41%, and `pairs` over-counted the independent events by a third.
+  Measured over 300 seeds, then fixed: `2·mad / sqrt(events)`, a re-centred refinement window that
+  cuts the estimate's own scatter to 0.6–0.67 of the single pass, and a calibration test that
+  holds the reported-to-actual ratio inside `[1.0, 1.5]` (measured 1.17 and 1.25).
+- **`spikeconv` charged a multiply-accumulate at the accumulate price.** A graded and a binary
+  workload produced byte-identical ledgers — the crate had silently supplied exactly the AC:MAC
+  ratio it declines to supply everywhere else. A residual block's second stage had no ledger at all.
+- **`cochlea`'s Nyquist guard was argued, not measured.** At the old `0.45·fs` the driven peak sat
+  1.9× further from `f_c` than the tolerance every other channel is held to. It is `0.40` now, the
+  peak test runs at the guard, and every filter order from 2 to 6 is driven rather than only
+  computed — four closed forms had carried an `n` no test had ever run.
+- **`mapping` used half of Fennel's balance penalty** (`0.75` for the paper's `1.5`), reported the
+  fan-in wall as a function of the placement, and wrapped its hop counts at `u64::MAX` spikes.
+- **`control`'s push-pull controller had never been driven negative.** Delete the entire negative
+  half and 45 tests stayed green while a controller asked to go down burnt 60,000 spikes and never
+  moved the plant. The sigma-delta encoder overflowed `u64` in one call at a finite input, under a
+  comment saying it would take 1e11 years.
+- **`olfaction`'s learned-mask limb was never exercised with two odours**, so recall could deliver
+  the wrong odour's mask; its ledger let half the loop's traffic be deleted; its gamma rhythm is
+  imposed by a duty gate and the doc now says so.
+- **`continual`'s stationary distribution degraded past depth 48** in every linear-algebra route
+  tried; it is now solved by flux balance, exact to 1e-14 at every depth the `f64` transition
+  matrix can represent, and refuses by name the depth it cannot.
+
 ## Not here, and said so
 
-- **No training.** No surrogate gradients, no ANN-to-SNN conversion, no plasticity rule yet. STDP is
-  next; nothing in this release learns.
+- **No hardware, and no measurement.** This crate simulates and counts; nothing in it has been on a
+  meter, and every joule it reports is a count times a published price. `NeuroBench`'s system track,
+  Rockpool's Xylo power readout and `BrainChip`'s tooling all measure more than this crate does.
+  `ferromorphic-meter` is the planned sibling, and until it exists the ledger's refusal to total a
+  bill without a fetch price is the most honest number here.
 - **The crossover thresholds are other people's numbers.** `Evidence::Derived` on all three: they
   are analyses, not measurements, and the Yan band in particular is this review's reading of a
   sparsity figure rather than a number that paper prints. Read `Crossover::source` before quoting.
