@@ -48,12 +48,19 @@
 //! so **this module does not read or write `.nir` files** — saying otherwise would be the useful
 //! lie. What it has instead is:
 //!
-//! - a complete in-memory graph over the `NIR` node set ([`Node`], seventeen kinds),
+//! - an in-memory graph over seventeen `NIR` node kinds ([`Node`]),
 //! - a line-oriented **text** serialisation that round-trips the graph *exactly*, every float
 //!   included ([`Graph::to_text`], [`Graph::from_text`]),
 //! - validation that names what is wrong ([`Graph::validate`]),
 //! - and a bridge to [`crate::net::Net`] + [`crate::neuron::Lif`] for the subset that maps
 //!   ([`Graph::to_net`], [`Graph::from_net`]).
+//!
+//! ⚠ **The node set here was not re-verified against the reference implementation.** The naming
+//! ladder `I -> IF` and `LI -> LIF` is complete, but `CubaLIF` has no `CubaLI` beside it — the
+//! current-based leaky integrator with no threshold, the readout counterpart a systematic naming
+//! scheme would predict, and the most likely gap in the seventeen. Whether `NIR` defines one was
+//! not checked here, so what follows is what this module implements and not a claim about what
+//! `NIR` contains.
 //!
 //! The node types are plain structs with public fields, so an `HDF5` reader living in a sibling
 //! crate can populate them without this module changing. That is the intended division: the format
@@ -85,6 +92,15 @@
 //!
 //! Refused by name, rather than converted approximately: a `CubaLIF` silently demoted to a `LIF`
 //! is a network whose synaptic filter vanished, and it would still produce a plausible raster.
+//!
+//! ⚠ **A third loss, on the comparison itself.** `NIR` fires on `v > v_threshold`; this crate's
+//! [`crate::neuron::Lif`] fires on `v >= v_th`. [`Graph::to_net`] copies the threshold across
+//! unchanged rather than nudging it by an ulp, so the converted network uses the non-strict rule.
+//! The two differ only on a membrane that lands **exactly** on its threshold — measure zero in
+//! floating point, and not zero: a `LIF` with `r = 0` and `v_leak = v_threshold` rests on its
+//! threshold, never fires under `NIR`, and fires on the first tick of the converted network.
+//! `the_bridge_turns_a_strict_crossing_into_a_non_strict_one` pins that case, so the loss is a
+//! disclosed one rather than a discovered one.
 //!
 //! # `CubaLIF` and the reduction that explains it
 //!
@@ -591,20 +607,41 @@ pub enum Node {
 /// Returns `0` for a window that cannot be placed even once, and for a zero stride or kernel, so
 /// that a shape query never panics on a malformed node; [`Graph::validate`] reports the malformed
 /// hyperparameter first and the zero dimension second.
+///
+/// **Every** product here saturates, the doubling of the padding included: `2 * padding` written
+/// plainly overflows for a padding past `usize::MAX / 2`, which panics in a debug build and wraps
+/// in a release one — and a shape query that panics would make a malformed file a crash rather
+/// than an error.
 fn conv_dim(input: usize, padding: usize, dilation: usize, kernel: usize, stride: usize) -> usize {
     if stride == 0 || kernel == 0 {
         return 0;
     }
     let span = dilation.saturating_mul(kernel - 1).saturating_add(1);
-    let padded = input.saturating_add(2 * padding);
+    let padded = input.saturating_add(padding.saturating_mul(2));
     if padded < span {
         return 0;
     }
     (padded - span) / stride + 1
 }
 
+/// How many elements a shape describes, or `None` when that count does not fit in a `usize`.
+///
+/// A shape read from a file can name more elements than the machine can address — `[2^32, 2^32]`
+/// is four tokens — and the plain product of it panics in a debug build and **wraps to zero** in a
+/// release one. A wrapped zero is the dangerous half: a node declaring `2^64` elements would then
+/// pass [`Graph::validate`] with empty parameter arrays, because zero entries is exactly what a
+/// zero count expects. Every caller with an error channel uses this form.
+fn checked_product(shape: &[usize]) -> Option<usize> {
+    shape.iter().copied().try_fold(1usize, usize::checked_mul)
+}
+
+/// The same product, saturating at `usize::MAX`, for the shape queries that have no error channel.
+///
+/// [`Node::output_shape`] promises never to panic on a malformed node, so it cannot use the
+/// checked form. Saturating leaves the answer wrong-but-enormous rather than wrong-and-zero, and
+/// an enormous axis is what [`Graph::validate`] then refuses through [`checked_product`].
 fn product(shape: &[usize]) -> usize {
-    shape.iter().product()
+    shape.iter().copied().fold(1usize, usize::saturating_mul)
 }
 
 impl Node {
@@ -743,10 +780,13 @@ impl Node {
 impl Affine {
     /// `W x + b`.
     ///
-    /// `None` when `x.len()` is not [`Affine::cols`] — the only way this call has no answer.
+    /// `None` when `x.len()` is not [`Affine::cols`], when `weight` does not hold exactly
+    /// `rows * cols` entries, when `bias` does not hold `rows`, or when `rows * cols` does not fit
+    /// in a `usize` — the fields are public, so that product is checked rather than assumed.
     #[must_use]
     pub fn apply(&self, x: &[f64]) -> Option<Vec<f64>> {
-        if x.len() != self.cols || self.weight.len() != self.rows * self.cols || self.bias.len() != self.rows {
+        let cells = self.rows.checked_mul(self.cols)?;
+        if x.len() != self.cols || self.weight.len() != cells || self.bias.len() != self.rows {
             return None;
         }
         let mut y = self.bias.clone();
@@ -765,11 +805,13 @@ impl Affine {
 impl Linear {
     /// `W x`.
     ///
-    /// `None` when `x.len()` is not [`Linear::cols`], or when the weight vector does not hold
-    /// `rows * cols` entries.
+    /// `None` when `x.len()` is not [`Linear::cols`], when the weight vector does not hold
+    /// `rows * cols` entries, or when `rows * cols` does not fit in a `usize` — the fields are
+    /// public, so that product is checked rather than assumed.
     #[must_use]
     pub fn apply(&self, x: &[f64]) -> Option<Vec<f64>> {
-        if x.len() != self.cols || self.weight.len() != self.rows * self.cols {
+        let cells = self.rows.checked_mul(self.cols)?;
+        if x.len() != self.cols || self.weight.len() != cells {
             return None;
         }
         let mut y = vec![0.0; self.rows];
@@ -886,6 +928,14 @@ impl CubaLif {
     ///
     /// `None` for `k` past the population, for a non-finite or negative `t`, for a non-finite `u`,
     /// or for `tau_mem <= 0`.
+    ///
+    /// ⚠ **`t = 0` with `tau_syn = 0`** is the one place the expression above cannot be evaluated
+    /// as written: `exp(-t/tau_syn)` is `exp(-0/0)`, which is `NaN`, and the cross term's factor of
+    /// exactly zero does not rescue it — `0 * NaN` is `NaN`. The instantaneous-synapse limit of
+    /// that exponential is `0` at every `t >= 0`, and that is what is substituted, so the value
+    /// returned is `v_leak`, the rest the neuron starts from. This function is the oracle
+    /// `the_cuba_propagator_matches_its_closed_form` compares the integrator against, so a `NaN`
+    /// here is a `NaN` in the only independent check the propagator has.
     #[must_use]
     pub fn step_response(&self, k: usize, t: f64, u: f64) -> Option<f64> {
         let s = self.state(k)?;
@@ -894,7 +944,9 @@ impl CubaLif {
         }
         let a = s.w_in * u;
         let em = (-t / s.tau_mem).exp();
-        let es = (-t / s.tau_syn).exp();
+        // See the `t = 0, tau_syn = 0` note above. For every `t > 0` this IS `(-t/0.0).exp()`,
+        // bit for bit, so no other value moves.
+        let es = if s.tau_syn == 0.0 { 0.0 } else { (-t / s.tau_syn).exp() };
         let bracket = if (s.tau_syn - s.tau_mem).abs() <= 1e-12 * s.tau_mem {
             1.0 - em - (t / s.tau_mem) * em
         } else {
@@ -915,16 +967,38 @@ impl CubaLif {
 /// pair has an error that grows with `dt / tau_syn`, and `tau_syn` is the *smallest* constant in
 /// the model, so it is exactly the term that forces a small timestep and therefore the energy bill.
 ///
-/// Because the propagator is exact and matrix exponentials compose, this model is
-/// [`crate::neuron::Neuron::EXACT_OVER_GAPS`] and may be run in
-/// [`crate::sim::Mode::EventDriven`].
+/// # ⚠ Exact does not mean jumpable: this model is NOT `EXACT_OVER_GAPS`
+///
+/// The propagator is exact and matrix exponentials compose, so the **flow** may be jumped: ten
+/// steps of `dt` and one step of `10 dt` under zero input land in the same place to a part in
+/// `1e14`. That is not the property [`crate::neuron::Neuron::EXACT_OVER_GAPS`] declares. That
+/// constant is about the **hybrid** system — the flow *plus* the threshold and the reset — and the
+/// threshold is where this model parts company with [`crate::neuron::Lif`].
+///
+/// Under zero input a `Lif`'s membrane is **monotone** toward `v_rest`, which sits below
+/// threshold, so a `Lif` that is sub-threshold when a quiet gap opens is sub-threshold throughout
+/// it and there is nothing for a jump to miss. A `CubaLIF`'s membrane is a **difference of two
+/// exponentials** and keeps *rising* after its input stops whenever `i_syn` is non-zero — which is
+/// the state this node exists to have. That late peak, several milliseconds after the last spike
+/// arrived, is the entire reason `CubaLIF` is in `NIR`, and a jump does not delay the spike it
+/// produces, it **deletes** it: [`crate::sim::Sim`] discards the return value of the step it jumps
+/// a quiet gap with.
+///
+/// So [`crate::sim::Sim::new`] **refuses** a `CubaState` in [`crate::sim::Mode::EventDriven`], and
+/// the model runs clocked. `the_cuba_hybrid_does_not_compose_across_a_quiet_gap` is the
+/// measurement behind that refusal.
 ///
 /// # The degenerate cases, both of them deliberate
 ///
-/// At `tau_syn = 0` the code below evaluates `exp(-dt/0)` as `exp(-inf) = 0` and the cross term's
-/// factor `tau_syn / (tau_syn - tau_mem)` as `0`, so the update collapses — **with no branch** —
-/// onto the exponential-Euler update [`crate::neuron::Lif`] uses. That is the `LIF` reduction
-/// falling out of the arithmetic rather than being special-cased, and a test pins it bit for bit.
+/// At `tau_syn = 0` the synaptic factor is `exp(-dt/0) = exp(-inf) = 0` and the cross term's factor
+/// `tau_syn / (tau_syn - tau_mem)` is `0`, so the update collapses onto the exponential-Euler
+/// update [`crate::neuron::Lif`] uses. That is the `LIF` reduction falling out of the arithmetic
+/// rather than being modelled separately, and a test pins it bit for bit.
+///
+/// The zero is substituted rather than divided for, for one reason: a **negative** zero is still
+/// `== 0.0`, still passes [`Graph::validate`] (`-0.0 < 0.0` is false), and turns `-dt / tau_syn`
+/// into `+inf`, so the division produced `exp(+inf)` and then a `NaN` membrane. The substituted
+/// value is the same `0.0` the division gave for a positive zero, so nothing else moves.
 ///
 /// At `tau_syn = tau_mem` the factor `tau_syn / (tau_syn - tau_mem)` is a division by zero that is
 /// *not* a limit the arithmetic reaches; the analytic limit is `(dt/tau_mem) * exp(-dt/tau_mem)`
@@ -933,7 +1007,9 @@ impl CubaLif {
 /// zero.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CubaState {
-    /// Synaptic time constant, seconds. Zero means the instantaneous-synapse limit.
+    /// Synaptic time constant, seconds. Finite and **non-negative**; zero means the
+    /// instantaneous-synapse limit. A negative value is a synapse that amplifies instead of
+    /// decaying, and [`CubaState::step_exact`] refuses it rather than integrating it.
     pub tau_syn: f64,
     /// Membrane time constant, seconds. Strictly positive.
     pub tau_mem: f64,
@@ -961,14 +1037,32 @@ impl CubaState {
     /// non-positive `dt`, or a non-finite `u`, is a **no-op returning `false`**: the alternative is
     /// a `NaN` in the membrane, which does not fail loudly — it propagates into every downstream
     /// spike time and the run completes and reports no spikes.
+    ///
+    /// A [`CubaState::tau_syn`] that is negative, infinite or `NaN` is a no-op for the same reason
+    /// and one more. [`Graph::validate`] refuses a negative `tau_syn` at the graph boundary, but
+    /// this struct's fields are public and [`CubaLif::state`] is not the only way to reach one: at
+    /// `tau_syn = -5 ms` the synaptic factor `exp(-dt/tau_syn)` is greater than one and the current
+    /// **grows without bound**, silently, with no `NaN` to notice. The precondition the validator
+    /// enforces is enforced here too.
     pub fn step_exact(&mut self, dt: f64, u: f64) -> bool {
-        if !(dt > 0.0) || !dt.is_finite() || !u.is_finite() || !(self.tau_mem > 0.0) {
+        if !(dt > 0.0)
+            || !dt.is_finite()
+            || !u.is_finite()
+            || !(self.tau_mem > 0.0)
+            || !(self.tau_syn >= 0.0)
+            || !self.tau_syn.is_finite()
+        {
             return false;
         }
         let a = self.w_in * u;
         let b = self.i_syn - a;
         let em = (-dt / self.tau_mem).exp();
-        let es = (-dt / self.tau_syn).exp();
+        // `tau_syn == 0.0` is TRUE for a NEGATIVE ZERO, and `-dt / -0.0` is `+inf`, so the
+        // instantaneous limit written as an ordinary division gave `exp(+inf) = inf` and then
+        // `0 * inf = NaN` in the membrane — from a value `Graph::validate` accepts, because
+        // `-0.0 < 0.0` is false. For a positive zero this substitutes the same `0.0` that
+        // `exp(-dt/0.0)` already produced, so the `LIF` reduction stays bit for bit.
+        let es = if self.tau_syn == 0.0 { 0.0 } else { (-dt / self.tau_syn).exp() };
         let cross = if (self.tau_syn - self.tau_mem).abs() <= 1e-12 * self.tau_mem {
             (dt / self.tau_mem) * em
         } else {
@@ -1003,10 +1097,19 @@ impl CubaState {
 }
 
 impl crate::neuron::Neuron for CubaState {
-    // The propagator is a matrix exponential of a time-invariant system, and matrix exponentials
-    // compose: Phi(a) * Phi(b) = Phi(a + b). A quiet gap may therefore be jumped in one step, to
-    // the same floating-point caveat that applies to `Lif`'s scalar exponential.
-    const EXACT_OVER_GAPS: bool = true;
+    // FALSE, and the reason is the threshold rather than the propagator; see the type's own doc.
+    //
+    // The linear flow composes — Phi(a) * Phi(b) = Phi(a + b), held to 1e-14 relative by
+    // `the_cuba_flow_composes_across_a_quiet_gap`. The hybrid system does not, because under zero
+    // input this membrane is non-monotone whenever `i_syn` is non-zero and can cross threshold
+    // inside a gap the jump skips over.
+    //
+    // Measured, `tau_syn = 5 ms`, `tau_mem = 20 ms`, `r = 10 MOhm`, `v_leak = -65 mV`,
+    // `v_threshold = -50 mV`, one arrival of 12 nA and then silence: 600 steps of 0.1 ms spike
+    // ONCE, at tick 41, and land at -63.9396 mV; one step of 60 ms spikes NOT AT ALL and lands at
+    // -63.0088 mV. A `true` here would have let `crate::sim` produce the second answer while
+    // reporting the first model.
+    const EXACT_OVER_GAPS: bool = false;
 
     fn step(&mut self, dt: f64, i: f64) -> bool {
         self.step_exact(dt, i)
@@ -1220,8 +1323,13 @@ pub enum ValidationError {
         /// What the constraint is.
         why: &'static str,
     },
-    /// A spike train reached a node that requires a continuous input, or the reverse. See
-    /// [`Signal`] for why this check is this crate's and not `NIR`'s.
+    /// A spike train reached a node that requires a continuous input.
+    ///
+    /// **One-directional, and it will stay that way while [`Node::accepts`] has one arm**: only
+    /// [`Kind::Threshold`] requires anything, and what it requires is [`Signal::Continuous`], so no
+    /// node in the vocabulary can demand spikes and the mirror-image error cannot arise. The
+    /// variant is shaped to carry both ends anyway, so a future node that does require spikes
+    /// needs no new vocabulary. See [`Signal`] for why this check is this crate's and not `NIR`'s.
     SignalMismatch {
         /// Source node.
         from: String,
@@ -1385,6 +1493,11 @@ impl Graph {
     /// The first [`ValidationError`] in this fixed order: node names, node parameters, edge
     /// endpoints and ports, edge shapes, edge signal kinds, cycles, boundary nodes. The order is
     /// part of the contract so that a message can be asserted on.
+    ///
+    /// This function is **total**: it is the boundary a graph parsed by [`Graph::from_text`]
+    /// crosses, so every count a shape or a kernel implies is computed with checked arithmetic and
+    /// reported as [`ValidationError::BadHyperparameter`] rather than overflowing. It does not
+    /// panic on any graph, however malformed.
     pub fn validate(&self, rules: &Rules) -> Result<(), ValidationError> {
         // 1. Names.
         for k in 0..self.nodes.len() {
@@ -1519,6 +1632,11 @@ fn check_array(
     Ok(())
 }
 
+/// A shape must have at least one axis, no zero axis, and an element count that fits in a `usize`.
+///
+/// The last of those is the one a file can violate on purpose: `shape=[4294967296,4294967296]` is
+/// four tokens and names `2^64` elements. Before this check the plain product wrapped to zero in a
+/// release build, `check_array` then expected zero entries, found zero, and the node validated.
 fn check_shape(node: &str, shape: &[usize]) -> Result<(), ValidationError> {
     if shape.is_empty() {
         return Err(ValidationError::EmptyDimension { node: node.to_string(), axis: 0 });
@@ -1527,6 +1645,13 @@ fn check_shape(node: &str, shape: &[usize]) -> Result<(), ValidationError> {
         if d == 0 {
             return Err(ValidationError::EmptyDimension { node: node.to_string(), axis });
         }
+    }
+    if checked_product(shape).is_none() {
+        return Err(ValidationError::BadHyperparameter {
+            node: node.to_string(),
+            field: "shape",
+            why: "names more elements than a usize can count",
+        });
     }
     Ok(())
 }
@@ -1555,14 +1680,22 @@ fn check_node(name: &str, node: &Node) -> Result<(), ValidationError> {
             if x.rows == 0 || x.cols == 0 {
                 return Err(bad("rows/cols", "must both be non-zero"));
             }
-            check_array(name, "weight", &x.weight, x.rows * x.cols)?;
+            let cells = x
+                .rows
+                .checked_mul(x.cols)
+                .ok_or_else(|| bad("rows/cols", "name more cells than a usize can count"))?;
+            check_array(name, "weight", &x.weight, cells)?;
             check_array(name, "bias", &x.bias, x.rows)?;
         }
         Node::Linear(x) => {
             if x.rows == 0 || x.cols == 0 {
                 return Err(bad("rows/cols", "must both be non-zero"));
             }
-            check_array(name, "weight", &x.weight, x.rows * x.cols)?;
+            let cells = x
+                .rows
+                .checked_mul(x.cols)
+                .ok_or_else(|| bad("rows/cols", "name more cells than a usize can count"))?;
+            check_array(name, "weight", &x.weight, cells)?;
         }
         Node::Conv1d(x) => {
             if x.groups == 0 || x.in_channels % x.groups != 0 || x.out_channels % x.groups != 0 {
@@ -1574,7 +1707,13 @@ fn check_node(name: &str, node: &Node) -> Result<(), ValidationError> {
             if x.kernel == 0 || x.dilation == 0 {
                 return Err(bad("kernel/dilation", "must both be non-zero"));
             }
-            let want = x.out_channels * (x.in_channels / x.groups) * x.kernel;
+            let want = x
+                .out_channels
+                .checked_mul(x.in_channels / x.groups)
+                .and_then(|v| v.checked_mul(x.kernel))
+                .ok_or_else(|| {
+                    bad("weight", "would need more entries than a usize can count")
+                })?;
             check_array(name, "weight", &x.weight, want)?;
             if !x.bias.is_empty() {
                 check_array(name, "bias", &x.bias, x.out_channels)?;
@@ -1592,8 +1731,14 @@ fn check_node(name: &str, node: &Node) -> Result<(), ValidationError> {
             if x.kernel[0] == 0 || x.kernel[1] == 0 || x.dilation[0] == 0 || x.dilation[1] == 0 {
                 return Err(bad("kernel/dilation", "must be non-zero on both axes"));
             }
-            let want =
-                x.out_channels * (x.in_channels / x.groups) * x.kernel[0] * x.kernel[1];
+            let want = x
+                .out_channels
+                .checked_mul(x.in_channels / x.groups)
+                .and_then(|v| v.checked_mul(x.kernel[0]))
+                .and_then(|v| v.checked_mul(x.kernel[1]))
+                .ok_or_else(|| {
+                    bad("weight", "would need more entries than a usize can count")
+                })?;
             check_array(name, "weight", &x.weight, want)?;
             if !x.bias.is_empty() {
                 check_array(name, "bias", &x.bias, x.out_channels)?;
@@ -1625,23 +1770,29 @@ fn check_node(name: &str, node: &Node) -> Result<(), ValidationError> {
             check_array(name, "r", &x.r, product(&x.shape))?;
         }
         Node::If(x) => {
-            let n = product(&x.shape);
+            // `check_shape` before the product: it is what refuses a shape whose element count
+            // does not fit in a `usize`, and `product` saturates rather than reporting.
             check_shape(name, &x.shape)?;
+            let n = product(&x.shape);
             check_array(name, "r", &x.r, n)?;
             check_array(name, "v_threshold", &x.v_threshold, n)?;
             check_array(name, "v_reset", &x.v_reset, n)?;
         }
         Node::Li(x) => {
-            let n = product(&x.shape);
+            // `check_shape` before the product: it is what refuses a shape whose element count
+            // does not fit in a `usize`, and `product` saturates rather than reporting.
             check_shape(name, &x.shape)?;
+            let n = product(&x.shape);
             check_array(name, "tau", &x.tau, n)?;
             check_positive(name, "tau", &x.tau)?;
             check_array(name, "r", &x.r, n)?;
             check_array(name, "v_leak", &x.v_leak, n)?;
         }
         Node::Lif(x) => {
-            let n = product(&x.shape);
+            // `check_shape` before the product: it is what refuses a shape whose element count
+            // does not fit in a `usize`, and `product` saturates rather than reporting.
             check_shape(name, &x.shape)?;
+            let n = product(&x.shape);
             check_array(name, "tau", &x.tau, n)?;
             check_positive(name, "tau", &x.tau)?;
             check_array(name, "r", &x.r, n)?;
@@ -1650,8 +1801,10 @@ fn check_node(name: &str, node: &Node) -> Result<(), ValidationError> {
             check_array(name, "v_reset", &x.v_reset, n)?;
         }
         Node::CubaLif(x) => {
-            let n = product(&x.shape);
+            // `check_shape` before the product: it is what refuses a shape whose element count
+            // does not fit in a `usize`, and `product` saturates rather than reporting.
             check_shape(name, &x.shape)?;
+            let n = product(&x.shape);
             check_array(name, "tau_syn", &x.tau_syn, n)?;
             if x.tau_syn.iter().any(|&t| t < 0.0) {
                 // Zero IS legal, and means the instantaneous-synapse limit; see
@@ -1841,17 +1994,30 @@ impl std::error::Error for TextError {}
 
 /// Format a float so that parsing it back gives the **same bits**.
 ///
-/// Rust's default float formatting already emits the shortest decimal that round-trips, and this
-/// checks that property per value rather than trusting it, falling back to 17 significant digits —
-/// which always round-trips for `f64` — when it does not hold. The check costs one parse per number
-/// written and removes a class of silent corruption from the format's central claim.
+/// Rust's `{:?}` already emits the shortest decimal that round-trips, and this **checks** that
+/// property per value rather than trusting it, falling back to [`fmt_f64_long`] when it does not
+/// hold. The check costs one parse per number written and removes a class of silent corruption from
+/// the format's central claim.
+///
+/// ⚠ The fallback has never fired, and on a conforming Rust it never will — `{:?}` round-trips by
+/// construction. It is kept because the cost is one parse and the alternative is trusting a
+/// property the format's whole claim rests on. [`fmt_f64_long`] is a named function rather than an
+/// inline `else` precisely so that the branch can be tested on its own; an untested fallback is a
+/// fallback that fails the first time it is needed.
 fn fmt_f64(x: f64) -> String {
     let s = format!("{x:?}");
-    if s.parse::<f64>().map(f64::to_bits) == Ok(x.to_bits()) {
-        s
-    } else {
-        format!("{x:.17e}")
-    }
+    if s.parse::<f64>().map(f64::to_bits) == Ok(x.to_bits()) { s } else { fmt_f64_long(x) }
+}
+
+/// The long form [`fmt_f64`] falls back to: **eighteen** significant digits, one before the point
+/// and seventeen after.
+///
+/// Seventeen significant digits is the number that always round-trips an `f64`; `{:.17e}` prints
+/// eighteen, which is one more than needed and therefore also round-trips. The count is stated
+/// exactly because an earlier doc called this "17 significant digits", and a reader checking the
+/// format's guarantee against the standard figure would have found the two off by one.
+fn fmt_f64_long(x: f64) -> String {
+    format!("{x:.17e}")
 }
 
 fn w_usize(out: &mut String, key: &str, v: usize) {
@@ -2406,6 +2572,39 @@ pub enum BridgeError {
         /// The tick length it was measured against, seconds.
         dt: f64,
     },
+    /// A delay that is a whole number of ticks but more of them than a `u32` can index.
+    ///
+    /// [`crate::net::Net`] stores a synaptic delay as a `u32`, so `u32::MAX` ticks is the
+    /// representational ceiling and this is where it is enforced. Before this variant existed the
+    /// cast `rounded as u32` **saturated**, which is what a Rust float-to-int cast does: a delay of
+    /// `1e9` s at `dt = 1e-4` (a true count of `1e13` ticks) was accepted as `4294967295`, nine
+    /// orders of magnitude wrong and silently so.
+    ///
+    /// ⚠ A delay that *is* inside the ceiling can still be expensive: [`crate::sim::Sim`] allocates
+    /// `max_delay + 1` delivery buckets, so a network whose longest delay is a billion ticks asks
+    /// for a billion of them. That cost is disclosed rather than capped, because the tick count a
+    /// caller can afford is not this module's to choose.
+    DelayTooManyTicks {
+        /// The `Delay` node.
+        name: String,
+        /// The delay that failed, seconds.
+        seconds: f64,
+        /// The tick length it was measured against, seconds.
+        dt: f64,
+        /// The whole number of ticks it works out to, which does not fit in a `u32`.
+        ticks: f64,
+    },
+    /// More neurons than [`crate::net::Net`]'s `u32` indices can address.
+    ///
+    /// `Net` names a neuron with a `u32`. A graph whose `LIF` elements outnumber `u32::MAX`, or a
+    /// network whose dense `n * n` matrix would overflow a `usize`, has no `Net` or no `NIR` form.
+    /// Named rather than clamped: `u32::try_from(..).unwrap_or(u32::MAX)` would have built a
+    /// plausible-looking synapse onto neuron `4294967295`, and [`crate::net::NetBuilder::connect`]
+    /// accepts that index whenever the network really is that large.
+    TooManyNeurons {
+        /// How many neurons were asked for.
+        count: usize,
+    },
     /// An edge between two node types the bridge has no rule for — two populations wired together
     /// with no weights between them, for instance, which `Net` cannot express because a synapse
     /// without a weight is not a synapse.
@@ -2501,6 +2700,14 @@ impl fmt::Display for BridgeError {
                 f,
                 "node {name}: a delay of {seconds} s is not a whole number of {dt} s ticks"
             ),
+            Self::DelayTooManyTicks { name, seconds, dt, ticks } => write!(
+                f,
+                "node {name}: a delay of {seconds} s is {ticks} ticks of {dt} s, and a Net stores \
+                 a delay in a u32"
+            ),
+            Self::TooManyNeurons { count } => {
+                write!(f, "{count} neurons is past what a Net's u32 indices can address")
+            }
             Self::UnsupportedEdge { from, to } => {
                 write!(f, "edge {from} -> {to} has no representation in a Net")
             }
@@ -2585,15 +2792,33 @@ impl Graph {
     /// [`BridgeError::UnsupportedNode`] naming any node type outside the subset;
     /// [`BridgeError::BiasNotRepresentable`], [`BridgeError::WeightFanout`],
     /// [`BridgeError::WeightNotBetweenNeurons`], [`BridgeError::DelayOutOfPlace`],
-    /// [`BridgeError::DelayNotWholeTicks`], [`BridgeError::UnsupportedEdge`] or
-    /// [`BridgeError::Net`] as described on each.
+    /// [`BridgeError::DelayNotWholeTicks`], [`BridgeError::DelayTooManyTicks`],
+    /// [`BridgeError::UnsupportedEdge`], [`BridgeError::TooManyNeurons`] or [`BridgeError::Net`]
+    /// as described on each.
     pub fn to_net(&self, dt: f64) -> Result<Conversion, BridgeError> {
         self.validate(&Rules::default())?;
         if !(dt > 0.0) || !dt.is_finite() {
             return Err(BridgeError::BadTimeStep { dt });
         }
 
-        // 1. Lay the LIF populations out in graph order.
+        // 1. Every node must be a kind the subset covers, checked BEFORE the edge sweep below.
+        //    Order matters for the message and only for the message: step 2 reports an edge, so a
+        //    CubaLIF that is actually wired to something — which is every CubaLIF in a real file —
+        //    used to come back as `UnsupportedEdge { from: "w", to: "cu" }` with its kind nowhere
+        //    in it, and `UnsupportedNode` was reachable only by a node with no edges at all. The
+        //    doc's promise is that an unsupported node is refused BY NAME, with its kind; this is
+        //    where that promise is kept.
+        for named in &self.nodes {
+            let kind = named.node.kind();
+            if !matches!(
+                kind,
+                Kind::Input | Kind::Output | Kind::Affine | Kind::Linear | Kind::Lif | Kind::Delay
+            ) {
+                return Err(BridgeError::UnsupportedNode { name: named.name.clone(), kind });
+            }
+        }
+
+        // 2. Lay the LIF populations out in graph order.
         let mut blocks: Vec<Block> = Vec::new();
         let mut block_of: Vec<Option<usize>> = vec![None; self.nodes.len()];
         let mut total = 0usize;
@@ -2609,7 +2834,7 @@ impl Graph {
             return Err(BridgeError::NoNeurons);
         }
 
-        // 2. Every edge must be one of the shapes the subset allows. Checked before anything is
+        // 3. Every edge must be one of the shapes the subset allows. Checked before anything is
         //    built, so an unsupported wiring is reported rather than half-converted.
         for e in &self.edges {
             let (Some(a), Some(b)) = (self.index_of(&e.from), self.index_of(&e.to)) else {
@@ -2632,7 +2857,7 @@ impl Graph {
             }
         }
 
-        // 3. Walk the nodes, consuming Delay nodes from the weight node in front of them.
+        // 4. Walk the nodes, consuming Delay nodes from the weight node in front of them.
         let mut builder = NetBuilder::new(total);
         let mut delay_used = vec![false; self.nodes.len()];
         let mut inputs = Vec::new();
@@ -2725,18 +2950,32 @@ impl Graph {
                     })?;
 
                     // `validate` has already matched [cols] against the source's output shape and
-                    // [rows] against the target's input shape, so these products agree.
+                    // [rows] against the target's input shape, so these products agree — but this
+                    // function is `pub` and the agreement is an argument, not a type. A short delay
+                    // array silently became zero delay here, and an out-of-range neuron index
+                    // silently became a synapse onto neuron 4294967295, which
+                    // `NetBuilder::connect` accepts whenever the network really is that large.
+                    if delay_ticks.len() != rows {
+                        return Err(BridgeError::Invalid(ValidationError::RaggedParameter {
+                            node: self.nodes[mid].name.clone(),
+                            field: "delay",
+                            len: delay_ticks.len(),
+                            expected: rows,
+                        }));
+                    }
                     let src_base = blocks[src_block].base;
                     let dst_base = blocks[dst_block].base;
                     for row in 0..rows {
-                        let d = delay_ticks.get(row).copied().unwrap_or(0);
+                        let d = delay_ticks[row];
                         for col in 0..cols {
                             let weight = w[row * cols + col];
                             if weight == 0.0 {
                                 continue; // dropped, and the doc says so
                             }
-                            let pre = u32::try_from(src_base + col).unwrap_or(u32::MAX);
-                            let post = u32::try_from(dst_base + row).unwrap_or(u32::MAX);
+                            let pre = u32::try_from(src_base + col)
+                                .map_err(|_| BridgeError::TooManyNeurons { count: total })?;
+                            let post = u32::try_from(dst_base + row)
+                                .map_err(|_| BridgeError::TooManyNeurons { count: total })?;
                             builder
                                 .connect(pre, post, weight, d)
                                 .map_err(BridgeError::Net)?;
@@ -2759,7 +2998,7 @@ impl Graph {
             }
         }
 
-        // 4. Build the neurons, one per element, parameters copied bit for bit.
+        // 5. Build the neurons, one per element, parameters copied bit for bit.
         let mut neurons = Vec::with_capacity(total);
         for (i, named) in self.nodes.iter().enumerate() {
             if block_of[i].is_none() {
@@ -2793,12 +3032,22 @@ impl Graph {
     /// network becomes an 800 MB node. The block structure a [`Conversion`] recorded is not
     /// recovered; the weights are, bit for bit.
     ///
+    /// ⚠ **The graph returned is cyclic, whatever the network was.** Collapsing every population
+    /// into one `neurons` node turns `neurons -> weights -> neurons` into a self-loop through the
+    /// weight node, so a feedforward chain comes back as a cycle. The graph validates under
+    /// [`Rules::default`] and **never** under [`Rules::feedforward`], which fails it with
+    /// [`ValidationError::Cycle`] naming `["neurons", "weights", "output"]`. Since
+    /// `Rules::feedforward` exists for the layer-by-layer consumers, no output of this function is
+    /// consumable by one. Recovering the layering would need the block structure this function
+    /// does not have.
+    ///
     /// # Errors
     ///
     /// [`BridgeError::WrongNeuronCount`], [`BridgeError::BadTimeStep`], [`BridgeError::NoNeurons`],
     /// [`BridgeError::RefractoryNotRepresentable`] for a neuron `NIR` cannot describe,
     /// [`BridgeError::NonFiniteNeuron`], [`BridgeError::SplitDelay`] where a neuron's incoming
-    /// synapses disagree about their delay, or [`BridgeError::DuplicateSynapse`].
+    /// synapses disagree about their delay, [`BridgeError::DuplicateSynapse`], or
+    /// [`BridgeError::TooManyNeurons`].
     pub fn from_net(
         net: &Net,
         neurons: &[crate::neuron::Lif],
@@ -2834,17 +3083,24 @@ impl Graph {
             }
         }
 
-        let mut dense = vec![0.0f64; n * n];
-        let mut filled = vec![false; n * n];
+        // `n * n` is the dense matrix NIR's Linear node forces; an `n` past a `u32` also has no
+        // Net-side index, so both are refused here rather than wrapping or clamping.
+        let cells = n.checked_mul(n).ok_or(BridgeError::TooManyNeurons { count: n })?;
+        if u32::try_from(n - 1).is_err() {
+            return Err(BridgeError::TooManyNeurons { count: n });
+        }
+        let mut dense = vec![0.0f64; cells];
+        let mut filled = vec![false; cells];
         let mut delay_of: Vec<Option<u32>> = vec![None; n];
         for pre in 0..n {
             for (post, w, d) in net.out_of(pre) {
                 let cell = post as usize * n + pre;
                 if filled[cell] {
-                    return Err(BridgeError::DuplicateSynapse {
-                        pre: u32::try_from(pre).unwrap_or(u32::MAX),
-                        post,
-                    });
+                    // `pre` is below `n` and `n` fits a `u32` by the check above, so this cast is
+                    // exact rather than clamped.
+                    let pre = u32::try_from(pre)
+                        .map_err(|_| BridgeError::TooManyNeurons { count: n })?;
+                    return Err(BridgeError::DuplicateSynapse { pre, post });
                 }
                 filled[cell] = true;
                 dense[cell] = w;
@@ -2900,7 +3156,14 @@ impl Graph {
     }
 }
 
-/// Seconds to whole ticks, refusing anything in between.
+/// Seconds to whole ticks, refusing anything in between and anything past a `u32`.
+///
+/// The second refusal is not decoration. `rounded as u32` is a saturating cast in Rust, so without
+/// the bound a delay of `1e30` s at `dt = 1e-4` — `1e34` ticks — became `4294967295` with no error
+/// at all, and `crate::sim::Sim` then tried to allocate that many delivery buckets. The `NIR` Units
+/// section says why such a number reaches this function in practice: a graph normalised for
+/// training carries `delay` in **timesteps**, and reading timesteps as seconds multiplies the tick
+/// count by `1 / dt`.
 fn ticks_of(name: &str, delay: &[f64], dt: f64) -> Result<Vec<u32>, BridgeError> {
     let mut out = Vec::with_capacity(delay.len());
     for &seconds in delay {
@@ -2915,6 +3178,16 @@ fn ticks_of(name: &str, delay: &[f64], dt: f64) -> Result<Vec<u32>, BridgeError>
                 dt,
             });
         }
+        // `u32::MAX as f64` is exact, and `rounded` is whole, so this comparison is exact and the
+        // cast below cannot saturate.
+        if rounded > f64::from(u32::MAX) {
+            return Err(BridgeError::DelayTooManyTicks {
+                name: name.to_string(),
+                seconds,
+                dt,
+                ticks: rounded,
+            });
+        }
         out.push(rounded as u32);
     }
     Ok(out)
@@ -2924,8 +3197,9 @@ fn ticks_of(name: &str, delay: &[f64], dt: f64) -> Result<Vec<u32>, BridgeError>
 mod tests {
     use super::{
         Affine, Block, BridgeError, Conv1d, Conv2d, CubaLif, CubaState, Delay, Flatten,
-        Graph, I, If, Input, Kind, Li, Lif, Linear, Named, Node, Output, Pool2d, Rules, Scale,
-        Signal, TextError, Threshold, ValidationError, fmt_f64, product,
+        Graph, I, If, Input, Kind, Li, Lif, Linear, MAGIC, Named, Node, Output, Pool2d, Rules,
+        Scale, Signal, TextError, Threshold, ValidationError, checked_product, fmt_f64,
+        fmt_f64_long, product,
     };
     use crate::neuron::Neuron;
 
@@ -3902,6 +4176,18 @@ mod tests {
             let u = 1e-9;
             let mut s = node.state(0).expect("one element");
             let dt = 1e-5;
+            // `t = 0` FIRST, before any step. The loop used to start at k = 1, so the sample where
+            // `exp(-t/tau_syn)` is `exp(-0/0)` was never taken and the oracle's `NaN` at
+            // `tau_syn = 0` never surfaced — in the one function every other CubaLIF check is
+            // measured against.
+            let want0 = node.step_response(0, 0.0, u).expect("t = 0 is in range");
+            assert!(want0.is_finite(), "the oracle is {want0} at t = 0 for tau_syn {tau_syn}");
+            assert_eq!(
+                want0.to_bits(),
+                (-65e-3f64).to_bits(),
+                "at t = 0 the step response is the rest it starts from, not {want0}"
+            );
+            assert!((s.v - want0).abs() < 1e-13, "tau_syn {tau_syn} step 0: {} vs {want0}", s.v);
             for k in 1..=2_000u32 {
                 assert!(!s.step_exact(dt, u), "the threshold is 1 kV; nothing should fire");
                 let t = f64::from(k) * dt;
@@ -4134,11 +4420,17 @@ mod tests {
         assert!((s.potential() - (-65e-3)).abs() < 1e-18);
         assert_eq!(s.refractory_left(), 0.0, "NIR has no refractory period");
 
-        // The enforcement point for EXACT_OVER_GAPS: the simulator accepts this model in
-        // event-driven mode, and refuses a model that cannot be jumped across a gap.
+        // The enforcement point for EXACT_OVER_GAPS. This test USED to assert that the simulator
+        // ACCEPTED a CubaState in event-driven mode, which pinned the wrong constant in place as a
+        // regression test. It is refused, for the reason
+        // `the_cuba_hybrid_does_not_compose_across_a_quiet_gap` measures.
         let net = crate::net::NetBuilder::new(1).build();
-        crate::sim::Sim::new(net.clone(), vec![s], 1e-4, crate::sim::Mode::EventDriven)
-            .expect("an exact propagator may be jumped across quiet ticks");
+        assert!(matches!(
+            crate::sim::Sim::new(net.clone(), vec![s], 1e-4, crate::sim::Mode::EventDriven),
+            Err(crate::sim::SimError::NotExactOverGaps)
+        ));
+        crate::sim::Sim::new(net.clone(), vec![s], 1e-4, crate::sim::Mode::Clocked)
+            .expect("clocked must still work; the model is fine, the jump is not");
         assert!(matches!(
             crate::sim::Sim::new(
                 net,
@@ -4150,14 +4442,20 @@ mod tests {
         ));
     }
 
-    /// The claim behind [`CubaState::EXACT_OVER_GAPS`], tested as mathematics rather than as a
-    /// constant: a matrix exponential composes, so ten steps of `dt` and one step of `10 dt` over a
-    /// quiet interval must land in the same place.
+    /// The **linear flow** composes: a matrix exponential composes, so ten steps of `dt` and one
+    /// step of `10 dt` over a quiet interval land in the same place.
+    ///
+    /// ⚠ Read what this fixture is before reading this as a licence to jump gaps.
+    /// [`cuba_node`] sets `v_threshold` to one kilovolt, so the threshold logic is structurally
+    /// out of reach and what is measured here is the propagator alone. That is worth measuring and
+    /// it is **not** [`crate::neuron::Neuron::EXACT_OVER_GAPS`], which is a claim about the flow
+    /// *and* the threshold together. For years this test carried that claim; the hybrid half is
+    /// `the_cuba_hybrid_does_not_compose_across_a_quiet_gap`, and it fails.
     ///
     /// To rounding, not bit for bit — `exp(-a)*exp(-b)` and `exp(-(a+b))` differ in the last place,
     /// which is the same caveat [`crate::neuron::Lif`]'s scalar exponential carries.
     #[test]
-    fn the_cuba_propagator_composes_across_a_quiet_gap() {
+    fn the_cuba_flow_composes_across_a_quiet_gap() {
         let node = cuba_node(5e-3, 20e-3, 1.0);
         let mut fine = node.state(0).expect("one element");
         fine.i_syn = 3e-9;
@@ -4181,5 +4479,441 @@ mod tests {
         );
         // The premise: the state actually moved, so this is not two copies of the initial value.
         assert!((coarse.i_syn - 3e-9).abs() > 1e-10, "nothing decayed");
+    }
+    // -- the repairs the audit asked for, each with the measurement behind it --------------------
+
+    /// **The hybrid system does NOT compose across a quiet gap**, which is why
+    /// [`CubaState`]'s [`crate::neuron::Neuron::EXACT_OVER_GAPS`] is `false`.
+    ///
+    /// `the_cuba_flow_composes_across_a_quiet_gap` measures the propagator with the threshold held
+    /// structurally out of reach at one kilovolt. Put the threshold back where a `CubaLIF` actually
+    /// has it and the two runs disagree about a whole spike — because under zero input this
+    /// membrane is a difference of two exponentials and keeps climbing after the input stops, and
+    /// the jumped step reads only the endpoint.
+    #[test]
+    fn the_cuba_hybrid_does_not_compose_across_a_quiet_gap() {
+        let node = CubaLif {
+            shape: vec![1],
+            tau_syn: vec![5e-3],
+            tau_mem: vec![20e-3],
+            r: vec![10e6],
+            v_leak: vec![-65e-3],
+            v_threshold: vec![-50e-3], // reachable, unlike `cuba_node`'s kilovolt
+            v_reset: vec![-65e-3],
+            w_in: vec![1.0],
+        };
+        let dt = 1e-4;
+        let steps = 600u32; // 60 ms, every tick of it quiet
+
+        let mut fine = node.state(0).expect("one element");
+        fine.bump_current(12e-9);
+        let mut fine_spikes = 0u32;
+        let mut first = None;
+        for k in 0..steps {
+            if fine.step_exact(dt, 0.0) {
+                fine_spikes += 1;
+                first.get_or_insert(k);
+            }
+        }
+
+        let mut jumped = node.state(0).expect("one element");
+        jumped.bump_current(12e-9);
+        let jumped_spiked = jumped.step_exact(dt * f64::from(steps), 0.0);
+
+        // The premise, asserted rather than assumed: the fine run really does cross, INSIDE the
+        // interval that has no input in it at all.
+        assert_eq!(fine_spikes, 1, "the fine run must spike or this test proves nothing");
+        let at = first.expect("one spike means one first spike");
+        assert!(
+            (20..80).contains(&at),
+            "the crossing is a few ms into the quiet interval, measured at tick {at}"
+        );
+
+        // And the jump does not delay that spike, it deletes it.
+        assert!(!jumped_spiked, "one step over the whole gap saw no crossing");
+        assert!(
+            (fine.v - jumped.v).abs() > 5e-4,
+            "the two runs landed at {} V and {} V; if those agreed, EXACT_OVER_GAPS could be true",
+            fine.v,
+            jumped.v
+        );
+        // A compile-time assertion, as `sim.rs` makes for `Izhikevich`: the constant is the whole
+        // safety property, and a spike this model produces inside a quiet gap would be discarded
+        // rather than delayed if it were `true`.
+        const {
+            assert!(!CubaState::EXACT_OVER_GAPS);
+        }
+
+        // End to end. The clocked run is the model; the event-driven run a `true` constant would
+        // have permitted is refused at construction instead of being produced and believed.
+        let net = crate::net::NetBuilder::new(1).build();
+        let cell = node.state(0).expect("one element");
+        let mut sim = crate::sim::Sim::new(net.clone(), vec![cell], dt, crate::sim::Mode::Clocked)
+            .expect("clocked is always legal");
+        let mut ext = vec![60e-9];
+        let mut clocked = 0usize;
+        for _ in 0..30 {
+            clocked += sim.step(&ext).len(); // 3 ms of drive
+        }
+        ext[0] = 0.0;
+        for _ in 0..570 {
+            clocked += sim.step(&ext).len(); // 57 ms of silence
+        }
+        assert!(clocked > 1, "the clocked run fired {clocked} times; the jumped one fires once");
+        assert!(matches!(
+            crate::sim::Sim::new(net, vec![cell], dt, crate::sim::Mode::EventDriven),
+            Err(crate::sim::SimError::NotExactOverGaps)
+        ));
+    }
+
+    /// A shape can name more elements than a `usize` can count, and four tokens is all it takes.
+    ///
+    /// Before the repair the plain product **wrapped to zero** in a release build — so a node
+    /// declaring `2^64` elements validated, because `check_array` expects zero entries for a zero
+    /// count and empty arrays supply them — and **panicked** in a debug build, inside the boundary
+    /// function whose job is to reject malformed nodes, on input straight from
+    /// [`Graph::from_text`].
+    #[test]
+    fn a_shape_that_overflows_a_usize_is_refused_rather_than_wrapped() {
+        let big = usize::MAX / 2 + 1;
+        let text = format!("{MAGIC}\nnode s Scale shape=[{big},2] scale=[]\n");
+        let g = Graph::from_text(&text).expect("the reader takes it; the validator is the boundary");
+        assert_eq!(
+            g.validate(&Rules::default()),
+            Err(ValidationError::BadHyperparameter {
+                node: "s".to_string(),
+                field: "shape",
+                why: "names more elements than a usize can count",
+            })
+        );
+
+        // The same for a node with dynamics, whose parameter arrays are the ones a wrapped zero
+        // would have certified as correctly empty.
+        let mut h = Graph::new();
+        h.push(
+            "n",
+            Node::Lif(Lif {
+                shape: vec![big, 2],
+                tau: vec![],
+                r: vec![],
+                v_leak: vec![],
+                v_threshold: vec![],
+                v_reset: vec![],
+            }),
+        );
+        assert!(matches!(
+            h.validate(&Rules::default()),
+            Err(ValidationError::BadHyperparameter { field: "shape", .. })
+        ));
+
+        // And the two products themselves: one reports, one saturates, neither wraps.
+        assert_eq!(checked_product(&[big, 2]), None);
+        assert_eq!(checked_product(&[3, 4, 5]), Some(60));
+        assert_eq!(product(&[big, 2]), usize::MAX, "the saturating form must not wrap to zero");
+        assert_eq!(product(&[3, 4, 5]), 60);
+    }
+
+    /// A weight count is a product too, and `rows * cols` is public arithmetic on public fields.
+    #[test]
+    fn an_overflowing_weight_count_is_refused_rather_than_wrapped() {
+        let big = usize::MAX / 2 + 1;
+
+        let lin = Linear { rows: big, cols: 2, weight: vec![] };
+        let mut g = Graph::new();
+        g.push("w", Node::Linear(lin.clone()));
+        assert_eq!(
+            g.validate(&Rules::default()),
+            Err(ValidationError::BadHyperparameter {
+                node: "w".to_string(),
+                field: "rows/cols",
+                why: "name more cells than a usize can count",
+            })
+        );
+        // `apply` is `#[must_use]` on public fields and must answer rather than panic.
+        assert_eq!(lin.apply(&[1.0, 2.0]), None);
+        assert_eq!(
+            Affine { rows: big, cols: 2, weight: vec![], bias: vec![] }.apply(&[1.0, 2.0]),
+            None
+        );
+
+        // out_channels * (in_channels / groups) * kernel, overflowing on any pointer width.
+        let mut h = Graph::new();
+        h.push(
+            "c1",
+            Node::Conv1d(Conv1d {
+                in_channels: 1 << 20,
+                out_channels: 1 << 20,
+                length: 16,
+                kernel: 1 << 24,
+                stride: 1,
+                padding: 0,
+                dilation: 1,
+                groups: 1,
+                weight: vec![],
+                bias: vec![],
+            }),
+        );
+        assert!(matches!(
+            h.validate(&Rules::default()),
+            Err(ValidationError::BadHyperparameter { field: "weight", .. })
+        ));
+    }
+
+    /// [`conv_dim`]'s doc promises a shape query never panics on a malformed node. It did:
+    /// `2 * padding` overflowed before `saturating_add` ever saw the result.
+    #[test]
+    fn a_shape_query_never_panics_on_a_malformed_node() {
+        let c = Node::Conv2d(Conv2d {
+            in_channels: 1,
+            out_channels: 1,
+            size: [8, 8],
+            kernel: [3, 3],
+            stride: [1, 1],
+            padding: [usize::MAX / 2 + 1, 0],
+            dilation: [1, 1],
+            groups: 1,
+            weight: vec![0.0; 9],
+            bias: vec![],
+        });
+        let shape = c.output_shape().expect("a Conv2d has an output port");
+        assert_eq!(shape[0], 1, "the channel axis is untouched");
+        assert_eq!(shape[2], 6, "the well-formed axis still follows the published arithmetic");
+        assert_eq!(shape[1], usize::MAX - 2, "the malformed axis saturates rather than wrapping");
+
+        // And the validator names it instead of overflowing on it.
+        let mut g = Graph::new();
+        g.push("c", c);
+        assert!(matches!(
+            g.validate(&Rules::default()),
+            Err(ValidationError::BadHyperparameter { .. })
+        ));
+
+        // A Flatten whose collapsed run overflows answers too.
+        let f = Node::Flatten(Flatten {
+            size: vec![usize::MAX / 2 + 1, 2, 3],
+            start_dim: 0,
+            end_dim: 1,
+        });
+        assert_eq!(f.output_shape().expect("a Flatten has an output port"), vec![usize::MAX, 3]);
+    }
+
+    /// A delay in seconds is cast to a tick count, and a Rust float-to-int cast **saturates**.
+    ///
+    /// The `Delay` node's own doc says a delay is refused rather than rounded, because a rounded
+    /// delay changes a coincidence window. A delay of `1e30` s silently became `4294967295` ticks:
+    /// the same failure, four orders of magnitude past the most extreme form the doc imagined, and
+    /// then `crate::sim::Sim` asks for that many delivery buckets.
+    #[test]
+    fn a_delay_past_a_u32_is_refused_rather_than_saturated() {
+        for seconds in [1e9f64, 1e30] {
+            let mut g = Graph::new();
+            g.push("a", Node::Lif(lif_params(1, 20e-3)));
+            g.push("w", Node::Linear(Linear { rows: 1, cols: 1, weight: vec![1e-3] }));
+            g.push("d", Node::Delay(Delay { shape: vec![1], delay: vec![seconds] }));
+            g.push("b", Node::Lif(lif_params(1, 20e-3)));
+            g.edge("a", "w");
+            g.edge("w", "d");
+            g.edge("d", "b");
+            match g.to_net(1e-4) {
+                Err(BridgeError::DelayTooManyTicks { name, ticks, .. }) => {
+                    assert_eq!(name, "d");
+                    assert!(
+                        ticks > f64::from(u32::MAX) * 1e3,
+                        "the error must carry the TRUE count, not the clamped one: {ticks}"
+                    );
+                }
+                other => panic!("a delay of {seconds} s gave {other:?}"),
+            }
+        }
+
+        // The boundary from both sides, at a `dt` of one second so the division is exact.
+        let mut g = Graph::new();
+        g.push("a", Node::Lif(lif_params(1, 20e-3)));
+        g.push("w", Node::Linear(Linear { rows: 1, cols: 1, weight: vec![1e-3] }));
+        g.push("d", Node::Delay(Delay { shape: vec![1], delay: vec![f64::from(u32::MAX)] }));
+        g.push("b", Node::Lif(lif_params(1, 20e-3)));
+        g.edge("a", "w");
+        g.edge("w", "d");
+        g.edge("d", "b");
+        let c = g.to_net(1.0).expect("u32::MAX ticks is exactly representable");
+        assert_eq!(c.net.max_delay, u32::MAX, "the last legal tick count survives unclamped");
+
+        let Node::Delay(d) = &mut g.nodes[2].node else { panic!("fixture changed") };
+        d.delay[0] = f64::from(u32::MAX) + 1.0;
+        assert!(matches!(g.to_net(1.0), Err(BridgeError::DelayTooManyTicks { .. })));
+    }
+
+    /// **Requirement (e), on a graph that can actually occur.** The disconnected fixture in
+    /// `the_bridge_refuses_an_unsupported_node_by_name` was the only shape that reached the
+    /// by-name refusal: the edge sweep ran first, so every unsupported node WIRED to anything came
+    /// back as an edge error with its kind nowhere in the message.
+    #[test]
+    fn the_bridge_names_a_wired_unsupported_node_by_its_kind() {
+        let mut g = Graph::new();
+        g.push("in", Node::Input(Input { shape: vec![1] }));
+        g.push("a", Node::Lif(lif_params(1, 20e-3)));
+        g.push("w", Node::Linear(Linear { rows: 1, cols: 1, weight: vec![1e-3] }));
+        g.push(
+            "cu",
+            Node::CubaLif(CubaLif {
+                shape: vec![1],
+                tau_syn: vec![5e-3],
+                tau_mem: vec![20e-3],
+                r: vec![10e6],
+                v_leak: vec![-65e-3],
+                v_threshold: vec![-50e-3],
+                v_reset: vec![-65e-3],
+                w_in: vec![1.0],
+            }),
+        );
+        g.edge("in", "a");
+        g.edge("a", "w");
+        g.edge("w", "cu");
+        // The premise: this is a perfectly legal NIR graph, not a broken one.
+        g.validate(&Rules::default()).expect("a weighted LIF -> CubaLIF chain is legal NIR");
+        match g.to_net(1e-4) {
+            Err(BridgeError::UnsupportedNode { name, kind }) => {
+                assert_eq!((name.as_str(), kind), ("cu", Kind::CubaLif));
+            }
+            other => panic!("expected the node named with its kind, got {other:?}"),
+        }
+    }
+
+    /// A `tau_syn` the graph validator refuses must not integrate, because the struct's fields are
+    /// public and [`CubaLif::state`] is not the only way to reach one.
+    ///
+    /// At `tau_syn = -5 ms` the synaptic factor `exp(-dt/tau_syn)` exceeds one and the current
+    /// grows every step, with no error, no `NaN` and nothing in the result to notice. And the
+    /// value the validator *accepts* — a **negative zero**, since `-0.0 < 0.0` is false — used to
+    /// put a `NaN` straight into the membrane.
+    #[test]
+    fn a_tau_syn_outside_its_range_cannot_grow_a_synapse_or_poison_a_membrane() {
+        let base = CubaState {
+            tau_syn: 0.0,
+            tau_mem: 20e-3,
+            r: 10e6,
+            v_leak: -65e-3,
+            v_threshold: 1e3,
+            v_reset: -65e-3,
+            w_in: 1.0,
+            i_syn: 5e-9,
+            v: -65e-3,
+        };
+        for tau_syn in [-5e-3, f64::NEG_INFINITY, f64::INFINITY, f64::NAN] {
+            let start = CubaState { tau_syn, ..base };
+            let mut s = start;
+            for k in 0..5 {
+                assert!(!s.step_exact(1e-4, 0.0), "tau_syn {tau_syn} step {k} claimed a spike");
+            }
+            assert_eq!(s.i_syn.to_bits(), start.i_syn.to_bits(), "tau_syn {tau_syn} moved i_syn");
+            assert_eq!(s.v.to_bits(), start.v.to_bits(), "tau_syn {tau_syn} moved v");
+        }
+
+        // A negative zero IS the instantaneous-synapse limit and must behave as one, bit for bit.
+        let mut plus = CubaState { tau_syn: 0.0, ..base };
+        let mut minus = CubaState { tau_syn: -0.0, ..base };
+        for k in 0..50 {
+            assert_eq!(plus.step_exact(1e-4, 1e-9), minus.step_exact(1e-4, 1e-9));
+            assert!(minus.v.is_finite(), "step {k}: a negative zero put {} in the membrane", minus.v);
+            assert_eq!(plus.v.to_bits(), minus.v.to_bits(), "step {k}: {} vs {}", plus.v, minus.v);
+            assert_eq!(plus.i_syn.to_bits(), minus.i_syn.to_bits());
+        }
+        assert!(minus.v > -65e-3, "the trajectory went nowhere: {}", minus.v);
+    }
+
+    /// The documented loss on the comparison itself, pinned so that it stays documented.
+    ///
+    /// `NIR` fires on `v > v_threshold`; [`crate::neuron::Lif`] fires on `v >= v_th`. A neuron with
+    /// `r = 0` and `v_leak = v_threshold` rests exactly on its threshold: under `NIR` it never
+    /// fires, and the converted network fires on every tick. Measure zero in floating point, and
+    /// not zero — this module's own `a_cuba_element_spikes_and_resets_on_a_strict_crossing` builds
+    /// the same fixed point to pin `>` on the `NIR` side.
+    #[test]
+    fn the_bridge_turns_a_strict_crossing_into_a_non_strict_one() {
+        let mut g = Graph::new();
+        g.push("in", Node::Input(Input { shape: vec![1] }));
+        g.push(
+            "n",
+            Node::Lif(Lif {
+                shape: vec![1],
+                tau: vec![20e-3],
+                r: vec![0.0],
+                v_leak: vec![-50e-3],
+                v_threshold: vec![-50e-3],
+                v_reset: vec![-65e-3],
+            }),
+        );
+        g.push("out", Node::Output(Output { shape: vec![1] }));
+        g.edge("in", "n");
+        g.edge("n", "out");
+        let c = g.to_net(1e-4).expect("a plain LIF is inside the subset");
+
+        // `NIR`'s rule, on this module's own `NIR`-side integrator: never a crossing.
+        let mut nir_side = CubaState {
+            tau_syn: 0.0,
+            tau_mem: 20e-3,
+            r: 0.0,
+            v_leak: -50e-3,
+            v_threshold: -50e-3,
+            v_reset: -65e-3,
+            w_in: 1.0,
+            i_syn: 0.0,
+            v: -50e-3,
+        };
+        for k in 0..100 {
+            assert!(!nir_side.step_exact(1e-4, 0.0), "step {k}: NIR fires on `>`, strictly");
+        }
+        assert_eq!(nir_side.v.to_bits(), (-50e-3f64).to_bits(), "it really did sit on the line");
+
+        // The converted network's rule: fires on the first tick, and the doc says so.
+        let mut sim = crate::sim::Sim::new(c.net, c.neurons, 1e-4, crate::sim::Mode::Clocked)
+            .expect("the neuron count matches by construction");
+        assert_eq!(sim.step(&[]), vec![0], "the `>` to `>=` loss the bridge table now discloses");
+    }
+
+    /// [`fmt_f64`]'s fallback had never executed — `{:?}` round-trips by construction, so the
+    /// check that guards it always passes. Exercise the fallback directly, on the same awkward
+    /// floats, so that "17 significant digits" being eighteen is a fact about tested code.
+    #[test]
+    fn the_float_codecs_long_form_round_trips_bit_for_bit() {
+        for x in AWKWARD {
+            let long = fmt_f64_long(x);
+            assert_eq!(
+                long.parse::<f64>().map(f64::to_bits),
+                Ok(x.to_bits()),
+                "the fallback lost {x} as {long}"
+            );
+            // One digit before the point and seventeen after: eighteen significant digits.
+            let mantissa = long.split('e').next().expect("an exponent form");
+            let digits = mantissa.chars().filter(char::is_ascii_digit).count();
+            assert_eq!(digits, 18, "{long} has {digits} significant digits, not 18");
+        }
+        // And the two forms agree on value even where they disagree on spelling.
+        for x in AWKWARD {
+            assert_eq!(
+                fmt_f64(x).parse::<f64>().map(f64::to_bits),
+                fmt_f64_long(x).parse::<f64>().map(f64::to_bits)
+            );
+        }
+    }
+
+    /// [`Graph::from_net`] returns a **cyclic** graph whatever the network was, so no consumer that
+    /// asked for [`Rules::feedforward`] can take its output. The doc now says so; this pins it.
+    #[test]
+    fn a_rebuilt_graph_is_cyclic_and_no_feedforward_consumer_takes_it() {
+        let mut b = crate::net::NetBuilder::new(2);
+        b.connect(0, 1, 1e-3, 0).expect("in range");
+        let net = b.build();
+        let cells = vec![crate::neuron::Lif { t_ref: 0.0, ..crate::neuron::Lif::default() }; 2];
+        let g = Graph::from_net(&net, &cells, 1e-4).expect("a delay-free network converts");
+
+        g.validate(&Rules::default()).expect("NIR allows cycles and so does the default");
+        assert!(!g.is_acyclic(), "the collapsed `neurons -> weights -> neurons` IS a cycle");
+        match g.validate(&Rules::feedforward()) {
+            Err(ValidationError::Cycle { nodes }) => {
+                assert_eq!(nodes, vec!["neurons", "weights", "output"]);
+            }
+            other => panic!("expected a cycle refusal, got {other:?}"),
+        }
     }
 }

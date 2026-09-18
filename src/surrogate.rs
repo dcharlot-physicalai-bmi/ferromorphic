@@ -70,12 +70,30 @@
 //! As the sharpness parameter grows, every family here narrows toward the delta:
 //! [`Surrogate::fwhm`] shrinks as `1 / factor` under [`Surrogate::sharpened`], and for the
 //! normalised families the mass stays at one while the height grows. That is the delta sequence.
-//! **It is also the failure mode**: in the sharp limit the surrogate is zero at every membrane
-//! potential that is not already at threshold, so the gradient vanishes and training stops. The test
-//! `an_over_sharp_surrogate_stops_learning` takes one network, one seed and one task and changes
-//! only the width: at a full width at half maximum of `0.637` thresholds the loss falls to `4.2e-5`
-//! in 300 steps, and at `0.00212` it sits at `0.69315` — `ln(2)`, the class prior, which is a
-//! network that has learned nothing.
+//! **It is also the failure mode.** The test `an_over_sharp_surrogate_stops_learning` takes one
+//! network, one seed and one task and changes only the width: at a full width at half maximum of
+//! `0.637` thresholds the loss falls to `4.2e-5` in 300 steps, and at `0.00212` it sits at `0.69315`
+//! — `ln(2)`, the class prior, which is a network that has learned nothing.
+//!
+//! **The usual explanation of that failure is that the sharp surrogate is zero away from threshold,
+//! so the gradient vanishes and training stops. It is not what happens here, and this module now
+//! measures the mechanism rather than asserting it.** A mass-normalised family conserves its mass
+//! under sharpening, so a width 300 times smaller is a peak 300 times taller: at the *identical*
+//! initial weights of that test the sharp run's batch gradient has norm `866.7` against the wide
+//! run's `1.325` — 654 times **larger** — carried on exactly the same 2504 of 4352 non-zero entries,
+//! because [`ArcTan`]'s tails fall as `x^-2` and are nowhere zero. What sharpening changes is where
+//! the gradient sits: the largest 1% of the entries carry 98.7% of `||g||^2` at the sharp width
+//! against 40.8% at the wide one. The run then collapses onto a function of the first cue alone —
+//! after 300 steps the two patterns that share a first cue produce **bit-identical** logits — and no
+//! function of the first cue alone can score better than `ln(2)` on delayed XOR. Nor are the weights
+//! frozen: they move by `max|dp| = 0.172` getting there.
+//!
+//! Starvation is the right story for other families, and which one you get is a property of the
+//! family rather than of sharpness. A *compact* support shrinks, so at the same 300-fold sharpening
+//! [`Rectangular`] goes from 1438 non-zero gradient entries to 144 while [`ArcTan`] stays at 2504;
+//! and the two families that are peak-normalised rather than mass-normalised, [`Triangular`] and
+//! [`StraightThrough`], lose mass as `1 / factor`, so their gradient really does shrink — `0.974` to
+//! `0.515` for the triangle. Read [`Surrogate::mass`] before predicting which failure you are in.
 //!
 //! # What this module can and cannot verify
 //!
@@ -83,9 +101,12 @@
 //! leaky readout, trained through time. [`SpikeFn::Smooth`] replaces the Heaviside on the forward
 //! pass with the surrogate's own antiderivative, which makes the network genuinely differentiable —
 //! and in that mode the backward pass is the *exact* gradient, so it can be checked against central
-//! finite differences. That check passes to a relative `1e-6`, and it is what makes the plumbing
-//! trustworthy: the time recurrence, the two-stage synapse-then-membrane filter, the soft reset, the
-//! recurrent weights and the readout.
+//! finite differences. That check passes at `1e-6 * (1 + |g|)`, which is a **relative** `1e-6` only
+//! where the gradient is large and an **absolute** one where it is small — a bound that would pass a
+//! gradient of `1e-8` against a true `1e-9`. So the same test also asserts a genuinely relative
+//! `1e-6` on every parameter whose gradient exceeds `1e-3`, where the worst measured error is
+//! `1.3e-7`. Together they are what makes the plumbing trustworthy: the time recurrence, the
+//! two-stage synapse-then-membrane filter, the soft reset, the recurrent weights and the readout.
 //!
 //! **Beside that figure, the caveat**: the finite-difference check validates the *reverse-mode
 //! machinery*, not the surrogate approximation. The approximation cannot be validated that way,
@@ -100,7 +121,11 @@
 //! `kappa = exp(-dt / tau_out)`. Inside [`LifLayer`] everything is dimensionless with threshold
 //! `theta = 1`, exactly as Neftci et al. print it, so that the update equations can be compared
 //! against the paper line by line. The surrogates themselves take a dimensionless argument: `x` is
-//! `U - theta` in units of the threshold, which is why a width of `1.0` means "one threshold wide".
+//! the **absolute** offset `U - theta`, as in every published implementation, so at the default
+//! `theta = 1` a width of `1.0` is one threshold wide. At any other `theta` the widths stay in units
+//! of `U` and not of `theta`: a surrogate whose `fwhm()` reads `1.0` then spans `1 / theta`
+//! thresholds, which `the_surrogate_sees_the_absolute_offset_at_a_non_unit_threshold` pins in both
+//! directions so that nobody has to infer it.
 
 use crate::rng::Rng;
 
@@ -212,8 +237,10 @@ pub fn heaviside(x: f64) -> f64 {
 /// [`Surrogate::backward`], [`Surrogate::antiderivative`], [`Surrogate::mass`] and
 /// [`Surrogate::fwhm`] are verified numerically in this module's tests for every family.
 ///
-/// The argument `x` is `U - theta` in **units of the threshold**, so `x = 0` is a neuron exactly at
-/// threshold and `x = -1` is a neuron one full threshold below it.
+/// The argument `x` is the **absolute** offset `U - theta`, so `x = 0` is a neuron exactly at
+/// threshold and `x = -1` is a neuron one unit of membrane potential below it — which is one full
+/// threshold below it at the default `theta = 1` and is not at any other threshold. Every width in
+/// this module is in those same units of `U`.
 ///
 /// Object-safe on purpose: [`catalogue`] hands back `Box<dyn Surrogate>` so that a test or a lesson
 /// can iterate over every published family and assert the same property of each. That is why the
@@ -827,8 +854,10 @@ impl Surrogate for Exponential {
 /// locate a single agreed parameterisation of the multi-Gaussian form to transcribe.
 ///
 /// **Normalised by construction**: `mass() == 1`. Its tails are the lightest here by far, which is
-/// the dead-neuron problem at its worst — at five sigma the gradient is `1e-6` of peak, at ten sigma
-/// it underflows to zero.
+/// the dead-neuron problem at its worst — at five sigma the gradient is `3.73e-6` of peak and at ten
+/// sigma `1.93e-22` of it. Dead in any practical sense, and **not** zero: the ratio is
+/// `exp(-k^2 / 2)`, which stays a normal `f64` out to `37.6` sigma and does not reach zero until
+/// `38.6`. `the_gaussian_tail_is_tiny_and_not_zero` measures all four figures.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Gaussian {
     /// Standard deviation, in thresholds. `fwhm == 2 sigma sqrt(2 ln 2)`, about `2.3548 sigma`.
@@ -995,6 +1024,17 @@ pub fn catalogue() -> Vec<Box<dyn Surrogate>> {
 /// use. Costs about a millisecond per surrogate.
 pub const DEFAULT_PANELS: usize = 400_000;
 
+/// Ceiling on the panel count [`integrated_mass`] will honour: `2^22 = 4_194_304`.
+///
+/// Ten times [`DEFAULT_PANELS`], where the midpoint rule's own error is already about `1e-6`
+/// relative for the smooth families, so nothing anybody wants to measure lies above it. A larger
+/// request is clamped down to it rather than refused, because the clamp cannot change an answer.
+///
+/// It is not a nicety. `(panels + 1) & !1` at `panels = usize::MAX` wrapped to zero, which made the
+/// panel width infinite and the integral `0.0 * inf` — `NaN` in release, an overflow panic in debug
+/// — and `usize::MAX - 1` asked for a loop that does not finish in a human lifetime.
+pub const MAX_PANELS: usize = 1 << 22;
+
 /// Numerically integrate a surrogate's `backward` over the **whole** real line.
 ///
 /// Midpoint rule under the substitution `x = tan(t)`, which maps `(-pi/2, pi/2)` onto the real line
@@ -1005,13 +1045,16 @@ pub const DEFAULT_PANELS: usize = 400_000;
 ///
 /// `panels` is rounded up to the next even number of at least two, so that the kink at `x = 0` that
 /// [`FastSigmoid`], [`Triangular`] and [`Exponential`] all have lands on a panel boundary rather
-/// than inside a panel, where it would cost an order of accuracy.
+/// than inside a panel, where it would cost an order of accuracy. It is also clamped **down** to
+/// [`MAX_PANELS`], which is where a count stops buying accuracy and starts buying an overflow or a
+/// loop that does not end.
 ///
 /// Accuracy: second order in the smooth case; first order, bounded by one panel's area, for the
 /// step discontinuities of [`Rectangular`] and [`StraightThrough`].
 #[must_use]
 pub fn integrated_mass(s: &dyn Surrogate, panels: usize) -> f64 {
-    let n = (panels.max(2) + 1) & !1;
+    // `clamp` before `+ 1`: the ceiling is what keeps this addition from wrapping to zero.
+    let n = (panels.clamp(2, MAX_PANELS) + 1) & !1;
     let h = core::f64::consts::PI / n as f64;
     let mut sum = 0.0;
     for k in 0..n {
@@ -1025,8 +1068,9 @@ pub fn integrated_mass(s: &dyn Surrogate, panels: usize) -> f64 {
 /// Find the full width at half maximum by bisection, for checking [`Surrogate::fwhm`].
 ///
 /// Assumes `backward` is non-increasing for `x > 0`, which holds for every family in this module.
-/// `None` when `backward(0)` is not strictly positive, or when the half-maximum point is not found
-/// below `x = 2^80`, either of which means the argument is not a mollifier and has no width.
+/// `None` when `backward(0)` is not strictly positive or finite, or when the half-maximum point is
+/// not found below `1e-3 * 2^80`, about `1.2e21` — the bracket starts at `1e-3` and doubles at most
+/// eighty times — either of which means the argument is not a mollifier and has no width.
 #[must_use]
 pub fn fwhm_numeric(s: &dyn Surrogate) -> Option<f64> {
     let peak = s.backward(0.0);
@@ -1097,7 +1141,9 @@ pub struct LifLayerSpec {
     /// Readout time constant, **seconds**. Becomes `kappa = exp(-dt / tau_out)`.
     pub tau_out: f64,
     /// Firing threshold, **dimensionless**, in the paper's frame. `1.0` unless you are reproducing
-    /// something that uses another value; the surrogates' widths are quoted in units of it.
+    /// something that uses another value. The surrogate is handed the **absolute** offset
+    /// `U - theta`, so its widths are in units of `U` rather than of `theta`: at `theta = 2` a
+    /// surrogate whose `fwhm()` reads `1.0` covers half a threshold, not one.
     pub theta: f64,
     /// Whether the recurrent weight block `V` is used.
     ///
@@ -1108,17 +1154,28 @@ pub struct LifLayerSpec {
     /// Initial weight scale, dimensionless. Weights are drawn uniformly from
     /// `[-w_scale, w_scale] / sqrt(fan_in)`.
     ///
-    /// The default `0.35` is `7 * (1 - beta)` at `tau_mem = 20 ms` and `dt = 1 ms`, the heuristic
-    /// in Zenke's `spytorch` tutorial accompanying Neftci et al. 2019. That tutorial draws from a
+    /// The default `0.35` is `7 * (1 - beta)` at `tau_mem = 20 ms` and `dt = 1 ms` **rounded to two
+    /// figures**: that heuristic, from Zenke's `spytorch` tutorial accompanying Neftci et al. 2019,
+    /// is `0.341394`, and this default sits 2.5% above it. The rounding is deliberate and the exact
+    /// figure is in `the_default_weight_scale_is_a_rounded_spytorch_heuristic`, because a constant
+    /// described as a transcription and checked against nothing is how a wrong one survives.
+    /// That tutorial draws from a
     /// normal rather than a uniform; this crate uses a uniform because [`crate::rng::Rng`] provides
     /// one exactly and a Gaussian would need a transform whose tails are a second thing to verify.
     pub w_scale: f64,
     /// Initial bias on every unit's input current, dimensionless.
     ///
     /// **This is the dead-neuron control and it is the most consequential number in the spec.** A
-    /// population that never reaches threshold has `backward(x) ~ 0` at every unit, so the gradient
-    /// is zero, so it never starts learning and the loss curve is flat forever. A small positive
-    /// bias puts the population near threshold at initialisation. The steady-state potential under
+    /// population parked far below threshold has its gradient multiplied by `backward(U - theta)` at
+    /// every unit, and how much survives that is a property of the family's tails rather than a law:
+    /// five thresholds below firing [`Gaussian::default`] passes `1.9e-22` of its peak and is dead in
+    /// every practical sense, while [`ArcTan::default`] still passes `4.0e-3` of its peak because its
+    /// tails fall as `x^-2`. So what this bias prevents is exponentially slow learning in the
+    /// light-tailed families, and **not** the exactly-zero gradient it is usually written as: with
+    /// the arctangent, at this module's own learning test, the one pattern that draws not a single
+    /// spike still carries a bias gradient of norm `5.7`.
+    /// `the_dead_neuron_problem_is_a_statement_about_tails` measures both families.
+    /// A small positive bias puts the population near threshold at initialisation. The steady-state potential under
     /// a constant bias `b` with no other input is `b / ((1 - alpha) (1 - beta))`, so at the default
     /// time constants a bias of `0.004` sits at roughly half a threshold.
     pub b_init: f64,
@@ -1409,8 +1466,13 @@ impl LifLayer {
     ///
     /// # Errors
     ///
-    /// [`SurrogateError::ShapeMismatch`] if `tr` was not produced by this layer or `d_logits` is
-    /// not `n_out` long.
+    /// [`SurrogateError::ShapeMismatch`] naming the **first** quantity that does not fit: `"input"`
+    /// when `x` is not `tr.t_steps * n_in` long, `"trace n_rec"` or `"trace n_out"` when the trace
+    /// came from a differently-shaped layer, `"trace u"`, `"trace s"`, `"trace i_syn"`, `"trace y"`
+    /// or `"trace logits"` when a hand-built trace's arrays do not match its own declared
+    /// `t_steps` — every one of which this method indexes, so the alternative is a panic — and
+    /// `"d_logits"` when the incoming gradient is not `n_out` long. These were one message carrying one
+    /// number, and in the `x.len()` case the number it carried was a correct one.
     pub fn backward(
         &self,
         sur: &dyn Surrogate,
@@ -1419,12 +1481,25 @@ impl LifLayer {
         d_logits: &[f64],
     ) -> Result<Vec<f64>, SurrogateError> {
         let (nr, no, t_steps) = (self.n_rec, self.n_out, tr.t_steps);
-        if tr.n_rec != nr || tr.n_out != no || x.len() != t_steps * self.n_in {
-            return Err(SurrogateError::ShapeMismatch {
-                what: "trace",
-                got: tr.n_rec,
-                want: nr,
-            });
+        if tr.n_rec != nr {
+            return Err(SurrogateError::ShapeMismatch { what: "trace n_rec", got: tr.n_rec, want: nr });
+        }
+        if tr.n_out != no {
+            return Err(SurrogateError::ShapeMismatch { what: "trace n_out", got: tr.n_out, want: no });
+        }
+        // Saturating, not wrapping: a hand-built `Trace` may carry any `t_steps` at all, and a
+        // product that overflowed would otherwise read as a length some array could match.
+        for (what, got, want) in [
+            ("input", x.len(), t_steps.saturating_mul(self.n_in)),
+            ("trace i_syn", tr.i_syn.len(), t_steps.saturating_mul(nr)),
+            ("trace u", tr.u.len(), t_steps.saturating_mul(nr)),
+            ("trace s", tr.s.len(), t_steps.saturating_mul(nr)),
+            ("trace y", tr.y.len(), t_steps.saturating_mul(no)),
+            ("trace logits", tr.logits.len(), no),
+        ] {
+            if got != want {
+                return Err(SurrogateError::ShapeMismatch { what, got, want });
+            }
         }
         if d_logits.len() != no {
             return Err(SurrogateError::ShapeMismatch {
@@ -1668,6 +1743,15 @@ pub fn cross_entropy(logits: &[f64], target: usize) -> Result<(f64, Vec<f64>), S
 /// the surrogate would require re-tuning the learning rate, and the comparison between surrogates
 /// would be a comparison between learning rates.
 ///
+/// **That normalisation holds only while `|g| >> eps`, and this module reaches the regime where it
+/// does not.** The first step is exactly `lr` at `|g| = 1` and `0.990 lr` at `|g| = 1e-6`, but
+/// [`Adam::eps`] `= 1e-8` halves it at `|g| = 1e-8` and leaves `0.091 lr` at `|g| = 1e-9` — the
+/// closed form is `|g| / (|g| + eps)`, not `1`. At the initialisation of
+/// `an_over_sharp_surrogate_stops_learning`, 119 of 4352 gradient entries are already inside
+/// `(0, 1e-6)` and four are below `1e-8`. Where that matters, put the missing scale on the surrogate
+/// with [`Scaled::unit_mass`] instead of trusting the optimiser to erase it;
+/// `adams_normalisation_is_lost_below_its_epsilon` is the measurement.
+///
 /// No randomness, no clock: the same gradients in the same order give the same parameters, on every
 /// platform.
 #[derive(Debug, Clone, PartialEq)]
@@ -1799,20 +1883,34 @@ impl Default for DelayedXor {
 }
 
 impl DelayedXor {
+    /// The one invariant: two cue windows and the gap between them fit inside `t_steps`, and a cue
+    /// is at least one step long.
+    ///
+    /// Checked here rather than only in [`DelayedXor::new`] because the fields are public and a
+    /// struct literal never goes near the constructor. `checked_*` throughout: `2 * cue + gap` at
+    /// `cue = usize::MAX` overflows, and an overflow that wraps to a small number would *pass* this
+    /// check on its way to indexing past the end of a pattern.
+    fn check(&self) -> Result<(), SurrogateError> {
+        let span = self.cue.checked_mul(2).and_then(|v| v.checked_add(self.gap));
+        if self.cue == 0 || span.is_none_or(|v| v > self.t_steps) {
+            return Err(SurrogateError::ShapeMismatch {
+                what: "delayed-xor windows",
+                got: span.unwrap_or(usize::MAX),
+                want: self.t_steps,
+            });
+        }
+        Ok(())
+    }
+
     /// # Errors
     ///
     /// [`SurrogateError::ShapeMismatch`] if the windows do not fit inside `t_steps`, or if `cue` is
     /// zero — a zero-length cue makes all four patterns identical and the task unlearnable in a way
     /// that would read as a training failure.
     pub fn new(t_steps: usize, cue: usize, gap: usize) -> Result<Self, SurrogateError> {
-        if cue == 0 || 2 * cue + gap > t_steps {
-            return Err(SurrogateError::ShapeMismatch {
-                what: "delayed-xor windows",
-                got: 2 * cue + gap,
-                want: t_steps,
-            });
-        }
-        Ok(Self { t_steps, cue, gap })
+        let task = Self { t_steps, cue, gap };
+        task.check()?;
+        Ok(task)
     }
 
     /// Input channels the task produces: always 1.
@@ -1832,8 +1930,15 @@ impl DelayedXor {
     /// The cue amplitude is `1.0` and the silent value is `0.0`. Deterministic and allocation-only:
     /// there is no noise in this task, so a failure to learn it is a failure of the learning rule
     /// rather than a sampling accident.
-    #[must_use]
-    pub fn patterns(&self) -> Vec<(Vec<f64>, usize)> {
+    ///
+    /// # Errors
+    ///
+    /// [`SurrogateError::ShapeMismatch`], exactly as [`DelayedXor::new`] would have. The fields of
+    /// this struct are public, so `DelayedXor { t_steps: 10, cue: 8, gap: 5 }` builds a task the
+    /// constructor refuses; this method re-derives the same window arithmetic, and before it
+    /// returned a `Result` that literal wrote element 13 of a ten-element pattern and panicked.
+    pub fn patterns(&self) -> Result<Vec<(Vec<f64>, usize)>, SurrogateError> {
+        self.check()?;
         let mut out = Vec::with_capacity(4);
         for a in [false, true] {
             for b in [false, true] {
@@ -1852,7 +1957,7 @@ impl DelayedXor {
                 out.push((x, usize::from(a != b)));
             }
         }
-        out
+        Ok(out)
     }
 }
 
@@ -1862,7 +1967,7 @@ mod tests {
         Adam, ArcTan, DelayedXor, Exponential, FastSigmoid, Gaussian, LifLayer, LifLayerSpec,
         Rectangular, Scaled, SigmoidDeriv, SpikeFn, StraightThrough, Surrogate, SurrogateError,
         Triangular, catalogue, cross_entropy, erf, fwhm_numeric, heaviside, integrated_mass,
-        normal_cdf, DEFAULT_PANELS,
+        normal_cdf, DEFAULT_PANELS, MAX_PANELS,
     };
 
     /// The forward pass is the same step function for every family. If this ever fails, the module's
@@ -2312,8 +2417,18 @@ mod tests {
     ///
     /// In [`SpikeFn::Smooth`] the network is genuinely differentiable and the module's reverse-mode
     /// pass is its exact gradient, so central finite differences have something to agree with. They
-    /// agree to a relative `1e-6` on every one of the layer's parameters — input weights, recurrent
-    /// weights, readout weights and biases — over a six-step unroll.
+    /// agree on every one of the layer's parameters — input weights, recurrent weights, readout
+    /// weights and biases — over a six-step unroll.
+    ///
+    /// **Two bounds, because one of them alone would be weaker than it reads.** The first,
+    /// `|fd - g| < 1e-6 * (1 + |g|)`, is relative where the gradient is large and ABSOLUTE where it
+    /// is small: it would pass a computed `1e-8` against a true `1e-9`, an order of magnitude wrong.
+    /// So the second is a genuinely relative `1e-6` on every parameter whose gradient exceeds
+    /// `1e-3`, which is where the finite difference itself is still trustworthy — at `h = 1e-6` the
+    /// subtraction of two O(1) losses leaves an absolute noise floor near `1e-10`. The worst
+    /// relative error measured over the three families and three targets is `1.3e-7`, and at least
+    /// two thirds of the parameters clear the `1e-3` bar, which the test also asserts so that the
+    /// relative half cannot quietly empty itself.
     ///
     /// Run on the three families whose antiderivative is infinitely differentiable. The others are
     /// checked at a looser tolerance in the next test, for the reason stated there.
@@ -2343,6 +2458,8 @@ mod tests {
                     .expect("valid");
                 let h = 1e-6;
                 let mut worst = 0.0_f64;
+                let mut worst_rel = 0.0_f64;
+                let mut checked_rel = 0;
                 for k in 0..layer.n_params() {
                     let mut up = layer.clone();
                     up.p[k] += h;
@@ -2365,8 +2482,29 @@ mod tests {
                         sur.name(),
                         g[k]
                     );
+                    // The genuinely relative half, where the finite difference is still meaningful.
+                    if g[k].abs() >= 1e-3 {
+                        checked_rel += 1;
+                        let rel = (fd - g[k]).abs() / g[k].abs();
+                        worst_rel = worst_rel.max(rel);
+                        assert!(
+                            rel < 1e-6,
+                            "{} param {k} target {target}: analytic {} and finite difference {fd} \
+                             agree absolutely and differ by {rel} RELATIVE",
+                            sur.name(),
+                            g[k]
+                        );
+                    }
                 }
                 assert!(worst > 0.0, "the finite differences were all exactly zero");
+                assert!(
+                    checked_rel * 2 >= layer.n_params(),
+                    "{} target {target}: only {checked_rel} of {} parameters carried a gradient \
+                     above 1e-3, so the relative bound checked almost nothing",
+                    sur.name(),
+                    layer.n_params()
+                );
+                assert!(worst_rel > 0.0, "every relative error was exactly zero, which is not a check");
             }
         }
     }
@@ -2379,19 +2517,31 @@ mod tests {
     /// only once differentiable there. A central difference across such a point has an error of
     /// order `h` rather than `h^2`. Nothing here is random, so this tolerance is a measured
     /// property of a fixed configuration and not a hedge against flakiness.
+    ///
+    /// **Two configurations, and three guards its sibling already had.** With one configuration and
+    /// a population that sat below threshold, only 3 of the 15 membrane samples fell inside
+    /// [`Rectangular`]'s boxcar, so 14 of that family's 18 surrogate-path comparisons were `0 == 0`
+    /// — true, passing, and asserting nothing. The second configuration raises `b_init` until the
+    /// population crosses threshold, which takes the boxcar from 4 non-zero comparisons to 10, and
+    /// the counts are now asserted: every family must land at least two membrane samples inside its
+    /// own support, and must carry a non-zero gradient on at least twelve of the thirty-six
+    /// surrogate-path parameters across the two runs. Plus the non-vacuity guard from the sibling
+    /// test: if every finite difference came out exactly zero, this test used to pass.
     #[test]
     fn the_gradient_check_also_holds_for_the_piecewise_families() {
-        let spec = LifLayerSpec {
+        // The two configurations differ only in `b_init`, which is what decides where the
+        // population sits relative to threshold: at 0.05 the membrane spans [-5.07, +0.03] and only
+        // the sharp-peaked families see anything, at 0.3 it spans [-2.95, +2.62] and crosses.
+        let specs = [0.05, 0.3].map(|b_init| LifLayerSpec {
             n_in: 2,
             n_rec: 3,
             n_out: 2,
             recurrent: true,
             w_scale: 0.6,
-            b_init: 0.05,
+            b_init,
             seed: 7,
             ..LifLayerSpec::default()
-        };
-        let layer = spec.build().expect("valid spec");
+        });
         let x = probe_input(5, 2);
         let surs: Vec<Box<dyn Surrogate>> = vec![
             Box::new(FastSigmoid::default()),
@@ -2401,24 +2551,77 @@ mod tests {
             Box::new(StraightThrough::default()),
         ];
         for sur in &surs {
-            let (_, g) = layer.loss_and_grad(sur.as_ref(), &x, 1, SpikeFn::Smooth).expect("valid");
-            let h = 1e-6;
-            for k in 0..layer.n_params() {
-                let mut up = layer.clone();
-                up.p[k] += h;
-                let mut dn = layer.clone();
-                dn.p[k] -= h;
-                let lu = up.loss_and_grad(sur.as_ref(), &x, 1, SpikeFn::Smooth).expect("valid").0;
-                let ld = dn.loss_and_grad(sur.as_ref(), &x, 1, SpikeFn::Smooth).expect("valid").0;
-                let fd = (lu - ld) / (2.0 * h);
-                let err = (fd - g[k]).abs() / (1.0 + g[k].abs());
+            // The parameters whose gradient goes THROUGH the surrogate: W, V and b. The readout R
+            // is an ordinary linear layer and would agree even if the surrogate path were deleted,
+            // so it is excluded from the coverage count and still checked for correctness.
+            let mut through_surrogate = Vec::new();
+            let mut nonzero_fd = 0;
+            for (config, spec) in specs.iter().enumerate() {
+                let layer = spec.build().expect("valid spec");
+                if config == 0 {
+                    for j in 0..layer.n_rec {
+                        for i in 0..layer.n_in {
+                            through_surrogate.push(layer.idx_w(j, i));
+                        }
+                        for k in 0..layer.n_rec {
+                            through_surrogate.push(layer.idx_v(j, k));
+                        }
+                        through_surrogate.push(layer.idx_b(j));
+                    }
+                }
+                let (_, g) = layer.loss_and_grad(sur.as_ref(), &x, 1, SpikeFn::Smooth).expect("valid");
+                let tr = layer.forward(sur.as_ref(), &x, SpikeFn::Smooth).expect("valid");
+                let in_support =
+                    tr.u.iter().filter(|u| sur.backward(**u - layer.theta) > 0.0).count();
                 assert!(
-                    err < 1e-4,
-                    "{} param {k}: analytic {} vs finite difference {fd}",
+                    in_support >= 2,
+                    "{} config {config}: only {in_support} of {} membrane samples are inside its \
+                     support, so the surrogate path is barely exercised",
                     sur.name(),
-                    g[k]
+                    tr.u.len()
                 );
+                let h = 1e-6;
+                let mut worst = 0.0_f64;
+                for k in 0..layer.n_params() {
+                    let mut up = layer.clone();
+                    up.p[k] += h;
+                    let mut dn = layer.clone();
+                    dn.p[k] -= h;
+                    let lu =
+                        up.loss_and_grad(sur.as_ref(), &x, 1, SpikeFn::Smooth).expect("valid").0;
+                    let ld =
+                        dn.loss_and_grad(sur.as_ref(), &x, 1, SpikeFn::Smooth).expect("valid").0;
+                    let fd = (lu - ld) / (2.0 * h);
+                    let err = (fd - g[k]).abs() / (1.0 + g[k].abs());
+                    worst = worst.max(err);
+                    assert!(
+                        err < 1e-4,
+                        "{} config {config} param {k}: analytic {} vs finite difference {fd}",
+                        sur.name(),
+                        g[k]
+                    );
+                    if through_surrogate.contains(&k) && fd != 0.0 {
+                        nonzero_fd += 1;
+                        // Where the finite difference sees something, the analytic gradient must
+                        // too: this is the comparison a zeroed surrogate path would fail, and the
+                        // count below is what keeps enough of them in the test to notice.
+                        assert!(
+                            g[k] != 0.0,
+                            "{} config {config} param {k}: the finite difference is {fd} and the \
+                             analytic gradient is exactly zero",
+                            sur.name()
+                        );
+                    }
+                }
+                assert!(worst > 0.0, "{} config {config}: every comparison was 0 == 0", sur.name());
             }
+            assert!(
+                nonzero_fd >= 12,
+                "{}: only {nonzero_fd} of {} surrogate-path comparisons across both \
+                 configurations carried any signal; measured 36, 36, 20, 14 and 20",
+                sur.name(),
+                2 * through_surrogate.len()
+            );
         }
     }
 
@@ -2541,7 +2744,7 @@ mod tests {
     #[test]
     fn a_recurrent_lif_layer_learns_delayed_xor() {
         let task = DelayedXor::default();
-        let batch = task.patterns();
+        let batch = task.patterns().expect("the windows fit");
         let spec = LifLayerSpec {
             n_in: task.n_in(),
             n_rec: 64,
@@ -2571,8 +2774,21 @@ mod tests {
             .filter(|(x, y)| layer.predict(&sur, x).expect("valid") == *y)
             .count();
         assert!(final_loss < 0.01, "loss fell only to {final_loss} (from {loss0})");
-        assert!(hist[0] > hist[hist.len() / 2], "the loss did not fall monotonically in the large");
+        assert!(hist.iter().all(|l| l.is_finite()), "the loss history left the finite numbers");
+        assert!(hist[hist.len() / 2] < hist[0], "the loss had not fallen at all by the midpoint");
+        assert!(final_loss < hist[hist.len() / 2], "the second half of training undid the first");
         assert_eq!(correct, 4, "only {correct} of 4 patterns classified correctly");
+
+        // The three assertions above are what "the loss falls" means here. The claim this line used
+        // to make — that it falls MONOTONICALLY — is false, and was never tested either: it compared
+        // two points. Momentum carries this run uphill on 35 of its 299 steps, as far as 1.616 at
+        // step 12 from 0.698 at step 0. So the envelope is what is asserted, and the uphill steps
+        // are asserted too, so that nobody puts the word back.
+        let rises = hist.windows(2).filter(|w| w[1] > w[0]).count();
+        assert!(rises > 0, "this run WAS monotone, so the comment above is now the wrong story");
+        assert!(rises < hist.len() / 2, "{rises} of {} steps went uphill", hist.len() - 1);
+        let peak = hist.iter().copied().fold(f64::MIN, f64::max);
+        assert!(peak > hist[0], "the history never rose above its start: peak {peak}");
 
         // The trained network still emits real spikes; it did not solve the task by going silent
         // and letting the biases decide.
@@ -2581,18 +2797,45 @@ mod tests {
         assert!(tr.mean_rate(1e-3).expect("positive dt") > 0.0);
     }
 
+    /// The fraction of `||g||^2` carried by the largest 1% of the entries. A mollifier that has
+    /// narrowed onto a handful of units shows up here and in no other summary of a gradient: the
+    /// norm rises, the count of non-zero entries does not move, and this number goes to one.
+    fn top_percent_share(g: &[f64]) -> f64 {
+        let mut sq: Vec<f64> = g.iter().map(|v| v * v).collect();
+        sq.sort_by(|a, b| b.partial_cmp(a).expect("a finite gradient"));
+        let k = sq.len() / 100;
+        assert!(k > 0, "too few parameters for a 1% share to mean anything");
+        sq[..k].iter().sum::<f64>() / sq.iter().sum::<f64>()
+    }
+
+    /// Euclidean norm, for comparing two gradients at the same weights.
+    fn l2(g: &[f64]) -> f64 {
+        g.iter().map(|v| v * v).sum::<f64>().sqrt()
+    }
+
     /// (b) part four, and the practical consequence of the whole module: THE WIDTH IS A
-    /// HYPERPARAMETER AND THE SHARP LIMIT IS A DEAD END.
+    /// HYPERPARAMETER AND THE SHARP LIMIT IS A DEAD END — FOR A REASON THAT IS NOT THE ONE USUALLY
+    /// WRITTEN DOWN.
     ///
     /// Same seed, same task, same optimiser, same number of steps. The only change is the
     /// surrogate's width: sharpened by 300, the arctangent's full width at half maximum falls from
-    /// `0.637` thresholds to `0.00212`, almost no unit is ever inside it, the gradient is starved,
-    /// and the loss sits at `0.69315` — `ln(2)` to five figures, which is a network that has learned
-    /// the class prior and nothing else. The wide surrogate reaches `4.2e-5` on the same run.
+    /// `0.637` thresholds to `0.00212` and the loss sits at `0.69315` — `ln(2)` to five figures,
+    /// which is a network that has learned the class prior and nothing else. The wide surrogate
+    /// reaches `4.2e-5` on the same run.
+    ///
+    /// **The gradient is not starved, and this test measures that instead of asserting it.** At the
+    /// identical initial weights the sharp surrogate's batch gradient has norm `866.7` against the
+    /// wide one's `1.325` — 654 times larger — on exactly the same 2504 non-zero entries, because a
+    /// mass-normalised family 300 times narrower is 300 times taller and [`ArcTan`]'s `x^-2` tails
+    /// are nowhere zero. What sharpening does is concentrate it: 98.7% of `||g||^2` lands on the
+    /// largest 1% of the parameters against 40.8% at the wide width. The run then collapses onto a
+    /// function of the first cue alone — patterns 0 and 1 end with bit-identical logits, as do 2 and
+    /// 3 — and no function of the first cue alone can beat `ln(2)` on delayed XOR. The weights move
+    /// `max|dp| = 0.172` getting there, so "training stops" is not it either.
     #[test]
     fn an_over_sharp_surrogate_stops_learning() {
         let task = DelayedXor::default();
-        let batch = task.patterns();
+        let batch = task.patterns().expect("the windows fit");
         let spec = LifLayerSpec {
             n_in: task.n_in(),
             n_rec: 64,
@@ -2609,19 +2852,149 @@ mod tests {
 
         let mut a = spec.build().expect("valid spec");
         let mut b = spec.build().expect("valid spec");
+        let p_init = b.p.clone();
+
+        // THE MECHANISM, AT THE IDENTICAL INITIAL WEIGHTS, BEFORE EITHER RUN HAS MOVED.
+        let gw = a.batch_loss_and_grad(&base, &batch, SpikeFn::Heaviside).expect("non-empty").1;
+        let gs =
+            a.batch_loss_and_grad(sharp.as_ref(), &batch, SpikeFn::Heaviside).expect("non-empty").1;
+        assert!(
+            l2(&gs) > 100.0 * l2(&gw),
+            "the over-sharp gradient did not GROW: {} against {} (measured 866.7 against 1.325)",
+            l2(&gs),
+            l2(&gw)
+        );
+        let (nz_w, nz_s) = (
+            gw.iter().filter(|v| **v != 0.0).count(),
+            gs.iter().filter(|v| **v != 0.0).count(),
+        );
+        assert_eq!(
+            nz_s, nz_w,
+            "sharpening changed WHICH parameters get a gradient: {nz_s} against {nz_w}; a family \
+             with x^-2 tails is non-zero everywhere however sharp it is"
+        );
+        assert!(nz_s > gs.len() / 2, "{nz_s} of {} entries are non-zero, measured 2504", gs.len());
+        let (cw, cs) = (top_percent_share(&gw), top_percent_share(&gs));
+        assert!(cs > 0.95, "the sharp gradient's top 1% carries {cs}, measured 0.987");
+        assert!(cw < 0.60, "the wide gradient's top 1% carries {cw}, measured 0.408");
+        assert!(cs > cw, "sharpening did not concentrate the gradient at all: {cs} against {cw}");
+        // Tiny entries are what Adam's epsilon cannot normalise, and sharpening manufactures them.
+        let small = |g: &[f64]| g.iter().filter(|v| v.abs() > 0.0 && v.abs() < 1e-6).count();
+        assert!(
+            small(&gs) > 10 * small(&gw),
+            "entries inside (0, 1e-6): {} sharp against {} wide, measured 119 against 7",
+            small(&gs),
+            small(&gw)
+        );
+
         let ha = train(&mut a, &base, &batch, 1e-2, 300);
         let hb = train(&mut b, sharp.as_ref(), &batch, 1e-2, 300);
         let (fa, fb) = (*ha.last().expect("steps"), *hb.last().expect("steps"));
         assert!(fa < 0.1, "the wide surrogate should have learned, loss {fa}");
         assert!(fb > 0.6, "the over-sharp surrogate learned anyway, loss {fb}");
         assert!(fb > 10.0 * fa, "wide {fa} vs sharp {fb}: the gap is not the point being made");
-        // It is starved, not diverged: it still spikes, and its loss is the class prior.
+        // It is not diverged: it still spikes, and its loss is the class prior.
         let tr = b.forward(sharp.as_ref(), &batch[0].0, SpikeFn::Heaviside).expect("valid");
         assert!(tr.spike_count() > 0.0, "the sharp run went silent, which is a different failure");
         assert!(
             (fb - core::f64::consts::LN_2).abs() < 0.05,
-            "the starved loss {fb} is not the class prior ln(2)"
+            "the loss {fb} is not the class prior ln(2)"
         );
+        // Nor is it frozen. "Training stops" would mean the weights stop moving, and they do not.
+        let dmax =
+            b.p.iter().zip(p_init.iter()).fold(0.0_f64, |m, (x, y)| m.max((x - y).abs()));
+        assert!(dmax > 0.1, "the over-sharp run barely moved: max|dp| = {dmax}, measured 0.172");
+
+        // WHAT IT ACTUALLY LEARNED: a function of the first cue and nothing else. Patterns 0 and 1
+        // share a first cue and differ in the second; so do 2 and 3. Each pair holds one example of
+        // each class, so a network that cannot tell its members apart scores exactly ln(2) on it —
+        // which is where the number above comes from, and it is not a starved gradient.
+        let logits_of = |k: usize| {
+            b.forward(sharp.as_ref(), &batch[k].0, SpikeFn::Heaviside).expect("valid").logits
+        };
+        for (i, j) in [(0_usize, 1_usize), (2, 3)] {
+            let (li, lj) = (logits_of(i), logits_of(j));
+            assert_eq!(batch[i].1 ^ batch[j].1, 1, "patterns {i} and {j} share a class after all");
+            for c in 0..2 {
+                assert!(
+                    (li[c] - lj[c]).abs() < 1e-4,
+                    "patterns {i} and {j} differ in the second cue and the collapsed network should \
+                     not see it: class {c} logits {} and {}",
+                    li[c],
+                    lj[c]
+                );
+            }
+        }
+        // ... and the readout is near-constant across classes, which is the other half of ln(2).
+        let l0 = logits_of(0);
+        assert!((l0[0] - l0[1]).abs() < 1e-3, "the collapsed readout is not flat: {l0:?}");
+        // The wide run is the control: it separates every one of the four.
+        let wide_logits = |k: usize| {
+            a.forward(&base, &batch[k].0, SpikeFn::Heaviside).expect("valid").logits
+        };
+        for (i, j) in [(0_usize, 1_usize), (2, 3)] {
+            let (li, lj) = (wide_logits(i), wide_logits(j));
+            assert!(
+                (li[0] - lj[0]).abs() > 1.0,
+                "the WIDE run also collapsed, so the comparison says nothing: {li:?} {lj:?}"
+            );
+        }
+    }
+
+    /// Starvation is the right story for a different pair of families, and the module doc says so on
+    /// the strength of this test. Sharpening at constant mass makes a COMPACT support sparse — the
+    /// boxcar keeps its mass and loses 90% of its non-zero gradient entries — while a peak-normalised
+    /// family loses the mass itself, so [`Triangular`]'s gradient really does shrink. The
+    /// heavy-tailed arctangent does neither. All three at the same 300-fold sharpening, the same
+    /// weights and the same batch.
+    #[test]
+    fn which_failure_a_sharp_surrogate_gives_you_is_a_property_of_the_family() {
+        let task = DelayedXor::default();
+        let batch = task.patterns().expect("the windows fit");
+        let spec = LifLayerSpec {
+            n_in: task.n_in(),
+            n_rec: 64,
+            n_out: task.n_out(),
+            recurrent: true,
+            w_scale: 0.4,
+            b_init: 3e-3,
+            seed: 8,
+            ..LifLayerSpec::default()
+        };
+        let layer = spec.build().expect("valid spec");
+        let measure = |s: &dyn Surrogate| {
+            let g = layer.batch_loss_and_grad(s, &batch, SpikeFn::Heaviside).expect("non-empty").1;
+            (l2(&g), g.iter().filter(|v| **v != 0.0).count())
+        };
+        for (name, base) in [
+            ("rectangular", Box::new(Rectangular::default()) as Box<dyn Surrogate>),
+            ("triangular", Box::new(Triangular::default())),
+            ("arctan", Box::new(ArcTan::default())),
+        ] {
+            let sharp = base.sharpened(300.0).expect("positive factor");
+            let (n0, c0) = measure(base.as_ref());
+            let (n1, c1) = measure(sharp.as_ref());
+            match name {
+                // Compact support, unit mass: the same total gradient, spread over a tenth of the
+                // parameters. Measured 1438 -> 144 entries, norm 1.71 -> 838.
+                "rectangular" => {
+                    assert!(c1 * 5 < c0, "{name}: {c0} -> {c1} non-zero entries, measured 1438 -> 144");
+                    assert!(n1 > n0, "{name}: the norm fell, {n0} -> {n1}");
+                }
+                // Compact support, PEAK-normalised: mass falls as 1/factor and so does the
+                // gradient. Measured 1613 -> 234 entries, norm 0.974 -> 0.515.
+                "triangular" => {
+                    assert!(c1 * 5 < c0, "{name}: {c0} -> {c1} non-zero entries, measured 1613 -> 234");
+                    assert!(n1 < n0, "{name}: this is the family whose gradient DOES shrink, {n0} -> {n1}");
+                }
+                // Heavy tails: neither sparser nor smaller. Measured 2504 -> 2504, 1.32 -> 866.7.
+                _ => {
+                    assert_eq!(c1, c0, "{name}: an x^-2 tail cannot lose an entry, {c0} -> {c1}");
+                    assert!(n1 > 100.0 * n0, "{name}: {n0} -> {n1}");
+                }
+            }
+            assert!(n1 > 0.0 && n1.is_finite(), "{name}: the sharpened gradient was {n1}");
+        }
     }
 
     /// Training is reproducible bit for bit. Two layers from the same seed, trained on the same
@@ -2629,7 +3002,7 @@ mod tests {
     #[test]
     fn training_is_deterministic_for_a_fixed_seed() {
         let task = DelayedXor::new(24, 4, 6).expect("windows fit");
-        let batch = task.patterns();
+        let batch = task.patterns().expect("the windows fit");
         let spec = LifLayerSpec {
             n_in: task.n_in(),
             n_rec: 8,
@@ -2699,5 +3072,512 @@ mod tests {
         assert!(p[2] == 0.0, "a zero gradient moved a parameter");
         assert!(Adam::new(0, 1e-2).is_err());
         assert!(Adam::new(3, 0.0).is_err());
+    }
+
+    /// Adam's per-parameter normalisation is `|g| / (|g| + eps)`, so it is a normalisation only
+    /// while `|g| >> eps`. The [`Adam`] doc leans on it to justify comparing surrogates whose mass
+    /// differs by fifty, and the assertion above tests it at `|g| = 1` only — where it cannot fail
+    /// on the claim it states. This is the same claim at the magnitudes where it breaks: at
+    /// `eps = 1e-8` the first step is the full `lr` at `|g| = 1`, 99% of it at `1e-6`, HALF of it at
+    /// `1e-8` and 9% of it at `1e-9`. That regime is occupied — 119 of 4352 entries are inside
+    /// `(0, 1e-6)` at the initialisation of `an_over_sharp_surrogate_stops_learning`.
+    #[test]
+    fn adams_normalisation_is_lost_below_its_epsilon() {
+        let lr = 1e-2;
+        // (gradient, first step as a fraction of lr). Measured, and then checked a second time
+        // against the closed form, which is `|g| / (|g| + eps)` and is emphatically not `1`.
+        let cases = [
+            (1.0, 1.0),
+            (1e-3, 0.999_990),
+            (1e-6, 0.990_099),
+            (1e-7, 0.909_091),
+            (1e-8, 0.5),
+            (1e-9, 0.090_909),
+            (1e-12, 0.000_100),
+        ];
+        for (g, want) in cases {
+            let mut opt = Adam::new(1, lr).expect("positive lr");
+            let mut p = vec![0.0];
+            opt.step(&mut p, &[g]).expect("finite gradient");
+            let got = -p[0] / lr;
+            assert!((got - want).abs() < 1e-5, "|g| = {g}: first step was {got} lr, want {want} lr");
+            let closed = g / (g + opt.eps);
+            assert!(
+                (got - closed).abs() < 1e-9,
+                "|g| = {g}: {got} is not |g| / (|g| + eps) = {closed}"
+            );
+            assert!(got > 0.0, "|g| = {g}: the step vanished entirely");
+        }
+        // The claim in one line: the ratio between the smallest and largest step is 1e4, for
+        // gradients Adam is supposed to have normalised to the same step.
+        assert!(
+            (cases[0].1 / cases[6].1 - 1e4).abs() < 1e2,
+            "the spread across twelve decades of gradient is not four decades of step"
+        );
+        // Raising the gradient's scale is the fix, and `Scaled` is where the scale lives.
+        let lifted = Scaled::new(Box::new(ArcTan::default()), 1e6).expect("positive gain");
+        assert!((lifted.mass() - 1e6).abs() < 1e-9, "the gain is not on the mass: {}", lifted.mass());
+    }
+
+    /// The fields of [`DelayedXor`] are public, so a struct literal builds one the constructor would
+    /// have refused, and `patterns` re-derived the window arithmetic without re-checking it:
+    /// `DelayedXor { t_steps: 10, cue: 8, gap: 5 }` wrote element 13 of a ten-element pattern and
+    /// panicked. It returns the constructor's own error now.
+    #[test]
+    fn a_delayed_xor_built_by_struct_literal_is_refused_rather_than_panicking() {
+        let want =
+            Err(SurrogateError::ShapeMismatch { what: "delayed-xor windows", got: 21, want: 10 });
+        assert_eq!(DelayedXor::new(10, 8, 5), want);
+        assert_eq!(DelayedXor { t_steps: 10, cue: 8, gap: 5 }.patterns(), want.map(|_| Vec::new()));
+        // A zero-length cue makes all four patterns identical; both paths refuse it.
+        assert!(DelayedXor { t_steps: 10, cue: 0, gap: 1 }.patterns().is_err());
+        assert!(DelayedXor::new(10, 0, 1).is_err());
+        // And the arithmetic that decides it must not overflow on its way to refusing: `2 * cue`
+        // wraps at `usize::MAX / 2`, and a wrapped span would have PASSED the comparison.
+        assert!(DelayedXor { t_steps: 10, cue: usize::MAX, gap: 3 }.patterns().is_err());
+        assert!(DelayedXor { t_steps: 10, cue: usize::MAX / 2 + 1, gap: 0 }.patterns().is_err());
+        assert!(DelayedXor::new(usize::MAX, usize::MAX, usize::MAX).is_err());
+        // The boundary is inclusive: windows that end on the very last step are legal, and the
+        // last step really is written, which is what makes the off-by-one above detectable.
+        let tight = DelayedXor::new(13, 4, 5).expect("2 * 4 + 5 == 13 fits");
+        let pats = tight.patterns().expect("the windows fit");
+        assert_eq!(pats.len(), 4);
+        assert_eq!(pats[3].0.len(), 13);
+        assert!(pats[3].0[12] == 1.0, "the second cue's last step should be the pattern's last");
+        assert!(pats[3].0[8] == 0.0, "the gap should be silent");
+        assert_eq!(pats[3].1, 0, "present and present is class 0");
+        assert_eq!(pats[1].1, 1, "absent then present is class 1");
+        // One more step of gap does not fit, and that is the case that used to panic.
+        assert!(DelayedXor { t_steps: 13, cue: 4, gap: 6 }.patterns().is_err());
+    }
+
+    /// Three different malformed arguments used to produce one message, and one of them reported a
+    /// number that was correct: a well-formed trace with a wrong-length `x` said "trace has length
+    /// 4, which does not fit 4". Each is named now. A trace whose arrays are shorter than its own
+    /// `t_steps` is also an error rather than an index past the end of a vector — the fields are
+    /// public, so nothing stopped one being built.
+    #[test]
+    fn a_malformed_trace_or_input_is_named_rather_than_indexed() {
+        let spec = LifLayerSpec { n_in: 2, n_rec: 4, n_out: 3, ..LifLayerSpec::default() };
+        let layer = spec.build().expect("valid spec");
+        let sur = ArcTan::default();
+        let x = probe_input(3, 2);
+        let tr = layer.forward(&sur, &x, SpikeFn::Heaviside).expect("valid");
+        let d = vec![0.0; 3];
+        assert!(layer.backward(&sur, &x, &tr, &d).is_ok(), "the well-formed case must still work");
+
+        // A correct trace and a short input: the INPUT is what is wrong, and what is named.
+        assert_eq!(
+            layer.backward(&sur, &probe_input(2, 2), &tr, &d),
+            Err(SurrogateError::ShapeMismatch { what: "input", got: 4, want: 6 })
+        );
+        let mut wrong = tr.clone();
+        wrong.n_rec = 5;
+        assert_eq!(
+            layer.backward(&sur, &x, &wrong, &d),
+            Err(SurrogateError::ShapeMismatch { what: "trace n_rec", got: 5, want: 4 })
+        );
+        let mut wrong = tr.clone();
+        wrong.n_out = 2;
+        assert_eq!(
+            layer.backward(&sur, &x, &wrong, &d),
+            Err(SurrogateError::ShapeMismatch { what: "trace n_out", got: 2, want: 3 })
+        );
+        // Arrays that do not match the trace's own declared length: each used to be a panic.
+        let mut wrong = tr.clone();
+        wrong.u.truncate(4);
+        assert_eq!(
+            layer.backward(&sur, &x, &wrong, &d),
+            Err(SurrogateError::ShapeMismatch { what: "trace u", got: 4, want: 12 })
+        );
+        let mut wrong = tr.clone();
+        wrong.s.pop();
+        assert_eq!(
+            layer.backward(&sur, &x, &wrong, &d),
+            Err(SurrogateError::ShapeMismatch { what: "trace s", got: 11, want: 12 })
+        );
+        let mut wrong = tr.clone();
+        wrong.i_syn.clear();
+        assert_eq!(
+            layer.backward(&sur, &x, &wrong, &d),
+            Err(SurrogateError::ShapeMismatch { what: "trace i_syn", got: 0, want: 12 })
+        );
+        let mut wrong = tr.clone();
+        wrong.y.push(0.0);
+        assert_eq!(
+            layer.backward(&sur, &x, &wrong, &d),
+            Err(SurrogateError::ShapeMismatch { what: "trace y", got: 10, want: 9 })
+        );
+        let mut wrong = tr.clone();
+        wrong.logits.pop();
+        assert_eq!(
+            layer.backward(&sur, &x, &wrong, &d),
+            Err(SurrogateError::ShapeMismatch { what: "trace logits", got: 2, want: 3 })
+        );
+        // A `t_steps` so large that `t_steps * n_rec` overflows: saturation, not a wrap.
+        let mut wrong = tr.clone();
+        wrong.t_steps = usize::MAX;
+        assert!(matches!(
+            layer.backward(&sur, &x, &wrong, &d),
+            Err(SurrogateError::ShapeMismatch { .. })
+        ));
+        // And `d_logits`, which was the one quantity already named correctly.
+        assert_eq!(
+            layer.backward(&sur, &x, &tr, &[0.0, 0.0]),
+            Err(SurrogateError::ShapeMismatch { what: "d_logits", got: 2, want: 3 })
+        );
+    }
+
+    /// The [`Gaussian`] tail figures, which are this module's argument for why the dead-neuron
+    /// problem is worst in that family. The ten-sigma figure used to read "underflows to zero"; it
+    /// is `1.93e-22`, twenty-two orders above where `f64` underflows.
+    #[test]
+    fn the_gaussian_tail_is_tiny_and_not_zero() {
+        let g = Gaussian::new(1.0).expect("positive sigma");
+        let peak = g.peak();
+        let ratio = |k: f64| g.backward(k) / peak;
+        assert!((ratio(5.0) - 3.726_653e-6).abs() < 1e-12, "five sigma: {}", ratio(5.0));
+        assert!((ratio(10.0) - 1.928_750e-22).abs() < 1e-28, "ten sigma: {}", ratio(10.0));
+        assert!(ratio(10.0) > 0.0, "ten sigma underflowed after all");
+        // The closed form, independently: the ratio to peak is exp(-k^2 / 2) and nothing else.
+        for k in [1.0_f64, 5.0, 10.0, 30.0] {
+            let want = (-0.5 * k * k).exp();
+            assert!(
+                (ratio(k) - want).abs() <= 1e-14 * want,
+                "{k} sigma: {} against exp(-k^2/2) = {want}",
+                ratio(k)
+            );
+        }
+        // Where it really does stop: exp(-k^2/2) leaves the normal numbers at sqrt(2 * 1022 * ln 2)
+        // and reaches zero at sqrt(2 * 1074 * ln 2) — 37.6 and 38.6 sigma, not 10.
+        let k_sub = (2.0 * 1022.0 * core::f64::consts::LN_2).sqrt();
+        let k_zero = (2.0 * 1074.0 * core::f64::consts::LN_2).sqrt();
+        assert!((k_sub - 37.64).abs() < 0.01, "the subnormal point moved: {k_sub}");
+        assert!((k_zero - 38.59).abs() < 0.01, "the underflow point moved: {k_zero}");
+        assert!(g.backward(k_sub + 0.5) > 0.0, "already zero at {} sigma", k_sub + 0.5);
+        assert!(g.backward(k_zero + 0.5) == 0.0, "still non-zero at {} sigma", k_zero + 0.5);
+        // It is a function of x / sigma, so the default's five thresholds are these ten sigma.
+        let half = Gaussian::default();
+        assert!(half.sigma == 0.5, "the default sigma moved");
+        assert!(
+            (half.backward(5.0) / half.peak() - ratio(10.0)).abs() < 1e-30,
+            "the scaling by sigma is not what the doc says"
+        );
+    }
+
+    /// [`LifLayerSpec::w_scale`]'s default is described as Zenke's `spytorch` heuristic
+    /// `7 * (1 - beta)`. It is that number ROUNDED, and the doc used to say "is" — which is how a
+    /// constant that drifted from its source survives a reader who checks the citation and not the
+    /// arithmetic.
+    #[test]
+    fn the_default_weight_scale_is_a_rounded_spytorch_heuristic() {
+        let spec = LifLayerSpec::default();
+        let layer = spec.build().expect("valid spec");
+        assert!(spec.tau_mem == 20e-3 && spec.dt == 1e-3, "the heuristic's conditions moved");
+        let heuristic = 7.0 * (1.0 - layer.beta);
+        assert!((heuristic - 0.341_394_028).abs() < 1e-9, "7 * (1 - beta) = {heuristic}");
+        assert!(spec.w_scale == 0.35, "the default weight scale moved: {}", spec.w_scale);
+        assert!(spec.w_scale != heuristic, "these are equal, so the doc should not say 'rounded'");
+        let rel = (spec.w_scale - heuristic).abs() / heuristic;
+        assert!((rel - 0.025_20).abs() < 1e-4, "the default is {rel} from the heuristic, doc says 2.5%");
+    }
+
+    /// The surrogate's argument is the ABSOLUTE offset `U - theta`, not `(U - theta) / theta`, and
+    /// the docs used to say "in units of the threshold" — the same statement only at `theta = 1`,
+    /// which is the only value any other test sets while anything can spike. At `theta = 2` a
+    /// membrane at `U = 1.5` presents `x = -0.5` and not `-0.25`, so a surrogate whose `fwhm()`
+    /// reads `1.0` covers half a threshold. Pinned in both directions: the forward smooth spike is
+    /// `Phi(U - theta)` exactly, and the reverse-mode gradient that goes with it still matches
+    /// central finite differences — which a divide-by-theta "fix" that forgot the chain rule would
+    /// not.
+    #[test]
+    fn the_surrogate_sees_the_absolute_offset_at_a_non_unit_threshold() {
+        let sur = ArcTan::default();
+        let spec = LifLayerSpec {
+            n_in: 2,
+            n_rec: 3,
+            n_out: 2,
+            theta: 2.0,
+            recurrent: true,
+            w_scale: 0.6,
+            b_init: 0.5,
+            seed: 11,
+            ..LifLayerSpec::default()
+        };
+        let layer = spec.build().expect("valid spec");
+        assert!(layer.theta == 2.0, "the threshold did not survive the build");
+        let x = probe_input(5, 2);
+        let tr = layer.forward(&sur, &x, SpikeFn::Smooth).expect("valid");
+
+        let mut distinguishing = 0;
+        for t in 0..tr.t_steps {
+            for j in 0..tr.n_rec {
+                let u = tr.u[t * tr.n_rec + j];
+                let absolute = sur.antiderivative(u - layer.theta);
+                let relative = sur.antiderivative((u - layer.theta) / layer.theta);
+                assert!(
+                    tr.s[t * tr.n_rec + j] == absolute,
+                    "step {t} unit {j}: the spike is {} and Phi(U - theta) is {absolute}",
+                    tr.s[t * tr.n_rec + j]
+                );
+                if (absolute - relative).abs() > 1e-6 {
+                    distinguishing += 1;
+                }
+            }
+        }
+        assert!(
+            distinguishing > 5,
+            "only {distinguishing} states could tell the two conventions apart, so this asserts \
+             nothing about which one is in force"
+        );
+
+        // The gradient of what was actually run, at the non-unit threshold.
+        let (_, g) = layer.loss_and_grad(&sur, &x, 1, SpikeFn::Smooth).expect("valid");
+        let h = 1e-6;
+        let mut worst = 0.0_f64;
+        for k in 0..layer.n_params() {
+            let mut up = layer.clone();
+            up.p[k] += h;
+            let mut dn = layer.clone();
+            dn.p[k] -= h;
+            let lu = up.loss_and_grad(&sur, &x, 1, SpikeFn::Smooth).expect("valid").0;
+            let ld = dn.loss_and_grad(&sur, &x, 1, SpikeFn::Smooth).expect("valid").0;
+            let fd = (lu - ld) / (2.0 * h);
+            let err = (fd - g[k]).abs() / (1.0 + g[k].abs());
+            worst = worst.max(err);
+            assert!(err < 1e-6, "param {k} at theta = 2: analytic {} against {fd}", g[k]);
+        }
+        assert!(worst > 0.0, "the finite differences were all exactly zero");
+        // And the width really is in units of U: the arctangent's `4 / (pi alpha)` is 0.63662 at
+        // the default alpha = 2, which is 1/pi = 0.3183 THRESHOLDS at this theta, and half of what
+        // the same number would mean at theta = 1.
+        assert!(
+            (sur.fwhm() / layer.theta - core::f64::consts::FRAC_1_PI).abs() < 1e-12,
+            "fwhm {} at theta {} is not the documented fraction of a threshold",
+            sur.fwhm(),
+            layer.theta
+        );
+    }
+
+    /// The dead-neuron claim on [`LifLayerSpec::b_init`], measured. It used to say that a population
+    /// that never reaches threshold has a gradient of zero; that is a statement about a family's
+    /// TAILS and it is false for the family this module's own learning test uses. Five thresholds
+    /// below firing the default Gaussian passes `1.9e-22` of its peak and the default arctangent
+    /// passes `4.0e-3` — nineteen orders apart — and at the learning test's own initialisation the
+    /// pattern that draws not one spike still carries a gradient of norm `5.7`.
+    #[test]
+    fn the_dead_neuron_problem_is_a_statement_about_tails() {
+        let arctan = ArcTan::default();
+        let gauss = Gaussian::default();
+        let ra = arctan.backward(-5.0) / arctan.peak();
+        let rg = gauss.backward(-5.0) / gauss.peak();
+        assert!((ra - 4.036_5e-3).abs() < 1e-6, "arctan five thresholds below: {ra}");
+        assert!((rg - 1.928_750e-22).abs() < 1e-28, "gaussian five thresholds below: {rg}");
+        assert!(ra > 1e16 * rg, "the two tails are not the orders of magnitude apart claimed");
+        // Both are closed forms, checked against the algebra rather than against themselves.
+        assert!(
+            (ra - 1.0 / (1.0 + (2.5 * core::f64::consts::PI).powi(2) * 4.0)).abs() < 1e-15,
+            "the arctan tail is not 1 / (1 + (pi alpha x / 2)^2)"
+        );
+        assert!((rg - (-50.0_f64).exp()).abs() <= 1e-14 * rg, "the gaussian tail is not exp(-50)");
+
+        // The consequence, in the network: a silent pattern still has a gradient.
+        let task = DelayedXor::default();
+        let batch = task.patterns().expect("the windows fit");
+        let spec = LifLayerSpec {
+            n_in: task.n_in(),
+            n_rec: 64,
+            n_out: task.n_out(),
+            recurrent: true,
+            w_scale: 0.4,
+            b_init: 3e-3,
+            seed: 8,
+            ..LifLayerSpec::default()
+        };
+        let layer = spec.build().expect("valid spec");
+        let tr = layer.forward(&arctan, &batch[0].0, SpikeFn::Heaviside).expect("valid");
+        assert!(tr.spike_count() == 0.0, "pattern 0 was supposed to be silent at initialisation");
+        assert!(tr.logits.iter().all(|v| *v == 0.0), "a silent network has zero logits: {:?}", tr.logits);
+        let (_, g) = layer.loss_and_grad(&arctan, &batch[0].0, 0, SpikeFn::Heaviside).expect("valid");
+        assert!(l2(&g) > 1.0, "a silent pattern's gradient was {}, so the old story holds", l2(&g));
+        let nz = g.iter().filter(|v| **v != 0.0).count();
+        assert_eq!(
+            nz, layer.n_rec,
+            "with no spikes and a zero input, only the bias can carry a gradient"
+        );
+        for j in 0..layer.n_rec {
+            assert!(g[layer.idx_b(j)] != 0.0, "bias {j} had no gradient");
+        }
+    }
+
+    /// [`integrated_mass`] used to take `panels` at face value. `usize::MAX` overflowed
+    /// `(panels + 1) & !1` to zero, which made the panel width infinite and the answer `NaN` in
+    /// release and a panic in debug; `usize::MAX - 1` asked for a loop that does not end. It clamps
+    /// at [`MAX_PANELS`] now, and the clamped answer is the converged one.
+    #[test]
+    fn a_panel_count_that_cannot_be_integrated_is_clamped_rather_than_overflowed() {
+        let s = Rectangular::default();
+        let huge = integrated_mass(&s, usize::MAX);
+        assert!(huge.is_finite(), "usize::MAX panels gave {huge}");
+        assert!(huge == integrated_mass(&s, MAX_PANELS), "the clamp is not at MAX_PANELS");
+        assert!(integrated_mass(&s, usize::MAX - 1) == huge, "an odd huge count took another path");
+        assert!((huge - 1.0).abs() < 1e-5, "the clamped integral is {huge}, not the unit mass");
+        // The floor: a count below two is raised to two rather than making an empty sum. Two
+        // panels of a boxcar happen to integrate to exactly zero — both sample points, x = -1 and
+        // x = +1, are outside a window of width one — which is a property of a two-panel midpoint
+        // rule and not of the clamp, so the assertion here is that the three counts AGREE and are
+        // finite, and a family that is positive everywhere carries the "not an empty sum" half.
+        let floor = integrated_mass(&s, 2);
+        for panels in [0_usize, 1, 2] {
+            let m = integrated_mass(&s, panels);
+            assert!(m.is_finite(), "{panels} panels gave {m}");
+            assert!(m == floor, "{panels} panels gave {m}, two panels give {floor}");
+        }
+        assert!(integrated_mass(&Gaussian::default(), 0) > 0.0, "the floor summed nothing at all");
+        assert!(integrated_mass(&s, 3) > 1.5, "an odd count should be rounded UP to four panels");
+        // The ceiling is where accuracy stops being bought: it beats the default by about a decade
+        // for the discontinuous family, which is first order in the panel width.
+        let d = integrated_mass(&s, DEFAULT_PANELS);
+        assert!((d - 1.0).abs() < 1e-4, "the default integral is {d}");
+        assert!(
+            (huge - 1.0).abs() < (d - 1.0).abs(),
+            "MAX_PANELS is no better than DEFAULT_PANELS: {huge} against {d}"
+        );
+        // A smooth family is converged long before either, which is why clamping cannot lose
+        // anything a caller wanted.
+        let g = Gaussian::default();
+        assert!(
+            (integrated_mass(&g, MAX_PANELS) - integrated_mass(&g, DEFAULT_PANELS)).abs() < 1e-6,
+            "the clamp changes a smooth family's answer"
+        );
+    }
+
+    /// A "surrogate" with a constant `backward`, for [`fwhm_numeric`]'s refusals. Nothing in the
+    /// catalogue can reach them: every family there has a width.
+    #[derive(Debug)]
+    struct FlatBackward(f64);
+
+    impl Surrogate for FlatBackward {
+        fn name(&self) -> &'static str {
+            "flat"
+        }
+        fn backward(&self, _x: f64) -> f64 {
+            self.0
+        }
+        fn antiderivative(&self, x: f64) -> f64 {
+            self.0 * x
+        }
+        fn mass(&self) -> f64 {
+            f64::INFINITY
+        }
+        fn peak(&self) -> f64 {
+            self.0
+        }
+        fn fwhm(&self) -> f64 {
+            f64::INFINITY
+        }
+        fn sharpened(&self, _factor: f64) -> Option<Box<dyn Surrogate>> {
+            None
+        }
+    }
+
+    /// [`fwhm_numeric`] returns `None` rather than looping or answering for something that has no
+    /// width, and its search ceiling is `1e-3 * 2^80` — about `1.2e21` — and not the `2^80` the doc
+    /// used to claim, a factor of a thousand apart. Both sides of that ceiling are checked here.
+    #[test]
+    fn fwhm_numeric_refuses_what_has_no_width() {
+        assert!(fwhm_numeric(&FlatBackward(1.0)).is_none(), "a constant has no half-maximum point");
+        assert!(fwhm_numeric(&FlatBackward(0.0)).is_none(), "a zero peak has no width");
+        assert!(fwhm_numeric(&FlatBackward(-1.0)).is_none(), "a negative peak has no width");
+        assert!(fwhm_numeric(&FlatBackward(f64::NAN)).is_none(), "a NaN peak has no width");
+        assert!(fwhm_numeric(&FlatBackward(f64::INFINITY)).is_none(), "an infinite peak has none");
+        // Inside the ceiling: sigma = 1e20 has a width of 2.35e20 and is found exactly.
+        let inside = Gaussian::new(1e20).expect("positive sigma");
+        let got = fwhm_numeric(&inside).expect("1e20 sigma is inside the search ceiling");
+        assert!(
+            (got - inside.fwhm()).abs() < 1e-9 * inside.fwhm(),
+            "{got} against the closed form {}",
+            inside.fwhm()
+        );
+        // Outside it: refused, in bounded time, rather than doubling forever.
+        assert!(
+            fwhm_numeric(&Gaussian::new(1e22).expect("positive sigma")).is_none(),
+            "a width of 2.35e22 is past 1e-3 * 2^80 and should be refused"
+        );
+    }
+
+    /// The public surface nothing else reaches: [`Triangular::unit_mass`],
+    /// [`SigmoidDeriv::logistic`], [`Trace::mean_rate`]'s refusals, and [`SurrogateError`]'s
+    /// `Display`, which is the only part of this module most users will ever read.
+    #[test]
+    fn the_small_public_surface_holds_its_promises() {
+        for hw in [0.25, 1.0, 4.0] {
+            let t = Triangular::unit_mass(hw).expect("positive half width");
+            assert!((t.mass() - 1.0).abs() < 1e-15, "half width {hw}: analytic mass {}", t.mass());
+            assert!((t.peak - 1.0 / hw).abs() < 1e-15, "half width {hw}: peak {}", t.peak);
+            let m = integrated_mass(&t, DEFAULT_PANELS);
+            assert!((m - 1.0).abs() < 1e-3, "half width {hw}: quadrature {m}");
+            assert!((t.fwhm() - hw).abs() < 1e-15, "the width changed under renormalisation");
+        }
+        assert!(Triangular::unit_mass(0.0).is_err());
+        assert!(Triangular::unit_mass(f64::NAN).is_err());
+
+        // The logistic, against its definition and at the magnitudes where the naive form overflows.
+        for z in [-800.0, -1.0, 0.0, 1.0, 800.0] {
+            let s = SigmoidDeriv::logistic(z);
+            assert!(s.is_finite(), "logistic({z}) = {s}");
+            assert!((0.0..=1.0).contains(&s), "logistic({z}) = {s} is not a probability");
+            assert!(
+                (s + SigmoidDeriv::logistic(-z) - 1.0).abs() < 1e-15,
+                "logistic is not odd about a half at {z}"
+            );
+        }
+        assert!((SigmoidDeriv::logistic(0.0) - 0.5).abs() < 1e-15);
+        assert!((SigmoidDeriv::logistic(1.0) - 0.731_058_578_630_004_9).abs() < 1e-15);
+        assert!(SigmoidDeriv::logistic(800.0) == 1.0, "the exponential overflowed on the way to one");
+
+        // `mean_rate` refuses what it cannot convert instead of returning a plausible number.
+        let layer = LifLayerSpec::default().build().expect("valid spec");
+        let sur = ArcTan::default();
+        let tr = layer.forward(&sur, &[1.0; 8], SpikeFn::Heaviside).expect("valid");
+        assert!(tr.mean_rate(0.0).is_none(), "a zero time step has no rate");
+        assert!(tr.mean_rate(-1e-3).is_none(), "a negative time step has no rate");
+        assert!(tr.mean_rate(f64::NAN).is_none(), "a NaN time step has no rate");
+        assert!(tr.mean_rate(f64::INFINITY).is_none(), "an infinite time step has no rate");
+        let r = tr.mean_rate(1e-3).expect("positive dt");
+        let want = tr.spike_count() / (8.0 * 16.0 * 1e-3);
+        assert!((r - want).abs() < 1e-9, "rate {r} against spikes / (steps * units * dt) = {want}");
+
+        // Every variant prints the quantity it names and the value that arrived.
+        let cases: [(SurrogateError, &str); 7] = [
+            (SurrogateError::NotPositive { what: "beta", value: -1.0 }, "beta must be > 0, got -1"),
+            (
+                SurrogateError::NonFiniteParam { what: "sigma", value: f64::INFINITY },
+                "sigma is not finite (inf)",
+            ),
+            (
+                SurrogateError::NonFiniteInput { index: 3, value: f64::NEG_INFINITY },
+                "input element 3 is not finite (-inf)",
+            ),
+            (
+                SurrogateError::ShapeMismatch { what: "trace u", got: 4, want: 12 },
+                "trace u has length 4, which does not fit 12",
+            ),
+            (
+                SurrogateError::Diverged { step: 7, neuron: 2, value: f64::INFINITY },
+                "state of unit 2 went non-finite (inf) at step 7",
+            ),
+            (
+                SurrogateError::TargetOutOfRange { target: 5, n_out: 2 },
+                "target class 5 is past the 2 readout units",
+            ),
+            (SurrogateError::EmptyBatch, "an empty batch has no mean loss"),
+        ];
+        for (err, want) in cases {
+            assert_eq!(err.to_string(), want);
+        }
+        // And it is a `std::error::Error`, which is what lets `?` work in the crate's examples.
+        let boxed: Box<dyn std::error::Error> = Box::new(SurrogateError::EmptyBatch);
+        assert_eq!(boxed.to_string(), "an empty batch has no mean loss");
     }
 }

@@ -106,14 +106,19 @@
 //!
 //! # What is verified here
 //!
-//! A single pair against `A_plus * exp(-lag / tau_plus)` bit for bit, both signs, six lags; the
+//! A single pair against `A_plus * exp(-lag / tau_plus)` bit for bit, both signs, seven lags; the
 //! window's analytic integral against midpoint quadrature of the window itself; the triplet rule
-//! against the pair rule as an exact equality; Oja's rule against the scalar map its own dynamics
-//! reduce to and against the principal eigenvector of a correlation matrix built to have a known
-//! one; `BCM`'s selective fixed point against `n_patterns * y_0`, which is where the sliding
-//! threshold must settle; the distal-reward integral against
-//! `c * d * tau_c * tau_d / (tau_c + tau_d)`; and every bounded rule against its bounds under
-//! adversarial amplitudes.
+//! against the pair rule as an exact equality; every named triplet parameter set against the
+//! printed Table 3 and Table 4 of Pfister & Gerstner (2006), field by field; the eligibility trace
+//! against [`PairStdp::window`] itself, so the three-factor rule's headline claim is checked
+//! against the window and not only against its own decay algebra; Oja's rule against the scalar map
+//! its own dynamics reduce to and against the principal eigenvector of a correlation matrix built
+//! to have a known one; `BCM`'s selective fixed point against `n_patterns * y_0`, which is where
+//! the sliding threshold must settle, and its single-presentation step against the closed form that
+//! fixes *when* the threshold moves; the distal-reward integral against
+//! `c * d * tau_c * tau_d / (tau_c + tau_d)`; the soft bound's exponent against Gütig's normalised
+//! distance at a span that is not one, so the normalisation is not the identity in the fixture; and
+//! every bounded rule against its bounds under adversarial amplitudes, `BCM` included.
 
 /// Why a plasticity rule refused an input.
 ///
@@ -166,6 +171,12 @@ pub enum PlasticityError {
     },
     /// The rule's own state left the finite numbers, which for [`Hebbian`] is the documented
     /// instability arriving rather than a defect.
+    ///
+    /// Also what every timing rule here returns when the weight it just computed is not finite.
+    /// That cannot happen from a weight inside the bounds with the parameters a constructor
+    /// accepts, but every field on every rule in this module is `pub` — a caller who writes
+    /// `s.a_minus = f64::NAN` after construction has bypassed the constructor's validation, and the
+    /// answer to that is a named refusal rather than a `NaN` returned as if it were a weight.
     Diverged {
         /// Which quantity went non-finite.
         what: &'static str,
@@ -214,6 +225,17 @@ fn non_negative(what: &'static str, v: f64) -> Result<f64, PlasticityError> {
     if v >= 0.0 { Ok(v) } else { Err(PlasticityError::Negative { what, value: v }) }
 }
 
+/// A value a rule just *computed*, refused if it left the finite numbers.
+///
+/// Distinct from [`finite`], which guards an input: this guards an output, and reports
+/// [`PlasticityError::Diverged`] rather than [`PlasticityError::NonFinite`] because the caller's
+/// argument was fine and the rule's own arithmetic was not. The clamp cannot do this job — a `NaN`
+/// satisfies neither of its comparisons and passes through unchanged, which is exactly how a `NaN`
+/// weight would otherwise be laundered into a plausible-looking return value.
+fn computed(what: &'static str, v: f64) -> Result<f64, PlasticityError> {
+    if v.is_finite() { Ok(v) } else { Err(PlasticityError::Diverged { what, value: v }) }
+}
+
 /// A closed interval a weight is never allowed to leave.
 ///
 /// The clamp is applied on **every** update by every bounded rule in this module, including the
@@ -221,6 +243,16 @@ fn non_negative(what: &'static str, v: f64) -> Result<f64, PlasticityError> {
 /// makes the step small near the boundary, it does not make it zero, and one oversized amplitude
 /// steps straight through. The guarantee a caller needs is "the weight is in range", and only an
 /// unconditional clamp provides it.
+///
+/// # The invariant, and who establishes it
+///
+/// `w_min < w_max`, both finite. [`Bounds::new`] is the only thing that checks it; the fields are
+/// `pub`, so `Bounds { w_min: 5.0, w_max: -5.0 }` is a legal expression and nothing here will stop
+/// it. An inverted pair is a programming error rather than a supported input, and it is a
+/// *detectable* one: [`Bounds::contains`] then returns `false` for every weight without exception
+/// and [`Bounds::span`] is negative, so a caller that checks either finds out immediately. What it
+/// is not is silently absorbed — nothing in this module reorders the endpoints for you, because
+/// doing so would turn a typo into a different model that still runs.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Bounds {
     /// Weight floor, in whatever unit the weight carries. Inclusive.
@@ -262,18 +294,24 @@ impl Bounds {
     /// Finite on purpose. An infinite ceiling turns [`WeightRule::SoftBound`]'s span into an
     /// infinity and every factor into zero, so the rule would silently stop learning instead of
     /// running unbounded. `1e12` is past any weight a simulation reaches and still leaves 296
-    /// powers of two of headroom below overflow.
+    /// **decades** of headroom below `f64::MAX` — about 984 powers of two, since `f64::MAX / 1e12`
+    /// is `1.8e296`.
     #[must_use]
     pub const fn wide() -> Self {
         Self { w_min: -1.0e12, w_max: 1.0e12 }
     }
 
     /// The weight, moved into range if it was outside.
+    ///
+    /// A `NaN` weight comes back as `NaN`: it satisfies neither comparison, so there is no range to
+    /// move it into. **The clamp is therefore not the guard against a non-finite weight** — the
+    /// rules that call it check their own result afterwards and return
+    /// [`PlasticityError::Diverged`], because a `NaN` returned from here would otherwise arrive at
+    /// the caller wearing the shape of a weight.
     #[must_use]
     pub fn clamp(self, w: f64) -> f64 {
-        // Written as two comparisons rather than `f64::clamp` because `f64::clamp` panics on a NaN
-        // bound and propagates a NaN input; here a NaN weight would pass both comparisons unchanged
-        // and reach `contains`, which reports it as out of range.
+        // Written as two comparisons rather than `f64::clamp`, which panics on a NaN bound. A NaN
+        // weight passes both comparisons unchanged; see the doc above for what catches it.
         if w < self.w_min {
             self.w_min
         } else if w > self.w_max {
@@ -356,21 +394,43 @@ impl WeightRule {
     ///
     /// Never negative, so potentiation can never be turned into depression by the weight
     /// dependence — which is what a negative factor would do and is never what a paper means.
+    ///
+    /// # Outside the bounds
+    ///
+    /// `w` is evaluated at [`Bounds::clamp`] of itself, so a weight outside the interval is priced
+    /// as if it were at the nearest bound. Two reasons, and the first is the one that matters:
+    /// without it `((w - w_min) / span).powf(mu)` is an **infinity** for a large `w` and a large
+    /// `mu`, and an infinity multiplied by a trace that happens to be zero is a `NaN` weight
+    /// returned as `Ok`. Second, extrapolating is wrong anyway — Gütig's factor is a function of
+    /// the *normalised* distance to a bound, and at `w = -1` in `[0, 1]` the raw expression makes a
+    /// soft bound **amplify** potentiation by 1.414 at `mu = 0.5` rather than damp it. No weight
+    /// this module produces is ever outside its bounds, so this changes nothing for a weight that
+    /// came from a rule in this module; it changes the answer for one the caller invented.
     #[must_use]
     pub fn potentiation_factor(self, w: f64, bounds: Bounds) -> f64 {
         match self {
             Self::Additive | Self::MultiplicativeDepression => 1.0,
-            Self::SoftBound { mu } => ((bounds.w_max - w) / bounds.span()).max(0.0).powf(mu),
+            Self::SoftBound { mu } => {
+                ((bounds.w_max - bounds.clamp(w)) / bounds.span()).max(0.0).powf(mu)
+            }
         }
     }
 
     /// The multiplier on a depressing step for a synapse currently at `w`.
+    ///
+    /// `w` is clamped into `bounds` first, for the reasons on
+    /// [`WeightRule::potentiation_factor`]. Note that
+    /// [`WeightRule::MultiplicativeDepression`]'s factor is `w - w_min` in the weight's **own
+    /// unit** and is therefore not normalised to one at the ceiling: van Rossum et al. write the
+    /// depression term as a fraction of the weight itself, and their `w_min` is zero.
     #[must_use]
     pub fn depression_factor(self, w: f64, bounds: Bounds) -> f64 {
         match self {
             Self::Additive => 1.0,
-            Self::MultiplicativeDepression => (w - bounds.w_min).max(0.0),
-            Self::SoftBound { mu } => ((w - bounds.w_min) / bounds.span()).max(0.0).powf(mu),
+            Self::MultiplicativeDepression => (bounds.clamp(w) - bounds.w_min).max(0.0),
+            Self::SoftBound { mu } => {
+                ((bounds.clamp(w) - bounds.w_min) / bounds.span()).max(0.0).powf(mu)
+            }
         }
     }
 
@@ -566,6 +626,14 @@ impl PairStdp {
     /// window integral negative when the two time constants are equal. Additive, hard bounds
     /// `[0, g_max]`, which is what produces the bimodal weight distribution the paper reports.
     ///
+    /// # A naming hazard, not a disagreement
+    ///
+    /// The paper writes its window as `F(Delta t)` with `Delta t = t_pre - t_post`, which is the
+    /// **opposite** sign to this module's `lag = t_post - t_pre`, and it assigns `Delta t = 0` to
+    /// depression where [`PairStdp::window`] returns `0.0` by convention. The model is the same
+    /// model; the variable is not the same variable. Anyone transcribing a figure from that paper
+    /// into this API has to flip the axis first.
+    ///
     /// # Errors
     ///
     /// [`PlasticityError::NotPositive`] if `g_max` is not strictly positive, plus anything
@@ -687,9 +755,14 @@ impl PairStdp {
     /// [`PlasticityError::NonFinite`] if the weight handed in is not finite. The weight is an input
     /// here rather than state because a rule object is shared across many synapses in every
     /// realistic use, and storing one weight inside it would quietly make that wrong.
+    ///
+    /// [`PlasticityError::Diverged`] if the weight this call computed is not finite, which needs a
+    /// parameter written into a `pub` field after construction — the constructor rejects every
+    /// amplitude and time constant that could do it. The spike is **not** registered when either
+    /// refusal fires, so a refused call leaves the traces exactly as it found them.
     pub fn on_pre(&mut self, w: f64) -> Result<f64, PlasticityError> {
         let w = finite("weight", w)?;
-        let out = self.bounds.clamp(w + self.pre_increment(w));
+        let out = computed("updated weight", self.bounds.clamp(w + self.pre_increment(w)))?;
         self.note_pre();
         Ok(out)
     }
@@ -703,7 +776,7 @@ impl PairStdp {
     /// As [`PairStdp::on_pre`].
     pub fn on_post(&mut self, w: f64) -> Result<f64, PlasticityError> {
         let w = finite("weight", w)?;
-        let out = self.bounds.clamp(w + self.post_increment(w));
+        let out = computed("updated weight", self.bounds.clamp(w + self.post_increment(w)))?;
         self.note_post();
         Ok(out)
     }
@@ -722,7 +795,8 @@ impl PairStdp {
     ///
     /// # Errors
     ///
-    /// [`PlasticityError::NonFinite`] for a non-finite `w` or `lag`.
+    /// [`PlasticityError::NonFinite`] for a non-finite `w` or `lag`, plus whatever
+    /// [`PairStdp::on_pre`] and [`PairStdp::on_post`] return.
     pub fn apply_pair(&mut self, w: f64, lag: f64) -> Result<f64, PlasticityError> {
         let w = finite("weight", w)?;
         let lag = finite("lag", lag)?;
@@ -783,14 +857,32 @@ impl PairStdp {
 ///
 /// # On the constants
 ///
-/// The four time constants — 16.8, 101, 33.7 and 125 ms — are the widely reproduced values for the
-/// visual-cortex fit, with `tau_plus` and `tau_minus` inherited from Bi & Poo (1998). The
-/// **amplitudes** in the named constructors below were transcribed from Table 3 of the paper as
-/// reported in the secondary literature; this implementation did not verify the digits against the
-/// printed table, and anyone reproducing a published figure should check them at the source before
-/// citing a result. They are stated here rather than omitted because a rule with no parameters
-/// teaches nothing, and stated with this caveat rather than confidently because they might be wrong
-/// in the last digit.
+/// `tau_plus = 16.8 ms` and `tau_minus = 33.7 ms` are inherited from Bi & Poo and held fixed for
+/// every row of both fitted tables. Everything else is fitted per data set **and per pairing
+/// scheme**, and the four named constructors below are four different rows, transcribed from the
+/// printed Table 3 and Table 4:
+///
+/// | constructor | data set | scheme | `A2+` | `A3+` | `A2-` | `A3-` | `tau_x` | `tau_y` |
+/// |---|---|---|---|---|---|---|---|---|
+/// | [`TripletStdp::visual_cortex_minimal`] | visual cortex | all-to-all | 0 | 6.5e-3 | 7.1e-3 | 0 | (inert) | 114 ms |
+/// | [`TripletStdp::visual_cortex_full`] | visual cortex | all-to-all | 5e-10 | 6.2e-3 | 7e-3 | 2.3e-4 | 101 ms | 125 ms |
+/// | [`TripletStdp::hippocampal_full`] | hippocampal culture | all-to-all | 6.1e-3 | 6.7e-3 | 1.6e-3 | 1.4e-3 | 946 ms | 27 ms |
+/// | [`TripletStdp::hippocampal_full_nearest_spike`] | hippocampal culture | nearest-spike | 4.6e-3 | 9.1e-3 | 3e-3 | 7.5e-9 | 575 ms | 47 ms |
+///
+/// **A row is a package.** The amplitudes, the two slow time constants and the pairing scheme were
+/// fitted together, so taking the time constants from one row and the amplitudes from another
+/// produces a model that appears in no table and reproduces no measurement. A previous release of
+/// this module did exactly that in `hippocampal_full` — see the note on that constructor — which is
+/// why the table above is printed here and why a test compares every field of every constructor
+/// against it.
+///
+/// The parentheses on the visual-cortex minimal `tau_x` are the paper's own convention, extended:
+/// the fit is insensitive to `tau_x` wherever `A3-` is zero, because zero multiplies the slow pre
+/// trace away. See [`TripletStdp::visual_cortex_minimal`] for what this implementation puts there
+/// and for the test that shows the choice cannot change an answer.
+///
+/// Source: Pfister & Gerstner, J. Neurosci. 26:9673–9682, 2006, Tables 3 and 4, read from the
+/// published article rather than from a secondary account of it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TripletStdp {
     /// Pair potentiation amplitude, weight units. Zero in the *minimal* model, which is the point
@@ -803,13 +895,16 @@ pub struct TripletStdp {
     /// Triplet depression amplitude, weight units, multiplying the slow pre trace `r2`. Zero in the
     /// minimal visual-cortex model.
     pub a3_minus: f64,
-    /// Fast presynaptic trace `r1`, time constant `tau_plus`.
+    /// Fast presynaptic trace `r1`, time constant `tau_plus`, 16.8 ms in every fitted row.
     pub r1: Trace,
-    /// Slow presynaptic trace `r2`, time constant `tau_x`, 101 ms in the visual-cortex fit.
+    /// Slow presynaptic trace `r2`, time constant `tau_x`: 101 ms in the full visual-cortex fit,
+    /// 946 ms in the full hippocampal one, and unidentifiable wherever `A3_minus` is zero.
     pub r2: Trace,
-    /// Fast postsynaptic trace `o1`, time constant `tau_minus`.
+    /// Fast postsynaptic trace `o1`, time constant `tau_minus`, 33.7 ms in every fitted row.
     pub o1: Trace,
-    /// Slow postsynaptic trace `o2`, time constant `tau_y`, 125 ms in the visual-cortex fit.
+    /// Slow postsynaptic trace `o2`, time constant `tau_y`: 114 ms in the *minimal* visual-cortex
+    /// fit, 125 ms in the *full* one, 27 ms in the full hippocampal one. The two visual-cortex
+    /// numbers are different fits of different models and are not interchangeable.
     pub o2: Trace,
     /// How the step scales with the current weight.
     pub rule: WeightRule,
@@ -855,14 +950,32 @@ impl TripletStdp {
     }
 
     /// The **minimal** triplet model fitted to visual-cortex data (Sjöström et al. 2001), all-to-all
-    /// pairing: `A2_plus = 0`, `A3_plus = 6.5e-3`, `A2_minus = 7.1e-3`, `A3_minus = 0`.
+    /// pairing: `A2_plus = 0`, `A3_plus = 6.5e-3`, `A2_minus = 7.1e-3`, `A3_minus = 0`,
+    /// `tau_y = 114 ms`. Table 3, "All-to-All / Min." row.
     ///
     /// Minimal because two of the four amplitudes are zero: depression is purely a pair effect and
     /// potentiation is purely a triplet effect. This is the parameter set that reproduces the
-    /// frequency dependence the pair rule cannot, and the one the test in this module uses.
+    /// frequency dependence the pair rule cannot, and the one the frequency test in this module
+    /// uses.
     ///
-    /// See the caveat on the type: the amplitudes are transcribed, not verified against the printed
-    /// table.
+    /// # `tau_y` is 114 ms here and 125 ms in the full model
+    ///
+    /// They are two fits of two different models to the same data and the paper prints them on two
+    /// different rows. 125 ms belongs to [`TripletStdp::visual_cortex_full`]. It matters more here
+    /// than anywhere else in this module, because with `A2_plus = 0` the slow post trace is the
+    /// **only** thing the minimal model's potentiation depends on: moving 114 to 125 multiplies the
+    /// per-pair change at 1 Hz by 2.16 and at 40 Hz by 1.19.
+    ///
+    /// # `tau_x` is unidentifiable here
+    ///
+    /// `A3_minus = 0` multiplies the slow pre trace `r2` out of the depression term, so no value of
+    /// `tau_x` changes any output of this model and the paper leaves that cell of the table blank.
+    /// A [`Trace`] still needs a positive time constant, so this constructor puts the full
+    /// visual-cortex fit's 101 ms there and
+    /// `the_minimal_triplet_models_slow_pre_trace_cannot_change_an_answer` proves the choice is
+    /// inert by running the model twice with `tau_x` two orders apart and comparing bit for bit.
+    /// The trace is still fired and decayed on every event, and
+    /// [`crate::ledger`] charges for it, which is the honest cost of a shared implementation.
     ///
     /// # Errors
     ///
@@ -876,37 +989,110 @@ impl TripletStdp {
             16.8e-3,
             101e-3,
             33.7e-3,
+            114e-3,
+            WeightRule::Additive,
+            bounds,
+        )
+    }
+
+    /// The **full** triplet model fitted to visual-cortex data, all-to-all pairing:
+    /// `A2_plus = 5e-10`, `A3_plus = 6.2e-3`, `A2_minus = 7e-3`, `A3_minus = 2.3e-4`,
+    /// `tau_x = 101 ms`, `tau_y = 125 ms`. Table 3, "All-to-All / Full" row.
+    ///
+    /// This is where 101 ms and 125 ms come from, and the only visual-cortex row where either is
+    /// identifiable. `A2_plus = 5e-10` is the fit's way of saying "zero": the optimiser put the
+    /// pair potentiation term at the floor of its search range, which is the observation the
+    /// minimal model turns into a structural assumption.
+    ///
+    /// # Errors
+    ///
+    /// As [`TripletStdp::new`].
+    pub fn visual_cortex_full(bounds: Bounds) -> Result<Self, PlasticityError> {
+        Self::new(
+            5e-10,
+            6.2e-3,
+            7e-3,
+            2.3e-4,
+            16.8e-3,
+            101e-3,
+            33.7e-3,
             125e-3,
             WeightRule::Additive,
             bounds,
         )
     }
 
-    /// The **full** triplet model fitted to hippocampal culture data, nearest-spike pairing:
-    /// `A2_plus = 5.3e-3`, `A3_plus = 8.0e-3`, `A2_minus = 3.5e-3`, `A3_minus = 1.0e-3`, with the
-    /// slow time constants `tau_x = 946 ms` and `tau_y = 27 ms`.
+    /// The **full** triplet model fitted to hippocampal culture data, all-to-all pairing:
+    /// `A2_plus = 6.1e-3`, `A3_plus = 6.7e-3`, `A2_minus = 1.6e-3`, `A3_minus = 1.4e-3`, with the
+    /// slow time constants `tau_x = 946 ms` and `tau_y = 27 ms`. Table 4, "All-to-All / Full" row.
     ///
     /// Note how different the slow constants are from the visual-cortex fit — 946 ms against
-    /// 101 ms. The triplet model is not one model with one parameter set; it is a form that two
-    /// preparations fill in differently, and reporting a result with the wrong preparation's
-    /// numbers is a category error the shared function name makes easy.
+    /// 101 ms, 27 ms against 125 ms, and the two swapped in rank. The triplet model is not one
+    /// model with one parameter set; it is a form that two preparations fill in differently, and
+    /// reporting a result with the wrong preparation's numbers is a category error the shared
+    /// function name makes easy.
     ///
-    /// Sets [`Pairing::NearestNeighbour`], because that is the scheme these amplitudes were fitted
-    /// under. Same transcription caveat as the type doc.
+    /// # What this constructor used to return, and why it is worth saying
+    ///
+    /// Through version 0.4.0 it returned `A2_plus = 5.3e-3`, `A3_plus = 8.0e-3`,
+    /// `A2_minus = 3.5e-3`, `A3_minus = 1.0e-3` under [`Pairing::NearestNeighbour`]. Those first
+    /// three amplitudes are the hippocampal **all-to-all minimal** row, whose `A3_minus` is zero
+    /// and whose `tau_y` is 40 ms; the `1.0e-3` appears in no row of either table; and the
+    /// nearest-spike scheme belongs to a row with different amplitudes again. It was three rows and
+    /// an invention in one object, and it had no test. If you have a result from that version,
+    /// it was produced by a model that is in no paper.
+    ///
+    /// For the nearest-spike hippocampal fit, which is a genuine published row, use
+    /// [`TripletStdp::hippocampal_full_nearest_spike`].
     ///
     /// # Errors
     ///
     /// As [`TripletStdp::new`].
     pub fn hippocampal_full(bounds: Bounds) -> Result<Self, PlasticityError> {
-        let mut t = Self::new(
-            5.3e-3,
-            8.0e-3,
-            3.5e-3,
-            1.0e-3,
+        Self::new(
+            6.1e-3,
+            6.7e-3,
+            1.6e-3,
+            1.4e-3,
             16.8e-3,
             946e-3,
             33.7e-3,
             27e-3,
+            WeightRule::Additive,
+            bounds,
+        )
+    }
+
+    /// The full hippocampal fit under **nearest-spike** pairing: `A2_plus = 4.6e-3`,
+    /// `A3_plus = 9.1e-3`, `A2_minus = 3e-3`, `A3_minus = 7.5e-9`, `tau_x = 575 ms`,
+    /// `tau_y = 47 ms`. Table 4, "Nearest-Spike / Full" row, and it sets
+    /// [`Pairing::NearestNeighbour`] to match.
+    ///
+    /// The same data as [`TripletStdp::hippocampal_full`], refitted under a different interaction
+    /// scheme — and **every number moved**, which is the concrete reason the pairing scheme is a
+    /// field of the model here rather than an implementation detail. The fitting error is the same
+    /// to two figures (2.9 for both), so the data do not choose between them; the scheme is an
+    /// assumption you make and then have to report.
+    ///
+    /// `A3_minus = 7.5e-9` is the fit's zero, exactly as `A2_plus = 5e-10` is in
+    /// [`TripletStdp::visual_cortex_full`]. It is kept at the printed value rather than rounded to
+    /// zero because rounding it would silently make `tau_x` unidentifiable, which is a different
+    /// model — the paper's own parentheses around 575 ms say the error surface is already almost
+    /// flat in it.
+    ///
+    /// # Errors
+    ///
+    /// As [`TripletStdp::new`].
+    pub fn hippocampal_full_nearest_spike(bounds: Bounds) -> Result<Self, PlasticityError> {
+        let mut t = Self::new(
+            4.6e-3,
+            9.1e-3,
+            3e-3,
+            7.5e-9,
+            16.8e-3,
+            575e-3,
+            33.7e-3,
+            47e-3,
             WeightRule::Additive,
             bounds,
         )?;
@@ -956,10 +1142,12 @@ impl TripletStdp {
     ///
     /// # Errors
     ///
-    /// [`PlasticityError::NonFinite`] for a non-finite weight.
+    /// [`PlasticityError::NonFinite`] for a non-finite weight, [`PlasticityError::Diverged`] for a
+    /// non-finite computed weight. As [`PairStdp::on_pre`], the spike is not registered when either
+    /// refusal fires.
     pub fn on_pre(&mut self, w: f64) -> Result<f64, PlasticityError> {
         let w = finite("weight", w)?;
-        let out = self.bounds.clamp(w + self.pre_increment(w));
+        let out = computed("updated weight", self.bounds.clamp(w + self.pre_increment(w)))?;
         self.note_pre();
         Ok(out)
     }
@@ -968,10 +1156,10 @@ impl TripletStdp {
     ///
     /// # Errors
     ///
-    /// [`PlasticityError::NonFinite`] for a non-finite weight.
+    /// As [`TripletStdp::on_pre`].
     pub fn on_post(&mut self, w: f64) -> Result<f64, PlasticityError> {
         let w = finite("weight", w)?;
-        let out = self.bounds.clamp(w + self.post_increment(w));
+        let out = computed("updated weight", self.bounds.clamp(w + self.post_increment(w)))?;
         self.note_post();
         Ok(out)
     }
@@ -1002,8 +1190,20 @@ impl TripletStdp {
 pub struct Hebbian {
     /// Learning rate per sample, dimensionless. The growth factor under unit input is `1 + eta`.
     pub eta: f64,
-    /// Linear weight decay per sample, dimensionless. Zero is pure Hebb; a positive value bounds
-    /// the norm at `sqrt(eta * lambda_1 / decay)`-ish but does **not** normalise it.
+    /// Linear weight decay per sample, dimensionless. Zero is pure Hebb.
+    ///
+    /// **A positive value does not bound the norm at anything.** The term is linear in `w`, so it
+    /// subtracts `decay` from every eigenvalue of the input correlation matrix `C` and leaves the
+    /// rule linear: the component along the principal direction is multiplied by
+    /// `1 + eta * (lambda_1 - decay)` every sample, exactly, and the norm is therefore geometric in
+    /// the sample count with no fixed point anywhere except zero. `decay < lambda_1` still diverges
+    /// — more slowly. `decay > lambda_1` collapses to zero — not to a smaller weight vector, to no
+    /// weight vector. `decay == lambda_1` is a knife edge no simulation lands on.
+    ///
+    /// Measured, with `C = u u^T` so `lambda_1 = 1`, `eta = 0.01`, 20,000 samples from
+    /// `|w_0| = 0.1`: `decay = 0.05` reaches a norm of 1.3e81, `decay = 0.5` reaches 2.1e42, and
+    /// `decay = 2.0` reaches 5e-89. Bounding the norm needs a term that is **not** linear in `w`,
+    /// which is precisely what [`Oja`]'s `-y^2 w` and [`Bcm`]'s sliding threshold are.
     pub decay: f64,
     /// The weight vector, dimensionless multipliers, one per input channel.
     pub w: Vec<f64>,
@@ -1252,6 +1452,18 @@ impl Bcm {
     /// Valid only for mutually orthogonal, equiprobable patterns. With overlapping patterns the
     /// threshold still slides but the equilibrium is a fixed point of a coupled system with no such
     /// one-line solution, and this function does not apply.
+    ///
+    /// # It is the averaged dynamics' fixed point, and nothing here checks the averaging
+    ///
+    /// The derivation replaces `theta` by its mean over presentations, which is only the same
+    /// system when `tau_theta` is short compared with the time the weights take to move. Outside
+    /// that regime the cell is still selective and still stable — it just settles somewhere else,
+    /// and this function has no way to know. Measured on the fixture in
+    /// `bcm_becomes_selective_for_one_pattern_and_depresses_the_rest`, which predicts 40 Hz: at
+    /// `tau_theta = 2 s` the winner lands at 40.4 Hz, and at `tau_theta = 20 s` — still four orders
+    /// of magnitude faster than the biological estimate — it lands at **51.5 Hz**, 29% high, with
+    /// no error and no warning. `n_patterns * y_0` is what the averaged equations say, not a
+    /// measurement of the simulation you are about to run.
     #[must_use]
     pub fn selective_fixed_point(&self, n_patterns: usize) -> Option<f64> {
         if n_patterns == 0 {
@@ -1266,12 +1478,30 @@ impl Bcm {
     /// step, for the reason [`crate::neuron::Lif`] does the same: the closed form is available, it
     /// costs one `exp`, and it cannot go unstable when `dt` approaches `tau_theta`.
     ///
+    /// # Which `theta` the weight step uses
+    ///
+    /// **The one from before this presentation.** Both derivatives are evaluated at the state at
+    /// the start of the interval — `phi = y * (y - theta_before)` moves the weights, and only then
+    /// does `theta` relax toward this presentation's `y^2 / y_0`. That is the standard convention
+    /// for stepping a coupled system forward and it is the one the published `BCM` equations are
+    /// written in, where `dw/dt` and `dtheta/dt` are both functions of the same instantaneous
+    /// state.
+    ///
+    /// Stated because it is invisible in the equations and load-bearing in the code: absorbing
+    /// `y^2` first and then stepping the weights is a different model, and on the selectivity
+    /// fixture in this module it moves the winner's settled response by 0.6 Hz — inside the 5% band
+    /// that test allows, which is why
+    /// `the_bcm_weight_step_uses_the_threshold_from_before_this_presentation` pins the single-step
+    /// arithmetic against the closed form instead of relying on the long run to notice.
+    ///
     /// # Errors
     ///
     /// As [`Bcm::output`], plus [`PlasticityError::Negative`] for a negative `dt`.
     pub fn update(&mut self, x: &[f64], dt: f64) -> Result<f64, PlasticityError> {
         let dt = non_negative("dt", dt)?;
         let y = self.output(x)?;
+        // ORDER IS THE MODEL. `theta` here is the threshold as it stood before this presentation;
+        // the relaxation below must not run first. See the doc above.
         let phi = y * (y - self.theta);
         for i in 0..self.w.len() {
             self.w[i] = self.bounds.clamp(self.w[i] + self.eta * dt * x[i] * phi);
@@ -1407,24 +1637,34 @@ impl RewardStdp {
     /// A presynaptic spike: tag the synapse for depression, weighted by the current weight
     /// dependence. The weight itself does not move.
     ///
+    /// **The tag written here is the `STDP` window, not a proxy for it.** After an isolated
+    /// post-before-pre pair from a cleared state, `c` equals [`PairStdp::window`] at that lag
+    /// exactly — the same amplitude times the same exponential, times the weight dependence — which
+    /// is what makes "`STDP` does not write the weight, it writes an eligibility trace" a statement
+    /// about this rule rather than about a decaying number. `the_eligibility_trace_is_the_stdp_window_itself`
+    /// asserts that equality bit for bit on both signs.
+    ///
     /// # Errors
     ///
-    /// [`PlasticityError::NonFinite`] for a non-finite weight.
+    /// [`PlasticityError::NonFinite`] for a non-finite weight, [`PlasticityError::Diverged`] if the
+    /// tag this call computed is not finite. The spike is not registered when either fires.
     pub fn on_pre(&mut self, w: f64) -> Result<(), PlasticityError> {
         let w = finite("weight", w)?;
-        self.c += self.stdp.pre_increment(w);
+        self.c = computed("eligibility trace", self.c + self.stdp.pre_increment(w))?;
         self.stdp.note_pre();
         Ok(())
     }
 
     /// A postsynaptic spike: tag the synapse for potentiation. The weight does not move.
     ///
+    /// As [`RewardStdp::on_pre`], the tag is [`PairStdp::window`] itself at the pair's lag.
+    ///
     /// # Errors
     ///
-    /// [`PlasticityError::NonFinite`] for a non-finite weight.
+    /// As [`RewardStdp::on_pre`].
     pub fn on_post(&mut self, w: f64) -> Result<(), PlasticityError> {
         let w = finite("weight", w)?;
-        self.c += self.stdp.post_increment(w);
+        self.c = computed("eligibility trace", self.c + self.stdp.post_increment(w))?;
         self.stdp.note_post();
         Ok(())
     }
@@ -1442,12 +1682,18 @@ impl RewardStdp {
     /// Advance `dt` seconds: apply the exact integral of `c * d` to the weight, then decay both
     /// traces and the `STDP` window's traces.
     ///
+    /// The last of those is easy to forget and changes the model: without it the pre and post
+    /// traces never decay between spikes, every pair in a train reads a trace of one, and the tag
+    /// stops depending on timing at all. `the_eligibility_trace_decays_the_stdp_window_between_spikes`
+    /// is the test that notices.
+    ///
     /// Returns the new weight, clamped into [`RewardStdp::bounds`].
     ///
     /// # Errors
     ///
     /// [`PlasticityError::NonFinite`] for a non-finite weight, [`PlasticityError::Negative`] or
-    /// [`PlasticityError::NonFinite`] for a `dt` that is not finite and non-negative.
+    /// [`PlasticityError::NonFinite`] for a `dt` that is not finite and non-negative, and
+    /// [`PlasticityError::Diverged`] for a computed weight that is not finite.
     pub fn advance(&mut self, w: f64, dt: f64) -> Result<f64, PlasticityError> {
         let w = finite("weight", w)?;
         let dt = non_negative("dt", dt)?;
@@ -1456,7 +1702,7 @@ impl RewardStdp {
         // exactly the synapses that were tagged hardest.
         let tau_eff = self.tau_effective();
         let dw = self.c * self.d * tau_eff * (1.0 - (-dt / tau_eff).exp());
-        let out = self.bounds.clamp(w + dw);
+        let out = computed("updated weight", self.bounds.clamp(w + dw))?;
         self.c *= (-dt / self.tau_c).exp();
         self.d *= (-dt / self.tau_d).exp();
         self.stdp.advance(dt)?;
@@ -1634,7 +1880,7 @@ mod tests {
     /// (a) THE SHARPEST CHECK IN THE MODULE. One isolated pair at a known lag must reproduce the
     /// window `A_plus * exp(-lag / tau_plus)` — not to a tolerance, to the last bit, because the
     /// online trace path and the closed form are the same two floating-point operations in the same
-    /// order. Both signs, six lags each.
+    /// order. Both signs, seven lags each.
     ///
     /// The weight starts at exactly zero so that `w + dw` is `dw` with no rounding of its own; at
     /// `w = 0.37` the addition would round and the comparison would be testing `f64` addition
@@ -1703,12 +1949,39 @@ mod tests {
     /// Song, Miller & Abbott's stability condition, on their own parameter set. Their whole
     /// mechanism is a 5% amplitude asymmetry with equal time constants, so if the ratio were
     /// transcribed as 1.00 the check would flip — which is exactly what this is here to catch.
+    ///
+    /// `g_max` is swept rather than left at 1.0. At `g_max = 1.0` the paper's `A_plus = 0.005 *
+    /// g_max` is numerically indistinguishable from a bare `0.005` and `Bounds::new(0.0, g_max)`
+    /// from `Bounds::normalised()`, so the one fixture that reads like coverage of the scaling is
+    /// the one fixture that has none. The paper's sentence is "the value A+ = 0.005 thus
+    /// corresponds to a change of 0.5% of the maximum synaptic strength per spike pair" (p. 920) —
+    /// a FRACTION of `g_max`, which is only visible when `g_max` is not one.
     #[test]
     fn the_song_abbott_parameter_set_is_depression_dominated() {
+        for &g_max in &[0.25f64, 1.0, 2.5, 400.0] {
+            let s = PairStdp::song_abbott_2000(g_max).unwrap();
+            assert_eq!(s.a_plus, 0.005 * g_max, "A_plus at g_max {g_max}");
+            assert_eq!(s.bounds, Bounds::new(0.0, g_max).unwrap(), "bounds at g_max {g_max}");
+            assert!(s.is_depression_dominated(), "g_max {g_max}, area {}", s.total_window_area());
+            // 0.5% of the ceiling per pair, which is the sentence the paper writes.
+            assert!(
+                (s.a_plus / g_max - 0.005).abs() < 1e-15,
+                "A_plus {} is not 0.5% of g_max {g_max}",
+                s.a_plus
+            );
+        }
+        // A non-positive ceiling has no fraction to take.
+        assert!(matches!(
+            PairStdp::song_abbott_2000(0.0),
+            Err(PlasticityError::NotPositive { what: "g_max", .. })
+        ));
+
         let s = PairStdp::song_abbott_2000(1.0).unwrap();
         assert!(s.is_depression_dominated(), "area {}", s.total_window_area());
         assert!((s.a_minus / s.a_plus - 1.05).abs() < 1e-12);
         assert_eq!(s.tau_plus, s.tau_minus);
+        assert_eq!(s.tau_plus, 20e-3);
+        assert_eq!(s.rule, WeightRule::Additive);
         assert_eq!(s.bounds, Bounds::new(0.0, 1.0).unwrap());
         // A rule with equal amplitudes and equal time constants is exactly on the line, and "not
         // negative" is the honest verdict there rather than "stable".
@@ -1750,9 +2023,15 @@ mod tests {
     /// (e) Bounds under adversarial input: amplitudes far larger than the interval, alternating
     /// spikes with no time between them, every weight rule. The clamp is unconditional precisely so
     /// that this cannot fail.
+    ///
+    /// The interval's span is deliberately **not** one. The first draft used `[-0.25, 0.75]`, whose
+    /// span is exactly 1.0, and a span of one makes [`WeightRule::SoftBound`]'s division by
+    /// `bounds.span()` the identity — so the whole soft-bound arm of this sweep was running a rule
+    /// with its normalisation deleted and reporting six rules' worth of coverage.
     #[test]
     fn weight_bounds_are_never_violated_under_adversarial_input() {
-        let b = Bounds::new(-0.25, 0.75).unwrap();
+        let b = Bounds::new(-0.6, 1.9).unwrap();
+        assert!((b.span() - 2.5).abs() < 1e-15, "the fixture must not have a unit span");
         let rules = [
             WeightRule::Additive,
             WeightRule::MultiplicativeDepression,
@@ -1821,8 +2100,29 @@ mod tests {
         let mid = step_at(&mut s, 0.5);
         let near_floor = step_at(&mut s, 0.01);
         assert!(near_top > mid && mid > near_floor, "{near_top} {mid} {near_floor}");
-        // Ratio is the weight ratio, exactly: the factor is linear in `w - w_min`.
+        // Ratio is the weight ratio, exactly: the factor is linear in `w - w_min`. With w_min = 0
+        // that is 0.9 / 0.5.
         assert!((near_top / mid - 1.8).abs() < 1e-12);
+
+        // AND AGAIN WITH A FLOOR THAT IS NOT ZERO, because `w - w_min` and `w` are the same
+        // expression when `w_min` is zero, and every van Rossum fixture in the literature has
+        // `w_min = 0`. At `w_min = 0.25` the ratio is (0.9 - 0.25) / (0.5 - 0.25) = 2.6, which is
+        // a different number from 1.8 only if the subtraction is really there.
+        let raised = Bounds::new(0.25, 1.0).unwrap();
+        let mut r = PairStdp::new(
+            0.1,
+            0.1,
+            16.8e-3,
+            33.7e-3,
+            WeightRule::MultiplicativeDepression,
+            raised,
+        )
+        .unwrap();
+        let hi = step_at(&mut r, 0.9);
+        let lo = step_at(&mut r, 0.5);
+        assert!((hi / lo - 2.6).abs() < 1e-12, "raised floor: {hi} / {lo}");
+        // A weight sitting exactly on the raised floor cannot be depressed at all.
+        assert_eq!(step_at(&mut r, 0.25), 0.0, "depression at the floor must vanish");
         // Potentiation is weight-independent in this rule, which is the asymmetry that defines it.
         let p_low = s.apply_pair(0.01, 5e-3).unwrap() - 0.01;
         let p_high = s.apply_pair(0.9, 5e-3).unwrap() - 0.9;
@@ -1932,12 +2232,19 @@ mod tests {
         let p: Vec<f64> = freqs.iter().map(|&f| pair_dw(f)).collect();
         let t: Vec<f64> = freqs.iter().map(|&f| trip_dw(f)).collect();
 
-        // Measured here, per pair, over 60 pairs:
+        // Measured here, per pair, over 60 pairs, with the minimal model's PUBLISHED
+        // `tau_y = 114 ms`:
         //
-        //     1 Hz    pair  +3.033e-3    triplet  +1.183e-6
-        //    10 Hz    pair  +2.995e-3    triplet  +2.335e-3
-        //    40 Hz    pair  +8.274e-4    triplet  +1.057e-2
-        //    50 Hz    pair  -1.536e-4    triplet  +1.497e-2
+        //     1 Hz    pair  +3.0327e-3    triplet  +5.4648e-7
+        //    10 Hz    pair  +2.9951e-3    triplet  +1.9774e-3
+        //    40 Hz    pair  +8.2742e-4    triplet  +8.8685e-3
+        //    50 Hz    pair  -1.5359e-4    triplet  +1.2712e-2
+        //
+        // Through version 0.4.0 this constructor carried the FULL model's `tau_y = 125 ms`, which
+        // gives +1.1827e-6 and +1.0573e-2 at 1 Hz and 40 Hz -- a factor of 2.16 at the bottom of
+        // the range. The qualitative assertions below pass either way, which is why they are now
+        // accompanied by a closed-form test of the constructor's own parameters
+        // (`the_minimal_visual_cortex_triplet_model_reproduces_its_published_window`).
         //
         // The pair rule's change SHRINKS with frequency and CHANGES SIGN at 50 Hz -- it predicts
         // depression exactly where Sjostrom et al. measured the strongest potentiation. That is the
@@ -1952,6 +2259,28 @@ mod tests {
         }
         assert!(t[4] > 1_000.0 * t[0], "triplet 40 Hz {} vs 1 Hz {}", t[4], t[0]);
         assert!(t[4] > 0.0 && t[0] > 0.0);
+
+        // The numbers in the comment above, pinned. A regression table nobody asserts is a
+        // regression table that drifts: `tau_y` moved under exactly this test once already and it
+        // did not notice, because "monotone and large" is true of both models.
+        let want_pair = [3.0327e-3, 2.9951e-3, 8.2742e-4, -1.5359e-4];
+        let want_trip = [5.4648e-7, 1.9774e-3, 8.8685e-3, 1.2712e-2];
+        for (k, &i) in [0usize, 2, 4, 5].iter().enumerate() {
+            assert!(
+                (p[i] - want_pair[k]).abs() <= 1e-4 * want_pair[k].abs(),
+                "pair at {} Hz: {} vs recorded {}",
+                freqs[i],
+                p[i],
+                want_pair[k]
+            );
+            assert!(
+                (t[i] - want_trip[k]).abs() <= 1e-4 * want_trip[k],
+                "triplet at {} Hz: {} vs recorded {}",
+                freqs[i],
+                t[i],
+                want_trip[k]
+            );
+        }
     }
 
     /// (Hebb) The exact geometric closed form. Under a constant unit input the weight along that
@@ -2108,6 +2437,7 @@ mod tests {
         // so by predicting the winner from the initial weights.
         let w0 = vec![0.010, 0.014, 0.011, 0.012];
         let favourite = 1usize;
+        let start: Vec<f64> = w0.iter().map(|w| w * drive).collect();
         let mut b = Bcm::new(w0, 2.0e-6, 2.0, y_0, 0.01, bounds).unwrap();
 
         let mut rng = Rng::new(0x0BC0_5EED);
@@ -2135,14 +2465,32 @@ mod tests {
             "winner response {} vs closed-form fixed point {want} (all {responses:?})",
             responses[winner]
         );
+        // DEPRESSED, not merely small. The bar used to be `0.02 * want`, which is 0.8 Hz -- and the
+        // initial responses are [0.5, 0.70, 0.55, 0.60] Hz, so all three losers START below it and
+        // a rule that never touched them would have passed. The two bars below cannot be met by
+        // standing still: each loser must have fallen by at least six orders of magnitude from
+        // where it began, and must end essentially at zero in absolute terms.
         for k in 0..n_patterns {
             if k != winner {
                 assert!(
-                    responses[k] < 0.02 * want,
-                    "pattern {k} was not depressed: {responses:?}"
+                    responses[k] < 1e-6 * start[k],
+                    "pattern {k} was not depressed: {} Hz from {} Hz (all {responses:?})",
+                    responses[k],
+                    start[k]
+                );
+                assert!(
+                    responses[k] < 1e-6,
+                    "pattern {k} did not collapse: {responses:?}"
                 );
             }
         }
+        // And the winner GREW, so "selective" is not "everything died but one".
+        assert!(
+            responses[winner] > 10.0 * start[winner],
+            "the winner did not grow: {} Hz from {} Hz",
+            responses[winner],
+            start[winner]
+        );
         // The threshold must sit AT the winner's response on average: that equality is what stops
         // the weight moving, and it is the mechanism rather than a coincidence.
         //
@@ -2325,8 +2673,11 @@ mod tests {
         let mut rng = Rng::new(0x5CA1_AB1E);
         for _ in 0..3_000 {
             // Rates all over the place, above and below target, so the factor swings both ways.
-            s.observe(rng.below(4), 0.05).unwrap();
-            let g = s.scale(0.05).unwrap();
+            // The step size varies too, so neither `observe` nor `scale` is ever fed the one `dt`
+            // that would let a hard-coded constant impersonate a division.
+            let dt = 0.01 + rng.next_f64() * 0.19;
+            s.observe(rng.below(4), dt).unwrap();
+            let g = s.scale(dt).unwrap();
             assert!(g.is_finite() && g > 0.0);
         }
         // The weights moved, or the invariant is vacuous.
@@ -2375,15 +2726,22 @@ mod tests {
     fn the_rate_estimator_relaxes_exponentially_and_the_bounds_hold() {
         let bounds = Bounds::new(0.05, 4.0).unwrap();
         let mut s = SynapticScaling::new(vec![0.2, 1.0], 5.0, 10.0, 0.5, bounds).unwrap();
-        let dt = 0.01;
         let r = 20.0; // hertz, held constant
-        let spikes_per_step = (r * dt) as u32; // 0 with dt = 10 ms, so drive the estimate directly
-        assert_eq!(spikes_per_step, 0, "this test drives the estimator with a rate, not a count");
+        // THREE spikes per 150 ms step, not one per 50 ms. Both are 20 Hz, and that is the point:
+        // every `observe` in the first draft of this suite used `dt = 0.05`, where `spikes / dt` is
+        // indistinguishable from `spikes * 20.0` and the estimator's use of the elapsed time is
+        // untested. With (3, 0.15) a hard-coded 20 would read 60 Hz and this loop would fail on its
+        // first step.
+        let (spikes, step) = (3u32, 0.15f64);
+        assert!(
+            (f64::from(spikes) / step - r).abs() < 1e-12,
+            "the fixture must deliver exactly {r} Hz"
+        );
         for k in 1..=2_000u32 {
-            // One spike every fifth step is exactly 20 Hz on average, but the estimator's closed
-            // form is for a CONSTANT instantaneous rate, so feed it that: 1 spike per 50 ms step.
-            s.observe(1, 0.05).unwrap();
-            let t = f64::from(k) * 0.05;
+            // The estimator's closed form is for a CONSTANT instantaneous rate, so feed it that
+            // rather than a bursty train that averages to the same thing.
+            s.observe(spikes, step).unwrap();
+            let t = f64::from(k) * step;
             let want = r * (1.0 - (-t / s.rate_tau).exp());
             assert!((s.rate - want).abs() < 1e-9, "step {k}: rate {} vs {want}", s.rate);
         }
@@ -2628,5 +2986,1182 @@ mod tests {
             s.advance(1.0).unwrap();
         }
         assert!((w - 100.0 * one).abs() / w < 1e-12, "{w} vs 100 x {one}");
+    }
+
+    /// EVERY NAMED TRIPLET PARAMETER SET AGAINST THE PRINTED TABLE — Pfister & Gerstner (2006),
+    /// Tables 3 and 4, read from the published article rather than from a secondary account.
+    ///
+    /// This exists because the one constructor whose numbers were wrong was the one constructor
+    /// with no test at all. `hippocampal_full` shipped the hippocampal **all-to-all minimal** row's
+    /// first three amplitudes, an `A3_minus` that appears in no row of either table, the
+    /// **all-to-all full** row's slow time constants, and the **nearest-spike** pairing scheme —
+    /// three rows and an invention in one object — and replacing all four of its amplitudes with
+    /// `1.0, 2.0, 3.0, 4.0` left the module's other tests green.
+    ///
+    /// A row is a package: amplitudes, slow time constants and pairing scheme were fitted
+    /// together. So the assertion is every field of every constructor, not a spot check.
+    #[test]
+    fn the_named_triplet_parameter_sets_match_the_printed_table() {
+        let b = Bounds::wide();
+        // One printed row: the model the constructor returns, then the six fitted numbers and the
+        // pairing scheme it must agree with, then the table and row it came from.
+        type Row = (TripletStdp, f64, f64, f64, f64, f64, f64, Pairing, &'static str);
+        let rows: [Row; 4] = [
+            (
+                TripletStdp::visual_cortex_minimal(b).unwrap(),
+                0.0,
+                6.5e-3,
+                7.1e-3,
+                0.0,
+                101e-3,
+                114e-3,
+                Pairing::AllToAll,
+                "Table 3, All-to-All / Min.",
+            ),
+            (
+                TripletStdp::visual_cortex_full(b).unwrap(),
+                5e-10,
+                6.2e-3,
+                7e-3,
+                2.3e-4,
+                101e-3,
+                125e-3,
+                Pairing::AllToAll,
+                "Table 3, All-to-All / Full",
+            ),
+            (
+                TripletStdp::hippocampal_full(b).unwrap(),
+                6.1e-3,
+                6.7e-3,
+                1.6e-3,
+                1.4e-3,
+                946e-3,
+                27e-3,
+                Pairing::AllToAll,
+                "Table 4, All-to-All / Full",
+            ),
+            (
+                TripletStdp::hippocampal_full_nearest_spike(b).unwrap(),
+                4.6e-3,
+                9.1e-3,
+                3e-3,
+                7.5e-9,
+                575e-3,
+                47e-3,
+                Pairing::NearestNeighbour,
+                "Table 4, Nearest-Spike / Full",
+            ),
+        ];
+        for (t, a2p, a3p, a2m, a3m, tx, ty, pairing, name) in rows {
+            assert_eq!(t.a2_plus, a2p, "{name}: A2+");
+            assert_eq!(t.a3_plus, a3p, "{name}: A3+");
+            assert_eq!(t.a2_minus, a2m, "{name}: A2-");
+            assert_eq!(t.a3_minus, a3m, "{name}: A3-");
+            assert_eq!(t.r2.tau, tx, "{name}: tau_x");
+            assert_eq!(t.o2.tau, ty, "{name}: tau_y");
+            assert_eq!(t.pairing, pairing, "{name}: pairing scheme");
+            // tau_plus and tau_minus are Bi & Poo's and are held FIXED for every row of both
+            // tables — the paper says so in the caption, and that is why they are not swept.
+            assert_eq!(t.r1.tau, 16.8e-3, "{name}: tau_plus");
+            assert_eq!(t.o1.tau, 33.7e-3, "{name}: tau_minus");
+            // The rest of the object is the module's own default, not the paper's.
+            assert_eq!(t.rule, WeightRule::Additive, "{name}: weight rule");
+            assert_eq!(t.bounds, b, "{name}: bounds");
+            assert_eq!((t.r1.x, t.r2.x, t.o1.x, t.o2.x), (0.0, 0.0, 0.0, 0.0), "{name}: at rest");
+
+            // And each one actually runs. Pre, post at +10 ms, post again at +40 ms: every row
+            // potentiates by a finite, non-zero amount. Two post spikes rather than one because
+            // the minimal row's `A2_plus` is zero, so a single pair leaves it at exactly 0.0 —
+            // which is that row's whole content and not a defect. A constructor returning a model
+            // with every amplitude zero would satisfy all the field assertions above and fail here.
+            let mut s = t;
+            s.on_pre(0.0).unwrap();
+            s.advance(10e-3).unwrap();
+            let after_one = s.on_post(0.0).unwrap();
+            s.advance(30e-3).unwrap();
+            let dw = s.on_post(after_one).unwrap();
+            assert!(dw.is_finite(), "{name}: non-finite step {dw}");
+            assert!(dw > 0.0, "{name}: a pre-post-post triplet must potentiate, got {dw}");
+            // The minimal row is the only one whose FIRST pair does nothing, because it is the only
+            // one with `A2_plus = 0`. That is a prediction of the table, so assert it as one.
+            assert_eq!(
+                after_one == 0.0,
+                a2p == 0.0,
+                "{name}: the first pair's change disagrees with A2+ = {a2p}"
+            );
+        }
+
+        // The two visual-cortex rows are two fits of two models to ONE data set, and they differ in
+        // exactly the place that is easiest to get wrong: `tau_y`. 125 ms is the full model's.
+        let vmin = TripletStdp::visual_cortex_minimal(b).unwrap();
+        let vfull = TripletStdp::visual_cortex_full(b).unwrap();
+        assert_eq!(vmin.o2.tau, 114e-3);
+        assert_eq!(vfull.o2.tau, 125e-3);
+        assert_ne!(vmin.o2.tau, vfull.o2.tau, "the two visual-cortex rows are not interchangeable");
+        // Minimal means two amplitudes are exactly zero; full means neither is.
+        assert_eq!((vmin.a2_plus, vmin.a3_minus), (0.0, 0.0));
+        assert!(vfull.a2_plus > 0.0 && vfull.a3_minus > 0.0);
+        // The two hippocampal rows are the SAME data refitted under a different pairing scheme, and
+        // every fitted number moved — which is the concrete content of "fitted per scheme".
+        let hall = TripletStdp::hippocampal_full(b).unwrap();
+        let hnear = TripletStdp::hippocampal_full_nearest_spike(b).unwrap();
+        assert_ne!(hall.pairing, hnear.pairing);
+        for (l, r, what) in [
+            (hall.a2_plus, hnear.a2_plus, "A2+"),
+            (hall.a3_plus, hnear.a3_plus, "A3+"),
+            (hall.a2_minus, hnear.a2_minus, "A2-"),
+            (hall.a3_minus, hnear.a3_minus, "A3-"),
+            (hall.r2.tau, hnear.r2.tau, "tau_x"),
+            (hall.o2.tau, hnear.o2.tau, "tau_y"),
+        ] {
+            assert_ne!(l, r, "{what} is the same in both hippocampal rows, which it is not");
+        }
+        // And the two preparations are not the same model either: 946 ms against 101 ms on the pre
+        // side, 27 ms against 125 ms on the post side, with the rank of the two REVERSED.
+        assert!(hall.r2.tau > 9.0 * vfull.r2.tau);
+        assert!(hall.o2.tau < vfull.o2.tau / 4.0);
+        assert!(vfull.r2.tau < vfull.o2.tau && hall.r2.tau > hall.o2.tau);
+    }
+
+    /// THE MINIMAL VISUAL-CORTEX MODEL AGAINST ITS OWN PUBLISHED WINDOW, in closed form, with the
+    /// table's numbers written out as literals rather than read back off the struct it is checking.
+    ///
+    /// With `A2_plus = 0` the slow post trace is the **only** thing this model's potentiation
+    /// depends on, so `A3_plus` and `tau_y` are both load-bearing — and neither was bound by
+    /// anything. The frequency test asserts "monotone and large", which is true of `tau_y = 114 ms`
+    /// and of 125 ms alike, and multiplying `A3_plus` by ten left the whole suite green.
+    #[test]
+    fn the_minimal_visual_cortex_triplet_model_reproduces_its_published_window() {
+        let mut t = TripletStdp::visual_cortex_minimal(Bounds::wide()).unwrap();
+
+        // DEPRESSION IS A PAIR EFFECT ONLY. One post spike, one pre spike `lag` later:
+        // `dw = -o1 * A2_minus`, with no triplet term at all because `A3_minus` is zero.
+        let lag = 14e-3;
+        t.clear();
+        t.on_post(0.0).unwrap();
+        t.advance(lag).unwrap();
+        let dep = t.on_pre(0.0).unwrap();
+        assert_eq!(dep, -((-lag / 33.7e-3f64).exp() * 7.1e-3), "pair depression: {dep}");
+
+        // POTENTIATION IS A TRIPLET EFFECT ONLY. Pre, then post, then post. The FIRST post spike
+        // finds `o2 = 0` and therefore changes the weight by exactly nothing — that is what
+        // `A2_plus = 0` means, and it is the structural claim the word "minimal" is making.
+        let (lag1, gap) = (9e-3, 120e-3);
+        t.clear();
+        t.on_pre(0.0).unwrap();
+        t.advance(lag1).unwrap();
+        let w1 = t.on_post(0.0).unwrap();
+        assert_eq!(w1, 0.0, "the first post spike potentiated, so A2_plus is not zero");
+
+        // The SECOND post spike reads `o2 = exp(-gap / 114 ms)` from the first, and `r1` has
+        // decayed for the whole interval.
+        t.advance(gap).unwrap();
+        let w2 = t.on_post(w1).unwrap();
+        let r1 = (-(lag1 + gap) / 16.8e-3f64).exp();
+        let o2 = (-gap / 114e-3f64).exp();
+        assert_eq!(w2, r1 * (6.5e-3 * o2), "triplet potentiation: {w2}");
+        assert!(w2 > 0.0);
+
+        // The fixture can tell 114 ms from 125 ms: the same protocol with the FULL model's `tau_y`
+        // gives an answer 9% larger, which is a hundred million times any rounding here.
+        let with_full_tau_y = r1 * (6.5e-3 * (-gap / 125e-3f64).exp());
+        assert!(
+            (with_full_tau_y - w2) / w2 > 0.05,
+            "the fixture cannot distinguish tau_y = 114 ms from 125 ms: {w2} vs {with_full_tau_y}"
+        );
+        // And it can tell 6.5e-3 from anything else: the amplitude is a literal factor above.
+        assert!((w2 / (r1 * o2) - 6.5e-3).abs() < 1e-18, "A3_plus is not 6.5e-3");
+    }
+
+    /// `tau_x` IS UNIDENTIFIABLE IN THE MINIMAL MODEL, and this is the test that says so out loud
+    /// instead of pretending to bind a number nothing can bind.
+    ///
+    /// `A3_minus = 0` multiplies the slow pre trace out of the only term it ever appears in, so no
+    /// value of `tau_x` changes any output — the paper leaves that cell of Table 3 blank for
+    /// exactly this reason. A [`Trace`] still needs a positive time constant, so the constructor
+    /// puts the full fit's 101 ms there; the honest check is that the choice cannot matter, run
+    /// twice with `tau_x` two orders apart over the same 200-event train and compared bit for bit.
+    #[test]
+    fn the_minimal_triplet_models_slow_pre_trace_cannot_change_an_answer() {
+        let run = |tau_x: f64, a3_minus: f64| {
+            let mut t = TripletStdp::new(
+                0.0,
+                6.5e-3,
+                7.1e-3,
+                a3_minus,
+                16.8e-3,
+                tau_x,
+                33.7e-3,
+                114e-3,
+                WeightRule::Additive,
+                Bounds::wide(),
+            )
+            .unwrap();
+            let mut rng = Rng::new(0xDEAD_BEEF);
+            let mut w = 0.0;
+            for _ in 0..200 {
+                t.advance(rng.next_f64() * 30e-3).unwrap();
+                w = if rng.next_f64() < 0.5 {
+                    t.on_pre(w).unwrap()
+                } else {
+                    t.on_post(w).unwrap()
+                };
+            }
+            w
+        };
+        // The published model: A3_minus = 0, so tau_x is inert across two orders of magnitude.
+        let at_101ms = run(101e-3, 0.0);
+        let at_5s = run(5.0, 0.0);
+        assert_eq!(at_101ms, at_5s, "tau_x changed an answer in a model where A3_minus is zero");
+        assert!(at_101ms.abs() > 1e-6, "the train never moved the weight, so the equality is vacuous");
+        // And the constructor really does set A3_minus to zero, which is the whole mechanism.
+        assert_eq!(TripletStdp::visual_cortex_minimal(Bounds::wide()).unwrap().a3_minus, 0.0);
+
+        // THE CONTRAST, so this is a statement about `A3_minus = 0` and not about `tau_x` being
+        // ignored everywhere: give the same model a non-zero triplet depression amplitude and the
+        // same two time constants now disagree.
+        let live_101ms = run(101e-3, 4.3e-3);
+        let live_5s = run(5.0, 4.3e-3);
+        assert_ne!(live_101ms, live_5s, "tau_x is inert even where A3_minus is not zero");
+        assert!(
+            (live_101ms - live_5s).abs() / live_101ms.abs() > 0.05,
+            "the contrast is within rounding: {live_101ms} vs {live_5s}"
+        );
+    }
+
+    /// `TripletStdp::clear` MUST FORGET ALL FOUR TRACES, not the two fast ones. A rule that cleared
+    /// only `r1` and `o1` would leave `r2` and `o2` carrying spike history across a reset, and
+    /// nothing in the suite looked: the reduction test sets both triplet amplitudes to zero, which
+    /// multiplies the slow traces away.
+    #[test]
+    fn clearing_a_triplet_rule_forgets_all_four_traces() {
+        let b = Bounds::wide();
+        let mut t = TripletStdp::hippocampal_full(b).unwrap();
+        t.note_pre();
+        t.note_post();
+        t.advance(5e-3).unwrap();
+        assert!(t.r1.x > 0.0 && t.r2.x > 0.0 && t.o1.x > 0.0 && t.o2.x > 0.0, "the fixture is empty");
+        t.clear();
+        assert_eq!((t.r1.x, t.r2.x, t.o1.x, t.o2.x), (0.0, 0.0, 0.0, 0.0));
+
+        // Behaviourally, where it bites. After the clear, one post spike sets `o1` and `o2`, and a
+        // pre spike then reads `o1 * (A2_minus + A3_minus * r2)`. With `r2` properly cleared that
+        // is the pair term alone; with a surviving `r2` it is 87% larger for this parameter set,
+        // so the difference is not subtle.
+        t.note_post();
+        let dw = t.on_pre(0.0).unwrap();
+        assert_eq!(dw, -(1.0 * t.a2_minus), "a cleared slow pre trace still contributed");
+        let if_r2_survived = -(1.0 * (t.a2_minus + t.a3_minus));
+        assert!(
+            (dw - if_r2_survived).abs() / dw.abs() > 0.5,
+            "the fixture cannot tell a cleared r2 from a surviving one"
+        );
+        // The parameters are untouched by a clear, which is the other half of the contract.
+        assert_eq!(t.a3_plus, 6.7e-3);
+        assert_eq!(t.r2.tau, 946e-3);
+        assert_eq!(t.pairing, Pairing::AllToAll);
+    }
+
+    /// THE THIRD FACTOR'S HEADLINE, CHECKED AGAINST THE WINDOW RATHER THAN AGAINST ITSELF.
+    ///
+    /// "`STDP` does not write the weight, it writes an eligibility trace" is a claim about **what**
+    /// gets written. Every other assertion about `c` in this module is relative to `c` — it is
+    /// positive, it decreases, it is `c * exp(-2)` two seconds later, `pending_change()` is
+    /// `c * d * tau_eff` — and all of them hold just as well if the tag is a constant. The tag is
+    /// the window: same amplitude, same exponential, same weight dependence, bit for bit.
+    #[test]
+    fn the_eligibility_trace_is_the_stdp_window_itself() {
+        let w = 0.37;
+        for &lag in &[1e-3, 10e-3, 40e-3] {
+            // Pre before post: the tag is the potentiating half of the window.
+            let mut r = RewardStdp::new(wide_pair(), 1.0, 0.2, Bounds::wide()).unwrap();
+            r.on_pre(w).unwrap();
+            r.advance(w, lag).unwrap();
+            r.on_post(w).unwrap();
+            assert_eq!(r.c, r.stdp.window(lag), "pre->post at {lag} s tagged {}", r.c);
+            assert!(r.c > 0.0);
+
+            // Post before pre: the depressing half, sign and all.
+            let mut r = RewardStdp::new(wide_pair(), 1.0, 0.2, Bounds::wide()).unwrap();
+            r.on_post(w).unwrap();
+            r.advance(w, lag).unwrap();
+            r.on_pre(w).unwrap();
+            assert_eq!(r.c, r.stdp.window(-lag), "post->pre at {lag} s tagged {}", r.c);
+            assert!(r.c < 0.0);
+        }
+
+        // AND THE WEIGHT DEPENDENCE the doc promises. A soft bound at `mu = 1` makes the tag linear
+        // in the distance to the ceiling, so the same pair tags a synapse at 0.25 exactly 0.75 as
+        // hard as one at 0.0 — and a tag that ignored `w` would give them the same number.
+        let tag_at = |w0: f64| {
+            let s = PairStdp::new(
+                0.05,
+                0.05,
+                16.8e-3,
+                33.7e-3,
+                WeightRule::SoftBound { mu: 1.0 },
+                Bounds::normalised(),
+            )
+            .unwrap();
+            let mut r = RewardStdp::new(s, 1.0, 0.2, Bounds::normalised()).unwrap();
+            r.on_pre(w0).unwrap();
+            r.advance(w0, 10e-3).unwrap();
+            r.on_post(w0).unwrap();
+            r.c
+        };
+        let at_floor = tag_at(0.0);
+        let at_quarter = tag_at(0.25);
+        let at_ceiling = tag_at(1.0);
+        assert!(at_floor > 0.0);
+        assert_eq!(at_quarter, 0.75 * at_floor, "the tag is not linear in the distance to the ceiling");
+        assert_eq!(at_ceiling, 0.0, "a synapse at the ceiling cannot be tagged for potentiation");
+    }
+
+    /// `RewardStdp::advance` MUST DECAY THE WINDOW'S OWN TRACES, and nothing noticed that it does.
+    ///
+    /// Every fixture in this module ran a single pair through this rule, so deleting
+    /// `self.stdp.advance(dt)` changed nothing anyone checked. Without it the pre trace stands at
+    /// one forever, every post spike in a train tags the full amplitude, and the eligibility trace
+    /// stops depending on spike timing at all — which is the one thing it is for.
+    #[test]
+    fn the_eligibility_trace_decays_the_stdp_window_between_spikes() {
+        let mut r = RewardStdp::new(wide_pair(), 1.0, 0.2, Bounds::wide()).unwrap();
+        let w = 0.0;
+        r.on_pre(w).unwrap();
+        // Fifty milliseconds, in five calls, so the decay has to COMPOSE across `advance`.
+        for _ in 0..5 {
+            r.advance(w, 10e-3).unwrap();
+        }
+        r.on_post(w).unwrap();
+        let want = r.stdp.window(50e-3);
+        assert!(
+            (r.c - want).abs() / want < 1e-12,
+            "tag {} vs the window at 50 ms {want}",
+            r.c
+        );
+        // Un-decayed it would be the full amplitude — twenty times larger, which is the size of the
+        // error this test exists to catch.
+        assert!(r.c < 0.1 * r.stdp.a_plus, "the pre trace did not decay: {} of {}", r.c, r.stdp.a_plus);
+        // The traces themselves, against the same closed form.
+        assert!((r.stdp.pre_trace.x - (-50e-3f64 / 16.8e-3).exp()).abs() < 1e-15);
+    }
+
+    /// `RewardStdp::clear` forgets the tag, the modulator and the spike history, and keeps the
+    /// parameters. A cleared rule cannot move a weight however long it runs, which is the property
+    /// a caller reusing one object across synapses depends on.
+    #[test]
+    fn clearing_a_reward_rule_forgets_the_tag_the_modulator_and_the_spike_history() {
+        let mut r = RewardStdp::new(wide_pair(), 1.0, 0.2, Bounds::wide()).unwrap();
+        r.on_pre(0.0).unwrap();
+        r.advance(0.0, 10e-3).unwrap();
+        r.on_post(0.0).unwrap();
+        r.reward(0.9).unwrap();
+        assert!(r.c > 0.0 && r.d > 0.0 && r.pending_change() > 0.0, "the fixture is empty");
+
+        r.clear();
+        assert_eq!(r.c, 0.0);
+        assert_eq!(r.d, 0.0);
+        assert_eq!(r.pending_change(), 0.0);
+        assert_eq!(r.stdp.pre_trace.x, 0.0);
+        assert_eq!(r.stdp.post_trace.x, 0.0);
+
+        let mut w = 0.37;
+        for _ in 0..1_000 {
+            w = r.advance(w, 1e-3).unwrap();
+        }
+        assert_eq!(w, 0.37, "a cleared rule moved a weight");
+
+        // Parameters survived.
+        assert_eq!(r.tau_c, 1.0);
+        assert_eq!(r.tau_d, 0.2);
+        assert_eq!(r.stdp.a_plus, 0.1);
+        assert!((r.tau_effective() - 1.0 * 0.2 / 1.2).abs() < 1e-15);
+        // A non-finite reward is refused by name rather than poisoning the modulator.
+        assert!(matches!(
+            r.reward(f64::NAN),
+            Err(PlasticityError::NonFinite { what: "reward", .. })
+        ));
+        assert_eq!(r.d, 0.0, "a refused reward still changed the modulator");
+    }
+
+    /// WHICH `theta` THE `BCM` WEIGHT STEP READS, pinned against the closed form for a single
+    /// presentation.
+    ///
+    /// The rule couples two variables and the code has to evaluate them in some order. It uses the
+    /// threshold from **before** this presentation — both derivatives at the state at the start of
+    /// the interval, which is how the published equations are written. Swapping the two blocks
+    /// leaves every other test in this module green: the selectivity run's winner moves from
+    /// 40.42 Hz to 39.82 Hz and the band there is 5%, and the threshold test sets `eta = 0`, which
+    /// multiplies the weight step away exactly as `A3 = 0` multiplied the slow trace away in the
+    /// triplet rule's "just before this spike" defect. Same shape, same blindness.
+    #[test]
+    fn the_bcm_weight_step_uses_the_threshold_from_before_this_presentation() {
+        let bounds = Bounds::new(0.0, 5.0).unwrap();
+        let (eta, tau_theta, y_0, theta0, dt) = (2.0e-4, 0.5, 10.0, 7.0, 0.05);
+        let mut b = Bcm::new(vec![0.5, 0.0], eta, tau_theta, y_0, theta0, bounds).unwrap();
+        let x = [40.0, 0.0];
+        let y = 20.0;
+        assert_eq!(b.update(&x, dt).unwrap(), y, "the fixture's output is not what it claims");
+
+        // The weight step, in closed form, with `theta` AS IT WAS.
+        let want_w = 0.5 + eta * dt * x[0] * (y * (y - theta0));
+        assert_eq!(b.w[0], want_w, "the weight step did not use the threshold from before");
+        // A channel with no input cannot move, whatever the threshold says.
+        assert_eq!(b.w[1], 0.0);
+        // And the threshold relaxed AFTERWARDS, toward this presentation's own `y^2 / y_0`.
+        let want_theta = {
+            let target = y * y / y_0;
+            target + (theta0 - target) * (-dt / tau_theta).exp()
+        };
+        assert_eq!(b.theta, want_theta, "the threshold did not relax to its closed form");
+
+        // The fixture can tell the two orders apart. Using the RELAXED threshold instead would make
+        // this step 24% smaller, which is far outside anything rounding could explain.
+        let swapped = 0.5 + eta * dt * x[0] * (y * (y - want_theta));
+        assert!(
+            (want_w - swapped).abs() / (want_w - 0.5).abs() > 0.15,
+            "the fixture cannot distinguish the two orders: {want_w} vs {swapped}"
+        );
+        assert!(want_theta > theta0, "the threshold must have moved at all");
+    }
+
+    /// (e, continued) THE BOUNDS BATTERY, EXTENDED TO `Bcm` — the one bounded rule it skipped.
+    ///
+    /// `Bcm::update` clamps every channel on every presentation and nothing ever asked it to. In
+    /// the selectivity fixture the winner settles at `w = 0.8` against a ceiling of 5.0 and the
+    /// losers approach the floor asymptotically from above, so removing the ceiling — or removing
+    /// the clamp outright — changed nothing any test could see. The house rule is stated in
+    /// `weight_bounds_are_never_violated_under_adversarial_input` and it applies here: a bound
+    /// nothing ever reaches is a bound nothing ever tested.
+    #[test]
+    fn bcm_weights_never_leave_their_bounds_and_both_clamps_bind() {
+        // A floor ABOVE zero, so a clamped cell still has an output and the run keeps moving; with
+        // a floor at zero a depressed cell is silent forever and the ceiling is never revisited.
+        // `eta` is six orders above the selectivity fixture's, so one presentation overshoots both
+        // ends of the interval and the rule spends the whole run pinned alternately to each.
+        let bounds = Bounds::new(0.2, 1.0).unwrap();
+        let mut b = Bcm::new(vec![0.5, 0.3], 1.0, 0.05, 10.0, 100.0, bounds).unwrap();
+        let mut rng = Rng::new(0x0BC0_B0DE);
+        let (mut hit_floor, mut hit_ceiling) = (false, false);
+        for k in 0..20_000u32 {
+            let mut x = vec![0.0; 2];
+            x[rng.below(2) as usize] = 40.0;
+            b.update(&x, 0.01).unwrap();
+            for &wi in &b.w {
+                assert!(bounds.contains(wi), "step {k}: BCM left the bound at w = {wi}");
+                hit_floor |= wi == bounds.w_min;
+                hit_ceiling |= wi == bounds.w_max;
+            }
+        }
+        assert!(hit_floor, "the floor never bound, so it was never tested");
+        assert!(hit_ceiling, "the ceiling never bound, so it was never tested");
+
+        // The refusals on the same call, which nothing exercised either.
+        assert!(matches!(
+            b.update(&[1.0, 0.0], -1e-3),
+            Err(PlasticityError::Negative { what: "dt", .. })
+        ));
+        assert!(matches!(
+            b.update(&[1.0], 0.01),
+            Err(PlasticityError::LengthMismatch { got: 1, want: 2, .. })
+        ));
+        assert!(matches!(
+            b.update(&[f64::NAN, 0.0], 0.01),
+            Err(PlasticityError::NonFinite { what: "input", .. })
+        ));
+        // Zero patterns has no selective equilibrium, and inventing one would be a lie.
+        assert_eq!(b.selective_fixed_point(0), None);
+        assert_eq!(b.selective_fixed_point(1), Some(10.0));
+        assert_eq!(b.selective_fixed_point(7), Some(70.0));
+    }
+
+    /// GÜTIG'S EXPONENT ACTS ON THE **NORMALISED** DISTANCE, checked at a span that is not one.
+    ///
+    /// [`Bounds::normalised`]'s doc claims the normalisation is the identity on `[0, 1]` and that
+    /// `mu` therefore means what the paper says it means. That is only worth saying if the division
+    /// is there, and both soft-bound fixtures in this module were blind to it: one used
+    /// `Bounds::new(-0.25, 0.75)`, whose span is exactly 1.0, and the other used `mu = 0.0`, where
+    /// `powf` returns one whatever its argument. Deleting the division entirely left them green.
+    #[test]
+    fn the_soft_bound_exponent_acts_on_the_normalised_distance_to_the_bound() {
+        // The invariant: the factor depends on WHERE IN THE INTERVAL the weight sits, not on how
+        // wide the interval happens to be. Without the division it would scale as `span^mu`.
+        let narrow = Bounds::normalised();
+        let wide = Bounds::new(-3.0, 7.0).unwrap(); // span 10, so a missing division is 10^mu out
+        assert_eq!(wide.span(), 10.0);
+        for &mu in &[0.25, 0.5, 1.0, 2.0] {
+            let r = WeightRule::SoftBound { mu };
+            for &f in &[0.0, 0.1, 0.5, 0.9, 1.0] {
+                let a = narrow.w_min + f * narrow.span();
+                let b = wide.w_min + f * wide.span();
+                assert!(
+                    (r.potentiation_factor(a, narrow) - r.potentiation_factor(b, wide)).abs() < 1e-15,
+                    "potentiation at {f} of the way, mu {mu}: {} vs {}",
+                    r.potentiation_factor(a, narrow),
+                    r.potentiation_factor(b, wide)
+                );
+                assert!(
+                    (r.depression_factor(a, narrow) - r.depression_factor(b, wide)).abs() < 1e-15,
+                    "depression at {f} of the way, mu {mu}"
+                );
+            }
+            // Half way down the wide interval is one half, not five.
+            assert!((r.potentiation_factor(2.0, wide) - 0.5f64.powf(mu)).abs() < 1e-15);
+        }
+
+        // One literal, so the arithmetic is pinned and not only its invariance: 40% of the way down
+        // from the ceiling of `[-1, 4]` — span 5 — with Gütig's `mu = 1/2`, is `sqrt(0.4)`.
+        let b = Bounds::new(-1.0, 4.0).unwrap();
+        let half = WeightRule::SoftBound { mu: 0.5 };
+        assert_eq!(half.potentiation_factor(2.0, b), 0.632_455_532_033_675_9);
+        assert_eq!(half.depression_factor(1.0, b), 0.632_455_532_033_675_9);
+        // `mu = 0` is the additive rule everywhere, including at the bounds themselves, because
+        // `x.powf(0.0)` is one for every `x` including zero.
+        let flat = WeightRule::SoftBound { mu: 0.0 };
+        for &w in &[-1.0, 0.0, 2.5, 4.0] {
+            assert_eq!(flat.potentiation_factor(w, b), 1.0);
+            assert_eq!(flat.depression_factor(w, b), 1.0);
+        }
+        // The two rules with no weight dependence at all say so for every weight and every bound.
+        for &w in &[-1.0, 1.5, 4.0] {
+            assert_eq!(WeightRule::Additive.potentiation_factor(w, b), 1.0);
+            assert_eq!(WeightRule::Additive.depression_factor(w, b), 1.0);
+            assert_eq!(WeightRule::MultiplicativeDepression.potentiation_factor(w, b), 1.0);
+        }
+    }
+
+    /// (Hebb, with decay) THE TERM THAT DOES NOT DO WHAT THE DOC USED TO SAY IT DID.
+    ///
+    /// `decay` was documented as bounding the norm at `sqrt(eta * lambda_1 / decay)`-ish. It cannot:
+    /// the term is **linear** in `w`, so it shifts every eigenvalue of the input correlation matrix
+    /// down by `decay` and leaves the rule linear. The norm stays geometric and the only fixed
+    /// point anywhere is zero. Nothing caught the claim because no test ever set `decay` to
+    /// anything but zero — flipping its sign and deleting it outright were equally invisible.
+    #[test]
+    fn hebbian_decay_shifts_the_eigenvalue_and_never_bounds_the_norm() {
+        let u = [0.6, 0.8]; // unit, so C = u u^T and lambda_1 = 1
+        let eta = 0.01;
+        let w0 = 0.1;
+
+        // The exact geometric closed form, with the decay in it: one multiplication by
+        // `1 + eta * (lambda_1 - decay)` per sample. Both sides of `lambda_1`, and on it.
+        for &decay in &[0.0, 0.05, 0.5, 1.0, 2.0] {
+            let mut h = Hebbian::new(vec![w0 * u[0], w0 * u[1]], eta, decay).unwrap();
+            for _ in 0..200 {
+                h.update(&u).unwrap();
+            }
+            let want = w0 * (1.0 + eta * (1.0 - decay)).powi(200);
+            assert!(
+                (h.norm() - want).abs() / want < 1e-9,
+                "decay {decay}: norm {} vs closed form {want}",
+                h.norm()
+            );
+        }
+        // `decay == lambda_1` is the knife edge: the rule stands exactly still.
+        let mut h = Hebbian::new(vec![w0 * u[0], w0 * u[1]], eta, 1.0).unwrap();
+        for _ in 0..5_000 {
+            h.update(&u).unwrap();
+        }
+        assert!((h.norm() - w0).abs() / w0 < 1e-9, "at decay = lambda_1 the norm moved: {}", h.norm());
+
+        // THE OLD DOC'S CLAIM, REFUTED AT ITS OWN NUMBERS. `sqrt(eta * lambda_1 / decay)` with
+        // `eta = 0.01` and `decay = 0.05` is 0.447. The rule blows past it and keeps climbing at a
+        // CONSTANT ratio, which is what "not bounded" means: every 5,000 samples multiply the norm
+        // by the same factor, forever.
+        let mut h = Hebbian::new(vec![w0 * u[0], w0 * u[1]], eta, 0.05).unwrap();
+        let start = h.norm();
+        for _ in 0..5_000 {
+            h.update(&u).unwrap();
+        }
+        let at_5k = h.norm();
+        for _ in 0..5_000 {
+            h.update(&u).unwrap();
+        }
+        let at_10k = h.norm();
+        assert!(at_5k > 100.0 * 0.447, "the claimed bound held: {at_5k}");
+        let (first, second) = (at_5k / start, at_10k / at_5k);
+        assert!(
+            (second / first - 1.0).abs() < 1e-6,
+            "the growth ratio changed, so something bounded it: {first} then {second}"
+        );
+
+        // A decay ABOVE lambda_1 does not settle the weights anywhere either — it deletes them.
+        let mut h = Hebbian::new(vec![w0 * u[0], w0 * u[1]], eta, 2.0).unwrap();
+        for _ in 0..20_000 {
+            h.update(&u).unwrap();
+        }
+        assert!(h.norm() < 1e-80, "decay above lambda_1 left a norm of {}", h.norm());
+
+        // And the SIGN of the term: a decay must slow growth, never accelerate it.
+        let grow = |decay: f64| {
+            let mut h = Hebbian::new(vec![w0 * u[0], w0 * u[1]], eta, decay).unwrap();
+            for _ in 0..200 {
+                h.update(&u).unwrap();
+            }
+            h.norm()
+        };
+        assert!(grow(0.2) < grow(0.0), "decay accelerated growth, so its sign is wrong");
+        assert!(grow(0.4) < grow(0.2));
+    }
+
+    /// THE ZERO-LAG CONVENTION, both halves, because the type doc puts a claim about it in bold.
+    ///
+    /// [`PairStdp::window`] returns `0.0` at exactly zero lag — a stated convention where the
+    /// experiment has no measurement — while [`PairStdp::apply_pair`] at zero lag delivers
+    /// pre-then-post with nothing between them and pays the full `A_plus`. The two answers disagree
+    /// on purpose, and neither returning `a_plus` from `window` nor sending zero lag down the
+    /// post-first branch was visible to anything.
+    #[test]
+    fn the_window_and_the_online_path_disagree_at_exactly_zero_lag() {
+        let mut s = wide_pair();
+        assert_eq!(s.window(0.0), 0.0, "the closed form's convention at zero lag");
+        assert_eq!(s.window(-0.0), 0.0);
+        assert_eq!(s.apply_pair(0.0, 0.0).unwrap(), s.a_plus, "the online path at zero lag");
+        // Negative zero satisfies `lag >= 0.0` in IEEE, so it takes the same branch. The code
+        // relies on that; asserting it is cheaper than rediscovering it.
+        assert_eq!(s.apply_pair(0.0, -0.0).unwrap(), s.a_plus);
+        assert!(s.a_plus > 0.0, "the disagreement is a real one, not two zeros");
+
+        // Either side of zero the two paths agree again exactly, arbitrarily close in — so the
+        // disagreement is the window's discontinuity and not a bug in the neighbourhood.
+        for &lag in &[1e-12, 1e-9, 1e-6] {
+            assert_eq!(s.apply_pair(0.0, lag).unwrap(), s.window(lag), "at +{lag} s");
+            assert_eq!(s.apply_pair(0.0, -lag).unwrap(), s.window(-lag), "at -{lag} s");
+            assert!(s.window(lag) > 0.0 && s.window(-lag) < 0.0);
+        }
+        // A `NaN` lag falls through `window`'s comparisons to the zero branch — a silent answer to
+        // a malformed question, which is why the doc says to prefer `apply_pair`, which refuses.
+        assert_eq!(s.window(f64::NAN), 0.0);
+        assert!(matches!(
+            s.apply_pair(0.0, f64::NAN),
+            Err(PlasticityError::NonFinite { what: "lag", .. })
+        ));
+        assert!(matches!(
+            s.apply_pair(f64::INFINITY, 1e-3),
+            Err(PlasticityError::NonFinite { what: "weight", .. })
+        ));
+    }
+
+    /// `Trace::after` IS THE CLOSED FORM `Trace::advance` STEPS ALONG. Its doc says it is exposed
+    /// so a test can compare an online run against it rather than against a previous online run,
+    /// and then nothing in the crate ever called it.
+    #[test]
+    fn the_trace_closed_form_is_the_online_decay() {
+        let mut t = Trace::new(20e-3).unwrap();
+        assert_eq!(t.x, 0.0, "a new trace is at rest");
+        assert_eq!(t.after(1.0), 0.0, "and a trace at rest stays there");
+
+        t.fire(Pairing::AllToAll);
+        assert_eq!(t.x, 1.0, "one immediately after an isolated spike");
+        for &dt in &[0.0, 1e-4, 5e-3, 20e-3, 1.0] {
+            let want = t.after(dt);
+            let mut online = t;
+            online.advance(dt).unwrap();
+            assert_eq!(online.x, want, "after({dt}) and advance({dt}) are not the same arithmetic");
+        }
+        // `after` is a question, not a step: it does not move the trace.
+        let before = t.x;
+        let _ = t.after(5.0);
+        assert_eq!(t.x, before);
+
+        // One time constant out leaves exactly 1/e, which is the identity the whole window rests
+        // on — the trace read at a partner spike IS `exp(-lag / tau)`.
+        let mut u = Trace::new(20e-3).unwrap();
+        u.fire(Pairing::NearestNeighbour);
+        assert!((u.after(20e-3) - 1.0 / std::f64::consts::E).abs() < 1e-16);
+        // And `clear` returns it to rest without touching `tau`.
+        u.advance(7e-3).unwrap();
+        assert!(u.x > 0.0);
+        u.clear();
+        assert_eq!(u.x, 0.0);
+        assert_eq!(u.tau, 20e-3);
+        // Negative time would AMPLIFY the trace, so it is refused rather than run.
+        assert!(matches!(u.advance(-1e-9), Err(PlasticityError::Negative { what: "dt", .. })));
+    }
+
+    /// `Bounds::normalised` IS THE INTERVAL GÜTIG'S EXPONENT IS DEFINED ON, and `Bounds::wide` is
+    /// the finite stand-in for "no bound". Both had docs making claims and neither had a test.
+    #[test]
+    fn the_normalised_interval_is_where_the_soft_bound_normalisation_is_the_identity() {
+        let n = Bounds::normalised();
+        assert_eq!(n, Bounds::new(0.0, 1.0).unwrap());
+        assert_eq!(n.span(), 1.0);
+        assert!(n.contains(0.0) && n.contains(1.0), "the interval is closed at both ends");
+        assert!(!n.contains(-1e-12) && !n.contains(1.0 + 1e-12));
+        // The identity the doc claims: dividing by a span of one is a no-op, so the factor is the
+        // raw distance to the bound and `mu` is the paper's exponent on the paper's quantity.
+        for &mu in &[0.3, 1.0, 2.0] {
+            let r = WeightRule::SoftBound { mu };
+            for &w in &[0.0, 0.2, 0.75, 1.0] {
+                assert_eq!(r.potentiation_factor(w, n), (1.0 - w).powf(mu), "potentiation at {w}");
+                assert_eq!(r.depression_factor(w, n), w.powf(mu), "depression at {w}");
+            }
+        }
+
+        let w = Bounds::wide();
+        assert_eq!(w.span(), 2.0e12);
+        assert!(w.span().is_finite(), "an infinite span makes every soft-bound factor zero");
+        assert!(w.contains(0.0) && w.contains(1e11) && w.contains(-1e12));
+        assert!(!w.contains(1e13) && !w.contains(f64::NAN));
+        assert_eq!(w.clamp(1e13), 1.0e12);
+        assert_eq!(w.clamp(-1e13), -1.0e12);
+        assert_eq!(w.clamp(3.5), 3.5);
+        // The headroom the doc claims, as arithmetic rather than as prose: 296 DECADES, which is
+        // about 984 powers of two, not 296 of them.
+        assert!(((f64::MAX / 1e12).log10() - 296.0).abs() < 1.0);
+        assert!(((f64::MAX / 1e12).log2() - 984.0).abs() < 1.0);
+        // A NaN weight is not inside any interval, which is what stops the clamp laundering it.
+        assert!(!n.contains(f64::NAN));
+        assert!(w.clamp(f64::NAN).is_nan(), "the clamp cannot repair a NaN and does not pretend to");
+    }
+
+    /// AN INVERTED `Bounds` BUILT BY LITERAL REPORTS ITSELF rather than pretending to work. The
+    /// fields are `pub`, so `Bounds::new`'s check can be bypassed; what must not happen is that the
+    /// bypass looks like a working interval.
+    #[test]
+    fn an_inverted_bounds_literal_reports_itself_rather_than_pretending_to_work() {
+        let bad = Bounds { w_min: 5.0, w_max: -5.0 };
+        for &w in &[-1e9, -5.0, 0.0, 5.0, 1e9] {
+            assert!(!bad.contains(w), "{w} reported as inside an empty interval");
+        }
+        assert!(bad.span() < 0.0, "a negative span is the second tell");
+        // And the constructor refuses to build one, at inversion and at equality alike — a zero
+        // span would make every soft-bound factor a division by zero.
+        assert!(matches!(
+            Bounds::new(5.0, -5.0),
+            Err(PlasticityError::BoundsInverted { w_min: 5.0, w_max: -5.0 })
+        ));
+        assert!(matches!(Bounds::new(2.0, 2.0), Err(PlasticityError::BoundsInverted { .. })));
+        assert!(matches!(
+            Bounds::new(f64::NAN, 1.0),
+            Err(PlasticityError::NonFinite { what: "weight floor", .. })
+        ));
+        assert!(matches!(
+            Bounds::new(f64::NEG_INFINITY, 1.0),
+            Err(PlasticityError::NonFinite { what: "weight floor", .. })
+        ));
+    }
+
+    /// A WEIGHT OUTSIDE ITS BOUNDS CAN NEVER PRODUCE A NON-FINITE STEP.
+    ///
+    /// `PairStdp::new(0.05, 0.05, .., SoftBound { mu: 200.0 }, Bounds::normalised())` followed by
+    /// `on_pre(1e6)` used to return **`Ok(NaN)`**: the soft bound's `((w - w_min) / span).powf(200)`
+    /// is an infinity at `w = 1e6`, the post trace was `0.0`, and `0.0 * inf` is `NaN`. The clamp
+    /// cannot catch that — a `NaN` satisfies neither of its comparisons — so it came back wearing
+    /// the shape of a weight, which is the exact failure [`PlasticityError`] exists to prevent.
+    #[test]
+    fn a_weight_outside_its_bounds_can_never_produce_a_non_finite_step() {
+        let b = Bounds::normalised();
+        for &mu in &[0.5, 1.0, 200.0] {
+            for &w in &[-1e6, -1.0, -1e-9, 1.0 + 1e-9, 1e6] {
+                let rule = WeightRule::SoftBound { mu };
+                let mut s = PairStdp::new(0.05, 0.05, 16.8e-3, 33.7e-3, rule, b).unwrap();
+                let out = s.on_pre(w).unwrap();
+                assert!(out.is_finite() && b.contains(out), "on_pre({w}) at mu {mu} gave {out}");
+                let mut s = PairStdp::new(0.05, 0.05, 16.8e-3, 33.7e-3, rule, b).unwrap();
+                let out = s.on_post(w).unwrap();
+                assert!(out.is_finite() && b.contains(out), "on_post({w}) at mu {mu} gave {out}");
+                // The factors themselves, which is where the infinity lived.
+                assert!(rule.potentiation_factor(w, b).is_finite(), "potentiation factor at {w}");
+                assert!(rule.depression_factor(w, b).is_finite(), "depression factor at {w}");
+            }
+            // The factor SATURATES at the nearest bound rather than extrapolating past it. The raw
+            // expression at `w = -1` in `[0, 1]` gives `2^mu`, so a soft bound would AMPLIFY
+            // potentiation outside its own interval instead of damping it.
+            let rule = WeightRule::SoftBound { mu };
+            assert_eq!(rule.potentiation_factor(-1.0, b), rule.potentiation_factor(0.0, b));
+            assert_eq!(rule.potentiation_factor(-1.0, b), 1.0);
+            assert_eq!(rule.depression_factor(2.0, b), rule.depression_factor(1.0, b));
+            assert_eq!(rule.depression_factor(2.0, b), 1.0);
+        }
+        // Multiplicative depression saturates for the same reason, rather than growing without
+        // bound in the weight's own unit.
+        assert_eq!(WeightRule::MultiplicativeDepression.depression_factor(1e12, b), 1.0);
+        assert_eq!(WeightRule::MultiplicativeDepression.depression_factor(-1e12, b), 0.0);
+    }
+
+    /// A PARAMETER WRITTEN INTO A `pub` FIELD AFTER CONSTRUCTION is refused by name rather than
+    /// written into a weight. Every field on every rule here is public and every constructor
+    /// validation is therefore advisory; the guard that is not advisory is the check on the value
+    /// the rule just computed.
+    #[test]
+    fn a_rule_poisoned_after_construction_refuses_rather_than_returning_a_nan_weight() {
+        let b = Bounds::normalised();
+        let mut s = PairStdp::new(0.05, 0.05, 16.8e-3, 33.7e-3, WeightRule::Additive, b).unwrap();
+        s.note_post();
+        s.a_minus = f64::NAN;
+        assert!(matches!(
+            s.on_pre(0.5),
+            Err(PlasticityError::Diverged { what: "updated weight", .. })
+        ));
+        // The refusal left the traces exactly as it found them, so a caller who fixes the parameter
+        // can carry on rather than having silently lost a spike.
+        assert_eq!(s.post_trace.x, 1.0);
+        s.a_minus = 0.05;
+        assert!(s.on_pre(0.5).unwrap().is_finite());
+
+        let mut t = TripletStdp::visual_cortex_minimal(b).unwrap();
+        t.note_pre();
+        t.a3_plus = f64::INFINITY;
+        assert!(matches!(
+            t.on_post(0.5),
+            Err(PlasticityError::Diverged { what: "updated weight", .. })
+        ));
+        assert_eq!(t.r1.x, 1.0, "a refused post spike still touched the traces");
+
+        // The same guard on the three-factor rule's tag and on its weight.
+        let mut r = RewardStdp::new(wide_pair(), 1.0, 0.2, b).unwrap();
+        r.stdp.post_trace.x = f64::INFINITY;
+        r.stdp.a_minus = 0.0;
+        assert!(matches!(
+            r.on_pre(0.5),
+            Err(PlasticityError::Diverged { what: "eligibility trace", .. })
+        ));
+        let mut r = RewardStdp::new(wide_pair(), 1.0, 0.2, b).unwrap();
+        r.c = f64::NAN;
+        r.d = 1.0;
+        assert!(matches!(
+            r.advance(0.5, 1e-3),
+            Err(PlasticityError::Diverged { what: "updated weight", .. })
+        ));
+    }
+
+    /// `PairStdp::bi_poo_1998` CARRIES THE TIME CONSTANTS AND NOT THE AMPLITUDES, on purpose, and
+    /// nothing checked either half of that.
+    #[test]
+    fn the_bi_poo_constructor_carries_the_published_widths_and_the_callers_amplitudes() {
+        let b = Bounds::normalised();
+        let s = PairStdp::bi_poo_1998(0.008, 0.009, WeightRule::Additive, b).unwrap();
+        assert_eq!(s.tau_plus, 16.8e-3);
+        assert_eq!(s.tau_minus, 33.7e-3);
+        assert_eq!(s.a_plus, 0.008, "the amplitudes are the caller's, unchanged");
+        assert_eq!(s.a_minus, 0.009);
+        assert_eq!(s.pre_trace.tau, 16.8e-3, "the traces carry the same widths as the window");
+        assert_eq!(s.post_trace.tau, 33.7e-3);
+        assert_eq!(s.pairing, Pairing::AllToAll, "all-to-all is the documented default");
+        assert_eq!((s.pre_trace.x, s.post_trace.x), (0.0, 0.0));
+        // Depression is the WIDER window — the asymmetry Bi & Poo measured, and the reason a rule
+        // with nearly equal amplitudes can still be depression-dominated.
+        assert!(s.tau_minus > s.tau_plus);
+        assert!(s.is_depression_dominated(), "area {}", s.total_window_area());
+        // The same two constants are what every row of both Pfister & Gerstner tables inherits.
+        let t = TripletStdp::hippocampal_full(b).unwrap();
+        assert_eq!((t.r1.tau, t.o1.tau), (s.tau_plus, s.tau_minus));
+        // A negative amplitude is refused rather than silently made positive by the sign convention.
+        assert!(matches!(
+            PairStdp::bi_poo_1998(0.008, -0.009, WeightRule::Additive, b),
+            Err(PlasticityError::Negative { what: "A_minus", .. })
+        ));
+    }
+
+    /// `Oja` REPORTS DIVERGENCE RATHER THAN RETURNING AN INFINITY. The rule normalises itself,
+    /// which is exactly why this path is easy to leave untested — but a learning rate large enough
+    /// to overshoot the fixed point outward makes the correction larger than the thing it is
+    /// correcting, and the weights leave the finite numbers in a handful of samples.
+    #[test]
+    fn ojas_rule_reports_divergence_rather_than_returning_an_infinity() {
+        let mut o = Oja::new(vec![0.1, 0.2], 1.0).unwrap();
+        let mut hit = None;
+        for k in 0..1_000u32 {
+            if let Err(e) = o.update(&[3.0, 4.0]) {
+                hit = Some((k, e));
+                break;
+            }
+        }
+        let (k, e) = hit.expect("eta = 1 with |x| = 5 did not diverge in 1000 samples");
+        assert!(matches!(e, PlasticityError::Diverged { what: "Oja weight", .. }), "{e}");
+        assert!(k < 50, "diverged at sample {k}, which is not the overshoot path");
+
+        // The same input at a sane rate does not diverge: this is a parameter error and is reported
+        // as one rather than clamped away.
+        let mut o = Oja::new(vec![0.1, 0.2], 1e-3).unwrap();
+        for _ in 0..20_000 {
+            o.update(&[3.0, 4.0]).unwrap();
+        }
+        assert!((o.norm() - 1.0).abs() < 1e-6, "norm {}", o.norm());
+        // The zero vector is a fixed point and is refused rather than producing a flat curve.
+        assert!(matches!(Oja::new(vec![0.0, 0.0, 0.0], 0.1), Err(PlasticityError::Empty { .. })));
+        assert!(matches!(Oja::new(vec![], 0.1), Err(PlasticityError::Empty { .. })));
+        assert!(matches!(
+            Oja::new(vec![0.1, f64::NAN], 0.1),
+            Err(PlasticityError::NonFinite { what: "weight", .. })
+        ));
+        assert!(matches!(
+            Oja::new(vec![0.1], -1e-3),
+            Err(PlasticityError::Negative { what: "eta", .. })
+        ));
+    }
+
+    /// THE LINEAR OUTPUT EVERY RATE RULE SHARES, against the dot product written out, plus the two
+    /// refusals it makes. Three public `output` methods, none of them called directly by a test.
+    #[test]
+    fn the_rate_rules_linear_output_is_the_dot_product() {
+        let w = vec![0.5, -0.25, 2.0];
+        let x = [4.0, 8.0, 0.5];
+        let want = 0.5 * 4.0 + (-0.25) * 8.0 + 2.0 * 0.5; // 2 - 2 + 1, all exact in binary
+        assert_eq!(want, 1.0);
+
+        let h = Hebbian::new(w.clone(), 0.01, 0.0).unwrap();
+        let o = Oja::new(w.clone(), 0.01).unwrap();
+        let b = Bcm::new(w.clone(), 1e-6, 1.0, 10.0, 0.0, Bounds::wide()).unwrap();
+        assert_eq!(h.output(&x).unwrap(), want);
+        assert_eq!(o.output(&x).unwrap(), want);
+        assert_eq!(b.output(&x).unwrap(), want);
+        // `update` returns the same number it used to drive itself.
+        let mut b2 = b.clone();
+        assert_eq!(b2.update(&x, 0.01).unwrap(), want);
+
+        // The norm is the Euclidean length, not the sum of the weights.
+        let len = (0.25 + 0.0625 + 4.0f64).sqrt();
+        assert!((h.norm() - len).abs() < 1e-15, "{} vs {len}", h.norm());
+        assert!((o.norm() - len).abs() < 1e-15);
+        assert!(
+            (h.norm() - w.iter().sum::<f64>()).abs() > 0.1,
+            "the norm is the Euclidean length, not the sum: {} vs {}",
+            h.norm(),
+            w.iter().sum::<f64>()
+        );
+
+        // Both refusals, on all three rules.
+        for r in [
+            h.output(&[1.0, 2.0]),
+            o.output(&[1.0, 2.0]),
+            b.output(&[1.0, 2.0]),
+        ] {
+            assert!(matches!(r, Err(PlasticityError::LengthMismatch { got: 2, want: 3, .. })));
+        }
+        for r in [
+            h.output(&[1.0, 2.0, f64::INFINITY]),
+            o.output(&[1.0, 2.0, f64::INFINITY]),
+            b.output(&[1.0, 2.0, f64::INFINITY]),
+        ] {
+            assert!(matches!(r, Err(PlasticityError::NonFinite { what: "input", .. })));
+        }
+    }
+
+    /// `SynapticScaling` REPORTS ITS TOTAL DRIVE AND WHETHER ITS ESTIMATOR HAS SETTLED. Two public
+    /// methods with docs making claims — that `total` is what scaling regulates, and that
+    /// `is_settled` is a statement about the estimate rather than about the cell — and no test.
+    #[test]
+    fn synaptic_scaling_reports_the_total_drive_and_whether_its_estimator_has_settled() {
+        let bounds = Bounds::new(0.0, 1e6).unwrap();
+        let w0 = vec![0.1, 0.25, 0.65];
+        let mut s = SynapticScaling::new(w0.clone(), 5.0, 20.0, 1.0, bounds).unwrap();
+        assert!((s.total() - 1.0).abs() < 1e-15, "total {}", s.total());
+
+        // Multiplicative means the TOTAL scales by exactly the factor the call reports, which is
+        // the sense in which this rule regulates total synaptic drive.
+        s.rate = 0.0;
+        let g = s.scale(2.0).unwrap();
+        assert!((g - (2.0f64 * 5.0 / (5.0 * 20.0)).exp()).abs() < 1e-15, "factor {g}");
+        assert!(g > 1.0, "a silent cell must scale UP, got {g}");
+        assert!((s.total() - g * 1.0).abs() < 1e-12, "total {} vs {g} times 1.0", s.total());
+        // `factor` is the same number without applying it.
+        assert_eq!(s.factor(2.0), g);
+        // A cell exactly at target neither grows nor shrinks, and the factor is exactly one.
+        s.rate = 5.0;
+        let before = s.total();
+        assert_eq!(s.scale(3.0).unwrap(), 1.0);
+        assert_eq!(s.total(), before);
+
+        // Settledness is about the ESTIMATE, and the tolerance is inclusive and symmetric.
+        assert!(s.is_settled(0.0), "exactly at target must be settled at any tolerance");
+        s.rate = 5.5;
+        assert!(!s.is_settled(0.4));
+        assert!(s.is_settled(0.5), "the tolerance is inclusive at exactly tol_hz");
+        s.rate = 4.5;
+        assert!(s.is_settled(0.5), "and symmetric below the target");
+        assert!(!s.is_settled(0.4));
+        // An empty cell has nothing to scale and is refused at construction.
+        assert!(matches!(
+            SynapticScaling::new(vec![], 5.0, 1.0, 1.0, bounds),
+            Err(PlasticityError::Empty { .. })
+        ));
+    }
+
+    /// THE `BCM` SELECTIVE FIXED POINT IS THE **AVERAGED** DYNAMICS', AND THE AVERAGING IS AN
+    /// ASSUMPTION THE FUNCTION CANNOT CHECK.
+    ///
+    /// [`Bcm::selective_fixed_point`] answers `n_patterns * y_0` for any `tau_theta` at all,
+    /// because the derivation replaced the sliding threshold by its mean over presentations. Run
+    /// the same protocol with a threshold that is not fast compared with the weights and the cell
+    /// is still selective, still stable, and settles somewhere else entirely — with no error and no
+    /// warning. This is the measurement behind the caveat on that function.
+    #[test]
+    fn the_bcm_selective_fixed_point_holds_only_while_the_threshold_is_the_fast_variable() {
+        let settle = |tau_theta: f64| {
+            let (n_patterns, drive, y_0) = (4usize, 50.0, 10.0);
+            let mut b = Bcm::new(
+                vec![0.010, 0.014, 0.011, 0.012],
+                2.0e-6,
+                tau_theta,
+                y_0,
+                0.01,
+                Bounds::new(0.0, 5.0).unwrap(),
+            )
+            .unwrap();
+            let mut rng = Rng::new(0x0BC0_5EED);
+            for _ in 0..200_000 {
+                let mut x = vec![0.0; n_patterns];
+                x[rng.below(n_patterns as u32) as usize] = drive;
+                b.update(&x, 0.01).unwrap();
+            }
+            (0..n_patterns).map(|k| b.w[k] * drive).collect::<Vec<f64>>()
+        };
+        let want = 40.0; // n_patterns * y_0
+
+        let fast = settle(2.0);
+        assert!(
+            (fast[1] - want).abs() / want < 0.05,
+            "with a fast threshold the closed form should hold: {fast:?}"
+        );
+
+        // 20 s is still four orders of magnitude faster than any biological estimate of the
+        // sliding threshold, and the winner lands 29% high.
+        let slow = settle(20.0);
+        assert!(
+            slow[1] > 1.25 * want,
+            "a slow threshold did not overshoot the closed form: {slow:?}"
+        );
+        assert!(slow[1] < 2.0 * want, "and it does not run away either: {slow:?}");
+
+        // Both are still SELECTIVE, and for the same pattern. The closed form is wrong about
+        // WHERE the winner lands, not about whether there is one.
+        for r in [&fast, &slow] {
+            for (k, &resp) in r.iter().enumerate() {
+                if k != 1 {
+                    assert!(resp < 1e-6, "pattern {k} was not depressed: {r:?}");
+                }
+            }
+        }
+    }
+
+    /// `pre_increment` AND `post_increment` PREVIEW THE STEP WITHOUT TAKING IT. Their docs say
+    /// they exist so a caller pricing plasticity can see the change before paying for the write,
+    /// and so [`RewardStdp`] can put the number into a tag instead of into the weight — but no test
+    /// ever called either of them directly, so "the same number" was an assumption rather than a
+    /// checked property, on both rules.
+    ///
+    /// Each preview is pinned against a closed form written out with the fixture's own literals.
+    /// The first draft of this test asserted only that `on_pre` applies `w + pre_increment(w)`,
+    /// which is a comparison of the function against ITSELF and therefore true under any mutation
+    /// of it: dropping the weight dependence, reading the other side's trace, and doubling the
+    /// triplet term all survived it. That is finding 3's shape, reproduced here by accident, and
+    /// the fix is the same one — compare the number to the model, not to the code that produced it.
+    #[test]
+    fn the_increment_preview_is_exactly_the_step_the_spike_would_take() {
+        let b = Bounds::new(0.0, 1.0).unwrap();
+        let w = 0.4;
+        for rule in [
+            WeightRule::Additive,
+            WeightRule::MultiplicativeDepression,
+            WeightRule::SoftBound { mu: 0.6 },
+        ] {
+            let mut s = PairStdp::new(0.05, 0.06, 16.8e-3, 33.7e-3, rule, b).unwrap();
+            s.note_pre();
+            s.note_post();
+            s.advance(7e-3).unwrap();
+            let dep = s.pre_increment(w);
+            let pot = s.post_increment(w);
+
+            // The closed form, from the fixture's literals. The weight dependence at `w = 0.4` in
+            // `[0, 1]`: additive is one either way, multiplicative depression is `w - w_min` on the
+            // depressing side only, and Gütig's soft bound is the normalised distance to whichever
+            // bound the step approaches, raised to `mu`.
+            let (dep_factor, pot_factor) = match rule {
+                WeightRule::Additive => (1.0, 1.0),
+                WeightRule::MultiplicativeDepression => (0.4f64 - 0.0, 1.0),
+                WeightRule::SoftBound { mu } => {
+                    (((0.4f64 - 0.0) / 1.0).powf(mu), ((1.0 - 0.4f64) / 1.0).powf(mu))
+                }
+            };
+            // Depression reads the POST trace, decaying with `tau_minus`; potentiation reads the
+            // PRE trace, decaying with `tau_plus`. Swapping them is the classic defect and the two
+            // time constants differ by a factor of two, so this fixture sees it.
+            let want_dep = -(0.06 * (-7e-3f64 / 33.7e-3).exp()) * dep_factor;
+            let want_pot = (0.05 * (-7e-3f64 / 16.8e-3).exp()) * pot_factor;
+            assert_eq!(dep, want_dep, "{rule:?}: pre_increment vs closed form");
+            assert_eq!(pot, want_pot, "{rule:?}: post_increment vs closed form");
+            // The sign is the rule's, not the caller's: `a_minus` is stored as a magnitude and the
+            // rule applies the sign, so no amplitude a caller supplies can make depression
+            // potentiate.
+            assert!(dep < 0.0 && pot > 0.0, "{rule:?}: signs {dep} {pot}");
+
+            // And the preview is bit for bit what the call then applies.
+            let mut taken = s;
+            assert_eq!(taken.on_pre(w).unwrap(), b.clamp(w + want_dep), "{rule:?}: pre");
+            let mut taken = s;
+            assert_eq!(taken.on_post(w).unwrap(), b.clamp(w + want_pot), "{rule:?}: post");
+            // Previewing does not register a spike or move a trace.
+            let before = (s.pre_trace.x, s.post_trace.x);
+            let _ = s.pre_increment(w);
+            let _ = s.post_increment(w);
+            assert_eq!((s.pre_trace.x, s.post_trace.x), before, "{rule:?}: a preview fired");
+        }
+
+        // The triplet rule's pair, same contract, with both slow traces in play so the previews
+        // carry the triplet terms and not only the pair ones. Table 4's all-to-all full row.
+        let mut t = TripletStdp::hippocampal_full(b).unwrap();
+        t.note_pre();
+        t.note_post();
+        t.advance(5e-3).unwrap();
+        let (dep, pot) = (t.pre_increment(w), t.post_increment(w));
+        let want_dep =
+            -((-5e-3f64 / 33.7e-3).exp() * (1.6e-3 + 1.4e-3 * (-5e-3f64 / 946e-3).exp()));
+        let want_pot = (-5e-3f64 / 16.8e-3).exp() * (6.1e-3 + 6.7e-3 * (-5e-3f64 / 27e-3).exp());
+        assert_eq!(dep, want_dep, "triplet pre_increment vs closed form");
+        assert_eq!(pot, want_pot, "triplet post_increment vs closed form");
+        assert!(dep < 0.0 && pot > 0.0, "triplet previews {dep} {pot}");
+        // Both triplet terms are doing real work here, or the closed forms above are the pair
+        // rule's wearing four time constants.
+        assert!(
+            1.4e-3 * (-5e-3f64 / 946e-3).exp() > 0.5 * 1.6e-3,
+            "the triplet depression term is negligible in this fixture"
+        );
+        assert!(
+            6.7e-3 * (-5e-3f64 / 27e-3).exp() > 0.5 * 6.1e-3,
+            "the triplet potentiation term is negligible in this fixture"
+        );
+        let mut taken = t;
+        assert_eq!(taken.on_pre(w).unwrap(), b.clamp(w + want_dep));
+        let mut taken = t;
+        assert_eq!(taken.on_post(w).unwrap(), b.clamp(w + want_pot));
+        let before = (t.r1.x, t.r2.x, t.o1.x, t.o2.x);
+        let _ = t.pre_increment(w);
+        let _ = t.post_increment(w);
+        assert_eq!((t.r1.x, t.r2.x, t.o1.x, t.o2.x), before, "a triplet preview fired");
+    }
+
+    /// EVERY REFUSAL NAMES ITS QUANTITY WHEN PRINTED, and crosses a `Box<dyn Error>` boundary. A
+    /// library error that says "invalid input" and nothing else sends its reader back to the
+    /// source, which is the opposite of the job the type exists to do.
+    #[test]
+    fn every_refusal_names_its_quantity_when_printed() {
+        let cases: [(PlasticityError, &str); 7] = [
+            (PlasticityError::NonFinite { what: "A_plus", value: f64::NAN }, "A_plus"),
+            (PlasticityError::NotPositive { what: "tau_c", value: 0.0 }, "tau_c"),
+            (PlasticityError::Negative { what: "dt", value: -1.0 }, "dt"),
+            (PlasticityError::BoundsInverted { w_min: 5.0, w_max: -5.0 }, "5"),
+            (
+                PlasticityError::LengthMismatch { what: "input vector", got: 1, want: 2 },
+                "input vector",
+            ),
+            (PlasticityError::Empty { what: "weight vector" }, "weight vector"),
+            (PlasticityError::Diverged { what: "Oja weight", value: f64::INFINITY }, "Oja weight"),
+        ];
+        for (e, needle) in cases {
+            let printed = e.to_string();
+            assert!(printed.contains(needle), "{printed:?} does not name {needle:?}");
+            assert!(!printed.is_empty());
+        }
+        // The value is printed too, so a reader can tell an infinity from a NaN without a debugger.
+        assert!(
+            PlasticityError::NonFinite { what: "weight", value: f64::NEG_INFINITY }
+                .to_string()
+                .contains("inf")
+        );
+        let boxed: Box<dyn std::error::Error> =
+            Box::new(PlasticityError::Empty { what: "weight vector" });
+        assert!(boxed.to_string().contains("weight vector"));
     }
 }

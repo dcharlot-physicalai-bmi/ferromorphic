@@ -12,7 +12,7 @@
 //! is the synaptic weight and `k` is the kernel — a fixed shape, normalised here so its **peak is
 //! exactly 1** for a unit weight. Four shapes cover essentially the whole literature:
 //!
-//! | kernel | `k(t)` | peak at | integral | what it costs |
+//! | kernel | `k(t)` | peak at | integral | state, per target and receptor |
 //! |---|---|---|---|---|
 //! | [`Delta`] | `δ(t)` | — | — | 0 state words |
 //! | [`Exponential`] | `exp(-t/τ)` | `t = 0` | `τ` | 1 state word |
@@ -24,9 +24,19 @@
 //! cores implement, and it **cannot detect coincidence** — two spikes one tick apart sum exactly as
 //! two spikes a thousand ticks apart do, because the membrane's own leak is the only thing left
 //! doing the temporal integration. Every other kernel here buys a coincidence window and pays for
-//! it in per-synapse state: on hardware, that is the difference between a synapse that is a weight
-//! and a synapse that is a weight plus a decaying variable, and the second one has to be fetched
-//! and written back every tick rather than only when a spike arrives.
+//! it in state that has to be fetched and written back **every tick** rather than only when a
+//! spike arrives.
+//!
+//! **That state is not per synapse, and in a crate whose thesis is that the memory term is the one
+//! people get wrong, the difference is not a quibble — it is the fan-in.** The kernels are linear,
+//! which `kernels_superpose_and_scale` and `one_kernel_per_target_carries_a_whole_fan_in` both
+//! check, so every synapse onto one target that shares a receptor shares one `(x, g)` pair: a
+//! thousand `AMPA` inputs to one cell are a thousand weights and **one** decaying pair. The state
+//! column above is therefore per **(target neuron, receptor)** — which is what a dendritic
+//! accumulator on a neuromorphic core holds, and what `NEST` and `Brian` hold — while what stays
+//! per synapse is the weight and the delay. An earlier version of this paragraph called the state
+//! per-synapse, which overstates the per-tick traffic by the fan-in and is the same class of
+//! mistake as pricing a synaptic operation without its fetch.
 //!
 //! [`Alpha`] is the classical compromise — a finite rise, one time constant, one parameter.
 //! [`BiExponential`] separates rise from decay, which is what you need if you want `AMPA`'s
@@ -71,8 +81,12 @@
 //! The kinetic scheme behind the shapes is [`KineticTwoState`], from Destexhe, Mainen &
 //! Sejnowski, *Neural Computation* 6:14-18, 1994, with the rate constants as tabulated in
 //! Destexhe, Mainen & Sejnowski, "Kinetic models of synaptic transmission", in *Methods in
-//! Neuronal Modeling* (2nd ed.), 1998. [`GabaBCascade`] is the four-variable G-protein model from
-//! Destexhe & Sejnowski, *PNAS* 92:9515-9519, 1995 — `GABA_B` is genuinely a second-messenger
+//! Neuronal Modeling* (2nd ed.), 1998. [`GabaBCascade`] is the **two-variable** G-protein cascade
+//! of Destexhe & Sejnowski, *PNAS* 92:9515-9519, 1995 — `r` and `G`, plus a fourth-power Hill
+//! readout, which is an algebraic function of `G` and not a third state. (The fuller form in that
+//! literature carries desensitised receptor states as well; it is not what is implemented here,
+//! and calling this one "four-variable", as an earlier version of this doc did, was the `n = 4` of
+//! the Hill term migrating into the variable count.) `GABA_B` is genuinely a second-messenger
 //! cascade with a fourth-power cooperativity, and a bi-exponential conductance is a fit to it
 //! rather than the mechanism.
 //!
@@ -108,14 +122,23 @@
 //! bi-exponential's peak time and its alpha limit, the incremental forms against their own
 //! analytic responses to floating-point noise, the `Tsodyks`-`Markram` steady state at six rates
 //! for two parameter sets, the limiting transmission rate, the two-state kinetic scheme's
-//! analytic solution, the `GABA_B` cascade's steady state, and the magnesium block's half-block
-//! potential.
+//! analytic solution and its pulse-restart semantics, the `GABA_B` cascade's steady state **and
+//! its single-pulse transient**, against both the two-exponential closed form and an independent
+//! Runge-Kutta integration, and the magnesium block's half-block potential.
 //!
 //! **Not verified: the constants themselves.** A steady-state test checks the integrator against
 //! the model, never the model against a cell. Every numeric receptor parameter here is transcribed
 //! from the literature, the doc on each one says which paper and how confident the transcription
 //! is, and where this implementation could not confirm a figure against the primary source it says
 //! so instead of rounding it off confidently.
+//!
+//! Named, because a disclosure that is not enumerated is not a disclosure: the **rise times** of
+//! [`AMPA`] and [`GABA_A`], both `0.5e-3`, are round placeholders and are in **neither** cited
+//! source — `AMPA`'s paper models an instantaneous rise and the kinetic scheme has no rise
+//! constant at all. The whole of the [`GABA_B`] row is a phenomenological fit to no particular
+//! trace, the [`GabaBCascade`] rate constants are transcribed from the secondary literature and
+//! unchecked against the 1995 figures, and both [`TsodyksMarkram`] parameter sets are round values
+//! rather than table entries. Everything else names a paper and a number in it.
 //!
 //! ```
 //! use ferromorphic::synapse::{AMPA, Drive};
@@ -248,10 +271,12 @@ fn unit_fraction(name: &'static str, value: f64) -> Result<f64, SynapseError> {
     }
 }
 
-/// Whether a time step is usable by an incremental update.
+/// Whether a time step actually moves an incremental update forward.
 ///
-/// Zero is usable-as-a-no-op rather than an error, so that a simulator may call `advance(0.0)`
-/// while landing exactly on an event boundary.
+/// Zero is **false** here, and that is what makes `advance(0.0)` a no-op: the caller returns
+/// having changed nothing, which is what a simulator landing exactly on an event boundary wants. A
+/// zero step is a no-op at a *call site*; it is still an error as a simulation's *chosen* step,
+/// and [`check_dt`] is where that distinction is drawn.
 fn steppable(dt: f64) -> bool {
     dt.is_finite() && dt > 0.0
 }
@@ -263,6 +288,14 @@ fn steppable(dt: f64) -> bool {
 /// or non-finite and leave their state untouched. That keeps `NaN` out of every downstream membrane
 /// potential, at the cost of saying nothing. This is the call that says it — make it once, where
 /// the time step is chosen.
+///
+/// # What it answers, and what it does not
+///
+/// It validates the time step a **simulation is built around**, which has to be strictly positive
+/// or the simulation never advances. It is not a per-call predicate: `advance(0.0)` is an accepted
+/// no-op, so a scheduler landing exactly on an event boundary may hand zero to `advance` while
+/// `check_dt(0.0)` is still, correctly, an error. The two are not in conflict and the tests pin
+/// both halves; the doc used to describe only the first.
 ///
 /// # Errors
 ///
@@ -300,6 +333,18 @@ pub trait Kernel: Clone {
     /// solution, and exponentials compose across concatenated intervals. It is a constant rather
     /// than a comment so that a future kernel integrated by forward Euler has to declare `false`
     /// and be refused by anything that jumps over quiet ticks.
+    ///
+    /// # Who reads it
+    ///
+    /// [`advance_over_gap`], and — until that function was written — **nothing at all**: the
+    /// constant was declared, asserted in one test, and consumed nowhere, while its doc promised a
+    /// refusal that no code performed. It refuses now, at compile time on the concrete kernel, so
+    /// a `false` kernel fails the *build* at the call site rather than earning a warning.
+    ///
+    /// What is still true and worth saying plainly: [`crate::sim::Sim`] drives a
+    /// [`crate::neuron::Neuron`] and cannot drive a [`Kernel`] at all, so the crate's own
+    /// event-driven simulator does not yet jump a kernel over a quiet tick. `advance_over_gap` is
+    /// the operation it will call when it can, and it is the only reader today.
     const EXACT_OVER_STEPS: bool;
 
     /// The kernel's value `t` seconds after a unit-weight spike, peak-normalised to 1.
@@ -347,6 +392,28 @@ pub trait Kernel: Clone {
     fn clear(&mut self);
 }
 
+/// Advance a kernel across `ticks` quiet ticks of `dt` seconds in one call.
+///
+/// This is what an event-driven scheduler does between two events, and it is the **consumer** of
+/// [`Kernel::EXACT_OVER_STEPS`]: the inline `const` below is a compile-time assertion on the
+/// concrete kernel, so a kernel integrated by forward Euler — which would have to declare `false`
+/// — fails to build here rather than silently reporting a state that depends on which ticks
+/// happened to be quiet. [`crate::sim::Sim::new`] enforces the same property for
+/// [`crate::neuron::Neuron`] at run time, because there the model is a value and not a type.
+///
+/// `dt` is seconds and `ticks` is a count; the elapsed time is `dt · ticks` formed in `f64`, which
+/// is exact for every `u32`. Zero ticks, or a `dt` that is zero, negative or non-finite, leaves
+/// the state untouched — see [`check_dt`].
+///
+/// Exact to floating-point round-off rather than approximate: it is the same exponential, so the
+/// answer does not depend on where the gap was cut. The one asymmetry is in the round-off's
+/// favour — stepping multiplies `ticks` times and accumulates about `ticks · ε`, so the gap form
+/// is the more accurate of the two as well as the cheaper.
+pub fn advance_over_gap<K: Kernel>(kernel: &mut K, dt: f64, ticks: u32) {
+    const { assert!(K::EXACT_OVER_STEPS, "a kernel jumped over a gap must be exact over steps") };
+    kernel.advance(dt * f64::from(ticks));
+}
+
 /// The instantaneous synapse: `w · δ(t)`.
 ///
 /// What [`crate::neuron::Neuron::bump`] already does, given a name and an analytic identity so it
@@ -356,7 +423,10 @@ pub trait Kernel: Clone {
 /// **It has no coincidence window.** Two spikes one tick apart and two spikes a second apart sum
 /// identically; whatever temporal structure the network computes with has to come from the
 /// membrane's own leak. That is the trade this kernel makes, and it is why digital neuromorphic
-/// cores overwhelmingly implement it: zero per-synapse state, one add per event.
+/// cores overwhelmingly implement it: **no state to carry between events at all**, and one add per
+/// event. The kernels with a window carry one state pair per target and receptor rather than per
+/// synapse — see the module doc — so what `Delta` saves is a per-tick read-modify-write of that
+/// pair on every target, not one per synapse.
 ///
 /// **The trap it carries**: the stateful form's [`Kernel::value`] is the weight delivered *during
 /// the current step*, so a [`CurrentBased`] synapse built on `Delta` delivers `gain · w` amperes for
@@ -641,12 +711,25 @@ impl Kernel for Alpha {
 /// arithmetic one. This implementation switches to the alpha form when
 /// `|τ_d - τ_r| <= 1e-6·(τ_d + τ_r)/2`, and uses that harmonic mean.
 ///
-/// Both halves of that choice matter. Taking the harmonic mean makes the switch **second order**
-/// in the separation — the two branches differ by `O(δ²)`, about `1e-12` at the threshold — where
-/// the arithmetic mean would leave a first-order step of `1e-6`. And switching at all is not
-/// defensive coding: the direct formula loses precision like `ε/δ` through the cancellation in
-/// `N`, so below a separation of roughly `1e-5` the alpha limit is **more** accurate than the exact
-/// expression, not less.
+/// The harmonic mean is the **carrier rate** of the exact kernel rather than a choice between two
+/// approximations: `2·e^{-mt}·sinh(ht)` has `m = (1/τ_r + 1/τ_d)/2` exactly, and `1/m` is the
+/// harmonic mean. That is why it is the one reported by [`BiExponential::tau_harmonic`] and used
+/// by the degenerate branch.
+///
+/// ⚠ **What this doc used to claim about the alternative is retracted.** It said the arithmetic
+/// mean "would leave a first-order step of `1e-6`". It would not. `A - H` is
+/// `(τ_d - τ_r)²/(2(τ_d + τ_r))`, which is `τ·δ²` at relative separation `δ` — **second** order,
+/// like the branch error itself. At the switching threshold that is `2.4e-13` of `τ`, seven orders
+/// below the retracted figure. Measured there against a cancellation-free `sinh` reference, the
+/// shipped harmonic branch sits `1.3e-13` from the exact kernel and an arithmetic-mean branch
+/// would sit `8.9e-14` from it — the arithmetic mean is, if anything, marginally *closer* in the
+/// sup norm. What makes the switch invisible is `DEGENERATE_BELOW`, not which
+/// mean is on the far side of it, and `the_two_means_differ_only_at_second_order` pins every
+/// number in this paragraph.
+///
+/// Switching at all is a different question, and there the claim stands: the direct formula loses
+/// precision like `ε/δ` through the cancellation in `N`, so below a separation of roughly `1e-5`
+/// the alpha limit is **more** accurate than the exact expression, not less.
 ///
 /// # The incremental form
 ///
@@ -1136,13 +1219,37 @@ impl MgBlock {
     /// Converts to millivolts at this boundary, because the `0.062` above is per millivolt. A
     /// non-finite `v` returns `0.0` — fully blocked — rather than propagating a `NaN` into a
     /// membrane potential; [`check_dt`] explains why the loop-level calls refuse silently.
+    ///
+    /// # The two guards, and why the range claim needs them
+    ///
+    /// `exp(-0.062·V_mV)` overflows to `+inf` below about −11.45 V. That made the
+    /// **magnesium-free** case — `mg_mm = 0.0`, which [`MgBlock::with_magnesium`] accepts because
+    /// it is the real experimental condition used to isolate the `NMDA` component — evaluate
+    /// `inf · 0.0` and return `NaN`, at a **finite** `v` the guard above never sees, in flat
+    /// contradiction of the `[0, 1]` range on this line. A 5 µS conductance against this crate's
+    /// own `Lif` gives `g·r_m = 50`, so a coarse step is all it takes to send a membrane there.
+    /// Zero magnesium is therefore answered before any arithmetic runs.
+    ///
+    /// The second guard catches every other way the product leaves the reals: a `k_mm` of zero
+    /// makes the block scale infinite and `0 · inf` is `NaN` again where the exponential
+    /// underflows, and a `NaN` or negative parameter reached through the public fields has no
+    /// sigmoid at all. Each is reported as fully blocked, which is the answer that cannot push
+    /// current into a membrane.
     #[must_use]
     pub fn open_fraction(&self, v: f64) -> f64 {
         if !v.is_finite() {
             return 0.0;
         }
+        if self.mg_mm == 0.0 {
+            return 1.0;
+        }
         let v_mv = v * 1e3;
-        1.0 / (1.0 + (-self.slope_per_mv * v_mv).exp() * self.mg_mm / self.k_mm)
+        let blocked = (-self.slope_per_mv * v_mv).exp() * self.mg_mm / self.k_mm;
+        // `!(x >= 0.0)` and not `x < 0.0`: the difference is `NaN`, which this has to catch.
+        if !(blocked >= 0.0) {
+            return 0.0;
+        }
+        1.0 / (1.0 + blocked)
     }
 
     /// The potential at which exactly half the channels are unblocked, volts, in closed form.
@@ -1253,13 +1360,22 @@ impl Receptor {
 /// reconciled here and the discrepancy is real rather than a transcription error: 2 ms is a fit to
 /// fast cortical `AMPA`-receptor-mediated currents, 5.3 ms comes from a kinetic fit to a different
 /// preparation. Pick one deliberately.
+///
+/// ⚠ **The 0.5 ms rise is not from that paper, or from any paper this review located.** Brunel &
+/// Wang model `AMPA` with an *instantaneous* rise and give the decay alone; the Destexhe kinetic
+/// scheme has no bi-exponential rise constant at all. The 0.5 ms here is a round value in the
+/// range fast `AMPA` currents are reported to rise in, and it exists because [`BiExponential`]
+/// needs a strictly positive rise to be a kernel. It is the weakest-provenance number in this
+/// table and it is stated here rather than left to be inferred from `source`. Set it yourself —
+/// `Receptor { tau_rise: .., ..AMPA }` — if the rise is load-bearing for what you are doing.
 pub const AMPA: Receptor = Receptor {
     name: "AMPA",
     e_rev: 0.0,
     tau_rise: 0.5e-3,
     tau_decay: 2.0e-3,
     mg_block: None,
-    source: "Brunel & Wang, J. Comput. Neurosci. 11:63-85, 2001 (cortical AMPA)",
+    source: "Brunel & Wang, J. Comput. Neurosci. 11:63-85, 2001 (cortical AMPA decay; \
+             the rise is unsourced, see this row's doc)",
 };
 
 /// Slow excitatory glutamate receptor with a magnesium block. Reversal 0 mV, rise 2 ms, decay
@@ -1284,11 +1400,23 @@ pub const NMDA: Receptor = Receptor {
 };
 
 /// Fast inhibitory `GABA` receptor, an ionotropic chloride channel. Reversal −70 mV, rise 0.5 ms,
-/// decay 5.6 ms.
+/// decay `1/180` s = 5.556 ms.
 ///
 /// The decay is `1/β` with `β = 180 s⁻¹` from the two-state kinetic scheme of Destexhe, Mainen &
 /// Sejnowski (1998), which is where [`KineticTwoState::gaba_a`] gets the same number — so this row
-/// and that one are consistent by construction, unlike [`AMPA`]'s.
+/// and that one are consistent by construction, unlike [`AMPA`]'s, and
+/// `the_gaba_a_row_and_the_kinetic_scheme_share_one_beta` asserts the equality bit-for-bit.
+///
+/// ⚠ **This constant moved.** Through 0.4.0 the field was the rounded `5.6e-3`, which is 0.8%
+/// away from `1/β` and made the "by construction" sentence above false while nothing in the suite
+/// could tell. It is now written as `1.0 / 180.0`. A `GABA_A` conductance decays 0.8% faster than
+/// it used to; if you were relying on 5.6 ms, `Receptor { tau_decay: 5.6e-3, ..GABA_A }` is the
+/// row you had.
+///
+/// ⚠ **The 0.5 ms rise is not from that source.** The two-state scheme has no bi-exponential rise
+/// constant at all — its rise is set by `α[T]` and the pulse width — and this review did not
+/// locate a 0.5 ms `GABA_A` rise in it. It is a round placeholder, for the same reason as
+/// [`AMPA`]'s, and the `source` string below now says so.
 ///
 /// **The reversal potential is the interesting parameter, not the decay.** It is set by the
 /// chloride gradient, which the cell maintains actively, and it moves: near or above rest in
@@ -1301,9 +1429,13 @@ pub const GABA_A: Receptor = Receptor {
     name: "GABA_A",
     e_rev: -70.0e-3,
     tau_rise: 0.5e-3,
-    tau_decay: 5.6e-3,
+    // 1/beta, written as the division so that it IS 1/beta rather than a rounding of it. See the
+    // doc above: this replaced a rounded 5.6e-3 that the "consistent by construction" claim on
+    // this row was not true of.
+    tau_decay: 1.0 / 180.0,
     mg_block: None,
-    source: "Destexhe, Mainen & Sejnowski, Methods in Neuronal Modeling 2nd ed., 1998 (beta = 180/s)",
+    source: "Destexhe, Mainen & Sejnowski, Methods in Neuronal Modeling 2nd ed., 1998 \
+             (decay = 1/beta, beta = 180/s; the rise is unsourced, see this row's doc)",
 };
 
 /// Slow inhibitory `GABA` receptor, metabotropic and potassium-mediated. Reversal −95 mV, rise
@@ -1489,7 +1621,12 @@ impl KineticTwoState {
     }
 }
 
-/// The `GABA_B` G-protein cascade: four variables and a fourth-power cooperativity.
+/// The `GABA_B` G-protein cascade: **two state variables** and a fourth-power cooperativity.
+///
+/// `r` and `G` are integrated; the Hill term is an algebraic readout of `G`, not a third variable,
+/// and the equation block below lists all three lines. The fuller model in this literature carries
+/// desensitised receptor states too and is **not** implemented here — an earlier version of this
+/// line said "four variables", which was `n = 4` migrating into the variable count.
 ///
 /// Destexhe & Sejnowski, *PNAS* 92:9515-9519, 1995, in the form tabulated by Destexhe, Mainen &
 /// Sejnowski, *Methods in Neuronal Modeling* (2nd ed.), 1998:
@@ -1580,14 +1717,39 @@ impl Default for GabaBCascade {
     }
 }
 
+/// The Hill readout `G^n/(G^n + Kd)`, in `[0, 1]`, written once so that
+/// [`GabaBCascade::open_fraction`] and [`GabaBCascade::steady_state`] cannot disagree about it.
+///
+/// `gn` is `G^n` and `kd` is the dissociation constant in the same units. Every input that is not
+/// a fraction is mapped to **fully closed**, which is the answer that cannot inject current: a
+/// `NaN` `G` (which the previous `is_finite` test reported as a fully *open* channel), a `Kd` of
+/// zero reached with `G = 0` (which is `0/0`), and a negative `Kd`, which has no Hill curve. An
+/// infinite `G^n` is the one saturating case and is `1`.
+fn hill(gn: f64, kd: f64) -> f64 {
+    if gn.is_nan() {
+        return 0.0;
+    }
+    if gn == f64::INFINITY {
+        return 1.0;
+    }
+    let denom = gn + kd;
+    if !(denom > 0.0) {
+        return 0.0;
+    }
+    // Bounded rather than trusted: `kd` and `n` are public fields, and the clamp is what keeps the
+    // documented range true for a parameter set outside the invariants stated on them.
+    (gn / denom).clamp(0.0, 1.0)
+}
+
 impl GabaBCascade {
-    /// Fraction of channels open for the current G-protein concentration, in `[0, 1)`.
+    /// Fraction of channels open for the current G-protein concentration, in `[0, 1]`.
     ///
-    /// `G^n/(G^n + Kd)`. Multiply by a peak conductance in siemens to get a conductance.
+    /// `G^n/(G^n + Kd)`. Multiply by a peak conductance in siemens to get a conductance. See
+    /// the private `hill` helper for what happens at the edges — in particular a `NaN` `G` reports a **closed**
+    /// channel, where an earlier version of this function reported a fully open one.
     #[must_use]
     pub fn open_fraction(&self) -> f64 {
-        let gn = self.g_conc.powi(i32::try_from(self.n).unwrap_or(i32::MAX));
-        if gn.is_finite() { gn / (gn + self.kd) } else { 1.0 }
+        hill(self.g_conc.powi(i32::try_from(self.n).unwrap_or(i32::MAX)), self.kd)
     }
 
     /// Steady state under a **sustained** transmitter concentration `t_mm` millimolar, in closed
@@ -1610,8 +1772,7 @@ impl GabaBCascade {
         }
         let r = on / sum;
         let g = self.k3 * r / self.k4;
-        let gn = g.powi(i32::try_from(self.n).unwrap_or(i32::MAX));
-        Some((r, g, gn / (gn + self.kd)))
+        Some((r, g, hill(g.powi(i32::try_from(self.n).unwrap_or(i32::MAX)), self.kd)))
     }
 
     /// Release transmitter: start (or restart) a pulse of `t_pulse` seconds.
@@ -1780,6 +1941,15 @@ impl TsodyksMarkram {
     /// refit them to a specific table entry in that paper, and the individual synapses fitted there
     /// span more than a factor of two in every parameter. Use them for a demonstration of the
     /// regime, not as a measurement of a connection.
+    ///
+    /// ⚠ **And the three are not equally round**, which makes the set look more like a table entry
+    /// than it is. 130 ms and 530 ms are the two figures that circulate in this literature as a
+    /// facilitating triple; the `U` they circulate with is `0.16`, not the `0.15` here. This
+    /// implementation has not checked any of the three against the paper's own table — so it has
+    /// not moved `U` to `0.16` either, because transcribing from what circulates is the mistake
+    /// this warning exists to prevent, and moving a shipped constant on that basis would change
+    /// every user's result to match a number nobody here has verified. If you want the circulating
+    /// triple, build it and own it: `TsodyksMarkram::new(0.16, 0.13, 0.53)`.
     #[must_use]
     pub fn facilitating() -> Self {
         Self { u_rest: 0.15, tau_d: 0.13, tau_f: 0.53, u: 0.0, x: 1.0 }
@@ -1893,7 +2063,7 @@ mod tests {
     use super::{
         AMPA, Alpha, BiExponential, ConductanceBased, CurrentBased, Delta, Drive, Exponential,
         GABA_A, GABA_B, GabaBCascade, Kernel, KineticTwoState, MgBlock, NMDA, RECEPTORS, Receptor,
-        SynapseError, TsodyksMarkram, check_dt,
+        SynapseError, TsodyksMarkram, advance_over_gap, check_dt,
     };
     use crate::neuron::{Lif, Neuron};
     use std::f64::consts::E;
@@ -2024,10 +2194,17 @@ mod tests {
     ///
     /// Three claims, because the limit has three parts. **Exactly equal** constants must give the
     /// alpha function bit-for-bit. **Nearly equal** constants must converge to it through the
-    /// general two-exponential formula, quadratically, which is what the harmonic mean buys — the
-    /// arithmetic mean would converge only linearly and this test's tolerance would catch it. And
-    /// the two branches must agree **across the switch**, so a caller sweeping the separation sees
-    /// no step.
+    /// general two-exponential formula, quadratically. And the two branches must agree **across the
+    /// switch**, so a caller sweeping the separation sees no step.
+    ///
+    /// This test says nothing about *which mean* the limit is taken at, and an earlier version of
+    /// this comment claimed it did — that "the arithmetic mean would converge only linearly and
+    /// this test's tolerance would catch it". It would not and it does not: swapping the harmonic
+    /// mean for the arithmetic one leaves the worst deviation below at `3.7e-9` against the
+    /// harmonic mean's `5.5e-9`, both a hundredfold inside the `1e-6` asserted here, and the
+    /// reference is built from `near.tau_harmonic()` so the swap moves the reference too. The mean
+    /// is pinned by `tau_harmonic_is_the_mean_of_the_reciprocals` instead, at a separation where
+    /// the two means are a factor of 25 apart.
     #[test]
     fn the_bi_exponential_reduces_to_the_alpha_kernel_when_the_taus_meet() {
         let tau = 5e-3;
@@ -2116,6 +2293,190 @@ mod tests {
         let direct = |t: f64| (-t / td).exp() - (-t / tr).exp();
         let rel = ((direct(tp) / peak) - 1.0).abs();
         assert!(rel > 1e-6, "expected the direct formula to be visibly wrong here, was {rel}");
+    }
+
+    /// `tau_harmonic` is the harmonic mean, and at a wide separation that is nowhere near the
+    /// arithmetic one — which is what lets this fail. It is the carrier rate `1/m` of the exact
+    /// kernel, with `m = (1/τ_r + 1/τ_d)/2`, and it is reported for every kernel and not only for
+    /// the degenerate ones.
+    ///
+    /// Written as a **mean of reciprocals**, which is the type doc's own statement of it and a
+    /// different expression from the product form the constructor evaluates. Replacing the
+    /// constructor's `tau_eff` with the arithmetic mean passed the whole suite before this test
+    /// existed, because the only place the mean was checked built its reference by asking the
+    /// object under test for it.
+    #[test]
+    fn tau_harmonic_is_the_mean_of_the_reciprocals() {
+        for &(tr, td) in &[(1e-3, 100e-3), (0.5e-3, 2e-3), (60e-3, 200e-3), (5e-3, 5e-3)] {
+            let k = BiExponential::new(tr, td).expect("valid");
+            let h = k.tau_harmonic();
+            let want = 1.0 / (0.5 * (1.0 / tr + 1.0 / td));
+            assert!((h - want).abs() / want < 1e-15, "({tr}, {td}): {h} vs {want}");
+            let arithmetic = 0.5 * (tr + td);
+            if tr == td {
+                assert_eq!(h, tr, "equal constants must give that constant back, exactly");
+                assert_eq!(h, arithmetic, "and the two means coincide only there");
+            } else {
+                assert!(h < arithmetic, "({tr}, {td}): harmonic {h} is not below arithmetic {arithmetic}");
+            }
+        }
+        // The pair where the two means are furthest apart, as a figure: 1 ms against 100 ms is
+        // 1.9802 ms harmonically and 50.5 ms arithmetically, a factor of 25.
+        let k = BiExponential::new(1e-3, 100e-3).expect("valid");
+        let h = k.tau_harmonic();
+        assert!((h - 1.9801980198019802e-3).abs() < 1e-18, "harmonic mean is {h}");
+        assert!(h < 0.04 * 0.5 * (1e-3 + 100e-3), "the arithmetic mean is 25 times larger");
+    }
+
+    /// The size of the choice of mean, measured — because the type's doc used to claim the
+    /// arithmetic mean would leave a **first-order** step of `1e-6` at the switch, and it would
+    /// not.
+    ///
+    /// `A - H = (τ_d - τ_r)²/(2(τ_d + τ_r))`, which is `τ·δ²` at relative separation `δ`: second
+    /// order, the same order as the branch error itself. Three claims, none of which the retracted
+    /// sentence survives: the identity, the factor of 100 per decade that makes it second order,
+    /// and the value at the switching threshold — `2.4e-13` of `τ`, seven orders below `1e-6`.
+    ///
+    /// Then the consequence, against a cancellation-free `sinh` reference at that threshold: both
+    /// alpha limits sit within `1e-12` of the exact kernel, and the arithmetic one sits **closer**.
+    /// What makes the switch invisible is `DEGENERATE_BELOW`, not which mean is on the far side of
+    /// it. Widening that threshold by three decades would fail this.
+    #[test]
+    fn the_two_means_differ_only_at_second_order() {
+        let tau = 5e-3;
+        let mut previous = f64::INFINITY;
+        for &delta in &[1e-2, 1e-3, 1e-4] {
+            let (tr, td) = (tau * (1.0 - delta), tau * (1.0 + delta));
+            let k = BiExponential::new(tr, td).expect("valid");
+            let gap = 0.5 * (tr + td) - k.tau_harmonic();
+            let identity = (td - tr).powi(2) / (2.0 * (td + tr));
+            assert!((gap - identity).abs() / identity < 1e-6, "delta {delta}: {gap} vs {identity}");
+            assert!(
+                (gap / (tau * delta * delta) - 1.0).abs() < 1e-6,
+                "delta {delta}: the gap {gap} is not tau*delta^2"
+            );
+            if previous.is_finite() {
+                let shrink = previous / gap;
+                assert!(
+                    (shrink - 100.0).abs() < 1.0,
+                    "second order means a factor of 100 per decade, measured {shrink}"
+                );
+            }
+            previous = gap;
+        }
+
+        // Just inside the threshold: (td - tr) = 9.8e-7 * tau against the 1e-6 * mean cut-off.
+        let delta = 4.9e-7;
+        let (tr, td) = (tau * (1.0 - delta), tau * (1.0 + delta));
+        let k = BiExponential::new(tr, td).expect("valid");
+        assert!(k.is_degenerate(), "4.9e-7 must be inside the degenerate threshold");
+        let gap = (0.5 * (tr + td) - k.tau_harmonic()) / tau;
+        assert!(
+            gap > 2e-13 && gap < 3e-13,
+            "at the threshold the two means are {gap} of tau apart, not the retracted 1e-6"
+        );
+
+        // The exact kernel, with no cancellation: 2·e^{-mt}·sinh(ht) formed from the RECIPROCALS,
+        // normalised at its own peak, where m·tanh(h·t_peak) = h.
+        let m = 0.5 * (1.0 / td + 1.0 / tr);
+        let h = 0.5 * (1.0 / tr - 1.0 / td);
+        let raw = |t: f64| 2.0 * (-m * t).exp() * (h * t).sinh();
+        let peak = raw((h / m).atanh() / h);
+        let harmonic = Alpha::new(k.tau_harmonic()).expect("valid");
+        let arithmetic = Alpha::new(0.5 * (tr + td)).expect("valid");
+        let (mut worst_h, mut worst_a) = (0.0f64, 0.0f64);
+        for i in 1..=4_000u32 {
+            let t = 20.0 * tau * f64::from(i) / 4000.0;
+            let want = raw(t) / peak;
+            worst_h = worst_h.max((harmonic.response(t).expect("finite") - want).abs());
+            worst_a = worst_a.max((arithmetic.response(t).expect("finite") - want).abs());
+        }
+        assert!(worst_h < 1e-12, "the shipped harmonic limit is {worst_h} from the exact kernel");
+        assert!(worst_a < 1e-12, "an arithmetic limit would be {worst_a} from it — also fine");
+        assert!(
+            worst_a < worst_h,
+            "the retraction's substance: arithmetic {worst_a} is not worse than harmonic {worst_h}"
+        );
+    }
+
+    /// The bi-exponential's integral, which had no test at all: the kernel every receptor row
+    /// actually instantiates was the one whose `integral_seconds` nothing checked.
+    ///
+    /// `N·(τ_d - τ_r)` against a composite-Simpson quadrature of the analytic response — Simpson
+    /// and not the trapezoid used for the other two, because the steepest pair here rises with a
+    /// 0.1 ms constant over a 3 s span and a trapezoid on that grid is only good to `1e-4`.
+    /// Truncation at `60·τ_d` leaves `e^{-60}` outside, which is `1e-26` of the answer.
+    #[test]
+    fn the_bi_exponentials_time_integral_is_the_area_under_its_own_response() {
+        for &(tr, td) in &[(0.5e-3, 2.0e-3), (2.0e-3, 100.0e-3), (0.1e-3, 50.0e-3), (60.0e-3, 200.0e-3)]
+        {
+            let k = BiExponential::new(tr, td).expect("valid");
+            let want = k.integral_seconds().expect("a bi-exponential has a finite integral");
+            assert!(want > 0.0, "({tr}, {td}): integral {want}");
+
+            let span = 60.0 * td;
+            let n = 2_000_000u32;
+            let step = span / f64::from(n);
+            let mut sum = k.response(0.0).expect("finite") + k.response(span).expect("finite");
+            for i in 1..n {
+                let t = f64::from(i) * step;
+                let w = if i % 2 == 1 { 4.0 } else { 2.0 };
+                sum += w * k.response(t).expect("finite");
+            }
+            let numeric = sum * step / 3.0;
+            let rel = (numeric - want).abs() / want;
+            assert!(rel < 1e-9, "({tr}, {td}): quadrature {numeric} vs closed form {want}");
+
+            // And it is bracketed by the two exponentials it is built from, which no scaling of
+            // `N` or of the difference can be at the same time.
+            assert!(want > tr && want < td * E, "({tr}, {td}): {want} is not a plausible width");
+        }
+
+        // The degenerate branch is continuous with it: `N·(τ_d - τ_r) -> e·τ` as the constants
+        // meet, approached here from the general side at a separation of 1e-5.
+        let deg = BiExponential::new(3e-3, 3e-3).expect("valid");
+        assert!(deg.is_degenerate());
+        assert_eq!(deg.integral_seconds(), Some(E * 3e-3));
+        let near = BiExponential::new(3e-3 * (1.0 - 1e-5), 3e-3 * (1.0 + 1e-5)).expect("valid");
+        assert!(!near.is_degenerate(), "1e-5 separation must use the general formula");
+        let rel = (near.integral_seconds().expect("has one") - E * 3e-3).abs() / (E * 3e-3);
+        assert!(rel < 1e-9, "the integral steps across the switch by {rel}");
+    }
+
+    /// Every kernel's peak from its **accessors**, not from a scan of `response`.
+    ///
+    /// `Exponential::peak_time` survived being changed to `Some(1.0)` and `BiExponential::
+    /// peak_value` survived being changed to `Some(0.5)`: the peak tests read `response` at the
+    /// closed-form time and never asked the accessors what they claimed.
+    #[test]
+    fn the_peak_accessors_report_the_peak_the_response_actually_has() {
+        for &tau in &[1e-4, 2e-3, 50e-3] {
+            let e = Exponential::new(tau).expect("valid");
+            assert_eq!(e.peak_time(), Some(0.0), "an exponential is at its peak on arrival");
+            assert_eq!(e.peak_value(), Some(1.0));
+            assert_eq!(e.response(0.0), Some(1.0));
+            for i in 1..=1_000u32 {
+                let t = 10.0 * tau * f64::from(i) / 1000.0;
+                let v = e.response(t).expect("finite");
+                assert!(v < 1.0, "the exponential rose to {v} after t = 0, at t = {t}");
+            }
+        }
+        for &(tr, td) in &[(0.5e-3, 2.0e-3), (2.0e-3, 100.0e-3), (3e-3, 3e-3)] {
+            let b = BiExponential::new(tr, td).expect("valid");
+            assert_eq!(b.peak_value(), Some(1.0), "({tr}, {td}) is peak-normalised");
+            let tp = b.peak_time().expect("a bi-exponential has a peak time");
+            let at_peak = b.response(tp).expect("finite");
+            assert!((at_peak - 1.0).abs() < 1e-12, "({tr}, {td}): {at_peak} at its own peak time");
+            // The accessor's value IS the value at the accessor's time, which is what a peak of
+            // `0.5` or a peak time of `1.0` would break: both sides move together or neither does.
+            assert!(at_peak > b.response(0.5 * tp).expect("finite"));
+            assert!(at_peak > b.response(2.0 * tp).expect("finite"));
+        }
+        // And the alpha's, for the same reason, through the accessors rather than the scan.
+        let a = Alpha::new(4e-3).expect("valid");
+        assert_eq!(a.peak_time(), Some(4e-3));
+        assert_eq!(a.peak_value(), Some(1.0));
+        assert_eq!(a.response(a.peak_time().expect("has one")), a.peak_value());
     }
 
     // ---------------------------------------------------------------- kernels, incremental
@@ -2237,6 +2598,96 @@ mod tests {
             let want = 2.0 * analytic.response(t).expect("finite");
             assert!((doubled.value() - want).abs() < 1e-14, "t = {t}: {} vs {want}", doubled.value());
         }
+    }
+
+    /// One kernel per **target and receptor** carries a whole fan-in, which is the claim the module
+    /// doc now makes about what a coincidence window costs — and the reason the earlier "per-synapse
+    /// state" wording overstated the per-tick traffic by the fan-in.
+    ///
+    /// Eight synapses, each with its own weight and its own arrival time, each given its own
+    /// kernel; against one shared kernel that every spike is injected into. The two agree at every
+    /// step, so the eight `(x, g)` pairs were seven pairs of redundant state. Weights are dyadic so
+    /// that the only difference between the two sides is summation order.
+    #[test]
+    fn one_kernel_per_target_carries_a_whole_fan_in() {
+        let dt = 1e-5;
+        let weights = [0.125, 0.25, 0.5, 0.75, 1.0, 0.0625, 1.5, 0.375];
+        let arrivals = [0u32, 3, 3, 17, 40, 41, 120, 300];
+        let mut shared = BiExponential::new(0.5e-3, 5e-3).expect("valid");
+        let mut separate: Vec<BiExponential> =
+            (0..8).map(|_| BiExponential::new(0.5e-3, 5e-3).expect("valid")).collect();
+        let mut biggest: f64 = 0.0;
+        for step in 0..1_000u32 {
+            for (i, &arrival) in arrivals.iter().enumerate() {
+                if arrival == step {
+                    shared.inject(weights[i]);
+                    separate[i].inject(weights[i]);
+                }
+            }
+            let sum: f64 = separate.iter().map(Kernel::value).sum();
+            biggest = biggest.max(sum);
+            // 1e-14: the two sides differ only in the order eight addends are accumulated, and the
+            // measured worst gap is 3.6e-15 against values of order 2.
+            assert!(
+                (shared.value() - sum).abs() < 1e-14,
+                "step {step}: one shared kernel {} against eight separate ones {sum}",
+                shared.value()
+            );
+            shared.advance(dt);
+            for s in &mut separate {
+                s.advance(dt);
+            }
+        }
+        assert!(biggest > 1.0, "the fan-in never delivered anything to compare: {biggest}");
+    }
+
+    /// [`advance_over_gap`] is what reads [`Kernel::EXACT_OVER_STEPS`], and this is the property the
+    /// compile-time gate inside it permits: one jump of `ticks·dt` leaves the state `ticks` steps of
+    /// `dt` would have left, and both equal the analytic response at that time.
+    ///
+    /// The gate itself is checked by the compiler, not here — a kernel declaring `false` fails to
+    /// build at the call site, which was verified by declaring one and watching the build stop.
+    #[test]
+    fn advance_over_gap_is_the_state_the_quiet_ticks_would_have_left() {
+        fn agree<K: Kernel>(fresh: impl Fn() -> K, dt: f64, ticks: u32, name: &str) {
+            let mut stepped = fresh();
+            let mut jumped = fresh();
+            stepped.inject(1.0);
+            jumped.inject(1.0);
+            for _ in 0..ticks {
+                stepped.advance(dt);
+            }
+            advance_over_gap(&mut jumped, dt, ticks);
+            let analytic = fresh().response(dt * f64::from(ticks)).expect("finite t");
+            assert!(analytic > 1e-3, "{name}: the gap landed where there is nothing to compare");
+            // 1e-12: the stepped side multiplies `ticks` times and carries about `ticks·eps` of
+            // round-off, which is where the whole gap between the two lives.
+            assert!(
+                (stepped.value() - jumped.value()).abs() < 1e-12,
+                "{name}: stepped {} vs jumped {}",
+                stepped.value(),
+                jumped.value()
+            );
+            assert!(
+                (jumped.value() - analytic).abs() < 1e-12,
+                "{name}: jumped {} vs analytic {analytic}",
+                jumped.value()
+            );
+        }
+        agree(|| Exponential::new(2e-3).expect("valid"), 1e-5, 400, "exponential");
+        agree(|| Alpha::new(2e-3).expect("valid"), 1e-5, 400, "alpha");
+        agree(|| BiExponential::new(0.4e-3, 6e-3).expect("valid"), 1e-5, 400, "bi-exponential");
+        agree(|| BiExponential::new(3e-3, 3e-3).expect("valid"), 1e-5, 400, "degenerate");
+
+        // A delta is gone after any gap at all, and a gap of no ticks is not a step.
+        let mut d = Delta::new();
+        d.inject(1.0);
+        advance_over_gap(&mut d, 1e-5, 400);
+        assert_eq!(d.value(), 0.0, "a delta survived a 4 ms gap");
+        let mut d = Delta::new();
+        d.inject(1.0);
+        advance_over_gap(&mut d, 1e-5, 0);
+        assert_eq!(d.value(), 1.0, "a gap of zero ticks moved the state");
     }
 
     /// The delta kernel refuses the three analytic quantities it does not have, and says nothing
@@ -2401,10 +2852,16 @@ mod tests {
     fn shunting_inhibition_suppresses_without_moving_rest() {
         let rest = Lif::default().v_rest;
 
-        // 5 µS of inhibitory conductance against a 100 nS leak. That is fifty unitary synapses'
-        // worth, not one, and it is stated rather than hidden: shunting is discussed in the
-        // literature as a HIGH-CONDUCTANCE state, and a single synapse at a tenth of the leak
-        // shunts an EPSP by about 20%, which is real but too small to separate from a tolerance.
+        // 5 µS of inhibitory conductance: FIFTY TIMES the 100 nS leak, and 250 times the 20 nS
+        // excitatory synapse this same test builds. Stated rather than hidden, because shunting is
+        // discussed in the literature as a HIGH-CONDUCTANCE state and the fixture has to be one.
+        //
+        // The earlier comment here said 5 µS was "fifty unitary synapses' worth" and that "a single
+        // synapse at a tenth of the leak shunts an EPSP by about 20%". Both were wrong: at ~1 nS a
+        // unitary synapse this is five thousand of them, and a tenth of the leak takes the
+        // 1.5695 mV reference EPSP to 1.5497 mV, which is 1.3% and not 20%. The shunt is strongly
+        // nonlinear in conductance and the fixture is large BECAUSE a small one does almost
+        // nothing — `the_shunt_reduces_an_epsp_by_the_fractions_quoted_here` measures the curve.
         let shunt = 5e-6;
 
         // Inhibition alone, reversal exactly at rest: nothing moves, bit-for-bit.
@@ -2437,6 +2894,37 @@ mod tests {
         );
     }
 
+    /// The numbers that justify the fixture above, measured instead of asserted in prose.
+    ///
+    /// The comment there used to say a synapse at a tenth of the leak "shunts an EPSP by about
+    /// 20%". It shunts it by 1.3%. The shunt is strongly nonlinear in conductance — 0.1, 1, 5 and
+    /// 50 times the leak give 1.3%, 11.3%, 38.2% and 84.8% — and that curve is the whole reason the
+    /// fixture is 5 µS rather than one synapse's worth. A figure quoted to defend a choice of
+    /// fixture and checked by nothing is a figure that drifts, so it is checked here.
+    #[test]
+    fn the_shunt_reduces_an_epsp_by_the_fractions_quoted_here() {
+        let rest = Lif::default().v_rest;
+        let (alone, _, _) = membrane_run(20e-9, 0.0, rest);
+        let reference = alone - rest;
+        assert!(
+            (reference - 1.5695e-3).abs() < 1e-6,
+            "the reference EPSP is {reference} V, not the 1.5695 mV the comment quotes"
+        );
+        // (conductance, percent reduction, tolerance). The leak is 100 nS and the excitatory
+        // synapse is 20 nS, so 5 µS is fifty leaks and 250 excitatory synapses.
+        for &(g, want_pct, tol) in
+            &[(10e-9, 1.26, 0.1), (100e-9, 11.26, 0.2), (500e-9, 38.18, 0.2), (5e-6, 84.80, 0.2)]
+        {
+            let (peak, _, _) = membrane_run(20e-9, g, rest);
+            let pct = 100.0 * (1.0 - (peak - rest) / reference);
+            assert!(
+                (pct - want_pct).abs() < tol,
+                "{} nS shunted the EPSP by {pct}%, expected about {want_pct}%",
+                g * 1e9
+            );
+        }
+    }
+
     /// The shunt, checked against a closed form rather than against a ratio.
     ///
     /// A large synaptic conductance drops the membrane's effective time constant `C/g_total` far
@@ -2449,10 +2937,19 @@ mod tests {
     ///
     /// That is the steady state of the membrane equation with the conductances frozen, and it is
     /// where the word "divisive" comes from: the excitatory term appears over a denominator that
-    /// the inhibition has enlarged. With 50 µS of shunt against a 100 nS leak the effective time
+    /// that the inhibition has enlarged. With 50 µS of shunt against a 100 nS leak the effective time
     /// constant is 40 µs against kinetics of hundreds of microseconds, so the simulated potential
     /// has to sit on that curve — and the residual is the lag `τ_eff · dV/dt`, which is why the
-    /// tolerance is a tenth of the swing and not a thousandth.
+    /// tolerance is a percent of the swing and not a part in a thousand.
+    ///
+    /// **The tolerance, measured.** Against the peak swing over the asserted window the worst lag
+    /// is 0.98%, so the assertion is at 1.5%. Earlier revisions of this test said three different
+    /// things here — a doc that said "a tenth of the swing", an assertion at 3%, and a review note
+    /// that said 0.98% — and the three are now one number with 50% of headroom over the
+    /// measurement. Measured against the *local* swing instead, which is the quantity the note
+    /// below is about, the lag grows from 0.98% over 0-5 ms to 2.3% over 5-10 ms and 14% over
+    /// 15-20 ms as the shunt decays and `τ_eff` grows back: the regime ends, and the assertion
+    /// uses the peak swing precisely so that the window's own end does not silently relax it.
     #[test]
     fn a_strong_shunt_puts_the_membrane_in_the_quasi_static_regime() {
         let proto = Lif { v_th: 1.0, t_ref: 0.0, ..Lif::default() };
@@ -2474,10 +2971,8 @@ mod tests {
         // is. The membrane therefore starts behind and needs several of its own (shrinking)
         // effective time constants to catch up.
         //
-        // Measured: from 0.2 ms the tracking error is 33% of the swing, from 0.5 ms it is 0.98%,
-        // and it climbs back through 2% by 5 ms as the shunt decays and τ_eff grows again. The
-        // window is where the condition holds, not where the numbers are prettiest — the 5 ms
-        // figure is stated here so the boundary is visible rather than hidden by the choice.
+        // Measured: from 0.2 ms the tracking error is 32.5% of the peak swing and from 0.5 ms it
+        // is 0.98%. The window is where the condition holds, not where the numbers are prettiest.
         let dt = 1e-6;
         let settle = 500u32;
         let mut worst: f64 = 0.0;
@@ -2497,7 +2992,7 @@ mod tests {
         }
         assert!(swing > 1e-5, "the quasi-static prediction barely moved: {swing} V");
         assert!(
-            worst < 0.03 * swing,
+            worst < 0.015 * swing,
             "membrane tracked its quasi-static prediction only to {worst} V \
              against a swing of {swing} V"
         );
@@ -2623,6 +3118,83 @@ mod tests {
         );
     }
 
+    /// Magnesium-free is a real condition, and it has to be open at **every** potential.
+    ///
+    /// Below about −11.45 V the sigmoid's exponential overflows to `+inf`, and `inf · 0.0` is
+    /// `NaN`: with `mg_mm = 0.0` this function returned `NaN` for a **finite** argument, outside
+    /// the `[0, 1]` its own doc claims, which the non-finite guard could never see. Reachable —
+    /// this module's own shunting fixture runs 5 µS against a 100 nS leak, which is `g·r_m = 50`,
+    /// and a coarse step makes the exponential-Euler membrane map divergent in a few of them.
+    #[test]
+    fn the_magnesium_free_block_is_open_at_every_potential() {
+        let free = MgBlock::with_magnesium(0.0).expect("zero is legal");
+        for &v in &[-1e300, -1e6, -100.0, -12.0, -11.5, -11.45, -1.0, -70e-3, 0.0, 1.0, 1e6] {
+            assert_eq!(free.open_fraction(v), 1.0, "magnesium-free at {v} V");
+        }
+
+        // The blocked case over the same sweep: in range everywhere, saturating rather than
+        // diverging at both ends.
+        let b = MgBlock::default();
+        for &v in &[-1e300, -1e6, -100.0, -12.0, -11.5, -1.0, -70e-3, 0.0, 1.0, 1e6] {
+            let f = b.open_fraction(v);
+            assert!((0.0..=1.0).contains(&f), "open fraction {f} at {v} V");
+        }
+        assert_eq!(b.open_fraction(-1e6), 0.0, "the block is total far below rest");
+        assert_eq!(b.open_fraction(1e6), 1.0, "and absent far above it");
+
+        // The mirror image, through the public fields: `k_mm = 0` is an infinite block scale, and
+        // `0 · inf` where the exponential underflows is the same NaN from the other side.
+        let infinite = MgBlock { k_mm: 0.0, ..MgBlock::default() };
+        for &v in &[-1.0, -70e-3, 0.0, 1.0, 12.0, 1e6] {
+            assert_eq!(infinite.open_fraction(v), 0.0, "an infinite block scale at {v} V");
+        }
+        // A NaN parameter is not a condition: fully blocked, which cannot push current anywhere.
+        let broken = MgBlock { mg_mm: f64::NAN, ..MgBlock::default() };
+        assert_eq!(broken.open_fraction(-70e-3), 0.0);
+        assert_eq!(MgBlock { k_mm: f64::NAN, ..MgBlock::default() }.open_fraction(-70e-3), 0.0);
+    }
+
+    /// The cascade's Hill readout stays a fraction for every `G`, including the three values that
+    /// used to leave the range.
+    ///
+    /// A `NaN` `G` reported a **fully open** channel, because the guard tested `is_finite` on `G^n`
+    /// and sent everything else to `1.0`; and `Kd = 0` with `G = 0` is `0/0`. Both are reachable
+    /// through public fields, and `open_fraction` is what a conductance is multiplied by.
+    #[test]
+    fn the_hill_readout_stays_a_fraction_for_every_g() {
+        let mut c = GabaBCascade { g_conc: 0.0, ..GabaBCascade::default() };
+        assert_eq!(c.open_fraction(), 0.0, "no G opens no channel");
+        let mut last = 0.0;
+        for i in 0..=200u32 {
+            c.g_conc = 0.05 * f64::from(i);
+            let f = c.open_fraction();
+            assert!((0.0..=1.0).contains(&f), "G = {}: open fraction {f}", c.g_conc);
+            assert!(f >= last, "the Hill term fell at G = {}", c.g_conc);
+            last = f;
+        }
+        // Half open at `G = Kd^(1/n)`, which is where the fourth power meets `Kd = 100`.
+        c.g_conc = 100.0f64.powf(0.25);
+        assert!((c.open_fraction() - 0.5).abs() < 1e-12, "half-open at G = {}", c.g_conc);
+
+        c.g_conc = f64::NAN;
+        assert_eq!(c.open_fraction(), 0.0, "a NaN G is not a fully open channel");
+        c.g_conc = f64::INFINITY;
+        assert_eq!(c.open_fraction(), 1.0, "an unbounded G saturates the Hill term");
+        assert_eq!(GabaBCascade { kd: 0.0, ..GabaBCascade::default() }.open_fraction(), 0.0);
+        assert_eq!(
+            GabaBCascade { kd: 0.0, g_conc: 1.0, ..GabaBCascade::default() }.open_fraction(),
+            1.0
+        );
+        // And `steady_state` shares the readout rather than keeping its own copy of it.
+        let zero_kd = GabaBCascade { kd: 0.0, ..GabaBCascade::default() };
+        assert_eq!(zero_kd.steady_state(0.0).expect("k4 is positive").2, 0.0);
+        let standard = GabaBCascade::default();
+        let (_, g, open) = standard.steady_state(standard.t_max_mm).expect("k4 is positive");
+        let mut probe = standard;
+        probe.g_conc = g;
+        assert_eq!(probe.open_fraction(), open, "the two readouts disagree");
+    }
+
     /// The receptor table's own claims: every entry is constructible, ordered fast to slow, and
     /// signed the way its reversal potential says relative to a typical resting potential.
     #[test]
@@ -2641,8 +3213,45 @@ mod tests {
         const { assert!(NMDA.tau_decay > 40.0 * AMPA.tau_decay, "NMDA is the slow excitatory one") };
         assert!(NMDA.mg_block.is_some(), "NMDA carries the block");
         assert!(AMPA.mg_block.is_none() && GABA_A.mg_block.is_none());
-        // GABA_A as shipped is nearly shunting at a typical rest: within 5 mV of it.
-        assert!((GABA_A.e_rev - rest).abs() < 6e-3);
+        // GABA_A as shipped is nearly shunting at a typical rest: exactly 5 mV below it. Asserted
+        // at 5.1 mV, not the 6 mV an earlier revision used, so that a one-millivolt move of either
+        // number fails this rather than passing with a millivolt to spare it never earned.
+        assert!((GABA_A.e_rev - rest).abs() < 5.1e-3, "GABA_A sits {} V from rest", GABA_A.e_rev - rest);
+    }
+
+    /// The [`GABA_A`] row's decay **is** `1/β`, bit-for-bit, and not a rounding of it.
+    ///
+    /// Two docs say this row and [`KineticTwoState::gaba_a`] are "consistent by construction". The
+    /// field was `5.6e-3` against `1/180 = 5.5556e-3` — 0.8% apart — and nothing pinned the claim
+    /// either way: writing `1.0 / 180.0` into the field passed the whole suite, and so did leaving
+    /// the rounded value. It is the division now, and this is the assertion that keeps it one.
+    #[test]
+    fn the_gaba_a_row_and_the_kinetic_scheme_share_one_beta() {
+        let scheme = KineticTwoState::gaba_a();
+        assert_eq!(scheme.beta, 180.0, "the source's beta");
+        assert_eq!(
+            GABA_A.tau_decay,
+            1.0 / scheme.beta,
+            "the GABA_A row's decay is not 1/beta; the 'by construction' claim in its doc is false"
+        );
+        assert_eq!(scheme.decay_tau(), Some(GABA_A.tau_decay));
+        // And it is no longer the rounded 5.6 ms it shipped as through 0.4.0, which is the
+        // behaviour change this test also records. A `const` block for the first, because both
+        // sides are constants and the claim can therefore be checked when the crate is BUILT.
+        const { assert!(GABA_A.tau_decay < 5.6e-3, "the GABA_A row is back to a rounded decay") };
+        assert!(
+            (GABA_A.tau_decay - 5.555555555555556e-3).abs() < 1e-18,
+            "the decay is {} s, not 1/180",
+            GABA_A.tau_decay
+        );
+
+        // AMPA's two numbers are deliberately NOT reconciled, which is the contrast the doc draws:
+        // 2 ms in the row against 5.26 ms from the kinetic scheme.
+        let ampa = KineticTwoState::ampa();
+        assert!(
+            (AMPA.tau_decay - ampa.decay_tau().expect("beta is positive")).abs() > 3e-3,
+            "AMPA's row and kinetic decay are supposed to disagree, and by a lot"
+        );
     }
 
     // ---------------------------------------------------------------- kinetic schemes
@@ -2655,11 +3264,21 @@ mod tests {
     /// straddles the end of the pulse and uses one rate for the whole of it.
     #[test]
     fn the_two_state_kinetic_scheme_matches_its_analytic_solution() {
-        for mut k in [KineticTwoState::ampa(), KineticTwoState::gaba_a()] {
+        // The steady open fractions as FIGURES — 1100/(1100+190) and 5000/(5000+180) — rather than
+        // as the expression `steady_open_fraction` evaluates. The line this replaces asserted
+        // `r_inf == on/rate`, which re-derives the implementation inline and can only fail on a
+        // typo in the test.
+        for (mut k, want_inf) in [
+            (KineticTwoState::ampa(), 0.8527131782945736),
+            (KineticTwoState::gaba_a(), 0.9652509652509652),
+        ] {
             let on = k.alpha * k.t_max_mm;
             let rate = on + k.beta;
             let r_inf = k.steady_open_fraction(k.t_max_mm).expect("rates are positive");
-            assert!((r_inf - on / rate).abs() < 1e-15);
+            assert!((r_inf - want_inf).abs() < 1e-15, "steady open fraction is {r_inf}");
+            // And zero transmitter has a steady state, which is zero open: the `None` is for a
+            // scheme with no dynamics at all, not for a resting one.
+            assert_eq!(k.steady_open_fraction(0.0), Some(0.0));
 
             k.reset();
             k.release();
@@ -2698,6 +3317,21 @@ mod tests {
         let tau = k.decay_tau().expect("beta is positive");
         assert!((tau - 5.263e-3).abs() < 1e-5, "AMPA decay tau is {tau} s");
         assert_eq!(KineticTwoState::new(0.0, 0.0, 1.0, 1e-3).expect("legal").decay_tau(), None);
+
+        // And the INTEGRATOR lands on the same figure, which the two analytic lines above do not
+        // check: they compute the quoted number from the same closed form the doc quotes. A 1 ms
+        // pulse from rest, stepped a thousand times, has to reach it.
+        let mut stepped = KineticTwoState::ampa();
+        stepped.release();
+        for _ in 0..1_000u32 {
+            stepped.advance(1e-6);
+        }
+        assert!(
+            (stepped.r - peak).abs() < 1e-12,
+            "the stepped scheme reached {} against the closed form's {peak}",
+            stepped.r
+        );
+        assert!((stepped.r - 0.618).abs() < 0.002, "and the doc's figure: {}", stepped.r);
     }
 
     /// The kinetic scheme **saturates**, which is the property the linear kernels do not have.
@@ -2751,6 +3385,62 @@ mod tests {
         assert!(a_peak > 1.9 * a_one, "the linear kernel should nearly double: {a_one}, {a_peak}");
     }
 
+    /// A second release **restarts** the transmitter pulse rather than extending it, which is what
+    /// the source's idealisation does and is the mechanism behind the saturation the test above
+    /// measures.
+    ///
+    /// Changing `=` to `+=` in `release` left that test green: two spikes 0.2 ms apart then reach
+    /// 0.769 open against one spike's 0.618, and `two < 1.5 * one` does not separate restart from
+    /// extend — it separates kinetic from linear. Asked directly here, twice: the pulse clock
+    /// itself, and the whole trajectory against the closed form that restarting implies. Under
+    /// restart the transmitter is on over `[0, 1.2 ms)`; under extend it would run to 2.0 ms.
+    #[test]
+    fn a_second_release_restarts_the_pulse_rather_than_extending_it() {
+        let mut k = KineticTwoState::ampa();
+        k.release();
+        assert_eq!(k.pulse_left, k.t_pulse);
+        for _ in 0..500u32 {
+            k.advance(1e-6);
+        }
+        assert!((k.pulse_left - 0.5e-3).abs() < 1e-12, "half a pulse in, {} is left", k.pulse_left);
+        k.release();
+        assert_eq!(k.pulse_left, k.t_pulse, "the second release must restart the 1 ms pulse");
+
+        let mut k = KineticTwoState::ampa();
+        let rate = k.alpha * k.t_max_mm + k.beta;
+        let r_inf = k.steady_open_fraction(k.t_max_mm).expect("rates are positive");
+        let dt = 1e-6;
+        let second = 200u32; // 0.2 ms
+        let end_tick = 1_200u32; // 0.2 ms + a fresh 1 ms pulse
+        let pulse_end = f64::from(end_tick) * dt;
+        let r_at_end = r_inf * (1.0 - (-rate * pulse_end).exp());
+        k.release();
+        for step in 0..3_000u32 {
+            if step == second {
+                k.release();
+            }
+            k.advance(dt);
+            let tick = step + 1;
+            let t = f64::from(tick) * dt;
+            let want = if tick <= end_tick {
+                r_inf * (1.0 - (-rate * t).exp())
+            } else {
+                r_at_end * (-k.beta * (t - pulse_end)).exp()
+            };
+            assert!((k.r - want).abs() < 1e-12, "t = {t}: r {} vs closed form {want}", k.r);
+        }
+        // The two semantics are far apart where it matters. Restarting ends the pulse at 1.2 ms
+        // with r = 0.671; extending would run it to 2.0 ms and reach 0.788, and would still be
+        // RISING at 1.5 ms where this test has it decaying.
+        assert!((r_at_end - 0.6714).abs() < 0.001, "the restarted pulse peaks at {r_at_end}");
+        let if_extended = r_inf * (1.0 - (-rate * 2.0e-3).exp());
+        assert!(
+            if_extended > 1.15 * r_at_end,
+            "an extending pulse would reach {if_extended} against the restarting {r_at_end}, \
+             which is the gap this test exists to see"
+        );
+    }
+
     /// The `GABA_B` cascade's steady state under sustained transmitter, against its closed form.
     ///
     /// ⚠ This validates the integrator, including the removable singularity branch. It says
@@ -2774,6 +3464,130 @@ mod tests {
         );
         assert!((c.open_fraction() - open_want).abs() < 1e-9);
         assert!((0.0..1.0).contains(&c.open_fraction()));
+    }
+
+    /// The cascade's `G` through a **single pulse**, step by step, against the two-exponential
+    /// closed form — the check the steady-state test structurally cannot make.
+    ///
+    /// Holding transmitter on for 5 s drives `r` to `r_∞`, and at `r0 == r_∞` the entire
+    /// convolution term `K3·(r0 - r_∞)·shape` is **identically zero**. So the steady-state test
+    /// passes with that term deleted outright, with `expm1(z)/z` replaced by `1`, with the receptor
+    /// transient halved, and with the pulse-boundary split in `advance` collapsed into one `relax`
+    /// — all four of those survived the whole suite. A single pulse is the case where `r` is never
+    /// at its fixed point, and every one of them fails here.
+    ///
+    /// From `dG/dt = K3·r - K4·G` with `r(t) = r∞ + (r0 - r∞)·e^{-a t}`:
+    ///
+    /// ```text
+    /// G(t) = G0·e^{-K4 t} + K3·r∞·(1 - e^{-K4 t})/K4
+    ///                     + K3·(r0 - r∞)·(e^{-a t} - e^{-K4 t})/(K4 - a)
+    /// ```
+    ///
+    /// written in the **direct** form. `a = 91.2 s⁻¹` against `K4 = 34 s⁻¹` is nowhere near the
+    /// removable singularity, so the naive quotient is well conditioned here and is a genuinely
+    /// different expression from the `expm1` one the implementation evaluates.
+    #[test]
+    fn the_gaba_b_cascade_matches_its_two_exponential_closed_form_through_one_pulse() {
+        let proto = GabaBCascade::default();
+        let (k2, k3, k4, tp) = (proto.k2, proto.k3, proto.k4, proto.t_pulse);
+        let a_on = proto.k1 * proto.t_max_mm + k2;
+        let r_inf = proto.k1 * proto.t_max_mm / a_on;
+        assert!((k4 - a_on).abs() > 50.0, "the direct quotient has to be well conditioned here");
+
+        let r_on = |t: f64| r_inf * (1.0 - (-a_on * t).exp());
+        let g_on = |t: f64| {
+            k3 * r_inf * (1.0 - (-k4 * t).exp()) / k4
+                - k3 * r_inf * ((-a_on * t).exp() - (-k4 * t).exp()) / (k4 - a_on)
+        };
+        let (r_p, g_p) = (r_on(tp), g_on(tp));
+        let r_off = |s: f64| r_p * (-k2 * s).exp();
+        let g_off = |s: f64| {
+            g_p * (-k4 * s).exp() + k3 * r_p * ((-k2 * s).exp() - (-k4 * s).exp()) / (k4 - k2)
+        };
+
+        // The transient term is not a correction, it IS the answer during the pulse: without it
+        // `G` at the end of the pulse would be the steady-state term alone, twenty-two times too
+        // large. That is the size of what the steady-state test could not see.
+        let base_only = k3 * r_inf * (1.0 - (-k4 * tp).exp()) / k4;
+        assert!(g_p < 0.05 * base_only, "G({tp}) = {g_p} against a base term of {base_only}");
+
+        // A step that does NOT divide the pulse, so the split at the pulse boundary is exercised
+        // rather than landed on: 1 ms of pulse in steps of 70 µs is 14.28... of them.
+        let dt = 7e-5;
+        let mut c = proto;
+        c.release();
+        let mut t = 0.0;
+        for _ in 0..200u32 {
+            c.advance(dt);
+            t += dt;
+            let (want_r, want_g) =
+                if t <= tp { (r_on(t), g_on(t)) } else { (r_off(t - tp), g_off(t - tp)) };
+            assert!(want_g > 0.0, "the reference itself went to zero at t = {t}");
+            assert!((c.r - want_r).abs() < 1e-14, "t = {t}: r {} vs closed form {want_r}", c.r);
+            assert!(
+                (c.g_conc - want_g).abs() / want_g < 1e-9,
+                "t = {t}: G {} vs closed form {want_g}",
+                c.g_conc
+            );
+        }
+        assert!(c.g_conc > 0.1, "the run left nothing to compare: G = {}", c.g_conc);
+    }
+
+    /// The same trajectory against a fourth-order Runge-Kutta integration of the two ODEs, which
+    /// shares no algebra with either the implementation or the closed form above.
+    ///
+    /// The closed form is the tighter check and this is the independent one: if the derivation and
+    /// the implementation were wrong together, this is what would notice.
+    #[test]
+    fn the_gaba_b_cascade_agrees_with_a_runge_kutta_integration() {
+        let p = GabaBCascade::default();
+        let (k1, k2, k3, k4) = (p.k1, p.k2, p.k3, p.k4);
+        let deriv = |r: f64, g: f64, t_mm: f64| (k1 * t_mm * (1.0 - r) - k2 * r, k3 * r - k4 * g);
+        let h = 2e-7;
+        let rk4 = |s: (f64, f64), t_mm: f64| {
+            let (r, g) = s;
+            let a = deriv(r, g, t_mm);
+            let b = deriv(r + 0.5 * h * a.0, g + 0.5 * h * a.1, t_mm);
+            let c = deriv(r + 0.5 * h * b.0, g + 0.5 * h * b.1, t_mm);
+            let d = deriv(r + h * c.0, g + h * c.1, t_mm);
+            (
+                r + h / 6.0 * (a.0 + 2.0 * b.0 + 2.0 * c.0 + d.0),
+                g + h / 6.0 * (a.1 + 2.0 * b.1 + 2.0 * c.1 + d.1),
+            )
+        };
+
+        let mut reference = (0.0, 0.0);
+        let mut c = p;
+        c.release();
+        // 1 ms of pulse: 5,000 steps of 200 ns for the reference, one 1 ms call for the model.
+        for _ in 0..5_000u32 {
+            reference = rk4(reference, p.t_max_mm);
+        }
+        c.advance(p.t_pulse);
+        assert!((c.r - reference.0).abs() / reference.0 < 1e-12, "r {} vs {}", c.r, reference.0);
+        assert!(
+            (c.g_conc - reference.1).abs() / reference.1 < 1e-12,
+            "G {} vs {}",
+            c.g_conc,
+            reference.1
+        );
+
+        // 4 ms of clear cleft, where `r` decays and `G` is still rising: the regime the single-spike
+        // response actually lives in.
+        for _ in 0..20_000u32 {
+            reference = rk4(reference, 0.0);
+        }
+        for _ in 0..400u32 {
+            c.advance(1e-5);
+        }
+        assert!(reference.1 > 0.05, "the reference produced no G to compare: {}", reference.1);
+        assert!((c.r - reference.0).abs() / reference.0 < 1e-12, "r {} vs {}", c.r, reference.0);
+        assert!(
+            (c.g_conc - reference.1).abs() / reference.1 < 1e-12,
+            "G {} vs {}",
+            c.g_conc,
+            reference.1
+        );
     }
 
     /// The Hill term is the mechanism: a burst opens disproportionately more than a single spike.
@@ -2928,9 +3742,15 @@ mod tests {
     /// ceiling depended on `U` would miss it by a factor.
     #[test]
     fn the_limiting_transmission_rate_is_one_over_tau_d() {
+        // The two ceilings as FIGURES: 800 ms of recovery is 1.25 releases per second and 130 ms
+        // is 7.6923. The line this replaces asserted `ceiling == 1.0/proto.tau_d`, which is the
+        // accessor's own body and can only fail on a typo in the test.
+        assert_eq!(TsodyksMarkram::depressing().limiting_transmission_rate(), 1.25);
+        let fac = TsodyksMarkram::facilitating().limiting_transmission_rate();
+        assert!((fac - 7.692307692307692).abs() < 1e-12, "the facilitating ceiling is {fac} Hz");
+
         for proto in [TsodyksMarkram::depressing(), TsodyksMarkram::facilitating()] {
             let ceiling = proto.limiting_transmission_rate();
-            assert_eq!(ceiling, 1.0 / proto.tau_d);
             let mut last = 0.0;
             for &rate in &[1e3, 1e4, 1e5] {
                 let s = proto.steady_state(rate).expect("positive rate");
@@ -3087,6 +3907,53 @@ mod tests {
         // Every message names the offending quantity.
         let msg = check_dt(-1e-4).unwrap_err().to_string();
         assert!(msg.contains("dt"), "message was {msg}");
+    }
+
+    /// A zero step is an error as a **chosen** time step and a no-op at a **call site**, and both
+    /// halves are deliberate.
+    ///
+    /// `check_dt(0.0)` refuses, because a simulation stepping by zero never advances. `advance(0.0)`
+    /// accepts and changes nothing, because a scheduler landing exactly on an event boundary asks
+    /// for exactly that. The docs described only the first and read as though they contradicted;
+    /// the split is pinned here so that closing the apparent contradiction by relaxing `check_dt`
+    /// fails a test rather than passing review.
+    #[test]
+    fn a_zero_step_is_refused_as_a_time_step_and_ignored_as_a_call() {
+        assert!(matches!(check_dt(0.0), Err(SynapseError::NonPositiveTimeConstant { .. })));
+
+        let mut k = Alpha::new(2e-3).expect("valid");
+        k.inject(1.0);
+        for _ in 0..50u32 {
+            k.advance(1e-5);
+        }
+        let held = k.value();
+        assert!(held > 0.0, "there has to be a state for the no-op to preserve");
+        k.advance(0.0);
+        assert_eq!(k.value(), held, "a zero step moved an alpha kernel");
+        advance_over_gap(&mut k, 0.0, 400);
+        assert_eq!(k.value(), held, "a zero-length gap moved an alpha kernel");
+
+        // Same contract for the plasticity models and the kinetic schemes, which have their own
+        // `advance` rather than the trait's.
+        let mut tm = TsodyksMarkram::facilitating();
+        tm.spike();
+        let (u, x) = (tm.u, tm.x);
+        tm.advance(0.0);
+        assert_eq!((tm.u, tm.x), (u, x), "a zero step moved a Tsodyks-Markram synapse");
+
+        let mut kin = KineticTwoState::ampa();
+        kin.release();
+        kin.advance(1e-4);
+        let (r, left) = (kin.r, kin.pulse_left);
+        kin.advance(0.0);
+        assert_eq!((kin.r, kin.pulse_left), (r, left), "a zero step consumed transmitter");
+
+        let mut cas = GabaBCascade::default();
+        cas.release();
+        cas.advance(1e-4);
+        let (cr, cg) = (cas.r, cas.g_conc);
+        cas.advance(0.0);
+        assert_eq!((cas.r, cas.g_conc), (cr, cg), "a zero step moved the cascade");
     }
 
     /// Determinism: the same construction run twice gives bit-identical state. No clock, no

@@ -34,6 +34,10 @@
 //! baseline is not printed beside it is a benchmark that will be misread, so here the baseline is a
 //! field on the struct and cannot be left out of the table.
 //!
+//! [`Dataset::majority_baseline`] is an `Option` for one case only: an empty test split, where
+//! there is no majority class to measure and a `0.0` in that column would read as a floor *below*
+//! chance. Every task in this module at its defaults reports `Some`.
+//!
 //! # Leakage is assumed until it is measured
 //!
 //! Train and test splits here are disjoint **by construction**: every sample is generated, keyed by
@@ -115,9 +119,14 @@ pub enum TaskError {
     },
     /// A parameter was finite but outside the range the task is defined on.
     OutOfRange {
-        /// Name of the parameter, as it is spelled on the config struct.
+        /// Name of the parameter, as it is spelled on the config struct. It is the field to
+        /// change, which is not always the field the number below came from: a range check on
+        /// `max_gap_ticks - threshold_ticks` names `max_gap_ticks`, because that is the one a
+        /// caller can move.
         what: &'static str,
-        /// The value supplied.
+        /// The offending value: the parameter itself where the constraint is on it directly, and
+        /// the derived quantity the constraint is actually on — a difference, a sum, a jittered
+        /// extreme — where it is not. The `# Errors` section of each generator says which.
         value: f64,
         /// Smallest acceptable value, inclusive.
         low: f64,
@@ -182,6 +191,64 @@ fn nonzero(what: &'static str, n: u64) -> Result<(), TaskError> {
         return Err(TaskError::Empty { what });
     }
     Ok(())
+}
+
+/// Largest number of distinct values any uniform draw in this module may span.
+///
+/// Not `u32::MAX`, and the difference is measured rather than stylistic. [`Rng::below`] debiases by
+/// rejection against `u32::MAX - (u32::MAX % n) - (n - 1)`, which is `(q - 1) * n + 2` acceptable
+/// values out of `2^32` for `q = floor((2^32 - 1) / n)`. At `n = 2^31` and above, `q` is 1 and the
+/// acceptance zone collapses to **two values in 2^32**: one draw of `n = 3_000_000_000` took
+/// **14.1 seconds** on the machine this was written on, against 10 nanoseconds at `n = 2^31 - 1`,
+/// where `q` is 2 and half of all draws are accepted. A task configured past this line does not
+/// come back, so it is refused instead — a hang is not a result.
+pub const MAX_DRAW_SPAN: u64 = i32::MAX as u64;
+
+/// Every uniform draw in this module goes through [`Rng::below`], which takes a `u32`, while every
+/// quantity a task is configured with is a `u64` of ticks. An `as u32` between the two is a silent
+/// narrowing: a legal, fully validated config asking for gaps in `0..5_000_000_000` would draw them
+/// from `0..705_032_696` and every assertion downstream would still pass, because a narrower range
+/// is still inside the wider one. Worse, a span that lands on a multiple of `2^32` narrows to zero
+/// and `below(0)` *panics* — out of a `Result`-returning constructor.
+///
+/// So the narrowing is done once, here, at the boundary, against [`MAX_DRAW_SPAN`], and it reports
+/// [`TaskError::OutOfRange`] instead of truncating. `what` is the config field a user would have to
+/// change.
+fn draw_span(what: &'static str, span: u64) -> Result<u32, TaskError> {
+    if span > MAX_DRAW_SPAN {
+        return Err(TaskError::OutOfRange {
+            what,
+            value: span as f64,
+            low: 1.0,
+            high: MAX_DRAW_SPAN as f64,
+        });
+    }
+    Ok(span as u32)
+}
+
+/// Largest jitter half-width a task may ask for, in ticks.
+///
+/// A half-width `h` draws from `2h + 1` values, so this is the largest `h` whose span still fits
+/// inside [`MAX_DRAW_SPAN`].
+pub const MAX_JITTER_HALF: u64 = (MAX_DRAW_SPAN - 1) / 2;
+
+/// A jitter half-width that has been **checked** to admit a `2 * half + 1` uniform draw.
+///
+/// A newtype rather than a plain `u32` so that the check cannot be skipped: [`jitter`] takes only
+/// this, and the only way to build one is [`half_width`], which refuses anything larger.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Half(u32);
+
+fn half_width(what: &'static str, half: u64) -> Result<Half, TaskError> {
+    if half > MAX_JITTER_HALF {
+        return Err(TaskError::OutOfRange {
+            what,
+            value: half as f64,
+            low: 0.0,
+            high: MAX_JITTER_HALF as f64,
+        });
+    }
+    Ok(Half(half as u32))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -260,9 +327,17 @@ impl Keyed for EventSample {
         let mut k = Vec::with_capacity(self.events.len() * 2);
         for e in &self.events {
             k.push(e.t);
-            // The polarity is part of the input and goes in the key. An event stream that differs
-            // only in sign is a different stimulus — dropping the bit here would let a leftward
-            // sweep and a rightward one collide and be rejected as duplicates.
+            // The polarity is part of the input and goes in the key: two streams that agree on
+            // every `(t, address)` but disagree on a sign are different stimuli, and a key that
+            // dropped the bit would call them the same input and reject one as a duplicate.
+            //
+            // What this bit does NOT do, stated because the comment here used to claim it: it is
+            // not what keeps a leftward sweep from colliding with a rightward one. Those two
+            // already differ in `(t, address)` — their leading edges move in opposite directions —
+            // so on the streams this module generates the bit changes no comparison at all. It is
+            // part of the key because [`EventSample`] is a public type that any caller can fill,
+            // and the identity of an event stream includes its signs whether or not the generator
+            // here can produce a pair that needs it.
             k.push((u64::from(e.address) << 1) | u64::from(e.polarity == Polarity::On));
         }
         k
@@ -296,7 +371,13 @@ pub struct Dataset<S> {
     /// Equal to [`Dataset::chance`] only when the test split is exactly balanced, which every task
     /// in this module arranges. It is stored separately anyway, because the moment a user changes
     /// the per-class counts the two diverge and the larger of them is the real floor.
-    pub majority_baseline: f64,
+    ///
+    /// `None` when the test split is **empty**, for the same reason [`Dataset::balance`] returns an
+    /// empty vector there: the majority class of no samples is not a quantity. It was previously an
+    /// `f64` that reported `0.0` for that case — a baseline *below chance*, printed in the column a
+    /// score is read against, for a split nobody measured. `Some` for every task in this module at
+    /// its defaults, so the table the module doc promises is still a table.
+    pub majority_baseline: Option<f64>,
     /// The seed that produced this dataset. Recorded so a figure can be regenerated from its
     /// caption alone.
     pub seed: u64,
@@ -326,6 +407,13 @@ impl<S> Dataset<S> {
 
 impl<S: Labelled> Dataset<S> {
     /// Number of samples of each class in one split, indexed by class.
+    ///
+    /// The vector has one bin per class and **no bin for anything else**, so a sample whose label
+    /// is outside `0..n_classes` — which no generator here produces, but which a caller filling
+    /// [`Dataset::train`] by hand can create — is counted nowhere and the counts sum to less than
+    /// the split. [`Dataset::balance`] divides by the split length rather than by the counted
+    /// total, so that shortfall shows up as shares that sum to under one instead of being
+    /// normalised away.
     #[must_use]
     pub fn counts(&self, split: Split) -> Vec<usize> {
         let mut c = vec![0usize; self.n_classes as usize];
@@ -341,7 +429,9 @@ impl<S: Labelled> Dataset<S> {
     /// Fraction of one split belonging to each class, indexed by class.
     ///
     /// Empty when the split is empty: a share of an empty set is a division by zero, and returning
-    /// zeros would report "perfectly imbalanced" for "nothing measured".
+    /// zeros would report "perfectly imbalanced" for "nothing measured". The denominator is the
+    /// split's length, so the shares sum to one exactly when every label is in range — see
+    /// [`Dataset::counts`].
     #[must_use]
     pub fn balance(&self, split: Split) -> Vec<f64> {
         let n = self.split(split).len();
@@ -424,9 +514,15 @@ fn shuffle<T>(v: &mut [T], rng: &mut Rng) {
 
 /// Fill an exactly-balanced, globally-distinct split.
 ///
-/// `make(class, draw_index)` is called until `per_class_train + per_class_test` samples with keys
+/// `make(class, accepted)` is called until `per_class_train + per_class_test` samples with keys
 /// never seen before — in **any** class — have been accepted. Class counts are therefore exact, and
 /// the train/test split is disjoint by construction rather than by inspection.
+///
+/// The second argument is the number of samples of this class **already accepted**, not the number
+/// of draws spent. The difference matters for a generator that cycles a condition on it — cycling
+/// on the draw index makes the condition counts depend on how many duplicates rejection happened to
+/// eat, which is a label-correlated imbalance nobody asked for; cycling on the accepted count makes
+/// them exact. [`TemporalXor`] is the generator that does this, and its blindness claim rests on it.
 fn collect_split<S, F>(
     n_classes: u32,
     per_class_train: usize,
@@ -439,8 +535,14 @@ where
     F: FnMut(u32, usize) -> S,
 {
     nonzero("n_classes", u64::from(n_classes))?;
-    let per_class = per_class_train + per_class_test;
+    let per_class = per_class_train.saturating_add(per_class_test);
     nonzero("samples per class", per_class as u64)?;
+    // `shuffle` draws an index with `Rng::below`, which takes a `u32`, so a longer split would
+    // shuffle only its first `MAX_DRAW_SPAN` entries. Refused rather than narrowed; such a split
+    // would need hundreds of gigabytes of samples to exist in the first place, so this costs
+    // nothing and closes the last `as u32` in the module. It also keeps the `with_capacity`
+    // products below inside `usize`.
+    draw_span("samples per class", (per_class as u64).saturating_mul(u64::from(n_classes)))?;
 
     // 64 draws per accepted sample plus a floor. Generous enough that a well-parameterised task
     // never trips it and tight enough that a degenerate one fails in milliseconds with a number.
@@ -456,7 +558,7 @@ where
             if draws >= budget {
                 return Err(TaskError::Exhausted { wanted: per_class, distinct: kept.len(), draws });
             }
-            let s = make(c, draws);
+            let s = make(c, kept.len());
             draws += 1;
             let k = s.key();
             if let Err(pos) = seen.binary_search(&k) {
@@ -501,7 +603,7 @@ fn finish<S: Labelled>(
         ticks,
         dt,
         chance: 1.0 / f64::from(n_classes),
-        majority_baseline: 0.0,
+        majority_baseline: None,
         seed,
         stands_in_for,
         not_captured,
@@ -509,23 +611,41 @@ fn finish<S: Labelled>(
     // MEASURED off the test split, not assumed from the per-class counts requested. If a future
     // change to a generator unbalances a split, this number moves and the task's own balance test
     // fails, which is the outcome we want.
+    //
+    // `balance` returns an empty vector for an empty split, and folding that with `max` from a 0.0
+    // seed would report a baseline of zero — a number below chance, for a measurement that was
+    // never made. `None` instead, which a caller has to handle rather than print.
     let bal = d.balance(Split::Test);
-    d.majority_baseline = bal.into_iter().fold(0.0f64, f64::max);
+    d.majority_baseline =
+        if bal.is_empty() { None } else { Some(bal.into_iter().fold(0.0f64, f64::max)) };
     d
 }
 
 /// A uniform integer draw in `[-half, half]`, used for every jitter in this module.
-fn jitter(rng: &mut Rng, half: u64) -> i64 {
-    if half == 0 {
+///
+/// Takes a [`Half`], which is a half-width that [`half_width`] has already proved is drawable:
+/// `half.0 <= (MAX_DRAW_SPAN - 1) / 2`, so `2 * half.0 + 1 <= MAX_DRAW_SPAN` and the arithmetic
+/// below can neither overflow nor narrow. That is why there is no `as` cast in it.
+fn jitter(rng: &mut Rng, half: Half) -> i64 {
+    if half.0 == 0 {
         return 0;
     }
-    let span = 2 * half + 1;
-    i64::from(rng.below(span as u32)) - half as i64
+    let span = 2 * half.0 + 1;
+    i64::from(rng.below(span)) - i64::from(half.0)
 }
 
 // ---------------------------------------------------------------------------------------------
 // Counting distributions, for the one task with an analytic optimum
 // ---------------------------------------------------------------------------------------------
+
+/// Largest count support either optimal-observer bound will build, in spikes.
+///
+/// Both bounds sum over an explicit probability-mass vector, so the support is also the allocation:
+/// three `Vec<f64>` of this length is 240 MB at the ceiling, and a caller asking for a billion-tick
+/// window would otherwise be asking for 24 GB and getting an abort instead of a `None`. The figure
+/// is also where the summation is still trustworthy — see
+/// [`RateDiscrimination::optimal_accuracy`], which measures what happens past it.
+pub const MAX_COUNT_SUPPORT: u64 = 10_000_000;
 
 /// `ln(k!)` for `k` in `0..=n`, by summation. Exact to floating-point noise and monotone, which is
 /// what the probability-mass recursions below need; a `lgamma` approximation is neither.
@@ -627,11 +747,25 @@ fn win_probability(hi: &[f64], lo: &[f64]) -> f64 {
 /// behind the readout changes nothing, because the information was destroyed at the readout.
 ///
 /// The claim is stronger than "counts are equal". With the four conditions balanced, the
-/// **per-channel spike-time histogram** is also identical between classes: channel 0 is early half
-/// the time in both classes, and so is channel 1. So even a per-channel *latency* readout — mean
-/// first-spike time, one number per channel — is blind. [`TemporalXor::condition_sample`] builds
-/// the four jitter-free conditions so a test can assert exactly that, and
-/// `temporal_xor_is_blind_to_every_per_channel_readout` does.
+/// **per-channel early/late counts** are identical between classes: channel 0 is early in exactly
+/// half the samples of class 0 and exactly half the samples of class 1, and so is channel 1. So a
+/// per-channel *latency* readout — mean first-spike time, one number per channel — is reading a
+/// quantity with the same expectation either way. [`TemporalXor::condition_sample`] builds the four
+/// jitter-free conditions so a test can assert the exact version of that, and
+/// `temporal_xor_is_blind_to_every_per_channel_readout` does;
+/// `the_early_late_counts_per_channel_are_exactly_equal_in_both_classes` asserts it on the
+/// generated splits, where the conditions are cycled on accepted samples so the counts are exact
+/// rather than approximate.
+///
+/// What is **not** claimed, because it is not true: that the realised spike times of the two
+/// classes are identical sample for sample. Each volley carries an independent jitter draw, so a
+/// finite split's per-channel mean first-spike times differ between classes by that sampling noise.
+/// Measured on the default configuration and seed: the two class means on channel 0 differ by 0.02
+/// ticks on the train split and 0.83 on the test split, against a jitter half-width of 6, and the
+/// best single threshold on channel 0 alone — chosen with hindsight over every tick — scores 0.55
+/// rather than 0.50, the way a coin flipped 128 times lands a little off 64. The blindness is a
+/// property of the distribution the labels were drawn from, and it is exact there; it is not a
+/// property of one realisation, and no generator that jitters can make it one.
 ///
 /// What is left is the **joint** quantity `abs(t0 - t1)`: zero for class 0, `late - early` for
 /// class 1. A neuron whose membrane constant is short compared to `late - early` computes it — it
@@ -752,13 +886,15 @@ impl TemporalXor {
     ///
     /// [`TaskError::Empty`] for a zero volley size, zero `burst_gap` or zero sample count;
     /// [`TaskError::OutOfRange`] when `late_tick <= early_tick`, when the jitter could push a
-    /// volley outside `0..ticks`, or when `dt` is not positive and finite;
-    /// [`TaskError::Exhausted`] when the jitter admits fewer distinct inputs than the split needs
-    /// — which is always the case for `jitter_ticks == 0`, where only four inputs exist.
+    /// volley outside `0..ticks`, when `jitter_ticks` exceeds [`MAX_JITTER_HALF`] (the largest
+    /// half-width a uniform draw can cover in bounded time), or when `dt` is not positive and
+    /// finite; [`TaskError::Exhausted`] when the jitter admits fewer distinct inputs than the split
+    /// needs — which is always the case for `jitter_ticks == 0`, where only four inputs exist.
     pub fn generate(&self) -> Result<Dataset<Sample>, TaskError> {
         in_range("dt", self.dt, f64::MIN_POSITIVE, f64::MAX)?;
         nonzero("spikes_per_channel", u64::from(self.spikes_per_channel))?;
         nonzero("burst_gap", self.burst_gap)?;
+        let jit = half_width("jitter_ticks", self.jitter_ticks)?;
         if self.late_tick <= self.early_tick {
             return Err(TaskError::OutOfRange {
                 what: "late_tick",
@@ -767,7 +903,9 @@ impl TemporalXor {
                 high: self.ticks as f64,
             });
         }
-        let span = u64::from(self.spikes_per_channel - 1) * self.burst_gap;
+        // Saturating, so that a volley long enough to overflow a `u64` reports the window error it
+        // deserves instead of wrapping to a small number that passes the check below.
+        let span = u64::from(self.spikes_per_channel - 1).saturating_mul(self.burst_gap);
         if self.early_tick < self.jitter_ticks {
             return Err(TaskError::OutOfRange {
                 what: "early_tick",
@@ -776,7 +914,7 @@ impl TemporalXor {
                 high: self.late_tick as f64,
             });
         }
-        let last = self.late_tick + span + self.jitter_ticks;
+        let last = self.late_tick.saturating_add(span).saturating_add(self.jitter_ticks);
         if last >= self.ticks {
             return Err(TaskError::OutOfRange {
                 what: "ticks",
@@ -793,18 +931,23 @@ impl TemporalXor {
             self.per_class_train,
             self.per_class_test,
             self.seed ^ 0xA5A5_0001,
-            |class, draw| {
-                // Conditions alternate on the draw index rather than on a coin, so the two rows of
-                // each class appear in equal numbers up to the few draws duplicate-rejection eats.
-                let second = draw % 2 == 1;
+            |class, accepted| {
+                // Conditions alternate on the ACCEPTED count rather than on a coin or on the draw
+                // index. On the draw index the two rows of a class came out unequal by however many
+                // duplicates rejection happened to eat — and since a row is `early` or `late`, that
+                // imbalance is a per-channel mean first-spike time that differs between the
+                // classes, which is precisely the readout this task's doc promises is blind. On the
+                // accepted count the two rows are exactly `per_class / 2` each, in both classes,
+                // and the promise holds on the generated data and not only on the four conditions.
+                let second = accepted % 2 == 1;
                 let (a, b) = match (class, second) {
                     (0, false) => (false, false),
                     (0, true) => (true, true),
                     (_, false) => (false, true),
                     (_, true) => (true, false),
                 };
-                let ja = jitter(&mut rng, cfg.jitter_ticks);
-                let jb = jitter(&mut rng, cfg.jitter_ticks);
+                let ja = jitter(&mut rng, jit);
+                let jb = jitter(&mut rng, jit);
                 let mut sp = Vec::with_capacity(2 * cfg.spikes_per_channel as usize);
                 for (ch, late, off) in [(0u32, a, ja), (1u32, b, jb)] {
                     let base = if late { cfg.late_tick } else { cfg.early_tick };
@@ -928,11 +1071,14 @@ impl Coincidence {
     /// # Errors
     ///
     /// [`TaskError::OutOfRange`] when `max_gap_ticks <= threshold_ticks` (class 0 would be
-    /// unreachable), when the jitter and the largest gap do not fit inside `0..ticks`, or when
-    /// `dt` is not positive and finite; [`TaskError::Exhausted`] when the reachable
-    /// `(gap, jitter)` combinations are fewer than the split needs.
+    /// unreachable), when the jitter and the largest gap do not fit inside `0..ticks`, when either
+    /// gap range or the jitter is too wide for a single uniform draw (`threshold_ticks + 1` and
+    /// `max_gap_ticks - threshold_ticks` must not exceed [`MAX_DRAW_SPAN`], nor `jitter_ticks`
+    /// [`MAX_JITTER_HALF`]), or when `dt` is not positive and finite; [`TaskError::Exhausted`]
+    /// when the reachable `(gap, jitter)` combinations are fewer than the split needs.
     pub fn generate(&self) -> Result<Dataset<Sample>, TaskError> {
         in_range("dt", self.dt, f64::MIN_POSITIVE, f64::MAX)?;
+        let jit = half_width("jitter_ticks", self.jitter_ticks)?;
         if self.max_gap_ticks <= self.threshold_ticks {
             return Err(TaskError::OutOfRange {
                 what: "max_gap_ticks",
@@ -949,15 +1095,20 @@ impl Coincidence {
                 high: self.ticks as f64,
             });
         }
-        let last = self.first_tick + self.jitter_ticks + self.max_gap_ticks;
+        let last =
+            self.first_tick.saturating_add(self.jitter_ticks).saturating_add(self.max_gap_ticks);
         if last >= self.ticks {
             return Err(TaskError::OutOfRange {
                 what: "ticks",
                 value: self.ticks as f64,
-                low: (last + 1) as f64,
+                low: last.saturating_add(1) as f64,
                 high: f64::MAX,
             });
         }
+        // The two gap ranges, narrowed once and checked, instead of an `as u32` per draw inside the
+        // closure. `max_gap_ticks > threshold_ticks` is already established, so both are at least 1.
+        let coincident_span = draw_span("threshold_ticks", self.threshold_ticks.saturating_add(1))?;
+        let distant_span = draw_span("max_gap_ticks", self.max_gap_ticks - self.threshold_ticks)?;
 
         let mut rng = Rng::new(self.seed);
         let cfg = *self;
@@ -969,13 +1120,12 @@ impl Coincidence {
             |class, _| {
                 let gap = if class == 1 {
                     // Coincident: 0 ..= threshold.
-                    u64::from(rng.below((cfg.threshold_ticks + 1) as u32))
+                    u64::from(rng.below(coincident_span))
                 } else {
                     // Not coincident: threshold+1 ..= max_gap.
-                    let span = cfg.max_gap_ticks - cfg.threshold_ticks;
-                    cfg.threshold_ticks + 1 + u64::from(rng.below(span as u32))
+                    cfg.threshold_ticks + 1 + u64::from(rng.below(distant_span))
                 };
-                let shift = jitter(&mut rng, cfg.jitter_ticks);
+                let shift = jitter(&mut rng, jit);
                 let t0 = (cfg.first_tick as i64 + shift).max(0) as u64;
                 let sp =
                     vec![Spike { t: t0, source: 0 }, Spike { t: t0 + gap, source: 1 }];
@@ -1066,8 +1216,11 @@ impl Default for DelayedMatch {
     /// constants of a default `Lif`, which is chosen so that the membrane cannot be the answer.
     ///
     /// The 4 ms jitter gives `4 * 9 * 9 = 324` distinct matching inputs, above the 192 per class
-    /// asked for; the cue window is 30 ms rather than 20 because a four-spike cue spanning 21 ms
-    /// plus jitter on both sides does not fit in 20.
+    /// asked for; the cue window is 30 ms rather than 20 because the spikes of a cue are spaced
+    /// `cue_ticks / cue_spikes` apart, so at `cue_ticks = 20` four spikes span `3 * 5 = 15` ticks
+    /// and `15 + 2 * 4` jitter ticks does not fit in 20. At 30 the spacing is 7, the span is 21,
+    /// and `21 + 8 < 30` fits. `a_cue_window_too_short_for_its_spikes_and_jitter_is_refused` runs
+    /// both halves of that sentence.
     fn default() -> Self {
         Self {
             n_symbols: 4,
@@ -1086,9 +1239,13 @@ impl Default for DelayedMatch {
 
 impl DelayedMatch {
     /// Total sample length in ticks: two cue windows and the delay between them.
+    ///
+    /// Saturates at `u64::MAX` rather than wrapping, so a configuration whose windows do not fit in
+    /// a `u64` reports an impossibly long sample instead of a short one. [`DelayedMatch::generate`]
+    /// refuses such a configuration; nothing in this module can produce a window that long.
     #[must_use]
     pub fn ticks(&self) -> u64 {
-        2 * self.cue_ticks + self.delay_ticks
+        self.cue_ticks.saturating_mul(2).saturating_add(self.delay_ticks)
     }
 
     /// How long the network must hold the sample symbol, in **seconds**.
@@ -1104,9 +1261,11 @@ impl DelayedMatch {
     }
 
     /// First tick after the delay window, where the test cue begins.
+    ///
+    /// Saturates at `u64::MAX` rather than wrapping, for the reason [`DelayedMatch::ticks`] gives.
     #[must_use]
     pub fn delay_end(&self) -> u64 {
-        self.cue_ticks + self.delay_ticks
+        self.cue_ticks.saturating_add(self.delay_ticks)
     }
 
     /// The memory-free shortcut: answer "match" when some channel carries `2 * cue_spikes` spikes.
@@ -1135,13 +1294,15 @@ impl DelayedMatch {
     ///
     /// [`TaskError::Empty`] for zero cue spikes or zero cue ticks; [`TaskError::OutOfRange`] when
     /// `n_symbols < 2`, when a jittered cue would not fit inside its window, when distractors are
-    /// requested but do not fit inside the delay, or when `dt` is not positive and finite;
-    /// [`TaskError::Exhausted`] when the reachable symbol-and-jitter combinations are fewer than
-    /// the split needs.
+    /// requested but do not fit inside the delay, when `jitter_ticks` exceeds [`MAX_JITTER_HALF`]
+    /// or the distractor's room inside the delay exceeds [`MAX_DRAW_SPAN`] (either would narrow a
+    /// uniform draw), or when `dt` is not positive and finite; [`TaskError::Exhausted`] when the
+    /// reachable symbol-and-jitter combinations are fewer than the split needs.
     pub fn generate(&self) -> Result<Dataset<Sample>, TaskError> {
         in_range("dt", self.dt, f64::MIN_POSITIVE, f64::MAX)?;
         nonzero("cue_spikes", u64::from(self.cue_spikes))?;
         nonzero("cue_ticks", self.cue_ticks)?;
+        let jit = half_width("jitter_ticks", self.jitter_ticks)?;
         if self.n_symbols < 2 {
             return Err(TaskError::OutOfRange {
                 what: "n_symbols",
@@ -1150,25 +1311,41 @@ impl DelayedMatch {
                 high: f64::from(u32::MAX),
             });
         }
-        let span = u64::from(self.cue_spikes - 1) * self.spacing();
-        if span + 2 * self.jitter_ticks >= self.cue_ticks {
+        let span = u64::from(self.cue_spikes - 1).saturating_mul(self.spacing());
+        let need = span.saturating_add(2 * self.jitter_ticks);
+        if need >= self.cue_ticks {
             return Err(TaskError::OutOfRange {
                 what: "cue_ticks",
                 value: self.cue_ticks as f64,
-                low: (span + 2 * self.jitter_ticks + 1) as f64,
+                low: need.saturating_add(1) as f64,
                 high: f64::MAX,
             });
         }
-        if self.distractor_cues > 0 && span + 1 >= self.delay_ticks {
+        if self.distractor_cues > 0 && span.saturating_add(1) >= self.delay_ticks {
             return Err(TaskError::OutOfRange {
                 what: "delay_ticks",
                 value: self.delay_ticks as f64,
-                low: (span + 2) as f64,
+                low: span.saturating_add(2) as f64,
                 high: f64::MAX,
             });
         }
+        // Room for a distractor inside the delay, narrowed once and checked. Only reachable when
+        // distractors are asked for, and the check above has already made it at least 1 there.
+        let room = if self.distractor_cues > 0 {
+            draw_span("delay_ticks", self.delay_ticks - span)?
+        } else {
+            1
+        };
 
         let ticks = self.ticks();
+        if ticks == u64::MAX {
+            return Err(TaskError::OutOfRange {
+                what: "delay_ticks",
+                value: self.delay_ticks as f64,
+                low: 0.0,
+                high: (u64::MAX - 1) as f64,
+            });
+        }
         let spacing = self.spacing();
         let mut rng = Rng::new(self.seed);
         let cfg = *self;
@@ -1193,14 +1370,13 @@ impl DelayedMatch {
                         sp.push(Spike { t: start + k * spacing, source: sym });
                     }
                 };
-                let j1 = jitter(&mut rng, cfg.jitter_ticks);
-                let j2 = jitter(&mut rng, cfg.jitter_ticks);
+                let j1 = jitter(&mut rng, jit);
+                let j2 = jitter(&mut rng, jit);
                 cue(&mut sp, sample_sym, cfg.jitter_ticks, j1);
                 cue(&mut sp, test_sym, cfg.delay_end() + cfg.jitter_ticks, j2);
                 for _ in 0..cfg.distractor_cues {
                     let sym = rng.below(cfg.n_symbols);
-                    let room = cfg.delay_ticks - span;
-                    let at = cfg.delay_start() + u64::from(rng.below(room as u32));
+                    let at = cfg.delay_start() + u64::from(rng.below(room));
                     cue(&mut sp, sym, at, 0);
                 }
                 Sample { train: Train::from_spikes(sp), label: class }
@@ -1289,8 +1465,13 @@ impl Default for RateDiscrimination {
     /// 60 Hz against 40 Hz over 100 ms at 1 ms ticks: 5.82 and 3.92 expected spikes, which puts
     /// [`RateDiscrimination::optimal_accuracy`] at **0.7324** — hard enough that a model has
     /// somewhere to go, and easy enough that a working model is visibly above the 0.5 chance line.
-    /// No model on this configuration can do better than 0.7324, and one reporting 0.80 has a
-    /// leak.
+    ///
+    /// 0.7324 bounds the **expected** accuracy, not the accuracy of one measurement of it. On the
+    /// default 800-sample test split a score has a binomial standard error of
+    /// `sqrt(0.7324 * 0.2676 / 800) = 0.0156`, so a model reporting 0.80 is 4.3 standard errors
+    /// above a ceiling no rule can pass in expectation: that is very strong evidence of a leak,
+    /// which is a different sentence from "impossible", and a benchmark that blurs the two teaches
+    /// the wrong reflex. A single score of 0.76 on this split is not evidence of anything.
     fn default() -> Self {
         Self {
             rate_hi: 60.0,
@@ -1319,12 +1500,20 @@ impl RateDiscrimination {
     /// Best accuracy any observer can reach on **this** generator, exactly.
     ///
     /// `None` when a parameter is not finite, when `rate_lo > rate_hi` (the labels would then be
-    /// upside down and a "bound" below chance would be reported as a bound), or when `ticks` is
+    /// upside down and a "bound" below chance would be reported as a bound), when `ticks` is
     /// zero — a window of no length carries no counts and has no discrimination at all, which is a
-    /// different statement from "chance".
+    /// different statement from "chance" — or when `ticks` exceeds [`MAX_COUNT_SUPPORT`].
+    ///
+    /// That last condition is the same ceiling [`RateDiscrimination::poisson_optimal_accuracy`]
+    /// puts on its truncation, and it exists for two measured reasons. The sum builds three
+    /// `Vec<f64>` of `ticks + 1` entries, so `ticks = 1e9` asks for 24 GB and aborts the process —
+    /// an abort is not a `None`. And the summation error grows with the support: at `ticks = 1e7`
+    /// the returned figure is within about `1e-6` of the truth, while at `ticks = 5e7` it comes
+    /// back as `1.00002636954903035`, which is not a probability at all. A bound above one is
+    /// worse than no bound, because it is still a number somebody will print.
     #[must_use]
     pub fn optimal_accuracy(&self) -> Option<f64> {
-        if self.ticks == 0 || self.rate_lo > self.rate_hi {
+        if self.ticks == 0 || self.ticks > MAX_COUNT_SUPPORT || self.rate_lo > self.rate_hi {
             return None;
         }
         let p_hi = self.p_tick(self.rate_hi)?;
@@ -1357,7 +1546,7 @@ impl RateDiscrimination {
         let mu_hi = self.rate_hi * t;
         let mu_lo = self.rate_lo * t;
         let k_max = (mu_hi + 12.0 * mu_hi.sqrt() + 60.0).ceil();
-        if !k_max.is_finite() || k_max > 1e7 {
+        if !k_max.is_finite() || k_max > MAX_COUNT_SUPPORT as f64 {
             return None;
         }
         let k_max = k_max as usize;
@@ -1520,22 +1709,26 @@ impl LatencyPatterns {
     /// # Errors
     ///
     /// [`TaskError::Empty`] for zero classes or channels; [`TaskError::OutOfRange`] when the window
-    /// leaves no room for a latency after the jitter margin; [`TaskError::Exhausted`] when
-    /// rejection sampling could not place that many templates at the requested separation, which
-    /// happens when `min_separation_ticks` approaches the usable window.
+    /// leaves no room for a latency after the jitter margin, or when that room is too wide for a
+    /// single uniform draw (`ticks - 2 * jitter_ticks` must not exceed [`MAX_DRAW_SPAN`]);
+    /// [`TaskError::Exhausted`] when rejection sampling could not place that many templates at the
+    /// requested separation, which happens when `min_separation_ticks` approaches the usable
+    /// window.
     pub fn templates(&self) -> Result<Vec<Vec<u64>>, TaskError> {
         nonzero("n_classes", u64::from(self.n_classes))?;
         nonzero("n_inputs", u64::from(self.n_inputs))?;
-        if self.ticks <= 2 * self.jitter_ticks {
+        let margin = self.jitter_ticks.saturating_mul(2);
+        if self.ticks <= margin {
             return Err(TaskError::OutOfRange {
                 what: "ticks",
                 value: self.ticks as f64,
-                low: (2 * self.jitter_ticks + 1) as f64,
+                low: margin.saturating_add(1) as f64,
                 high: f64::MAX,
             });
         }
         let lo = self.jitter_ticks;
-        let span = self.ticks - 2 * self.jitter_ticks;
+        // Narrowed once, here, rather than with an `as u32` inside the rejection loop.
+        let span = draw_span("ticks", self.ticks - margin)?;
 
         let mut rng = Rng::new(self.seed ^ 0x7E17_0005);
         let mut out: Vec<Vec<u64>> = Vec::with_capacity(self.n_classes as usize);
@@ -1551,7 +1744,7 @@ impl LatencyPatterns {
             }
             draws += 1;
             let cand: Vec<u64> =
-                (0..self.n_inputs).map(|_| lo + u64::from(rng.below(span as u32))).collect();
+                (0..self.n_inputs).map(|_| lo + u64::from(rng.below(span))).collect();
             let ok = out.iter().all(|t| linf(t, &cand) > self.min_separation_ticks);
             if ok {
                 out.push(cand);
@@ -1593,9 +1786,10 @@ impl LatencyPatterns {
     ///
     /// As [`LatencyPatterns::templates`], plus [`TaskError::Exhausted`] when the jitter admits
     /// fewer distinct patterns than the split needs, and [`TaskError::OutOfRange`] for a `dt` that
-    /// is not positive and finite.
+    /// is not positive and finite or a `jitter_ticks` above [`MAX_JITTER_HALF`].
     pub fn generate(&self) -> Result<Dataset<Sample>, TaskError> {
         in_range("dt", self.dt, f64::MIN_POSITIVE, f64::MAX)?;
+        let jit = half_width("jitter_ticks", self.jitter_ticks)?;
         let templates = self.templates()?;
         let mut rng = Rng::new(self.seed);
         let cfg = *self;
@@ -1608,7 +1802,7 @@ impl LatencyPatterns {
                 let t = &templates[class as usize];
                 let mut sp = Vec::with_capacity(cfg.n_inputs as usize);
                 for (ch, &base) in t.iter().enumerate() {
-                    let off = jitter(&mut rng, cfg.jitter_ticks);
+                    let off = jitter(&mut rng, jit);
                     let at = (base as i64 + off).clamp(0, cfg.ticks as i64 - 1) as u64;
                     sp.push(Spike { t: at, source: ch as u32 });
                 }
@@ -1788,12 +1982,14 @@ impl MovingBar {
         if !v.is_finite() || v <= 0.0 {
             return None;
         }
-        let extent = f64::from(self.width.max(self.height) + self.bar_width);
+        // Summed in `f64`, because `width.max(height) + bar_width` overflows a `u32` for a grid
+        // near the top of the range and would wrap to a tiny extent — a window that looks ample.
+        let extent = f64::from(self.width.max(self.height)) + f64::from(self.bar_width);
         let t = (extent / v).ceil();
         if !t.is_finite() || t > 1e12 {
             return None;
         }
-        Some(self.max_start_delay + t as u64 + 2)
+        Some(self.max_start_delay.saturating_add(t as u64).saturating_add(2))
     }
 
     /// One noiseless traverse at a chosen direction and speed, starting immediately.
@@ -1823,7 +2019,7 @@ impl MovingBar {
             });
         }
         let extent = if direction.is_horizontal() { self.width } else { self.height };
-        let need = ((f64::from(extent + self.bar_width)) / speed).ceil() as u64 + 2;
+        let need = ((f64::from(extent) + f64::from(self.bar_width)) / speed).ceil() as u64 + 2;
         if self.ticks < need {
             return Err(TaskError::OutOfRange {
                 what: "ticks",
@@ -1853,11 +2049,32 @@ impl MovingBar {
         if hi <= lo { (0, 0) } else { (lo, hi) }
     }
 
+    /// First tick at which the bar is certainly gone, for this delay and speed.
+    ///
+    /// `occupancy` is empty once `floor(speed * (t - delay)) >= extent + bar_width`, in every
+    /// direction, and an off-event trails its tick by one. Iterating past that point emits nothing,
+    /// so the loop in [`MovingBar::bar_events`] stops there instead of walking the whole window: a
+    /// legal `ticks = 1e9` config — the window is not otherwise bounded above — took 20 seconds for
+    /// eight samples before, and a `1e12` one never finished at all. Clipped to `ticks`, so the
+    /// events are exactly the ones the full walk produced.
+    fn last_active_tick(&self, direction: Direction, delay: u64, speed: f64) -> u64 {
+        let extent = if direction.is_horizontal() { self.width } else { self.height };
+        let reach = (f64::from(extent) + f64::from(self.bar_width)) / speed;
+        if !reach.is_finite() || reach < 0.0 {
+            return self.ticks;
+        }
+        let over = reach.ceil();
+        // `as u64` saturates at the top of the range in Rust, and the `min` puts it back inside the
+        // window, so neither a huge speed nor a tiny one can produce an out-of-range bound here.
+        self.ticks.min(delay.saturating_add(over as u64).saturating_add(2))
+    }
+
     fn bar_events(&self, direction: Direction, delay: u64, speed: f64) -> Vec<Event> {
         let mut out = Vec::new();
         let cross = if direction.is_horizontal() { self.height } else { self.width };
         let mut prev = self.occupancy(direction, delay, speed, 0);
-        for t in 1..self.ticks {
+        let end = self.last_active_tick(direction, delay, speed);
+        for t in 1..end {
             let cur = self.occupancy(direction, delay, speed, t);
             let in_prev = |c: i64| c >= prev.0 && c < prev.1;
             let in_cur = |c: i64| c >= cur.0 && c < cur.1;
@@ -1886,13 +2103,27 @@ impl MovingBar {
     ///
     /// [`TaskError::Empty`] for a zero grid dimension, zero bar width or zero window;
     /// [`TaskError::OutOfRange`] for a non-positive or pixel-skipping speed, a speed jitter outside
-    /// `[0, 0.9]`, a noise probability outside `[0, 1)`, a `dt` that is not positive and finite, or
-    /// a window shorter than [`MovingBar::min_ticks`]; [`TaskError::Exhausted`] when the jitters
-    /// admit fewer distinct streams than the split needs.
+    /// `[0, 0.9]`, a noise probability outside `[0, 1)` — the top of that range is **exclusive**,
+    /// as the field's own doc says, because `p = 1` is a sensor that emits every pixel on every
+    /// tick and carries no stimulus at all — a `max_start_delay` too large for a single uniform
+    /// draw, a `dt` that is not positive and finite, or a window shorter than
+    /// [`MovingBar::min_ticks`]; [`TaskError::Exhausted`] when the jitters admit fewer distinct
+    /// streams than the split needs.
     pub fn generate(&self) -> Result<Dataset<EventSample>, TaskError> {
         in_range("dt", self.dt, f64::MIN_POSITIVE, f64::MAX)?;
         in_range("speed_jitter_frac", self.speed_jitter_frac, 0.0, 0.9)?;
         in_range("noise_prob_per_pixel_per_tick", self.noise_prob_per_pixel_per_tick, 0.0, 1.0)?;
+        // `in_range` is inclusive at both ends and the field is documented on `[0, 1)`, so the top
+        // needs its own line rather than a second reading of the same doc sentence.
+        if self.noise_prob_per_pixel_per_tick >= 1.0 {
+            return Err(TaskError::OutOfRange {
+                what: "noise_prob_per_pixel_per_tick",
+                value: self.noise_prob_per_pixel_per_tick,
+                low: 0.0,
+                high: 1.0,
+            });
+        }
+        let delay_span = draw_span("max_start_delay", self.max_start_delay.saturating_add(1))?;
         nonzero("width", u64::from(self.width))?;
         nonzero("height", u64::from(self.height))?;
         nonzero("bar_width", u64::from(self.bar_width))?;
@@ -1906,6 +2137,15 @@ impl MovingBar {
                 high: f64::from(self.bar_width),
             });
         }
+        // `n_inputs` is the pixel count and is a `u32`, so a grid whose product does not fit one
+        // has no address space to be reported in; wrapping it would hand every consumer a channel
+        // count smaller than the addresses the events actually carry.
+        let pixels = self.width.checked_mul(self.height).ok_or(TaskError::OutOfRange {
+            what: "width",
+            value: f64::from(self.width),
+            low: 1.0,
+            high: f64::from(u32::MAX) / f64::from(self.height),
+        })?;
         let need = self.min_ticks().ok_or(TaskError::OutOfRange {
             what: "speed_px_per_tick",
             value: self.speed_px_per_tick,
@@ -1930,7 +2170,7 @@ impl MovingBar {
             self.seed ^ 0xA5A5_0006,
             |class, _| {
                 let dir = Direction::all()[class as usize];
-                let delay = u64::from(rng.below((cfg.max_start_delay + 1) as u32));
+                let delay = u64::from(rng.below(delay_span));
                 let u = rng.next_f64() * 2.0 - 1.0;
                 let speed = cfg.speed_px_per_tick * (1.0 + cfg.speed_jitter_frac * u);
                 let mut ev = cfg.bar_events(dir, delay, speed);
@@ -1956,7 +2196,7 @@ impl MovingBar {
             train,
             test,
             4,
-            self.width * self.height,
+            pixels,
             self.ticks,
             self.dt,
             self.seed,
@@ -2032,9 +2272,13 @@ impl Default for SpokenDigits {
     /// (44.9 for the flat class, from `expected_spikes_per_sample`).
     ///
     /// The window has to hold the steepest sweep plus a four-sigma margin at both ends: the
-    /// extreme peak sits `6 * 8 = 48` ticks off centre and needs 24 more on each side, so 200 is
-    /// the first round number that fits. A shorter window clips an envelope, which changes both
-    /// the expected count and the centroid, and `generate` refuses rather than quietly clipping.
+    /// extreme peak sits `6 * 8 = 48` ticks off centre and needs `4 * 6 = 24` more on each side, so
+    /// the floor is `ticks/2 + 48 + 24 < ticks` with `ticks/2 - 48 >= 24`, which first holds at
+    /// **145** ticks. 200 is the round number chosen above that floor, with room left to widen
+    /// `sigma_ticks` or the sweep without re-deriving it. That floor is not a claim in prose:
+    /// `the_window_floor_is_the_one_the_doc_derives` generates at 145 and asserts the refusal at
+    /// 144. A shorter window clips an envelope, which changes both the expected count and the
+    /// centroid, and `generate` refuses rather than quietly clipping.
     fn default() -> Self {
         Self {
             n_classes: 5,
@@ -2054,18 +2298,24 @@ impl Default for SpokenDigits {
 
 impl SpokenDigits {
     /// Sweep slope of a class, in ticks per channel. Negative is a down-sweep.
+    ///
+    /// Saturating rather than wrapping, so an absurd `slope_step_ticks` produces a peak far outside
+    /// the window — which [`SpokenDigits::generate`] refuses — instead of wrapping to one inside it.
     #[must_use]
     pub fn slope(&self, class: u32) -> i64 {
         let mid = i64::from(self.n_classes.saturating_sub(1)) / 2;
-        self.slope_step_ticks * (i64::from(class) - mid)
+        self.slope_step_ticks.saturating_mul(i64::from(class) - mid)
     }
 
     /// Tick at which channel `k` of `class` peaks, before jitter.
+    ///
+    /// `ticks / 2 + slope(class) * (channel - n_channels / 2)`, saturating for the same reason
+    /// [`SpokenDigits::slope`] does.
     #[must_use]
     pub fn peak_tick(&self, class: u32, channel: u32) -> i64 {
         let mid = i64::from(self.n_channels) / 2;
         let centre = (self.ticks / 2) as i64;
-        centre + self.slope(class) * (i64::from(channel) - mid)
+        centre.saturating_add(self.slope(class).saturating_mul(i64::from(channel) - mid))
     }
 
     /// Per-tick spike probability of channel `k` of `class` at tick `t`, with an optional shift.
@@ -2125,9 +2375,10 @@ impl SpokenDigits {
     /// # Errors
     ///
     /// [`TaskError::Empty`] for zero classes, channels or ticks; [`TaskError::OutOfRange`] when
-    /// `sigma_ticks`, `peak_hz` or `dt` is not positive and finite, or when a class's envelope
-    /// peak plus the jitter would fall outside `4 * sigma` of the window edge — which would clip
-    /// the envelope and quietly change both the count and the centroid;
+    /// `sigma_ticks`, `peak_hz` or `dt` is not positive and finite, when `time_jitter_ticks`
+    /// exceeds [`MAX_JITTER_HALF`] (which would narrow its uniform draw), or when a class's
+    /// envelope peak plus the jitter would fall outside `4 * sigma` of the window edge — which
+    /// would clip the envelope and quietly change both the count and the centroid;
     /// [`TaskError::Exhausted`] when the window admits fewer distinct spike patterns than the split
     /// needs.
     pub fn generate(&self) -> Result<Dataset<Sample>, TaskError> {
@@ -2137,16 +2388,24 @@ impl SpokenDigits {
         nonzero("n_classes", u64::from(self.n_classes))?;
         nonzero("n_channels", u64::from(self.n_channels))?;
         nonzero("ticks", self.ticks)?;
+        // Checked before the margin below, which would otherwise cast the same quantity to `i64`.
+        let jit = half_width("time_jitter_ticks", self.time_jitter_ticks)?;
 
-        let margin = (4.0 * self.sigma_ticks).ceil() as i64 + self.time_jitter_ticks as i64;
+        let margin = (4.0 * self.sigma_ticks).ceil() as i64 + i64::from(jit.0);
         for c in 0..self.n_classes {
             for k in 0..self.n_channels {
                 let p = self.peak_tick(c, k);
-                if p - margin < 0 || p + margin >= self.ticks as i64 {
+                if p.saturating_sub(margin) < 0 || p.saturating_add(margin) >= self.ticks as i64 {
+                    let low = p
+                        .saturating_abs()
+                        .max(margin)
+                        .saturating_add(margin)
+                        .saturating_mul(2)
+                        .saturating_add(1);
                     return Err(TaskError::OutOfRange {
                         what: "ticks",
                         value: self.ticks as f64,
-                        low: (2 * (p.abs().max(margin) + margin) + 1) as f64,
+                        low: low as f64,
                         high: f64::MAX,
                     });
                 }
@@ -2161,7 +2420,7 @@ impl SpokenDigits {
             self.per_class_test,
             self.seed ^ 0xA5A5_0007,
             |class, _| {
-                let shift = jitter(&mut rng, cfg.time_jitter_ticks);
+                let shift = jitter(&mut rng, jit);
                 let mut sp = Vec::new();
                 for t in 0..cfg.ticks {
                     for k in 0..cfg.n_channels {
@@ -2282,6 +2541,7 @@ mod tests {
         CATALOGUE, Coincidence, Dataset, DelayedMatch, Direction, LatencyPatterns, MovingBar,
         RateDiscrimination, Split, SpokenDigits, TaskError, TemporalXor, polarity_counts,
     };
+    use crate::rng::Rng;
     use crate::spike::Polarity;
 
     // -- (a) determinism -----------------------------------------------------------------------
@@ -2344,12 +2604,12 @@ mod tests {
         check(x.counts(Split::Train), 128, "temporal_xor train");
         check(x.counts(Split::Test), 64, "temporal_xor test");
         assert!((x.chance - 0.5).abs() < 1e-15);
-        assert!((x.majority_baseline - 0.5).abs() < 1e-15);
+        assert_eq!(x.majority_baseline, Some(0.5));
 
         let l = LatencyPatterns::default().generate().unwrap();
         check(l.counts(Split::Test), 50, "latency test");
         assert!((l.chance - 0.2).abs() < 1e-15);
-        assert!((l.majority_baseline - 0.2).abs() < 1e-15);
+        assert_eq!(l.majority_baseline, Some(0.2));
 
         let m = MovingBar::default().generate().unwrap();
         check(m.counts(Split::Test), 24, "moving_bar test");
@@ -2364,11 +2624,11 @@ mod tests {
 
         let m2 = DelayedMatch::default().generate().unwrap();
         check(m2.counts(Split::Test), 64, "dms test");
-        assert!((m2.majority_baseline - 0.5).abs() < 1e-15);
+        assert_eq!(m2.majority_baseline, Some(0.5));
 
         let r = RateDiscrimination::default().generate().unwrap();
         check(r.counts(Split::Test), 400, "rate test");
-        assert!((r.majority_baseline - 0.5).abs() < 1e-15);
+        assert_eq!(r.majority_baseline, Some(0.5));
 
         // And the balance vector agrees with the counts it was derived from.
         for d in [&x.balance(Split::Test), &l.balance(Split::Test)] {
@@ -2382,7 +2642,7 @@ mod tests {
     #[test]
     fn the_majority_baseline_follows_an_unbalanced_split() {
         let d = TemporalXor::default().generate().unwrap();
-        assert!((d.majority_baseline - 0.5).abs() < 1e-15);
+        assert_eq!(d.majority_baseline, Some(0.5));
         let mut e = d.clone();
         // Drop three quarters of class 1, deterministically by position.
         let mut seen = 0usize;
@@ -2399,8 +2659,9 @@ mod tests {
             e.name, e.train, e.test, e.n_classes, e.n_inputs, e.ticks, e.dt, e.seed,
             e.stands_in_for, e.not_captured,
         );
-        assert!((re.majority_baseline - want).abs() < 1e-12);
-        assert!(re.majority_baseline > 0.5, "baseline {} did not move", re.majority_baseline);
+        let got = re.majority_baseline.expect("a non-empty test split has a majority class");
+        assert!((got - want).abs() < 1e-12);
+        assert!(got > 0.5, "baseline {got} did not move");
     }
 
     // -- (e) temporal XOR is blind to every per-channel readout ---------------------------------
@@ -2889,27 +3150,235 @@ mod tests {
 
     /// Speed does not change the data volume, it changes the LATENCY. Doubling the speed halves
     /// the time the events take to arrive, so the event rate doubles.
+    ///
+    /// The count is taken from each returned stream rather than from `events_per_traverse()`. With
+    /// the analytic count on both sides the rate ratio was `(n/fast)/(n/slow) = slow/fast` — the
+    /// span assertion's own number a second time, so "the event rate doubles" was checked zero
+    /// times rather than twice. Measured, the independent content is the first assertion: the two
+    /// speeds emit the SAME number of events. The rate claim is that fact divided by the span, and
+    /// it is kept because it is the sentence the module doc makes.
     #[test]
     fn doubling_the_speed_halves_the_traverse_and_doubles_the_event_rate() {
         let b = MovingBar { bar_width: 4, ticks: 400, ..MovingBar::default() };
-        let span = |v: f64| {
+        let measure = |v: f64| {
             let ev = b.traverse(Direction::Right, v).unwrap();
             let first = ev.first().unwrap().t;
             let last = ev.last().unwrap().t;
-            (last - first + 1) as f64
+            (ev.len() as f64, (last - first + 1) as f64)
         };
-        let slow = span(0.5);
-        let fast = span(1.0);
+        let (n_slow, slow) = measure(0.5);
+        let (n_fast, fast) = measure(1.0);
+        assert!(
+            (n_slow - n_fast).abs() < f64::EPSILON,
+            "the event count moved with the speed: {n_slow} at 0.5 px/tick, {n_fast} at 1.0"
+        );
         let ratio = slow / fast;
         assert!((ratio - 2.0).abs() < 0.1, "traverse span ratio {ratio}, expected 2");
-        let n = b.events_per_traverse() as f64;
-        let rate_slow = n / slow;
-        let rate_fast = n / fast;
+        let rate_slow = n_slow / slow;
+        let rate_fast = n_fast / fast;
         assert!(
             ((rate_fast / rate_slow) - 2.0).abs() < 0.1,
             "event rate ratio {}",
             rate_fast / rate_slow
         );
+    }
+
+    /// Exact `(time, x)` and `(time, y)` covariances of a stream's on-events, in INTEGERS.
+    ///
+    /// `n * sum(t * x) - sum(t) * sum(x)`, which is `n^2` times the covariance and has its sign.
+    /// Integer arithmetic on purpose: a bar moving along `x` covers a whole column at every tick,
+    /// so the `y` sum per tick is the same constant and the `(t, y)` covariance is **exactly**
+    /// zero — a fact about the geometry that a floating-point accumulation would turn into "small".
+    fn motion_covariances(b: &MovingBar, ev: &[super::Event]) -> (i128, i128) {
+        let (mut st, mut sx, mut sy, mut stx, mut sty, mut n) = (0i128, 0i128, 0i128, 0i128, 0i128, 0i128);
+        for e in ev.iter().filter(|e| e.polarity == Polarity::On) {
+            let t = i128::from(e.t);
+            let x = i128::from(e.address % b.width);
+            let y = i128::from(e.address / b.width);
+            st += t;
+            sx += x;
+            sy += y;
+            stx += t * x;
+            sty += t * y;
+            n += 1;
+        }
+        (n * stx - st * sx, n * sty - st * sy)
+    }
+
+    /// The direction a stream actually travels, read off the events with no help from
+    /// [`Direction::all`] or from `occupancy`: `Right` is increasing `x`, `Down` is increasing `y`,
+    /// and an address is `y * width + x`. Exactly one covariance is zero; the other one's sign is
+    /// the answer.
+    fn decode_direction(b: &MovingBar, ev: &[super::Event]) -> Direction {
+        let (cx, cy) = motion_covariances(b, ev);
+        assert!(
+            (cx == 0) != (cy == 0),
+            "neither axis was stationary: cov(t,x) = {cx}, cov(t,y) = {cy}"
+        );
+        if cy == 0 {
+            if cx > 0 { Direction::Right } else { Direction::Left }
+        } else if cy > 0 {
+            Direction::Down
+        } else {
+            Direction::Up
+        }
+    }
+
+    /// THE thing that stops this benchmark from silently becoming a three-class problem printing
+    /// `chance = 0.25`.
+    ///
+    /// Nothing else in the module pins the class-to-direction map: `Direction::all()` could be
+    /// `[Right, Right, Down, Up]` — two classes drawing the identical stimulus, a real ceiling of
+    /// 0.75 — and every other test would pass, because global dedup only forbids identical streams
+    /// and the catalogue check reads only the name, the class count and the chance level. So the
+    /// expected order is written out here as a literal, not fetched from `all()`, and each class's
+    /// stimulus is decoded from its own events and compared against it.
+    #[test]
+    fn every_moving_bar_class_travels_the_way_its_direction_names() {
+        // The documented order, spelled out: a class index and a direction are interconvertible.
+        let expected = [Direction::Right, Direction::Left, Direction::Down, Direction::Up];
+        assert_eq!(Direction::all(), expected, "the class order drifted from the documented one");
+        let mut distinct = expected.to_vec();
+        distinct.dedup();
+        assert_eq!(distinct.len(), 4, "two classes name the same direction");
+
+        let b = MovingBar { per_class_train: 6, per_class_test: 6, ..MovingBar::default() };
+        let d = b.generate().unwrap();
+        for s in d.train.iter().chain(d.test.iter()) {
+            let got = decode_direction(&b, &s.events);
+            assert_eq!(
+                got, expected[s.label as usize],
+                "a sample labelled {} travels {got:?}",
+                s.label
+            );
+        }
+        // And on a bare traverse, where there is no label to hide behind.
+        for dir in expected {
+            assert_eq!(decode_direction(&b, &b.traverse(dir, 1.0).unwrap()), dir);
+        }
+    }
+
+    /// The polarity convention, which the module doc states in words and nothing held in place:
+    /// swapping the two emissions passes every other test, because each pixel still appears once
+    /// in each polarity and the totals are unchanged.
+    ///
+    /// The invariant that is not symmetric under the swap: a pixel is turned ON when the leading
+    /// edge arrives and OFF when the trailing edge leaves, and arrival precedes departure.
+    #[test]
+    fn a_pixel_turns_on_when_the_bar_arrives_and_off_when_it_leaves() {
+        let b = MovingBar { bar_width: 4, ticks: 400, ..MovingBar::default() };
+        let pixels = (b.width * b.height) as usize;
+        for &v in &[0.25f64, 1.0, 4.0] {
+            for dir in Direction::all() {
+                let ev = b.traverse(dir, v).unwrap();
+                let mut on = vec![None; pixels];
+                let mut off = vec![None; pixels];
+                for e in &ev {
+                    let slot = if e.polarity == Polarity::On { &mut on } else { &mut off };
+                    assert!(slot[e.address as usize].is_none(), "pixel reported twice");
+                    slot[e.address as usize] = Some(e.t);
+                }
+                for a in 0..pixels {
+                    let (i, o) = (on[a].expect("every pixel turns on"), off[a].expect("and off"));
+                    assert!(i < o, "{dir:?} at {v}: pixel {a} went off at {o} before on at {i}");
+                }
+                // The first tick that carries anything carries only on-events: nothing has left
+                // the frame yet when the leading edge first enters it.
+                let t0 = ev.first().unwrap().t;
+                assert!(
+                    ev.iter().filter(|e| e.t == t0).all(|e| e.polarity == Polarity::On),
+                    "{dir:?} at {v}: the first tick already carried an off-event"
+                );
+            }
+        }
+    }
+
+    /// The event-stream key keeps the polarity bit, and this is what makes that checkable. Two
+    /// streams that agree on every `(t, address)` and disagree on one sign are different inputs.
+    #[test]
+    fn two_streams_that_differ_only_in_a_sign_have_different_keys() {
+        use super::Keyed;
+        let base = super::EventSample {
+            events: vec![
+                super::Event { t: 3, address: 7, polarity: Polarity::On },
+                super::Event { t: 9, address: 2, polarity: Polarity::Off },
+            ],
+            label: 0,
+        };
+        let mut flipped = base.clone();
+        flipped.events[1].polarity = Polarity::On;
+        assert_ne!(
+            base.key(),
+            flipped.key(),
+            "a sign flip left the input key untouched; dedup would reject one as a duplicate"
+        );
+        // The label is NOT in the key, which is the other half of the contract.
+        let relabelled = super::EventSample { label: 1, ..base.clone() };
+        assert_eq!(base.key(), relabelled.key());
+    }
+
+    /// A window is not bounded above, and the generator used to walk every tick of it whether or
+    /// not the bar was still in the frame: eight samples of a legal `ticks = 1e9` config took 20
+    /// seconds, and `1e12` never finished. The events are the same either way — the bar is gone —
+    /// so the loop stops when it is gone.
+    #[test]
+    fn a_window_far_longer_than_the_traverse_costs_nothing_to_generate() {
+        let b = MovingBar {
+            ticks: 1_000_000_000_000,
+            per_class_train: 1,
+            per_class_test: 1,
+            ..MovingBar::default()
+        };
+        let d = b.generate().unwrap();
+        assert_eq!(d.ticks, 1_000_000_000_000);
+        for s in d.train.iter().chain(d.test.iter()) {
+            assert_eq!(s.events.len(), b.events_per_traverse() as usize);
+        }
+    }
+
+    /// The premise the early exit rests on, asserted rather than assumed: from `last_active_tick`
+    /// onwards the bar covers nothing, in every direction and at every speed, so no on-event and
+    /// no off-event can be lost by stopping there. (That no event IS lost is the exact-count test
+    /// above, which runs the same directions and speeds.)
+    #[test]
+    fn nothing_is_left_to_emit_after_the_last_active_tick() {
+        let b = MovingBar { bar_width: 4, ticks: 4_000, ..MovingBar::default() };
+        for &v in &[0.25f64, 0.5, 1.0, 2.0, 4.0] {
+            for dir in Direction::all() {
+                for delay in [0u64, 1, 37] {
+                    let end = b.last_active_tick(dir, delay, v);
+                    assert!(end <= b.ticks);
+                    for t in (end - 1)..(end + 64).min(b.ticks) {
+                        assert_eq!(
+                            b.occupancy(dir, delay, v, t),
+                            (0, 0),
+                            "{dir:?} at {v} px/tick, delay {delay}: tick {t} is still covered, \
+                             but the walk stops at {end}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// The field doc says `[0, 1)` and the `# Errors` section repeats it; `in_range` is inclusive
+    /// at the top and used to accept 1.0 — a sensor that emits every pixel on every tick, which
+    /// carries no stimulus at all.
+    #[test]
+    fn a_saturated_noise_probability_is_refused_because_the_range_is_half_open() {
+        let saturated = MovingBar { noise_prob_per_pixel_per_tick: 1.0, ..MovingBar::default() };
+        assert!(matches!(
+            saturated.generate(),
+            Err(TaskError::OutOfRange { what: "noise_prob_per_pixel_per_tick", .. })
+        ));
+        // Just inside the range still generates, so the check is a boundary and not a ban.
+        let loud = MovingBar {
+            noise_prob_per_pixel_per_tick: 0.999,
+            per_class_train: 1,
+            per_class_test: 1,
+            ..MovingBar::default()
+        };
+        assert!(loud.generate().is_ok());
     }
 
     #[test]
@@ -3135,30 +3604,16 @@ mod tests {
             assert_eq!(card.name, name, "catalogue name drifted");
             assert_eq!(card.classes, classes, "{name}: catalogue class count drifted");
             assert!((card.chance - chance).abs() < 1e-15, "{name}: catalogue chance drifted");
+            // The two prose columns are the reason this table is worth printing beside a score,
+            // and nothing checked that they had been written at all.
+            assert!(card.isolates.len() > 20, "{name}: `isolates` says nothing");
+            assert!(card.stands_in_for.len() > 10, "{name}: `stands_in_for` says nothing");
         }
-    }
-
-    /// Every dataset carries its own caveat. A blank one is a benchmark that will be over-quoted.
-    #[test]
-    fn every_dataset_says_what_it_does_not_capture() {
-        let checks: Vec<(&str, &str, &str)> = vec![
-            {
-                let d = TemporalXor::default().generate().unwrap();
-                (d.name, d.stands_in_for, d.not_captured)
-            },
-            {
-                let d = MovingBar::default().generate().unwrap();
-                (d.name, d.stands_in_for, d.not_captured)
-            },
-            {
-                let d = SpokenDigits::default().generate().unwrap();
-                (d.name, d.stands_in_for, d.not_captured)
-            },
-        ];
-        for (name, stands, not) in checks {
-            assert!(stands.len() > 20, "{name}: stands_in_for is too short to mean anything");
-            assert!(not.len() > 20, "{name}: not_captured is too short to mean anything");
-        }
+        // And each row names its own mechanism rather than repeating its neighbour's.
+        let mut isolates: Vec<&str> = CATALOGUE.iter().map(|c| c.isolates).collect();
+        isolates.sort_unstable();
+        isolates.dedup();
+        assert_eq!(isolates.len(), CATALOGUE.len(), "two catalogue rows isolate the same thing");
     }
 
     #[test]
@@ -3173,5 +3628,487 @@ mod tests {
         let mut d = TemporalXor::default().generate().unwrap();
         d.test.clear();
         assert!(d.balance(Split::Test).is_empty());
+    }
+
+    /// `balance` refuses to report zeros for a split nobody measured, and `finish` then folded that
+    /// empty vector with `max` from a `0.0` seed — storing a majority baseline of **zero**, below
+    /// chance, in the field the module doc says a score must be read against. `None` instead.
+    /// A label outside `0..n_classes` is dropped by `counts` — it has no bin — and the module says
+    /// so rather than leaving it to be discovered. `balance` divides by the split length, so the
+    /// loss surfaces as shares that do not sum to one instead of being normalised out of sight.
+    #[test]
+    fn a_label_outside_the_class_range_is_dropped_visibly_not_silently() {
+        let mut d = TemporalXor::default().generate().unwrap();
+        let n = d.test.len();
+        assert_eq!(d.counts(Split::Test).iter().sum::<usize>(), n);
+        d.test[0].label = 7;
+        let counts = d.counts(Split::Test);
+        assert_eq!(counts.len(), 2, "the vector is indexed by class and has no overflow bin");
+        assert_eq!(counts.iter().sum::<usize>(), n - 1, "the stray sample was counted somewhere");
+        let total: f64 = d.balance(Split::Test).iter().sum();
+        assert!(total < 1.0, "the shares summed to {total}, hiding the dropped sample");
+        assert!((total - (n - 1) as f64 / n as f64).abs() < 1e-12);
+    }
+
+    #[test]
+    fn a_dataset_with_no_test_split_has_no_majority_baseline_rather_than_zero() {
+        let t = DelayedMatch { per_class_train: 8, per_class_test: 0, ..DelayedMatch::default() };
+        let d = t.generate().unwrap();
+        assert_eq!(d.train.len(), 16, "the train split still filled");
+        assert!(d.test.is_empty());
+        assert!(d.balance(Split::Test).is_empty());
+        assert_eq!(
+            d.majority_baseline, None,
+            "a split of no samples reported a majority class anyway"
+        );
+        // And the ordinary case still carries the number, so this is not a silent opt-out.
+        assert_eq!(DelayedMatch::default().generate().unwrap().majority_baseline, Some(0.5));
+    }
+
+    /// `Dataset::train` is documented as shuffled, and a no-op `shuffle` passed every other test in
+    /// this file: `collect_split` appends class 0, then class 1, so an unshuffled split is
+    /// perfectly class-ordered — the silent confound that breaks an online learner while moving no
+    /// count, no balance and no baseline.
+    #[test]
+    fn the_training_split_is_shuffled_rather_than_class_ordered() {
+        let d = LatencyPatterns::default().generate().unwrap();
+        let ordered = usize::try_from(d.n_classes).unwrap() - 1;
+        let flips = d.train.windows(2).filter(|w| w[0].label != w[1].label).count();
+        // A class-ordered stream has exactly `n_classes - 1` label changes; a random permutation of
+        // five balanced classes has about `(n - 1) * 4 / 5 = 399` of them.
+        assert!(
+            flips > 300,
+            "{flips} label changes in {} training samples, and a class-ordered split has {ordered}",
+            d.train.len()
+        );
+        // The other way to see it: every class appears in the first tenth of the stream.
+        let head = &d.train[..d.train.len() / 10];
+        for c in 0..d.n_classes {
+            assert!(head.iter().any(|s| s.label == c), "class {c} is absent from the first tenth");
+        }
+        // The test split is shuffled too.
+        let flips = d.test.windows(2).filter(|w| w[0].label != w[1].label).count();
+        assert!(flips > 150, "{flips} label changes in the test split");
+    }
+
+    /// And `shuffle` itself, against the three things it has to be: a permutation, not the
+    /// identity, and the same one for the same seed.
+    #[test]
+    fn shuffle_is_a_deterministic_permutation_that_actually_moves_things() {
+        let ident: Vec<u32> = (0..64).collect();
+        let mut a = ident.clone();
+        super::shuffle(&mut a, &mut Rng::new(7));
+        let mut sorted = a.clone();
+        sorted.sort_unstable();
+        assert_eq!(sorted, ident, "shuffle lost or duplicated an element");
+        assert_ne!(a, ident, "shuffle left the order exactly as it found it");
+        let fixed = a.iter().enumerate().filter(|&(i, &v)| i as u32 == v).count();
+        assert!(fixed < 8, "{fixed} of 64 entries stayed put, which is not a shuffle");
+
+        let mut b = ident.clone();
+        super::shuffle(&mut b, &mut Rng::new(7));
+        assert_eq!(a, b, "the same seed gave a different permutation");
+        let mut c = ident.clone();
+        super::shuffle(&mut c, &mut Rng::new(8));
+        assert_ne!(a, c, "two seeds gave the same permutation");
+
+        // A slice of one draws nothing, which is why `below(0)` is unreachable from here.
+        let mut one = [5u32];
+        super::shuffle(&mut one, &mut Rng::new(7));
+        assert_eq!(one, [5]);
+    }
+
+    /// The condition cycling is on ACCEPTED samples, so the per-channel early/late counts of the
+    /// two classes are exactly equal — the claim the task doc makes about per-channel readouts.
+    ///
+    /// Cycling on the draw index instead made them differ by however many duplicates rejection ate:
+    /// measured on this configuration, channel 0 of the test split was early in 31 samples of class
+    /// 0 and 34 of class 1, which is a 2-tick difference in the class means of a quantity the doc
+    /// says carries nothing.
+    #[test]
+    fn the_early_late_counts_per_channel_are_exactly_equal_in_both_classes() {
+        let t = TemporalXor::default();
+        // Premise: a jittered early volley can never be mistaken for a late one.
+        assert!(
+            2 * t.jitter_ticks < t.late_tick - t.early_tick,
+            "the jitter overlaps the two volley positions, so 'early' is not recoverable"
+        );
+        let mid = (t.early_tick + t.late_tick) / 2;
+        let d = t.generate().unwrap();
+        for split in [Split::Train, Split::Test] {
+            let n = d.split(split).len();
+            for ch in 0..2u32 {
+                let mut early = [0usize; 2];
+                for s in d.split(split) {
+                    let ft = Dataset::first_spike(s, ch).expect("both channels fire");
+                    // Premise again, per sample: the first spike sits on one volley or the other.
+                    assert!(
+                        ft.abs_diff(t.early_tick) <= t.jitter_ticks
+                            || ft.abs_diff(t.late_tick) <= t.jitter_ticks,
+                        "a first spike at {ft} is on neither volley"
+                    );
+                    early[s.label as usize] += usize::from(ft < mid);
+                }
+                assert_eq!(
+                    early[0], early[1],
+                    "{split:?} channel {ch}: class 0 was early {} times, class 1 {} times",
+                    early[0], early[1]
+                );
+                assert_eq!(4 * early[0], n, "{split:?} channel {ch}: {early:?} of {n} samples");
+            }
+        }
+    }
+
+    /// `peak_tick` had no independent check at all: the centroid test used it as the expected
+    /// value and the generator computed the envelope from it, so both sides moved together —
+    /// changing `n_channels / 2` to `n_channels / 4` passed everything. Here the expectation is
+    /// written from the STRUCT DOC's formula, and the measurement comes from the spikes.
+    #[test]
+    fn the_channel_centroids_match_the_closed_form_in_the_doc_not_the_function() {
+        let t = SpokenDigits { per_class_train: 4, per_class_test: 200, ..SpokenDigits::default() };
+        let d = t.generate().unwrap();
+        // "channel `k` has a Gaussian firing-rate envelope peaking at tick
+        //  `centre + slope(c) * (k - mid)`", with `centre = ticks / 2`, `mid = n_channels / 2`,
+        //  and `slope(c) = slope_step_ticks * (c - (n_classes - 1) / 2)` — the integer grid
+        //  `the_sweep_slopes_are_the_integer_grid_the_doc_describes` pins to [-6, -3, 0, 3, 6].
+        let centre = (t.ticks / 2) as f64;
+        let mid = f64::from(t.n_channels / 2);
+        for (c, slope) in [-6.0f64, -3.0, 0.0, 3.0, 6.0].into_iter().enumerate() {
+            for k in [0u32, 4, 15] {
+                let want = centre + slope * (f64::from(k) - mid);
+                let mut sum = 0.0f64;
+                let mut n = 0.0f64;
+                for s in d.test.iter().filter(|s| s.label == c as u32) {
+                    for sp in s.train.spikes().iter().filter(|sp| sp.source == k) {
+                        sum += sp.t as f64;
+                        n += 1.0;
+                    }
+                }
+                assert!(n > 200.0, "class {c} channel {k} produced only {n} spikes");
+                let centroid = sum / n;
+                let se = t.sigma_ticks / n.sqrt();
+                assert!(
+                    (centroid - want).abs() < 4.0 * se,
+                    "class {c} channel {k}: centroid {centroid} vs the doc's {want}, 4 SE = {}",
+                    4.0 * se
+                );
+            }
+        }
+    }
+
+    /// The window floor the `SpokenDigits::default` doc derives, run rather than asserted in prose.
+    #[test]
+    fn the_window_floor_is_the_one_the_doc_derives() {
+        let fits = SpokenDigits {
+            ticks: 145,
+            per_class_train: 1,
+            per_class_test: 1,
+            ..SpokenDigits::default()
+        };
+        assert!(fits.generate().is_ok(), "145 ticks should hold the steepest sweep plus 4 sigma");
+        let clipped = SpokenDigits { ticks: 144, ..fits };
+        assert!(
+            matches!(clipped.generate(), Err(TaskError::OutOfRange { what: "ticks", .. })),
+            "144 ticks clips the extreme envelope and must be refused"
+        );
+    }
+
+    /// The cue-window arithmetic the `DelayedMatch::default` doc argues from, with the numbers.
+    #[test]
+    fn a_cue_window_too_short_for_its_spikes_and_jitter_is_refused() {
+        // At `cue_ticks = 20` the spacing is `20 / 4 = 5`, so four spikes span `3 * 5 = 15`, and
+        // `15 + 2 * 4` jitter ticks is 23, which does not fit in 20.
+        let short = DelayedMatch { cue_ticks: 20, ..DelayedMatch::default() };
+        match short.generate() {
+            Err(TaskError::OutOfRange { what: "cue_ticks", value, low, .. }) => {
+                assert!((value - 20.0).abs() < f64::EPSILON);
+                assert!((low - 24.0).abs() < f64::EPSILON, "the refusal asks for {low}, not 24");
+            }
+            other => panic!("a 20-tick cue window produced {other:?}"),
+        }
+        // At 30 the spacing is 7, the span is 21, and 21 + 8 fits.
+        assert!(DelayedMatch::default().generate().is_ok());
+    }
+
+    /// Every dataset carries its own caveat. A blank one is a benchmark that will be over-quoted.
+    ///
+    /// Every task's caveat, not three of the seven. The old test named `TemporalXor`, `MovingBar`
+    /// and `SpokenDigits` only, while the disclosure said "every `Dataset`".
+    #[test]
+    fn every_dataset_says_what_it_does_not_capture() {
+        let checks: Vec<(&str, &str, &str)> = vec![
+            {
+                let d = TemporalXor::default().generate().unwrap();
+                (d.name, d.stands_in_for, d.not_captured)
+            },
+            {
+                let d = Coincidence::default().generate().unwrap();
+                (d.name, d.stands_in_for, d.not_captured)
+            },
+            {
+                let d = DelayedMatch::default().generate().unwrap();
+                (d.name, d.stands_in_for, d.not_captured)
+            },
+            {
+                let d = RateDiscrimination::default().generate().unwrap();
+                (d.name, d.stands_in_for, d.not_captured)
+            },
+            {
+                let d = LatencyPatterns::default().generate().unwrap();
+                (d.name, d.stands_in_for, d.not_captured)
+            },
+            {
+                let d = MovingBar::default().generate().unwrap();
+                (d.name, d.stands_in_for, d.not_captured)
+            },
+            {
+                let d = SpokenDigits::default().generate().unwrap();
+                (d.name, d.stands_in_for, d.not_captured)
+            },
+        ];
+        assert_eq!(checks.len(), CATALOGUE.len(), "a task has no caveat row here");
+        for (name, stands, not) in &checks {
+            assert!(stands.len() > 20, "{name}: stands_in_for is too short to mean anything");
+            assert!(not.len() > 20, "{name}: not_captured is too short to mean anything");
+        }
+        // And each one is its own sentence rather than a copy of its neighbour's.
+        let mut caveats: Vec<&str> = checks.iter().map(|c| c.2).collect();
+        caveats.sort_unstable();
+        caveats.dedup();
+        assert_eq!(caveats.len(), checks.len(), "two tasks share a not_captured string");
+    }
+
+    // -- the u32 boundary every draw in this module crosses ------------------------------------
+
+    /// `Rng::below` takes a `u32` and every span here is a `u64` of ticks, so an `as u32` between
+    /// them draws from a range nobody asked for — and no assertion downstream notices, because a
+    /// narrower range sits inside the wider one. Measured before the fix: this config drew its
+    /// "up to `5_000_000_000`" gaps from `0..705_032_696`, and the largest gap in the dataset
+    /// was `688_949_765`.
+    #[test]
+    fn a_gap_range_too_wide_for_a_uniform_draw_is_refused_rather_than_narrowed() {
+        let wide = Coincidence {
+            threshold_ticks: 8,
+            max_gap_ticks: 5_000_000_000,
+            first_tick: 20,
+            jitter_ticks: 15,
+            ticks: 6_000_000_000,
+            per_class_train: 4,
+            per_class_test: 4,
+            ..Coincidence::default()
+        };
+        assert!(
+            matches!(wide.generate(), Err(TaskError::OutOfRange { what: "max_gap_ticks", .. })),
+            "a 5e9 gap range was narrowed instead of refused"
+        );
+        // A span landing on a multiple of 2^32 narrowed to ZERO, and `below(0)` PANICS — out of a
+        // constructor whose `# Errors` section promises a `TaskError` and which carries no
+        // `# Panics` section.
+        let exact = Coincidence { max_gap_ticks: 8 + 4_294_967_296, ..wide };
+        assert!(
+            matches!(exact.generate(), Err(TaskError::OutOfRange { .. })),
+            "a span of exactly 2^32 must not reach below(0)"
+        );
+        let coincident = Coincidence {
+            threshold_ticks: 4_294_967_295,
+            max_gap_ticks: 8_000_000_000,
+            ticks: 20_000_000_000,
+            ..wide
+        };
+        assert!(matches!(
+            coincident.generate(),
+            Err(TaskError::OutOfRange { what: "threshold_ticks", .. })
+        ));
+
+        // The ceiling is `MAX_DRAW_SPAN`, not `u32::MAX`, and this is the config that says why:
+        // `Rng::below(4_000_000_000)` accepts two values in 2^32 and takes 14.1 SECONDS per draw.
+        // A dataset built on it does not come back, so it is refused rather than started.
+        let slow = Coincidence { max_gap_ticks: 4_000_000_000, ..wide };
+        assert!(matches!(
+            slow.generate(),
+            Err(TaskError::OutOfRange { what: "max_gap_ticks", high, .. })
+                if (high - super::MAX_DRAW_SPAN as f64).abs() < f64::EPSILON
+        ));
+
+        // The positive control, without which this is a test that the module refuses everything:
+        // a range that DOES fit still generates, and the gaps still span what was asked for.
+        let ok = Coincidence {
+            max_gap_ticks: 2_000_000_000,
+            ticks: 5_000_000_000,
+            per_class_train: 16,
+            per_class_test: 16,
+            ..wide
+        };
+        let d = ok.generate().unwrap();
+        let largest = d
+            .train
+            .iter()
+            .chain(d.test.iter())
+            .filter(|s| s.label == 0)
+            .map(|s| s.train.spikes()[0].t.abs_diff(s.train.spikes()[1].t))
+            .max()
+            .unwrap();
+        assert!(
+            largest > 1_500_000_000,
+            "largest gap {largest} of a requested 2_000_000_000 — the range was narrowed"
+        );
+        // The two ceilings are what they claim to be, and a jitter spans twice its half-width.
+        assert_eq!(super::MAX_DRAW_SPAN, 2_147_483_647);
+        assert_eq!(2 * super::MAX_JITTER_HALF + 1, super::MAX_DRAW_SPAN);
+    }
+
+    /// The same boundary on every jitter in the module. Before the fix a 3e9 half-width on
+    /// `TemporalXor` drew from `(2 * 3e9 + 1) as u32 = 1_705_032_705`, and the volley starts
+    /// spanned `64_380_331 ..= 5_669_951_247` instead of the requested `0 ..= 1e10`.
+    #[test]
+    fn a_jitter_too_wide_for_a_uniform_draw_is_refused_in_every_task() {
+        let x = TemporalXor {
+            early_tick: 3_000_000_000,
+            late_tick: 7_000_000_000,
+            jitter_ticks: 3_000_000_000,
+            ticks: 20_000_000_000,
+            per_class_train: 4,
+            per_class_test: 4,
+            ..TemporalXor::default()
+        };
+        assert!(matches!(
+            x.generate(),
+            Err(TaskError::OutOfRange { what: "jitter_ticks", .. })
+        ));
+
+        let c = Coincidence {
+            jitter_ticks: 3_000_000_000,
+            first_tick: 4_000_000_000,
+            ticks: 9_000_000_000,
+            ..Coincidence::default()
+        };
+        assert!(matches!(
+            c.generate(),
+            Err(TaskError::OutOfRange { what: "jitter_ticks", .. })
+        ));
+
+        let m = DelayedMatch {
+            jitter_ticks: 3_000_000_000,
+            cue_ticks: 8_000_000_000,
+            ..DelayedMatch::default()
+        };
+        assert!(matches!(
+            m.generate(),
+            Err(TaskError::OutOfRange { what: "jitter_ticks", .. })
+        ));
+
+        let l = LatencyPatterns { jitter_ticks: 3_000_000_000, ticks: 9_000_000_000, ..LatencyPatterns::default() };
+        assert!(matches!(
+            l.generate(),
+            Err(TaskError::OutOfRange { what: "jitter_ticks", .. })
+        ));
+
+        let s = SpokenDigits {
+            time_jitter_ticks: 3_000_000_000,
+            ticks: 9_000_000_000,
+            ..SpokenDigits::default()
+        };
+        assert!(matches!(
+            s.generate(),
+            Err(TaskError::OutOfRange { what: "time_jitter_ticks", .. })
+        ));
+
+        let b = MovingBar { max_start_delay: 5_000_000_000, ticks: 6_000_000_000, ..MovingBar::default() };
+        assert!(matches!(
+            b.generate(),
+            Err(TaskError::OutOfRange { what: "max_start_delay", .. })
+        ));
+
+        // The latency window itself is a draw span too.
+        let t = LatencyPatterns { ticks: 9_000_000_000, ..LatencyPatterns::default() };
+        assert!(matches!(t.templates(), Err(TaskError::OutOfRange { what: "ticks", .. })));
+
+        // And the shuffle index: a split longer than `u32::MAX` would shuffle only its first four
+        // billion entries. Refused before a byte is allocated.
+        let big = TemporalXor { per_class_train: 3_000_000_000, per_class_test: 0, ..TemporalXor::default() };
+        assert!(matches!(
+            big.generate(),
+            Err(TaskError::OutOfRange { what: "samples per class", .. })
+        ));
+    }
+
+    /// Two public items nothing exercised at all: the `tau_m` rule of thumb, and the error
+    /// messages — which are the whole of what a user sees when a configuration is refused, and
+    /// which the `TaskError` doc promises will "name the offending quantity".
+    #[test]
+    fn the_tau_m_hint_is_in_seconds_and_every_refusal_names_its_quantity() {
+        // `threshold_ticks * dt`, in SECONDS: 8 ticks of 1 ms.
+        let c = Coincidence::default();
+        assert!((c.suggested_tau_m() - 0.008).abs() < 1e-15, "{}", c.suggested_tau_m());
+        let slower = Coincidence { dt: 2e-3, threshold_ticks: 10, ..c };
+        assert!((slower.suggested_tau_m() - 0.02).abs() < 1e-15, "{}", slower.suggested_tau_m());
+
+        let msgs = [
+            TaskError::NotFinite { what: "rate_hi", value: f64::NAN }.to_string(),
+            TaskError::Empty { what: "cue_spikes" }.to_string(),
+            TaskError::OutOfRange { what: "ticks", value: 5.0, low: 30.0, high: 40.0 }.to_string(),
+            TaskError::Exhausted { wanted: 192, distinct: 4, draws: 13312 }.to_string(),
+        ];
+        for (m, needle) in msgs.iter().zip(["rate_hi", "cue_spikes", "ticks", "192"]) {
+            assert!(m.contains(needle), "{m:?} does not name {needle}");
+        }
+        assert!(msgs[0].contains("NaN"), "{:?}", msgs[0]);
+        assert!(msgs[2].contains("30") && msgs[2].contains("40"), "{:?}", msgs[2]);
+        assert!(msgs[3].contains("13312"), "{:?}", msgs[3]);
+        // It is an `Error`, which is what lets `?` work in every example in this crate.
+        let boxed: Box<dyn std::error::Error> = Box::new(TaskError::Empty { what: "n_classes" });
+        assert!(boxed.to_string().contains("n_classes"));
+    }
+
+    /// The speed bounds the window floor is derived from, which nothing read back.
+    #[test]
+    fn the_speed_bounds_and_the_window_floor_are_the_ones_the_config_implies() {
+        let b = MovingBar::default();
+        assert!((b.min_speed() - 0.8).abs() < 1e-12, "{}", b.min_speed());
+        assert!((b.max_speed() - 1.2).abs() < 1e-12, "{}", b.max_speed());
+        // The slowest traverse of a 16-wide grid behind a 3-pixel bar is `ceil(19 / 0.8) = 24`
+        // ticks, after a start delay of up to 4, plus the two ticks the edges need.
+        assert_eq!(b.min_ticks(), Some(30));
+        assert!(b.ticks >= b.min_ticks().unwrap(), "the default window is below its own floor");
+        // A speed that cannot move has no window at all, rather than a very long one.
+        let stuck = MovingBar { speed_px_per_tick: 0.0, ..b };
+        assert_eq!(stuck.min_ticks(), None);
+        // The floor rounds UP and never down, including through the floating point: at a 90%
+        // jitter `1.0 * (1.0 - 0.9)` is 0.09999999999999998, so `19 / v` is 190.00000000000003 and
+        // the traverse is charged 191 ticks rather than 190. A window one tick too long clips
+        // nothing; one tick too short clips an event.
+        let backwards = MovingBar { speed_jitter_frac: 0.9, ..b };
+        assert!((backwards.min_speed() - 0.1).abs() < 1e-12);
+        assert_eq!(backwards.min_ticks(), Some(4 + 191 + 2));
+        let long = MovingBar { ticks: 197, ..backwards };
+        assert!(long.generate().is_ok(), "a window at the floor must generate");
+        let short = MovingBar { ticks: 196, ..backwards };
+        assert!(matches!(short.generate(), Err(TaskError::OutOfRange { what: "ticks", .. })));
+    }
+
+    /// `poisson_optimal_accuracy` refuses a support above [`super::MAX_COUNT_SUPPORT`]; its exact
+    /// twin had no guard at all, so `ticks = 1e9` asked for three `Vec<f64>` of 24 GB and aborted
+    /// the process. Worse, the summation error grows with the support: at `ticks = 5e7` the
+    /// function returned **1.00002636954903035**, which is not a probability, and printed it as a
+    /// bound.
+    #[test]
+    fn an_unsummable_window_has_no_bound_rather_than_an_abort_or_a_number_above_one() {
+        let over = RateDiscrimination {
+            ticks: super::MAX_COUNT_SUPPORT + 1,
+            ..RateDiscrimination::default()
+        };
+        assert!(
+            over.optimal_accuracy().is_none(),
+            "a window too long to sum exactly reported a bound anyway"
+        );
+        // The Poisson twin truncates on COUNTS, not on ticks, so it still answers here — the two
+        // ceilings are different quantities and only one of them is an allocation.
+        let p = over.poisson_optimal_accuracy().expect("the count support is still small");
+        assert!((0.0..=1.0).contains(&p), "the Poisson bound {p} is not a probability");
+
+        // Inside the ceiling the sum is still a probability, and still a bound above chance.
+        let big = RateDiscrimination { ticks: 1_000_000, ..RateDiscrimination::default() };
+        let a = big.optimal_accuracy().expect("a million ticks is inside the ceiling");
+        assert!((0.5..=1.0).contains(&a), "the bound at a million ticks was {a}");
     }
 }

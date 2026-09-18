@@ -88,10 +88,22 @@
 //! The **weights are not the paper's**, and this is stated rather than buried. Maass uses dynamic
 //! synapses with gamma-distributed amplitudes in amperes; this crate's synapse is a delta synapse in
 //! volts ([`crate::net::Net::w`]). There is no faithful conversion between the two, so
-//! [`LiquidSpec`]'s weight defaults are round numbers chosen to put the default column in a regime
-//! where it fires without saturating, and they are exposed as fields so a user can replace them.
-//! Any figure produced with the defaults is a figure about this implementation, not a reproduction
-//! of the 2002 paper.
+//! [`LiquidSpec`]'s weight defaults are round numbers, and they are exposed as fields so a user can
+//! replace them. Any figure produced with the defaults is a figure about this implementation, not a
+//! reproduction of the 2002 paper.
+//!
+//! They were previously described as "chosen to put the default column in a regime where it fires
+//! without saturating", with a firing rate quoted as the evidence. **That evidence does not hold**
+//! and [`LiquidSpec::maass_column`] now says so with the measurement that replaced it: under the
+//! documented drive only 13 of the 135 cells fire at all, at a rate set by [`Lif`]'s own
+//! inter-spike interval, and a 2% change to `w_ee` does not move the column's spike count by one
+//! spike. Nothing in this crate justifies these four numbers. They are pinned as literals so they
+//! cannot move quietly, and that is all that can honestly be claimed for them.
+//!
+//! Two smaller things are also **this crate's and not transcribed**, listed here so they are not
+//! mistaken for paper claims: that input is injected into excitatory cells only
+//! ([`Liquid::input_sites`]), and the exact averaging inside the class separation statistic
+//! ([`SeparationReport::inter_class`]).
 //!
 //! # What is verified here
 //!
@@ -103,6 +115,21 @@
 //! test puts a linear readout on the raw input window beside the reservoir on the same data: the
 //! baseline gets strictly more of the relevant input than the reservoir sees at any instant, and
 //! still cannot do it, because the obstacle is nonlinearity rather than memory.
+//!
+//! [`memory_capacity`] is checked against a **closed form**, not only against its bound: a single
+//! unit driven weakly enough that `tanh` is linear has capacity exactly `ρ^{2k}(1 − ρ²)` at delay
+//! `k`, which is what pins which delay each entry reports. The lattice probability is checked at a
+//! diagonal pair so that all three axes are in the comparison, and the `C` table is checked **per
+//! ordered type pair**, because `Σ p` over the whole column is invariant under transposing it.
+//!
+//! # A note on this file's size
+//!
+//! It is about 4050 lines against a 400–900 line house target, and a reviewer should know that
+//! before opening it rather than after. It carries two unrelated reservoir families — Jaeger's rate
+//! model and Maass's spiking column — plus the only linear algebra in the crate, because
+//! [`Ridge`] and [`power_iteration`] have no other home in a zero-dependency library and both of
+//! them exist to serve the readout. Splitting it would put the solver a module away from its only
+//! caller.
 
 use crate::net::{Net, NetBuilder, NetError};
 use crate::neuron::Lif;
@@ -119,9 +146,11 @@ use crate::sim::{Mode, Sim, SimError};
 pub enum ReservoirError {
     /// A supplied number was not finite.
     NonFinite {
-        /// Which array it was in, for example `"input"` or `"gram"`.
+        /// Which array or scalar it was, for example `"input"`, `"gram"` or `"input_scaling"`.
         what: &'static str,
-        /// Index of the offending element within that array.
+        /// Index of the offending element within that array, or `0` when `what` names a **scalar**
+        /// parameter rather than an array — [`Esn::new`] reports a non-finite `input_scaling` that
+        /// way. The index is a position only when there is a position to report.
         index: usize,
     },
     /// A slice had the wrong length for the shape it was used at.
@@ -307,6 +336,22 @@ pub struct Spectrum {
 /// right answer for a nilpotent matrix — `[[0,1],[0,0]]` has both eigenvalues at zero — and it is
 /// reached rather than guessed: the iterate is in the kernel of a power of `A`.
 ///
+/// # Matrices whose scale would break the norm
+///
+/// The iteration's norm squares before it sums, so a matrix whose entries are past about `1.3e154`
+/// would overflow that sum to `+inf`, `y / inf` would underflow to exactly zero, and the zero
+/// branch above would report **radius 0, `converged` true** for a matrix of magnitude `1e200` —
+/// the largest error the function can make, flagged as a convergence. Entries near `1e-160` do the
+/// same thing from below: their squares underflow and the norm is zero with nothing in the kernel.
+///
+/// So a matrix outside a safe band is first multiplied into it by a **power of two**, which is
+/// exact in binary floating point, and [`Spectrum::radius`] and [`Spectrum::rayleigh`] are divided
+/// back at the end. A matrix already inside the band is neither copied nor touched, and its result
+/// is bit-for-bit what it would have been without the guard. The one thing the guard cannot save is
+/// a matrix whose entries span more than about 600 orders of magnitude at once: scaling the largest
+/// into range flushes the smallest to zero, and no estimator reads both ends of that matrix in
+/// `f64`.
+///
 /// # Errors
 ///
 /// [`ReservoirError::ShapeMismatch`] if `a.len() != n * n`, [`ReservoirError::Empty`] for `n == 0`,
@@ -342,6 +387,21 @@ pub fn power_iteration(
         });
     }
 
+    // The scale guard described in the doc above. `amax == 0` is the all-zero matrix, whose radius
+    // really is zero and which the `g == 0.0` branch below reports correctly without any scaling.
+    let amax = a.iter().fold(0.0f64, |m, v| m.max(v.abs()));
+    let rescaled = amax > 0.0 && (amax < 1e-150 || amax > 1e150 / n as f64);
+    // Two factors rather than one: moving a subnormal up needs `2^1075`, which is not a `f64`.
+    let (f1, f2) = if rescaled {
+        let shift = -(amax.log2().floor() as i32);
+        (f64::powi(2.0, shift / 2), f64::powi(2.0, shift - shift / 2))
+    } else {
+        (1.0, 1.0)
+    };
+    let scaled: Vec<f64> =
+        if rescaled { a.iter().map(|v| v * f1 * f2).collect() } else { Vec::new() };
+    let work: &[f64] = if rescaled { &scaled } else { a };
+
     let mut rng = Rng::new(seed);
     let mut x = vec![0.0f64; n];
     // A random start, renormalised. The loop guards against the astronomically unlikely all-zero
@@ -368,7 +428,7 @@ pub fn power_iteration(
     let mut logs = Vec::with_capacity(max_iters);
     for _ in 0..max_iters {
         for i in 0..n {
-            let row = &a[i * n..i * n + n];
+            let row = &work[i * n..i * n + n];
             let mut s = 0.0;
             for j in 0..n {
                 s += row[j] * x[j];
@@ -395,7 +455,7 @@ pub fn power_iteration(
     // is 1 and is not divided out.
     let mut rayleigh = 0.0;
     for i in 0..n {
-        let row = &a[i * n..i * n + n];
+        let row = &work[i * n..i * n + n];
         let mut s = 0.0;
         for j in 0..n {
             s += row[j] * x[j];
@@ -409,9 +469,11 @@ pub fn power_iteration(
     let early = mean(&logs[max_iters - 2 * q..max_iters - q]).exp();
     let residual = if late > 0.0 { (late - early).abs() / late } else { (late - early).abs() };
 
+    // `f1` and `f2` are exactly 1.0 when the matrix was left alone, and division by 1.0 is exact,
+    // so an in-band matrix returns the same bits it always did.
     Ok(Spectrum {
-        radius: late,
-        rayleigh,
+        radius: late / f1 / f2,
+        rayleigh: rayleigh / f1 / f2,
         residual,
         iters: max_iters,
         converged: residual < tol,
@@ -571,8 +633,15 @@ pub struct Ridge {
     pub samples: usize,
     /// The Gram matrix `XᵀX`, row-major `p × p` with `p = features + bias as usize`. Symmetric by
     /// construction; both triangles are filled.
+    ///
+    /// This field and [`Ridge::features`] are both public, so the two can be made to disagree from
+    /// outside — `r.features = 5` after `Ridge::new(3, ..)` leaves a 16-entry `gram` being indexed
+    /// as a 6×6. [`Ridge::accumulate`] and [`Ridge::solve`] therefore **check** the length against
+    /// the declared shape and return [`ReservoirError::ShapeMismatch`] rather than indexing past
+    /// the end, which is what they used to do.
     pub gram: Vec<f64>,
-    /// The cross-moment `XᵀY`, row-major `p × targets`.
+    /// The cross-moment `XᵀY`, row-major `p × targets`. Checked against the declared shape on every
+    /// call for the reason given on [`Ridge::gram`].
     pub cross: Vec<f64>,
 }
 
@@ -630,17 +699,27 @@ impl Ridge {
         self.features + usize::from(self.bias)
     }
 
+    /// The accumulators are the size the declared shape says they are.
+    fn check_shape(&self) -> Result<(), ReservoirError> {
+        let p = self.width();
+        shape(self.gram.len(), p * p, "gram")?;
+        shape(self.cross.len(), p * self.targets, "cross")
+    }
+
     /// Fold one sample into the normal equations.
     ///
     /// # Errors
     ///
-    /// [`ReservoirError::ShapeMismatch`] if `x` is not [`Ridge::features`] long or `y` is not
-    /// [`Ridge::targets`] long, and [`ReservoirError::NonFinite`] for a non-finite entry in either.
+    /// [`ReservoirError::ShapeMismatch`] if `x` is not [`Ridge::features`] long, `y` is not
+    /// [`Ridge::targets`] long, or the public [`Ridge::gram`] / [`Ridge::cross`] buffers do not
+    /// match the declared shape, and [`ReservoirError::NonFinite`] for a non-finite entry in
+    /// either input.
     pub fn accumulate(&mut self, x: &[f64], y: &[f64]) -> Result<(), ReservoirError> {
         shape(x.len(), self.features, "sample")?;
         shape(y.len(), self.targets, "target")?;
         finite(x, "sample")?;
         finite(y, "target")?;
+        self.check_shape()?;
         let p = self.width();
         let at = |i: usize| if i < self.features { x[i] } else { 1.0 };
         for i in 0..p {
@@ -660,14 +739,17 @@ impl Ridge {
     ///
     /// # Errors
     ///
-    /// [`ReservoirError::NoSamples`] if nothing was accumulated, and
-    /// [`ReservoirError::IllConditioned`] if the penalised Gram matrix is numerically rank
-    /// deficient — which with `alpha = 0` is exactly the case of linearly dependent features or
-    /// fewer samples than features, and with `alpha > 0` should not happen at all.
+    /// [`ReservoirError::NoSamples`] if nothing was accumulated,
+    /// [`ReservoirError::ShapeMismatch`] if the public [`Ridge::gram`] / [`Ridge::cross`] buffers
+    /// do not match the declared shape, and [`ReservoirError::IllConditioned`] if the penalised
+    /// Gram matrix is numerically rank deficient — which with `alpha = 0` is exactly the case of
+    /// linearly dependent features or fewer samples than features, and with `alpha > 0` should not
+    /// happen at all.
     pub fn solve(&self) -> Result<Readout, ReservoirError> {
         if self.samples == 0 {
             return Err(ReservoirError::NoSamples);
         }
+        self.check_shape()?;
         let p = self.width();
         let mut m = self.gram.clone();
         // The penalty goes on the FEATURE diagonal only. See the note on `Ridge::bias`.
@@ -730,6 +812,10 @@ pub struct Readout {
     /// Whether a constant `1.0` was appended during the fit; [`Readout::predict`] appends it again.
     pub bias: bool,
     /// Coefficients, row-major `targets × (features + bias as usize)`.
+    ///
+    /// Public alongside [`Readout::features`], so the two can be made to disagree from outside.
+    /// [`Readout::predict`] checks the length against the declared shape and returns
+    /// [`ReservoirError::ShapeMismatch`] rather than slicing past the end.
     pub w: Vec<f64>,
     /// The [`Cholesky::pivot_ratio`] of the fit, carried forward so a caller can see how far the
     /// solve was from rank deficiency without refitting.
@@ -743,12 +829,14 @@ impl Readout {
     ///
     /// # Errors
     ///
-    /// [`ReservoirError::ShapeMismatch`] for the wrong feature count, [`ReservoirError::NonFinite`]
-    /// for a non-finite feature.
+    /// [`ReservoirError::ShapeMismatch`] for the wrong feature count or for a coefficient vector
+    /// that does not match the declared shape, and [`ReservoirError::NonFinite`] for a non-finite
+    /// feature.
     pub fn predict(&self, x: &[f64]) -> Result<Vec<f64>, ReservoirError> {
         shape(x.len(), self.features, "sample")?;
         finite(x, "sample")?;
         let p = self.features + usize::from(self.bias);
+        shape(self.w.len(), self.targets * p, "coefficients")?;
         let mut out = vec![0.0f64; self.targets];
         for t in 0..self.targets {
             let row = &self.w[t * p..t * p + p];
@@ -916,14 +1004,46 @@ pub struct Esn {
     pub x: Vec<f64>,
     /// The spectral radius measured after scaling, dimensionless.
     ///
-    /// Not identical to [`EsnSpec::spectral_radius`]: the matrix was scaled by the ratio of the
-    /// target to a *measured* radius, so this is the target up to the power iteration's own
-    /// residual. It is stored rather than recomputed because a reader comparing two reservoirs
-    /// needs the number that was actually realised, not the one that was asked for.
+    /// Not identical to [`EsnSpec::spectral_radius`], and the reason is worth stating because the
+    /// obvious implementation makes it identical by accident. The matrix was scaled by
+    /// `target / measured`, and power iteration is positively homogeneous, so re-measuring **from
+    /// the same random start** returns the target to the last bit however wrong the first estimate
+    /// was — an algebraic identity dressed up as a measurement. [`Esn::rescale`] therefore verifies
+    /// from a **different** start ([`Esn::VERIFY_SEED`]), which makes this an independent estimate
+    /// of the matrix that was actually left behind.
+    ///
+    /// It will therefore differ from the target, typically by a few parts in a thousand for a
+    /// 400-iteration run on a random sparse matrix whose spectrum is not well separated. That gap
+    /// is the estimator's error and not a scaling bug. On the 40-unit reservoir in
+    /// `the_contraction_rate_approaches_the_spectral_radius`, asked for 0.6: this field reads
+    /// 0.600132, a 200 000-iteration reference says 0.598153, and the contraction the reservoir's
+    /// own dynamics show over 100 steps is 0.596873. Four numbers inside 0.6% of each other, which
+    /// is the accuracy a 400-step power method has on a spectrum that crowded. A **large**
+    /// disagreement is the signal worth acting on: it means the spectrum is degenerate enough that
+    /// 400 iterations did not resolve it at all.
+    ///
+    /// Written by [`Esn::new`] and rewritten by every [`Esn::rescale`], so it always describes the
+    /// matrix currently in [`Esn::w`].
     pub radius: f64,
 }
 
 impl Esn {
+    /// Iterations [`Esn::rescale`] gives each of its two power-iteration passes.
+    ///
+    /// 400 at 1e-10: enough that a random sparse matrix, whose two largest eigenvalues are
+    /// typically well separated, settles to the last few digits, and cheap enough that building a
+    /// 1000-unit reservoir is still a fraction of a second.
+    pub const ITERS: usize = 400;
+
+    /// The random start [`Esn::rescale`] **measures** from, before scaling.
+    pub const SCALE_SEED: u64 = 0x9E37_79B9;
+
+    /// The random start [`Esn::rescale`] **verifies** from, after scaling.
+    ///
+    /// Different from [`Esn::SCALE_SEED`] on purpose, and that difference is the whole information
+    /// content of [`Esn::radius`]; see that field.
+    pub const VERIFY_SEED: u64 = 0x85EB_CA6B;
+
     /// Build a reservoir from a spec and an input width.
     ///
     /// The recurrent matrix is drawn entry by entry: each of the `units²` positions is non-zero with
@@ -1014,11 +1134,21 @@ impl Esn {
     }
 
     /// Rescale the recurrent matrix to a new spectral radius, returning the radius measured after
-    /// scaling.
+    /// scaling — measured, not assumed; see [`Esn::radius`].
     ///
     /// This exists so that two reservoirs can differ **only** in their spectral radius — same
     /// sparsity pattern, same signs, same relative magnitudes — which is what the echo-state-property
     /// test needs to make its contrast a controlled one rather than two unrelated draws.
+    ///
+    /// # On `Spectrum::converged`
+    ///
+    /// Neither pass's flag is turned into an error here, and that is a decision rather than an
+    /// oversight: a random sparse matrix at 400 iterations and a tolerance of 1e-10 reports
+    /// `converged` **false** most of the time, because its two largest eigenvalues are usually a
+    /// fraction of a percent apart, and refusing those reservoirs would refuse the normal case. The
+    /// number a caller should look at instead is the returned one, which is an independent estimate
+    /// of the same matrix: a disagreement with `target` far past a percent is the same information
+    /// the flag carries, stated in the units of the thing being measured.
     ///
     /// # Errors
     ///
@@ -1034,10 +1164,7 @@ impl Esn {
             });
         }
         let n = self.units;
-        // 400 iterations at 1e-10: enough that a random sparse matrix, whose two largest eigenvalues
-        // are typically well separated, settles to the last few digits, and cheap enough that
-        // building a 1000-unit reservoir is still a fraction of a second.
-        let s = power_iteration(&self.w, n, 400, 1e-10, 0x9E37_79B9)?;
+        let s = power_iteration(&self.w, n, Self::ITERS, 1e-10, Self::SCALE_SEED)?;
         if !(s.radius > 0.0) {
             return Err(ReservoirError::Degenerate { radius: s.radius });
         }
@@ -1045,7 +1172,14 @@ impl Esn {
         for v in &mut self.w {
             *v *= k;
         }
-        let after = power_iteration(&self.w, n, 400, 1e-10, 0x9E37_79B9)?;
+        // A DIFFERENT start. Re-measuring from `SCALE_SEED` would reproduce the iterates that
+        // produced `k` exactly — power iteration is positively homogeneous and the start is seeded
+        // — and return `target` to the last bit whatever the first estimate was.
+        let after = power_iteration(&self.w, n, Self::ITERS, 1e-10, Self::VERIFY_SEED)?;
+        // The field is updated, not only returned. It used to be written once by `Esn::new` and
+        // left stale by every later rescale, so an `Esn` whose matrix had been scaled to 3.0 went
+        // on reporting the 0.9 it was built at.
+        self.radius = after.radius;
         Ok(after.radius)
     }
 
@@ -1252,15 +1386,26 @@ pub fn separation(a: &[f64], b: &[f64]) -> Result<f64, ReservoirError> {
 /// The class-based separation statistic and its two halves.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct SeparationReport {
-    /// `Cd`: mean Euclidean distance between class centroids, averaged over **all ordered pairs of
-    /// classes including the diagonal**, which is the averaging the source paper uses.
+    /// `Cd`: mean Euclidean distance between class centroids, averaged over **all `k²` ordered
+    /// pairs of classes, the zero diagonal included**.
+    ///
+    /// Including the diagonal is **this implementation's choice and has not been checked against
+    /// the source paper**, which is stated here rather than asserted away because the two
+    /// conventions differ by a fixed factor: averaging over the `k(k−1)` off-diagonal pairs instead
+    /// would multiply this by `k / (k − 1)`, which is 2 for two classes. The choice does not affect
+    /// any comparison made at a fixed class count, and does affect a number quoted on its own.
     pub inter_class: f64,
-    /// `Cv`: mean distance from a state to its own class centroid, averaged over classes and then
-    /// over the members of each class.
+    /// `Cv`: mean distance from a state to its own class centroid, averaged over the members of
+    /// each class and then over the `k` classes — so every class weighs the same whatever its size.
     pub intra_class: f64,
-    /// `Cd / (Cv + 1)`. The `+ 1` is in the source and keeps the statistic finite for a class with
-    /// no spread; it also means the figure is **not** scale-free, so comparing it between
-    /// reservoirs whose states have different magnitudes compares two different things.
+    /// `Cd / (Cv + 1)`, the form this crate implements from the citation.
+    ///
+    /// The `+ 1` keeps the statistic finite for a class with no spread; it also means the figure is
+    /// **not** scale-free, so comparing it between reservoirs whose states have different
+    /// magnitudes compares two different things. As with [`SeparationReport::inter_class`], the
+    /// exact averaging has not been checked line by line against Goodman & Ventura — what is
+    /// checked here is the arithmetic, against a two-class fixture whose centroids are written out
+    /// by hand in `the_separation_statistic_matches_centroids_computed_by_hand`.
     pub ratio: f64,
     /// Number of distinct classes found in the labels.
     pub classes: usize,
@@ -1555,11 +1700,36 @@ impl LiquidSpec {
     /// 15×3×3 = 135 neurons, 20% inhibitory, `λ = 2`, `C` of 0.3/0.2/0.4/0.1, delays of 1.5 ms for
     /// excitatory→excitatory and 0.8 ms otherwise, at a 0.1 ms tick.
     ///
-    /// The weights are this crate's, for the reason in the module doc. They are sized by measurement
-    /// rather than taken from the paper: with 4 nA driven into a tenth of the cells, the default
-    /// column runs at a mean rate of **5.8 Hz** and at 6 nA at **11.0 Hz**, which is a regime where
-    /// it neither falls silent nor saturates. Those two figures are from this crate's own probe on
-    /// this crate's own synapse model and are not a reproduction of anything published.
+    /// # The weights, and what does and does not justify them
+    ///
+    /// The weights are this crate's, for the reason in the module doc. This paragraph used to say
+    /// they were "sized by measurement", quoting a mean rate of 5.8 Hz at 4 nA into a tenth of the
+    /// cells and 11.0 Hz at 6 nA. **Both numbers were wrong and the argument behind them does not
+    /// work**, so both are gone and what is actually there is written out instead.
+    ///
+    /// Protocol, so the numbers below can be repeated: `Liquid::build(&LiquidSpec::maass_column())`,
+    /// a constant current into the 13 excitatory cells `input_sites(1, 13, 99)` picks and nothing
+    /// into the other 122, `Lif::default()` for both populations, [`Mode::Clocked`] at the spec's
+    /// 0.1 ms tick, 10 000 ticks = 1 s.
+    ///
+    /// | drive | spikes | mean rate over 135 cells | cells that fired | spikes from the other cells |
+    /// |-------|--------|--------------------------|------------------|------------------------------|
+    /// | 4 nA  | 1131   | 8.378 Hz                 | **13**           | **0**                        |
+    /// | 6 nA  | 1696   | 12.563 Hz                | **14**           | 32 (1.9%)                    |
+    ///
+    /// The mean rate is real and reproducible and it **is not a measurement of these weights**. At
+    /// 4 nA every one of those 1131 spikes comes from one of the 13 driven cells, each firing at
+    /// 87 Hz, which is `1 / Lif::isi(4 nA)` rounded up to a tick and has nothing to do with `w_ee`
+    /// or anything else in this table: the other 122 cells never reach threshold. Changing `w_ee`
+    /// by 2% does not move the spike count by one spike. So "a regime where it neither falls silent
+    /// nor saturates" was true of 13 cells and false of 122, and the honest statement is that
+    /// **nothing in this crate currently justifies these four weights**. They are round numbers,
+    /// they are exposed as fields, and `the_default_columns_firing_rate_is_a_property_of_the_drive`
+    /// pins both the rate and the fact that it is the drive being measured.
+    ///
+    /// What the weight defaults themselves are pinned by is
+    /// `the_default_weight_table_is_the_one_documented_here`, which asserts the four literals and
+    /// that every synapse in the built column carries exactly the one its cell types select.
     #[must_use]
     pub fn maass_column() -> Self {
         Self {
@@ -1634,6 +1804,15 @@ pub struct Liquid {
 }
 
 impl Liquid {
+    /// The largest delay, in ticks, [`Liquid::build`] will convert a `delay / dt` ratio into.
+    ///
+    /// A million ticks is 100 s of delay at the default 0.1 ms tick, which is longer than any
+    /// axon. The ceiling exists because [`crate::sim::Sim`] holds one delivery bucket per tick of
+    /// delay — `max_delay + 1` of them, 24 bytes each — so this is about 24 MB of ring, and the
+    /// `u32` the cast saturates to would be 103 GB. The number is a policy, not a physical limit:
+    /// it is the point past which a delay is a mis-specified `dt` rather than a model.
+    pub const MAX_DELAY_TICKS: u32 = 1_000_000;
+
     /// Build the column.
     ///
     /// Inhibitory neurons are chosen by a partial Fisher-Yates shuffle over the neuron indices, so
@@ -1649,6 +1828,16 @@ impl Liquid {
     /// negative delay, a `C` outside `[0, 1]`, a non-positive excitatory weight or a non-negative
     /// inhibitory one, [`ReservoirError::NonFinite`] for a non-finite parameter, and
     /// [`ReservoirError::Net`] if the underlying builder refuses a synapse.
+    ///
+    /// Also [`ReservoirError::OutOfRange`] on `"delay_ee / dt"` or `"delay_other / dt"` when the
+    /// tick conversion cannot carry the delay: a **positive** delay that rounds to zero ticks, or
+    /// one past [`Liquid::MAX_DELAY_TICKS`]. Both were silent before and both are worth an error.
+    /// A delay that rounds to zero deletes the distinction the paper's two delays exist to draw —
+    /// at `dt = 1 s` the 1.5 ms and 0.8 ms delays both become instantaneous — and a delay past the
+    /// ceiling is an allocation, not a model: [`crate::sim::Sim`] sizes its delivery ring at
+    /// `max_delay + 1` buckets, so the `dt = 1e-15` that saturates the `u32` cast asks it for
+    /// 4.3 billion of them. An explicitly **zero** delay is still accepted and still means
+    /// same-tick delivery.
     pub fn build(spec: &LiquidSpec) -> Result<Self, ReservoirError> {
         let n = spec.neurons();
         if n == 0 {
@@ -1733,9 +1922,31 @@ impl Liquid {
             kinds[idx as usize] = Cell::Inhibitory;
         }
 
-        let ticks = |seconds: f64| (seconds / spec.dt).round() as u32;
-        let d_ee = ticks(spec.delay_ee);
-        let d_other = ticks(spec.delay_other);
+        // `as u32` SATURATES, so the unchecked form turned dt = 1e-15 into 4_294_967_295 ticks
+        // without a word, and `round()` turned any dt past about 1.6 ms into zero ticks the same
+        // way. Both are refused, naming the ratio that was wrong.
+        let ticks = |what: &'static str, seconds: f64| -> Result<u32, ReservoirError> {
+            let t = (seconds / spec.dt).round();
+            if !t.is_finite() || t > f64::from(Self::MAX_DELAY_TICKS) {
+                return Err(ReservoirError::OutOfRange {
+                    what,
+                    value: t,
+                    low: 0.0,
+                    high: f64::from(Self::MAX_DELAY_TICKS),
+                });
+            }
+            if seconds > 0.0 && t == 0.0 {
+                return Err(ReservoirError::OutOfRange {
+                    what,
+                    value: t,
+                    low: 1.0,
+                    high: f64::from(Self::MAX_DELAY_TICKS),
+                });
+            }
+            Ok(t as u32)
+        };
+        let d_ee = ticks("delay_ee / dt", spec.delay_ee)?;
+        let d_other = ticks("delay_other / dt", spec.delay_other)?;
 
         let mut b = NetBuilder::new(n);
         let l2 = spec.lambda * spec.lambda;
@@ -1831,9 +2042,12 @@ impl Liquid {
 
     /// Choose `per_channel` distinct excitatory neurons for each of `channels` input channels.
     ///
-    /// Input is injected into excitatory cells only, which is the arrangement in the paper: an
-    /// afferent that drove the inhibitory population directly would suppress the liquid rather than
-    /// perturb it. The sets for different channels are drawn independently and may overlap.
+    /// Input is injected into excitatory cells only. The reasoning is that an afferent driving the
+    /// inhibitory population directly would suppress the liquid rather than perturb it — but that
+    /// is **this crate's convention and not a transcribed item**: it belongs with the weights in
+    /// the module doc's "not the paper's" list, not with the probabilities and delays, and nothing
+    /// here checks it against Maass. What is checked is that the sites really are excitatory. The
+    /// sets for different channels are drawn independently and may overlap.
     ///
     /// # Errors
     ///
@@ -1881,8 +2095,16 @@ impl Liquid {
     /// Build a simulation of this liquid, giving excitatory and inhibitory cells different
     /// membranes.
     ///
+    /// `dt` must equal [`LiquidSpec::dt`], and is taken as an argument rather than read from the
+    /// spec so that the tick length is visible at the call site. It cannot be a free parameter:
+    /// [`Net::delay`](crate::net::Net::delay) holds **integer tick counts** that [`Liquid::build`]
+    /// computed at `spec.dt`, so running at a different `dt` silently reinterprets every one of
+    /// them — a liquid built at 0.1 ms and stepped at 1 ms turns Maass's 1.5 ms delay into 15 ms
+    /// and produces a plausible-looking spike train of a network nobody specified.
+    ///
     /// # Errors
     ///
+    /// [`ReservoirError::OutOfRange`] on `"dt"` if it differs from [`LiquidSpec::dt`] at all, and
     /// [`ReservoirError::Sim`] if [`crate::sim::Sim::new`] refuses — which for [`Lif`] can only be
     /// a neuron-count mismatch, since `Lif` is exact over gaps and both modes are therefore legal.
     pub fn to_sim(
@@ -1892,6 +2114,14 @@ impl Liquid {
         dt: f64,
         mode: Mode,
     ) -> Result<Sim<Lif>, ReservoirError> {
+        if dt != self.spec.dt {
+            return Err(ReservoirError::OutOfRange {
+                what: "dt",
+                value: dt,
+                low: self.spec.dt,
+                high: self.spec.dt,
+            });
+        }
         let cells: Vec<Lif> = self
             .kinds
             .iter()
@@ -1907,12 +2137,15 @@ impl Liquid {
     /// which is what Maass reads out: a spike adds 1 to its neuron's trace and every trace decays
     /// by `exp(−dt / tau)` per tick.
     ///
+    /// `dt` must equal [`LiquidSpec::dt`], for the reason given on [`Liquid::to_sim`]. `tau` is
+    /// free: it belongs to the readout filter and not to the network.
+    ///
     /// # Errors
     ///
     /// [`ReservoirError::Empty`] for an empty input, [`ReservoirError::ShapeMismatch`] if a tick's
     /// current vector is not `n` long, [`ReservoirError::OutOfRange`] for a non-positive `dt` or
-    /// `tau`, [`ReservoirError::NonFinite`] for a non-finite current, and [`ReservoirError::Sim`]
-    /// from the simulator.
+    /// `tau` or for a `dt` that differs from [`LiquidSpec::dt`], [`ReservoirError::NonFinite`] for
+    /// a non-finite current, and [`ReservoirError::Sim`] from the simulator.
     pub fn respond(
         &self,
         excitatory: Lif,
@@ -1982,6 +2215,12 @@ pub struct SpikeFilter {
     pub trace: Vec<f64>,
     /// `exp(−dt / tau)`, the per-tick decay, in `(0, 1)`. Cached because it is otherwise an
     /// exponential per neuron per tick.
+    ///
+    /// **Invariant: `decay == (-dt / tau).exp()`.** All three fields are public, so writing `tau`
+    /// or `dt` on their own leaves this stale and the filter goes on decaying at the old rate with
+    /// nothing to show for it. [`SpikeFilter::retune`] changes the pair together and is the
+    /// supported way to do it; [`SpikeFilter::decay_is_current`] answers whether a filter that was
+    /// edited by hand still holds the invariant.
     pub decay: f64,
 }
 
@@ -2027,6 +2266,43 @@ impl SpikeFilter {
                 *v += 1.0;
             }
         }
+    }
+
+    /// Change the time constant and the tick length together, recomputing the cached decay.
+    ///
+    /// The traces are **kept**: a filter retuned mid-run carries the history it had, which is the
+    /// behaviour a caller sweeping `tau` over one recorded spike train wants. Call
+    /// [`SpikeFilter::reset`] first if you want the other one.
+    ///
+    /// # Errors
+    ///
+    /// [`ReservoirError::OutOfRange`] if `tau` or `dt` is not positive and finite, in which case
+    /// the filter is left exactly as it was.
+    pub fn retune(&mut self, tau: f64, dt: f64) -> Result<(), ReservoirError> {
+        for (what, v) in [("tau", tau), ("dt", dt)] {
+            if !(v > 0.0) || !v.is_finite() {
+                return Err(ReservoirError::OutOfRange {
+                    what,
+                    value: v,
+                    low: f64::MIN_POSITIVE,
+                    high: f64::INFINITY,
+                });
+            }
+        }
+        self.tau = tau;
+        self.dt = dt;
+        self.decay = (-dt / tau).exp();
+        Ok(())
+    }
+
+    /// Whether [`SpikeFilter::decay`] still equals `exp(−dt / tau)` for the `tau` and `dt` the
+    /// filter currently holds — exactly, since both sides are computed the same way.
+    ///
+    /// Written for the case where the public fields were set by hand: a `false` here means the
+    /// filter is decaying at a rate that no longer corresponds to its stated time constant.
+    #[must_use]
+    pub fn decay_is_current(&self) -> bool {
+        self.decay == (-self.dt / self.tau).exp()
     }
 
     /// The current trace.
@@ -2196,6 +2472,57 @@ mod tests {
         assert!(s.converged);
         let zero = vec![0.0; 9];
         assert_eq!(power_iteration(&zero, 3, 64, 1e-12, 11).unwrap().radius, 0.0);
+    }
+
+    /// **The largest error the estimator can make, and it used to be flagged as a convergence.**
+    ///
+    /// The norm squares before it sums, so a matrix of magnitude 1e200 overflowed that sum to
+    /// `+inf`, `y / inf` underflowed to exactly zero, and the nilpotent branch reported
+    /// `radius 0, converged true` — for a matrix whose radius is 1e200. Underflow does the same
+    /// thing from below. All three of these returned 0.0 before the scale guard.
+    #[test]
+    fn power_iteration_reports_a_radius_whose_scale_would_overflow_or_underflow_the_norm() {
+        // 1x1: the radius IS the entry, and the Rayleigh quotient is the signed entry.
+        let s = power_iteration(&[1e200], 1, 64, 1e-12, 1).unwrap();
+        assert!((s.radius / 1e200 - 1.0).abs() < 1e-12, "radius {}", s.radius);
+        assert!((s.rayleigh / 1e200 - 1.0).abs() < 1e-12, "rayleigh {}", s.rayleigh);
+        // Diagonal: the radius is the largest magnitude on the diagonal, sign ignored.
+        let s = power_iteration(&[-1e160, 0.0, 0.0, 0.5e160], 2, 64, 1e-12, 2).unwrap();
+        assert!((s.radius / 1e160 - 1.0).abs() < 1e-12, "radius {}", s.radius);
+        assert!((s.rayleigh / -1e160 - 1.0).abs() < 1e-12, "rayleigh {}", s.rayleigh);
+        // And from below, where it is the squares that underflow. 1e-320 is SUBNORMAL, so the
+        // input itself carries only about three digits and the tolerance says so.
+        let s = power_iteration(&[1e-320, 0.0, 0.0, 1e-320], 2, 64, 1e-12, 3).unwrap();
+        assert_ne!(s.radius, 0.0, "a 1e-320 matrix was reported as nilpotent");
+        assert!((s.radius / 1e-320 - 1.0).abs() < 1e-3, "radius {}", s.radius);
+        // The guard must not disturb a matrix that never needed it: this one is in the band and
+        // takes the untouched path.
+        let s = power_iteration(&[2.0], 1, 64, 1e-12, 4).unwrap();
+        assert!((s.radius - 2.0).abs() < 1e-15, "radius {}", s.radius);
+        // A genuinely zero matrix still has radius zero, guard or no guard.
+        assert_eq!(power_iteration(&[0.0; 4], 2, 64, 1e-12, 5).unwrap().radius, 0.0);
+    }
+
+    /// [`Spectrum::converged`] has to be a comparison and not an ornament: the same matrix and the
+    /// same iterates must report `false` under a tolerance below their residual and `true` under
+    /// one above it. Three tests assert `converged`; this is the one that asserts `!converged`,
+    /// without which `converged: residual < tol || true` passes the whole suite.
+    #[test]
+    fn the_convergence_flag_is_the_residual_against_the_tolerance_in_both_directions() {
+        // Eigenvalues 1.0 and 0.999: 400 iterations move their ratio by 0.999^400 = 0.67, so the
+        // estimate is nowhere near settled and the estimator must not claim it is.
+        let hard = householder_conjugate(&[1.0, 0.999, 0.4], &[0.4, -1.0, 0.6]);
+        let strict = power_iteration(&hard, 3, 400, 1e-10, Esn::SCALE_SEED).unwrap();
+        assert!(!strict.converged, "an unsettled estimate claimed convergence");
+        assert!((strict.residual - 4.2414238e-5).abs() < 1e-11, "residual {}", strict.residual);
+        let loose = power_iteration(&hard, 3, 400, 1e-3, Esn::SCALE_SEED).unwrap();
+        assert_eq!(loose.radius, strict.radius, "the tolerance moved the estimate itself");
+        assert_eq!(loose.residual, strict.residual);
+        assert!(loose.converged, "a residual of {} did not clear 1e-3", loose.residual);
+        // A well-separated spectrum settles to the last bit, which is the other end of the scale.
+        let easy = householder_conjugate(&[4.0, -2.0, 1.0], &[1.0, 2.0, -0.5]);
+        let s = power_iteration(&easy, 3, 400, 1e-12, 5).unwrap();
+        assert!(s.converged && s.residual < 1e-12, "residual {}", s.residual);
     }
 
     #[test]
@@ -2383,6 +2710,46 @@ mod tests {
         assert_eq!(batch, acc.solve().unwrap());
     }
 
+    /// Every field of [`Ridge`] is public, so the declared shape and the buffers can be made to
+    /// disagree from outside without a line of `unsafe` — and `accumulate` then indexed a
+    /// 16-entry Gram matrix as a 6x6 and panicked inside a published crate.
+    #[test]
+    fn a_ridge_whose_declared_shape_was_edited_is_refused_rather_than_indexed_past_the_end() {
+        let mut r = Ridge::new(3, 1, 1e-6, true).unwrap();
+        r.accumulate(&[1.0, 2.0, 3.0], &[1.0]).unwrap();
+        r.features = 5;
+        assert_eq!(
+            r.accumulate(&[1.0, 2.0, 3.0, 4.0, 5.0], &[1.0]).unwrap_err(),
+            ReservoirError::ShapeMismatch { what: "gram", got: 16, want: 36 }
+        );
+        assert!(matches!(
+            r.solve().unwrap_err(),
+            ReservoirError::ShapeMismatch { what: "gram", .. }
+        ));
+        // The cross-moment is checked on the same call, not only the Gram matrix.
+        let mut r = Ridge::new(2, 1, 0.0, false).unwrap();
+        r.cross.push(0.0);
+        assert_eq!(
+            r.accumulate(&[1.0, 2.0], &[1.0]).unwrap_err(),
+            ReservoirError::ShapeMismatch { what: "cross", got: 3, want: 2 }
+        );
+
+        // `Readout` carries the same hazard and used to slice `w` past its end.
+        let mut ro = Ridge::fit(
+            &[vec![1.0, 2.0], vec![0.5, -1.0], vec![-2.0, 0.25]],
+            &[vec![1.0], vec![0.0], vec![-1.0]],
+            1e-6,
+            true,
+        )
+        .unwrap();
+        assert!(ro.predict(&[1.0, 2.0]).is_ok());
+        ro.targets = 3;
+        assert_eq!(
+            ro.predict(&[1.0, 2.0]).unwrap_err(),
+            ReservoirError::ShapeMismatch { what: "coefficients", got: 3, want: 9 }
+        );
+    }
+
     #[test]
     fn a_fit_with_nothing_in_it_is_refused() {
         let r = Ridge::new(3, 1, 1.0, true).unwrap();
@@ -2448,7 +2815,6 @@ mod tests {
         for &radius in &[0.6, 0.8, 0.95] {
             let mut e = esn(40, 0.9, 1.0, 5, 1);
             let measured = e.rescale(radius).unwrap();
-            assert!((measured - radius).abs() < 1e-6, "rescale gave {measured} for {radius}");
             let mut a = e.clone();
             let mut b = e;
             let mut x0 = vec![0.0; 40];
@@ -2469,10 +2835,59 @@ mod tests {
                 (rate - radius).abs() / radius < 0.01,
                 "radius {radius}: contraction per step {rate}"
             );
+            // And the radius the reservoir REPORTS against the contraction its dynamics show:
+            // two independent estimates of the same eigenvalue, one algebraic and one dynamical,
+            // agreeing to 0.55%. This assertion used to read `(measured - radius) < 1e-6`, which
+            // could not fail — `measured` was the target re-derived from the same seeded iterates
+            // and was bounded to it by 5e-16 whatever the matrix did.
+            assert!(
+                (measured - rate).abs() / rate < 0.01,
+                "radius {radius}: reported {measured} against a measured contraction of {rate}"
+            );
         }
     }
 
     /// The invariant in the type doc, against a reservoir built to break it.
+    /// **`Esn::radius` is a measurement of the matrix that was left behind.**
+    ///
+    /// The scaling multiplies `w` by `target / measured`, and power iteration is positively
+    /// homogeneous, so re-measuring from the *same seeded start* returns the target to the last bit
+    /// however wrong `measured` was — an identity wearing a measurement's clothes. The check is a
+    /// matrix whose spectrum 400 iterations cannot resolve, where the two answers visibly differ:
+    /// the scaling is computed from an estimate 6.7e-4 low, so the matrix left behind has radius
+    /// 1.000674 and not 1.0, and the reported number has to follow the matrix.
+    #[test]
+    fn the_realised_radius_follows_the_matrix_and_is_not_the_target_handed_back() {
+        let spec = EsnSpec {
+            units: 3,
+            spectral_radius: 0.9,
+            density: 1.0,
+            input_scaling: 1.0,
+            bias_scaling: 0.0,
+            leak: 1.0,
+            seed: 1,
+        };
+        let mut e = Esn::new(&spec, 1).unwrap();
+        e.w = householder_conjugate(&[1.0, 0.999, 0.4], &[0.4, -1.0, 0.6]);
+        let got = e.rescale(1.0).unwrap();
+        // 200 000 iterations on a 3x3 settle exactly: this is the radius of what is now in `e.w`.
+        let truth = power_iteration(&e.w, 3, 200_000, 1e-12, 4242).unwrap();
+        assert!(truth.converged, "the reference run did not settle");
+        assert!((truth.radius - 1.000673608).abs() < 1e-8, "reference {}", truth.radius);
+        assert!(
+            (got - truth.radius).abs() < 5e-5,
+            "reported {got} against the matrix's true {}",
+            truth.radius
+        );
+        assert!(
+            (got - 1.0).abs() > 1e-4,
+            "reported {got}: that is the target echoed back, not a measurement"
+        );
+        // And the stored field is the returned one: `rescale` used to leave `self.radius` at
+        // whatever `Esn::new` measured, so a reservoir scaled to a new radius reported the old one.
+        assert_eq!(e.radius, got, "the stored radius was left behind by the rescale");
+    }
+
     #[test]
     fn the_state_stays_inside_the_unit_box_whatever_the_weights_and_input() {
         let spec = EsnSpec {
@@ -2507,12 +2922,130 @@ mod tests {
         );
     }
 
+    /// [`Esn::collect`] is the washout machinery the module doc calls "not optional and not free",
+    /// and it had no caller and no test anywhere in the crate — including its `if k >= washout`,
+    /// where an off-by-one hands the readout a state that still remembers the initial condition.
+    #[test]
+    fn collect_drops_exactly_the_washout_and_returns_the_states_step_returns() {
+        let mut rng = Rng::new(2);
+        let inputs: Vec<Vec<f64>> = (0..25).map(|_| vec![2.0 * rng.next_f64() - 1.0]).collect();
+        let mut a = esn(12, 0.9, 1.0, 44, 1);
+        let got = a.collect(&inputs, 10).unwrap();
+        assert_eq!(got.len(), 15, "25 inputs less a washout of 10 is 15 states");
+
+        // The same run stepped by hand. The first kept state is the one AFTER the 11th step, not
+        // before it, and the last is the reservoir's final state.
+        let mut b = esn(12, 0.9, 1.0, 44, 1);
+        let mut want = Vec::new();
+        for (k, u) in inputs.iter().enumerate() {
+            b.step(u).unwrap();
+            if k >= 10 {
+                want.push(b.state().to_vec());
+            }
+        }
+        assert_eq!(got, want, "collect and step disagree about which states survive the washout");
+        assert_eq!(got.last().unwrap().as_slice(), a.state());
+
+        // A washout of zero keeps everything; one at the last index keeps exactly one.
+        let mut c = esn(12, 0.9, 1.0, 44, 1);
+        assert_eq!(c.collect(&inputs, 0).unwrap().len(), 25);
+        let mut d = esn(12, 0.9, 1.0, 44, 1);
+        assert_eq!(d.collect(&inputs, 24).unwrap().len(), 1);
+        assert!(matches!(
+            d.collect(&inputs, 25).unwrap_err(),
+            ReservoirError::Empty { what: "inputs after washout" }
+        ));
+        assert!(matches!(
+            d.collect(&[], 0).unwrap_err(),
+            ReservoirError::Empty { what: "inputs" }
+        ));
+    }
+
     #[test]
     fn the_same_spec_builds_the_same_reservoir_on_every_run() {
         let spec = EsnSpec::default();
         assert_eq!(Esn::new(&spec, 3).unwrap(), Esn::new(&spec, 3).unwrap());
         let other = EsnSpec { seed: spec.seed + 1, ..spec };
         assert_ne!(Esn::new(&spec, 3).unwrap().w, Esn::new(&other, 3).unwrap().w);
+    }
+
+    /// [`Esn::new`]'s refusals, which had no test at all — including
+    /// [`ReservoirError::Degenerate`], the one error in this module that a legal-looking spec can
+    /// reach, and the `index: 0` that a **scalar** `NonFinite` carries.
+    #[test]
+    fn a_malformed_esn_spec_is_refused_naming_the_field() {
+        let base = EsnSpec {
+            units: 8,
+            spectral_radius: 0.9,
+            density: 0.5,
+            input_scaling: 1.0,
+            bias_scaling: 0.0,
+            leak: 1.0,
+            seed: 4,
+        };
+        assert_eq!(
+            Esn::new(&EsnSpec { units: 0, ..base }, 1).unwrap_err(),
+            ReservoirError::Empty { what: "units" }
+        );
+        assert_eq!(
+            Esn::new(&base, 0).unwrap_err(),
+            ReservoirError::Empty { what: "input channels" }
+        );
+        for bad in [0.0, 1.5, f64::NAN] {
+            assert!(
+                matches!(
+                    Esn::new(&EsnSpec { density: bad, ..base }, 1).unwrap_err(),
+                    ReservoirError::OutOfRange { what: "density", .. }
+                ),
+                "density {bad} was accepted"
+            );
+            assert!(
+                matches!(
+                    Esn::new(&EsnSpec { leak: bad, ..base }, 1).unwrap_err(),
+                    ReservoirError::OutOfRange { what: "leak", .. }
+                ),
+                "leak {bad} was accepted"
+            );
+        }
+        // A spectral radius ABOVE 1 is legal and deliberately so — the echo-state test builds one
+        // at 3.0 to watch the property fail — so only non-positive and non-finite are refused.
+        assert!(Esn::new(&EsnSpec { spectral_radius: 1.5, ..base }, 1).is_ok());
+        for bad in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert!(
+                matches!(
+                    Esn::new(&EsnSpec { spectral_radius: bad, ..base }, 1).unwrap_err(),
+                    ReservoirError::OutOfRange { what: "spectral_radius", .. }
+                ),
+                "spectral_radius {bad} was accepted"
+            );
+        }
+        // A scalar reported through `NonFinite` carries index 0 because there is no position to
+        // report, which is what that variant's doc now says.
+        assert_eq!(
+            Esn::new(&EsnSpec { input_scaling: f64::NAN, ..base }, 1).unwrap_err(),
+            ReservoirError::NonFinite { what: "input_scaling", index: 0 }
+        );
+        assert_eq!(
+            Esn::new(&EsnSpec { bias_scaling: f64::INFINITY, ..base }, 1).unwrap_err(),
+            ReservoirError::NonFinite { what: "bias_scaling", index: 0 }
+        );
+        // A density low enough that every entry came out zero: the matrix has no radius to scale
+        // to, which is the one error a well-formed-looking spec can reach.
+        assert_eq!(
+            Esn::new(&EsnSpec { units: 1, density: 1e-12, ..base }, 1).unwrap_err(),
+            ReservoirError::Degenerate { radius: 0.0 }
+        );
+        // And `rescale` refuses a target it cannot aim at.
+        let mut e = Esn::new(&base, 1).unwrap();
+        assert!(matches!(
+            e.rescale(0.0).unwrap_err(),
+            ReservoirError::OutOfRange { what: "target radius", .. }
+        ));
+        // `reset` returns the state to the zero vector exactly.
+        e.step(&[1.0]).unwrap();
+        assert!(e.state().iter().any(|v| *v != 0.0));
+        e.reset();
+        assert!(e.state().iter().all(|v| *v == 0.0));
     }
 
     #[test]
@@ -2535,6 +3068,13 @@ mod tests {
     /// `sqrt(units)` — the per-coordinate separation is roughly constant at 0.44 to 0.53 — which is
     /// the caveat stated in [`separation`]'s doc rather than a hidden one: a larger liquid separates
     /// more partly by having more coordinates, and those coordinates are also readout parameters.
+    ///
+    /// **What this does not establish.** The two streams differ at their last step as well as
+    /// everywhere else, so a reservoir with the recurrent term deleted — a memoryless random
+    /// projection of the instantaneous input — passes this test unchanged. It is a statement about
+    /// coordinate count, not about the transient;
+    /// `separation_survives_a_common_suffix_and_therefore_measures_the_transient` is the one that
+    /// is about the transient.
     #[test]
     fn separation_grows_with_reservoir_size() {
         let mut last = 0.0;
@@ -2554,6 +3094,51 @@ mod tests {
             assert!(s > last, "separation {s} at {n} units did not exceed {last}");
             last = s;
         }
+    }
+
+    /// **Separation has to come from the transient, not from the last input.**
+    ///
+    /// Two streams that differ for 40 steps and are then IDENTICAL for a few more. A reservoir
+    /// whose state were a function of the instantaneous input alone — a random projection with the
+    /// recurrent term deleted — would land both copies on the same point and separate by exactly
+    /// zero. `separation_grows_with_reservoir_size` and
+    /// `the_separation_ratio_separates_real_classes_and_not_invented_ones` both pass on such a
+    /// reservoir, because their two streams differ at the last step as well; this one does not.
+    ///
+    /// Measured at 160 units: 1.843 after five common steps, 0.0147 after twenty, which is the
+    /// memory decaying at roughly the spectral radius per step.
+    #[test]
+    fn separation_survives_a_common_suffix_and_therefore_measures_the_transient() {
+        let run = |suffix: usize| -> f64 {
+            let mut a = esn(160, 0.9, 1.0, 77, 1);
+            let mut b = a.clone();
+            let mut rng = Rng::new(21);
+            let head_a: Vec<f64> = (0..40).map(|_| 2.0 * rng.next_f64() - 1.0).collect();
+            let head_b: Vec<f64> = (0..40).map(|_| 2.0 * rng.next_f64() - 1.0).collect();
+            let tail: Vec<f64> = (0..suffix).map(|_| 2.0 * rng.next_f64() - 1.0).collect();
+            for u in head_a.iter().chain(&tail) {
+                a.step(&[*u]).unwrap();
+            }
+            for u in head_b.iter().chain(&tail) {
+                b.step(&[*u]).unwrap();
+            }
+            // The premise, asserted rather than described: the two streams genuinely differ, and
+            // the last input handed to the two copies is the same number — so nothing
+            // instantaneous can account for whatever distance comes out.
+            assert_ne!(head_a, head_b, "the two streams were identical to begin with");
+            let end_a = *head_a.iter().chain(&tail).last().unwrap();
+            let end_b = *head_b.iter().chain(&tail).last().unwrap();
+            assert_eq!(end_a, end_b, "the two streams did not end on the same input");
+            separation(a.state(), b.state()).unwrap()
+        };
+        let five = run(5);
+        let twenty = run(20);
+        assert!(five > 0.5, "five common steps left a separation of only {five}");
+        assert!(
+            five > 10.0 * twenty,
+            "the memory did not decay: {five} after five common steps against {twenty} after twenty"
+        );
+        assert!(twenty > 0.0, "twenty common steps erased the transient exactly, which is suspect");
     }
 
     /// Identical input streams must give identical states, so separation is exactly zero — not
@@ -2581,6 +3166,12 @@ mod tests {
     /// are different streams gives a ratio well above it.
     ///
     /// Measured on 20, 80 and 320 units with two jittered input classes: 1.46, 2.99, 4.67.
+    ///
+    /// Both assertions here are calibrated thresholds, and they carry the same caveat as
+    /// `separation_grows_with_reservoir_size`: the classes differ at the last input as well, so
+    /// this passes on a reservoir with no recurrence at all. The statistic's **arithmetic** is
+    /// pinned independently, by hand, in
+    /// `the_separation_statistic_matches_centroids_computed_by_hand`.
     #[test]
     fn the_separation_ratio_separates_real_classes_and_not_invented_ones() {
         let base = esn(80, 0.9, 1.0, 77, 1);
@@ -2614,6 +3205,60 @@ mod tests {
             "an arbitrary labelling separated by {} against the real {}",
             junk.ratio,
             good.ratio
+        );
+    }
+
+    /// **The statistic's arithmetic, against centroids written out by hand.**
+    ///
+    /// Without this, doubling `Cd` or dropping the class average from `Cv` both pass the whole
+    /// suite: the only other assertions on this function are calibrated thresholds that tolerate a
+    /// common rescaling of either term.
+    ///
+    /// Class A is `(0,0)` and `(2,0)`, centroid `(1,0)`, every member 1 away from it. Class B is
+    /// `(10,0)` and `(10,4)`, centroid `(10,2)`, every member 2 away. The centroids are `sqrt(85)`
+    /// apart. `Cd` averages over all four ordered pairs including the two zero diagonal ones, so
+    /// it is `sqrt(85)/2`; `Cv` averages 1 and 2 over the two classes, so it is 1.5; and
+    /// `Sep = Cd / (Cv + 1)`.
+    #[test]
+    fn the_separation_statistic_matches_centroids_computed_by_hand() {
+        let states =
+            vec![vec![0.0, 0.0], vec![2.0, 0.0], vec![10.0, 0.0], vec![10.0, 4.0]];
+        // Labels are arbitrary `usize` values and need not be contiguous or ordered.
+        let classes = [7usize, 7, 3, 3];
+        let r = separation_ratio(&states, &classes).unwrap();
+        let d = 85.0f64.sqrt();
+        assert!((r.inter_class - d / 2.0).abs() < 1e-15, "Cd {}", r.inter_class);
+        assert!((r.intra_class - 1.5).abs() < 1e-15, "Cv {}", r.intra_class);
+        assert!((r.ratio - (d / 2.0) / 2.5).abs() < 1e-15, "Sep {}", r.ratio);
+        assert_eq!(r.classes, 2);
+        assert_eq!(r.samples, 4);
+
+        // One class: the centroids term is the single zero diagonal entry, so Cd is exactly 0 and
+        // the statistic is exactly 0 however spread the class is. That is what the `+ 1` protects
+        // against a division by zero, and it is worth asserting rather than assuming.
+        let one = separation_ratio(&states, &[1usize, 1, 1, 1]).unwrap();
+        assert_eq!(one.classes, 1);
+        assert_eq!(one.inter_class, 0.0);
+        assert_eq!(one.ratio, 0.0);
+        assert!(one.intra_class > 4.0, "Cv {}", one.intra_class);
+
+        // The refusals, which had no test either.
+        assert_eq!(
+            separation_ratio(&[], &[]).unwrap_err(),
+            ReservoirError::Empty { what: "states" }
+        );
+        assert_eq!(
+            separation_ratio(&states, &[0usize, 0, 0]).unwrap_err(),
+            ReservoirError::ShapeMismatch { what: "class labels", got: 3, want: 4 }
+        );
+        assert_eq!(
+            separation_ratio(&[vec![]], &[0usize]).unwrap_err(),
+            ReservoirError::Empty { what: "state" }
+        );
+        assert_eq!(separation(&[], &[]).unwrap_err(), ReservoirError::Empty { what: "state" });
+        assert_eq!(
+            separation(&[f64::NAN], &[0.0]).unwrap_err(),
+            ReservoirError::NonFinite { what: "state", index: 0 }
         );
     }
 
@@ -2711,10 +3356,13 @@ mod tests {
         assert!(brmse > 5.0 * rmse, "the gap was only {brmse} against {rmse}");
     }
 
-    /// Jaeger's bound, `MC ≤ units`, is a theorem about linear readouts on a fixed-dimensional
-    /// state and must hold for every reservoir this module can build.
+    /// Memory capacity grows with the spectral radius, and the bound is asserted at **60 delays on
+    /// 50 units** so that it is a statement about the reservoir rather than about arithmetic: the
+    /// sum of 60 numbers each in `[0, 1]` could reach 60, and Jaeger's theorem says it cannot pass
+    /// 50. At the 40 delays this test used to run, `MC <= 50` held by counting and could not fail
+    /// for any reservoir, any weights or any input.
     ///
-    /// Measured at 50 units: 4.43 at radius 0.05, 9.97 at 0.5, 13.61 at 0.9, 14.45 at 0.99 — a
+    /// Measured at 50 units over 60 delays: 4.708 at radius 0.05, 10.664 at 0.5, 14.243 at 0.9 — a
     /// quarter of the ceiling at best, which is the honest figure for a `tanh` reservoir.
     #[test]
     fn memory_capacity_stays_under_jaegers_bound_and_grows_with_the_spectral_radius() {
@@ -2730,20 +3378,118 @@ mod tests {
                 seed: 3,
             };
             let e = Esn::new(&spec, 1).unwrap();
-            let mc = memory_capacity(&e, 40, 1_500, 200, 1e-8, 42).unwrap();
+            let mc = memory_capacity(&e, 60, 1_500, 200, 1e-8, 42).unwrap();
             assert_eq!(mc.units, 50);
-            assert_eq!(mc.per_delay.len(), 40);
+            assert_eq!(mc.per_delay.len(), 60);
             assert!(
                 mc.total <= mc.units as f64 + 1e-9,
                 "MC {} exceeded the {}-unit bound",
                 mc.total,
                 mc.units
             );
+            // A NaN r2 would fail `contains`, which is the only thing this range can still catch —
+            // `r2` clamps to [0, 1] by construction, so it is not the bound check it looks like.
             for (k, &v) in mc.per_delay.iter().enumerate() {
                 assert!((0.0..=1.0).contains(&v), "r2 at delay {} was {v}", k + 1);
             }
+            // The two reported quantities have to be the same measurement: `total` is the sum of
+            // `per_delay` and not a separately accumulated number.
+            let summed: f64 = mc.per_delay.iter().sum();
+            assert!((mc.total - summed).abs() < 1e-12, "{} against a per-delay sum of {summed}", mc.total);
+            // And the memory decays: the first delay is worth far more than the sixtieth.
+            assert!(
+                mc.per_delay[0] > 10.0 * mc.per_delay[59],
+                "delay 1 gave {} and delay 60 gave {}",
+                mc.per_delay[0],
+                mc.per_delay[59]
+            );
             assert!(mc.total > last, "radius {radius} gave MC {} against {last}", mc.total);
             last = mc.total;
+        }
+    }
+
+    /// **The closed form, on the one reservoir that has one.**
+    ///
+    /// A single unit driven weakly enough that `tanh` is linear to a part in a thousand is the
+    /// filter `x(t) = Σ_j ρ^j w_in u(t−j)`. For i.i.d. `u` the correlation of `x(t)` with `u(t−k)`
+    /// is `ρ^k sqrt(1 − ρ²)`, so the capacity at delay `k` is exactly `ρ^{2k}(1 − ρ²)` —
+    /// independent of `w_in`, of the sign of `ρ` and of the input's variance — and the sum over all
+    /// `k ≥ 1` is `ρ²`.
+    ///
+    /// This is what pins **which** delay each entry of `per_delay` reports. Reconstructing `u(t)`
+    /// instead of `u(t−1)` — crediting the reservoir with memory of the input it is being fed at
+    /// that instant — puts `1 − ρ² = 0.190` in the first slot where the theory says
+    /// `ρ²(1 − ρ²) = 0.154`, and every other test in the module passes either way.
+    #[test]
+    fn a_one_unit_reservoir_reproduces_the_closed_form_memory_curve() {
+        let rho = 0.9f64;
+        let spec = EsnSpec {
+            units: 1,
+            spectral_radius: rho,
+            density: 1.0,
+            input_scaling: 0.01,
+            bias_scaling: 0.0,
+            leak: 1.0,
+            seed: 17,
+        };
+        let e = Esn::new(&spec, 1).unwrap();
+        // The premise the closed form rests on, measured rather than assumed: the state never
+        // leaves the region where `tanh` is linear. At |x| < 0.05 the cubic term is under 1e-3
+        // relative, an order below the tolerance used against the theory below.
+        let mut probe = e.clone();
+        let mut rng = Rng::new(5);
+        let mut peak = 0.0f64;
+        for _ in 0..2_000 {
+            let u = 2.0 * rng.next_f64() - 1.0;
+            peak = peak.max(probe.step(&[u]).unwrap()[0].abs());
+        }
+        assert!(peak < 0.05, "the drive left the linear region of tanh: |x| reached {peak}");
+
+        let mc = memory_capacity(&e, 10, 50_000, 200, 1e-12, 5).unwrap();
+        let r2 = rho * rho;
+        for (k, &got) in mc.per_delay.iter().enumerate() {
+            let want = r2.powi(k as i32 + 1) * (1.0 - r2);
+            assert!(
+                (got - want).abs() < 3e-3,
+                "delay {}: r2 {got} against the closed form {want}",
+                k + 1
+            );
+        }
+        let want: f64 = (1..=10).map(|k| r2.powi(k) * (1.0 - r2)).sum();
+        assert!((mc.total - want).abs() < 3e-3, "MC {} against the closed form {want}", mc.total);
+        assert!(mc.total <= 1.0 + 1e-9, "a single unit reported MC {}", mc.total);
+    }
+
+    /// The bound where it can actually bind: 30 delays on a two-unit reservoir, so the sum of 30
+    /// numbers each in `[0, 1]` is being held under 2 by the theorem and not by counting.
+    ///
+    /// Measured: 1.401 at two units and 2.008 at three — a reservoir that uses most of what it is
+    /// allowed, which is what makes the ceiling a real constraint here.
+    #[test]
+    fn the_memory_capacity_bound_binds_when_there_are_more_delays_than_units() {
+        for units in [2usize, 3] {
+            let spec = EsnSpec {
+                units,
+                spectral_radius: 0.9,
+                density: 1.0,
+                input_scaling: 0.5,
+                bias_scaling: 0.0,
+                leak: 1.0,
+                seed: 17,
+            };
+            let e = Esn::new(&spec, 1).unwrap();
+            let mc = memory_capacity(&e, 30, 5_000, 200, 1e-8, 5).unwrap();
+            assert_eq!(mc.per_delay.len(), 30);
+            assert!(
+                mc.total <= mc.units as f64,
+                "MC {} exceeded the {units}-unit bound over 30 delays",
+                mc.total
+            );
+            assert!(
+                mc.total > 0.6 * units as f64,
+                "MC {} at {units} units is too far under the bound for it to be binding",
+                mc.total
+            );
         }
     }
 
@@ -2791,6 +3537,119 @@ mod tests {
             assert!(got < last, "probability did not fall with distance at {k}");
             last = got;
         }
+    }
+
+    /// **All three lattice axes, at a diagonal pair.** The other probability tests run on `ny = 1,
+    /// nz = 1` lattices, so only `dx` was ever compared against hand-written arithmetic, and
+    /// deleting the z axis from the metric of the 15x3x3 column passed the whole suite — the
+    /// expectation and the sampler call the same distance function, so "the sampler agrees with
+    /// the closed form" agrees about the wrong closed form.
+    #[test]
+    fn the_connection_probability_uses_all_three_lattice_axes() {
+        // A 2x2x2 block, all excitatory. The index-to-lattice map is x = i / (ny*nz), then y, then
+        // z, so 1 is one step in z, 2 one step in y and 4 one step in x.
+        let spec = LiquidSpec {
+            nx: 2,
+            ny: 2,
+            nz: 2,
+            inhibitory_fraction: 0.0,
+            ..LiquidSpec::maass_column()
+        };
+        let l = Liquid::build(&spec).unwrap();
+        assert_eq!(l.positions[0], [0.0, 0.0, 0.0]);
+        assert_eq!(l.positions[1], [0.0, 0.0, 1.0]);
+        assert_eq!(l.positions[2], [0.0, 1.0, 0.0]);
+        assert_eq!(l.positions[4], [1.0, 0.0, 0.0]);
+        assert_eq!(l.positions[7], [1.0, 1.0, 1.0]);
+
+        // lambda = 2, so p = 0.3 exp(-D^2 / 4). One step along EACH axis has to give the same
+        // number; a metric missing an axis reports 0.3 for that one.
+        let one = 0.3 * (-0.25f64).exp();
+        for b in [1usize, 2, 4] {
+            let got = l.connection_probability(0, b);
+            assert!((got - one).abs() < 1e-15, "p(0,{b}) = {got} against {one}");
+        }
+        // Two axes at once and then all three: the diagonal pairs a one-dimensional fixture cannot
+        // reach. D^2 = 2 for 3, 5 and 6; D^2 = 3 for 7.
+        let two = 0.3 * (-0.5f64).exp();
+        for b in [3usize, 5, 6] {
+            let got = l.connection_probability(0, b);
+            assert!((got - two).abs() < 1e-15, "p(0,{b}) = {got} against {two}");
+        }
+        let three = 0.3 * (-0.75f64).exp();
+        let got = l.connection_probability(0, 7);
+        assert!((got - three).abs() < 1e-15, "p(0,7) = {got} against {three}");
+        assert!(three < two && two < one, "the probability did not fall with distance");
+    }
+
+    /// **The `C` table, per ordered type pair, not in total.**
+    ///
+    /// `Σ p` over all ordered pairs is *invariant* under transposing the table, because
+    /// `exp(-D²/λ²)` is symmetric — so `the_synapse_count_matches_the_analytic_expectation` cannot
+    /// see a transposition, its mean and standard deviation are unchanged by one, and swapping the
+    /// two arguments at the draw site passed the whole suite. The paper's one real asymmetry is
+    /// `C = 0.2` for excitatory→inhibitory against `0.4` for inhibitory→excitatory, a factor of
+    /// two, and its direction is what this pins.
+    #[test]
+    fn the_connection_table_is_not_transposed_between_the_two_cell_types() {
+        let spec = LiquidSpec::maass_column();
+        let l = Liquid::build(&spec).unwrap();
+        let n = l.n();
+        let inh = |i: usize| usize::from(l.kinds[i] == Cell::Inhibitory);
+        let mut count = [[0usize; 2]; 2];
+        for pre in 0..n {
+            for (post, _, _) in l.net.out_of(pre) {
+                count[inh(pre)][inh(post as usize)] += 1;
+            }
+        }
+
+        // The expectation and variance PER ORDERED TYPE PAIR, from a table written out here rather
+        // than read back through `c_for` — otherwise the check inherits whatever `c_for` does.
+        let c = [[spec.c_ee, spec.c_ei], [spec.c_ie, spec.c_ii]];
+        let mut mu = [[0.0f64; 2]; 2];
+        let mut var = [[0.0f64; 2]; 2];
+        for a in 0..n {
+            for b in 0..n {
+                if a == b {
+                    continue;
+                }
+                let (pa, pb) = (l.positions[a], l.positions[b]);
+                let d2 = (pa[0] - pb[0]).powi(2)
+                    + (pa[1] - pb[1]).powi(2)
+                    + (pa[2] - pb[2]).powi(2);
+                let p = c[inh(a)][inh(b)] * (-d2 / (spec.lambda * spec.lambda)).exp();
+                mu[inh(a)][inh(b)] += p;
+                var[inh(a)][inh(b)] += p * (1.0 - p);
+            }
+        }
+        let name = ["excitatory", "inhibitory"];
+        for a in 0..2 {
+            for b in 0..2 {
+                let sd = var[a][b].sqrt();
+                assert!(sd > 0.0, "{} -> {} had no variance to check against", name[a], name[b]);
+                assert!(
+                    (count[a][b] as f64 - mu[a][b]).abs() < 4.0 * sd,
+                    "{} -> {}: {} synapses against {} +/- {}",
+                    name[a],
+                    name[b],
+                    count[a][b],
+                    mu[a][b],
+                    sd
+                );
+            }
+        }
+        // The witness, as exact counts: 2916 ordered excitatory->inhibitory pairs and the same
+        // 2916 the other way, drawn at 0.2 and 0.4 respectively.
+        assert_eq!(count[0][1], 65, "excitatory -> inhibitory");
+        assert_eq!(count[1][0], 126, "inhibitory -> excitatory");
+        assert_eq!(count[0][0] + count[0][1] + count[1][0] + count[1][1], l.net.n_syn);
+        assert!(
+            count[1][0] > count[0][1],
+            "the 0.4 against 0.2 asymmetry is running the wrong way: {} inhibitory -> excitatory \
+             against {} excitatory -> inhibitory",
+            count[1][0],
+            count[0][1]
+        );
     }
 
     /// The expectation, against two neurons and one exponential.
@@ -2865,6 +3724,206 @@ mod tests {
         assert_eq!(seen, l.net.n_syn, "the CSR walk missed synapses");
     }
 
+    /// **The rate the weights were said to be sized by, and what it is actually a measurement of.**
+    ///
+    /// [`LiquidSpec::maass_column`] used to justify its weights with a mean firing rate. Nothing
+    /// checked it, the quoted 5.8 Hz and 11.0 Hz did not reproduce under any protocol, and — the
+    /// part worth a test rather than a correction — the rate that *does* reproduce is **not a
+    /// function of the weights at all**. At 4 nA every spike comes from one of the 13 driven cells
+    /// at `1 / Lif::isi(4 nA)` rounded up to a tick; the other 122 never reach threshold.
+    #[test]
+    fn the_default_columns_firing_rate_is_a_property_of_the_drive() {
+        let spec = LiquidSpec::maass_column();
+        let l = Liquid::build(&spec).unwrap();
+        let n = l.n();
+        let sites = l.input_sites(1, 13, 99).unwrap();
+        let steps = 10_000usize; // 1 s at the 0.1 ms tick
+        let run = |amps: f64| -> Vec<usize> {
+            let mut ext = vec![0.0; n];
+            for &site in &sites[0] {
+                ext[site as usize] = amps;
+            }
+            let mut sim = l.to_sim(Lif::default(), Lif::default(), spec.dt, Mode::Clocked).unwrap();
+            let mut per = vec![0usize; n];
+            for _ in 0..steps {
+                for id in sim.step(&ext) {
+                    per[id as usize] += 1;
+                }
+            }
+            per
+        };
+        let hz = |per: &[usize]| {
+            per.iter().sum::<usize>() as f64 / (n as f64 * steps as f64 * spec.dt)
+        };
+
+        let four = run(4e-9);
+        assert!((hz(&four) - 8.378).abs() < 0.01, "4 nA gave {} Hz against 8.378", hz(&four));
+        // The decomposition, which is the point: 13 cells fired and 122 did not.
+        assert_eq!(four.iter().filter(|&&c| c > 0).count(), 13, "cells that fired at 4 nA");
+        for &site in &sites[0] {
+            assert!(four[site as usize] > 0, "a driven cell was silent");
+        }
+        let recurrent: usize =
+            (0..n).filter(|i| !sites[0].contains(&(*i as u32))).map(|i| four[i]).sum();
+        assert_eq!(recurrent, 0, "{recurrent} spikes came from cells the drive did not reach");
+
+        // And the 87 Hz each of the 13 is the closed form of the membrane, not of the column: a
+        // `Lif` at 4 nA has an inter-spike interval of 11.40 ms, which the simulator rounds up to
+        // 115 ticks, giving 86.96 Hz.
+        let isi = Lif::default().isi(4e-9).expect("4 nA is above rheobase");
+        let ticks = (isi / spec.dt).ceil();
+        let closed = 1.0 / (ticks * spec.dt);
+        assert!((ticks - 115.0).abs() < 1e-9, "{ticks} ticks per interval");
+        for &site in &sites[0] {
+            let cell = four[site as usize] as f64;
+            assert!((cell - closed).abs() <= 1.0, "a driven cell fired {cell} times against {closed}");
+        }
+
+        // 6 nA: one more cell joins and 1.9% of the spikes become recurrent. Still the drive.
+        let six = run(6e-9);
+        assert!((hz(&six) - 12.563).abs() < 0.01, "6 nA gave {} Hz against 12.563", hz(&six));
+        assert_eq!(six.iter().filter(|&&c| c > 0).count(), 14, "cells that fired at 6 nA");
+        assert!(hz(&six) > hz(&four), "more drive produced fewer spikes");
+    }
+
+    /// The four weight defaults, as literals, plus the mapping from a cell-type pair to the weight
+    /// every synapse actually carries.
+    ///
+    /// They are round numbers rather than a transcription, which is exactly why they need pinning:
+    /// nothing else in the module notices if one moves. The firing-rate test does not — a 2% nudge
+    /// to `w_ee` does not change the default column's spike count by one spike.
+    #[test]
+    fn the_default_weight_table_is_the_one_documented_here() {
+        let spec = LiquidSpec::maass_column();
+        assert_eq!(spec.w_ee, 1.6e-3, "w_ee, volts per spike");
+        assert_eq!(spec.w_ei, 1.6e-3, "w_ei, volts per spike");
+        assert_eq!(spec.w_ie, -2.4e-3, "w_ie, volts per spike");
+        assert_eq!(spec.w_ii, -2.4e-3, "w_ii, volts per spike");
+        assert_eq!(spec.c_ee, 0.3);
+        assert_eq!(spec.c_ei, 0.2);
+        assert_eq!(spec.c_ie, 0.4);
+        assert_eq!(spec.c_ii, 0.1);
+        assert_eq!(spec.delay_ee, 1.5e-3);
+        assert_eq!(spec.delay_other, 0.8e-3);
+        assert_eq!(spec.lambda, 2.0);
+        assert_eq!(spec.dt, 1e-4);
+        assert_eq!(spec.inhibitory_fraction, 0.2);
+
+        // **The default column cannot see half of the weight table.** `w_ee == w_ei` and
+        // `w_ie == w_ii` in it, so a `w_for` that returned the wrong one of either pair is a no-op
+        // here — asserting the mapping against this spec passes either way. Four DISTINCT weights
+        // are what makes the mapping visible, and the same goes for `c_for`, whose four entries
+        // happen to differ already.
+        let told = LiquidSpec { w_ee: 1e-3, w_ei: 2e-3, w_ie: -3e-3, w_ii: -4e-3, ..spec };
+        assert_eq!(told.w_for(Cell::Excitatory, Cell::Excitatory), 1e-3);
+        assert_eq!(told.w_for(Cell::Excitatory, Cell::Inhibitory), 2e-3);
+        assert_eq!(told.w_for(Cell::Inhibitory, Cell::Excitatory), -3e-3);
+        assert_eq!(told.w_for(Cell::Inhibitory, Cell::Inhibitory), -4e-3);
+        assert_eq!(spec.c_for(Cell::Excitatory, Cell::Excitatory), 0.3);
+        assert_eq!(spec.c_for(Cell::Excitatory, Cell::Inhibitory), 0.2);
+        assert_eq!(spec.c_for(Cell::Inhibitory, Cell::Excitatory), 0.4);
+        assert_eq!(spec.c_for(Cell::Inhibitory, Cell::Inhibitory), 0.1);
+
+        // And the built column carries those four distinct weights on the four ordered type pairs,
+        // each of which has to actually occur or the loop would assert nothing.
+        let want = [[1e-3, 2e-3], [-3e-3, -4e-3]];
+        let told_l = Liquid::build(&told).unwrap();
+        let mut hits = [[0usize; 2]; 2];
+        for pre in 0..told_l.n() {
+            for (post, w, _) in told_l.net.out_of(pre) {
+                let a = usize::from(told_l.kinds[pre] == Cell::Inhibitory);
+                let b = usize::from(told_l.kinds[post as usize] == Cell::Inhibitory);
+                assert_eq!(w, want[a][b], "synapse {pre} -> {post} carried {w}");
+                hits[a][b] += 1;
+            }
+        }
+        for a in 0..2 {
+            for b in 0..2 {
+                assert!(hits[a][b] > 0, "no synapse of type {a} -> {b} to check");
+            }
+        }
+
+        // Back on the default column: every synapse carries exactly what `w_for` returns — not
+        // approximately, since a delta synapse's weight is copied rather than computed.
+        let l = Liquid::build(&spec).unwrap();
+        let mut seen = 0usize;
+        for pre in 0..l.n() {
+            for (post, w, _) in l.net.out_of(pre) {
+                assert_eq!(w, spec.w_for(l.kinds[pre], l.kinds[post as usize]));
+                seen += 1;
+            }
+        }
+        assert_eq!(seen, l.net.n_syn);
+        // A weight table with two distinct magnitudes really does produce two magnitudes.
+        let mags: Vec<f64> = l.net.w.iter().map(|w| w.abs()).collect();
+        assert!(mags.iter().any(|m| (m - 1.6e-3).abs() < 1e-18));
+        assert!(mags.iter().any(|m| (m - 2.4e-3).abs() < 1e-18));
+    }
+
+    /// **The delay-to-tick conversion, at both ends.** `(seconds / dt).round() as u32` SATURATES,
+    /// so `dt = 1e-15` turned the paper's 1.5 ms into 4 294 967 295 ticks and
+    /// [`crate::sim::Sim::new`] would then ask for a delivery ring of 4.3 billion buckets — about
+    /// 100 GB — from a spec that was accepted without a word. At the other end `dt = 1 s` rounds
+    /// both delays to zero ticks, so every synapse becomes instantaneous and the paper's
+    /// excitatory/other distinction disappears silently.
+    #[test]
+    fn a_delay_the_tick_cannot_carry_is_refused_rather_than_saturated_or_collapsed() {
+        let base =
+            LiquidSpec { nx: 2, ny: 1, nz: 1, inhibitory_fraction: 0.0, ..LiquidSpec::maass_column() };
+        assert!(matches!(
+            Liquid::build(&LiquidSpec { dt: 1e-15, ..base }).unwrap_err(),
+            ReservoirError::OutOfRange { what: "delay_ee / dt", .. }
+        ));
+        assert!(matches!(
+            Liquid::build(&LiquidSpec { dt: 1.0, ..base }).unwrap_err(),
+            ReservoirError::OutOfRange { what: "delay_ee / dt", .. }
+        ));
+        // 2 ms per tick: 1.5 ms survives as one tick, 0.8 ms does not survive at all, and the
+        // error names the second one rather than the first.
+        assert!(matches!(
+            Liquid::build(&LiquidSpec { dt: 2e-3, ..base }).unwrap_err(),
+            ReservoirError::OutOfRange { what: "delay_other / dt", .. }
+        ));
+        // An explicitly zero delay is a choice, not a rounding accident, and is still accepted.
+        let instant = LiquidSpec { delay_ee: 0.0, delay_other: 0.0, ..base };
+        assert_eq!(Liquid::build(&instant).unwrap().net.max_delay, 0);
+        // The ceiling from both sides. `c_ee = 1` with a huge lambda makes both ordered pairs
+        // certain, so there is a synapse whose delay can be read back.
+        let big = LiquidSpec { c_ee: 1.0, lambda: 1e9, ..base };
+        let ceiling = f64::from(Liquid::MAX_DELAY_TICKS) * big.dt;
+        let ok = Liquid::build(&LiquidSpec { delay_ee: ceiling, ..big }).unwrap();
+        assert_eq!(ok.net.n_syn, 2);
+        assert_eq!(ok.net.max_delay, Liquid::MAX_DELAY_TICKS);
+        assert!(matches!(
+            Liquid::build(&LiquidSpec { delay_ee: ceiling + big.dt, ..big }).unwrap_err(),
+            ReservoirError::OutOfRange { what: "delay_ee / dt", .. }
+        ));
+    }
+
+    /// The delays stored in the network are integer TICK COUNTS baked at [`LiquidSpec::dt`], so a
+    /// simulation stepped at a different `dt` reinterprets every one of them: a liquid built at
+    /// 0.1 ms and run at 1 ms turns Maass's 1.5 ms delay into 15 ms and produces a perfectly
+    /// plausible spike train of a network nobody specified.
+    #[test]
+    fn a_liquid_refuses_a_tick_length_that_is_not_the_one_its_delays_were_baked_at() {
+        let spec = LiquidSpec::maass_column();
+        let l = Liquid::build(&spec).unwrap();
+        assert!(matches!(
+            l.to_sim(Lif::default(), Lif::default(), 1e-3, Mode::Clocked).unwrap_err(),
+            ReservoirError::OutOfRange { what: "dt", .. }
+        ));
+        let input = vec![vec![0.0; l.n()]; 4];
+        assert!(matches!(
+            l.respond(Lif::default(), Lif::default(), 1e-3, 30e-3, &input).unwrap_err(),
+            ReservoirError::OutOfRange { what: "dt", .. }
+        ));
+        // Even a tick length one part in 1e15 away is a different network, and is refused.
+        assert!(l.to_sim(Lif::default(), Lif::default(), spec.dt * (1.0 + 1e-15), Mode::Clocked).is_err());
+        // The spec's own dt is accepted, by both.
+        assert!(l.to_sim(Lif::default(), Lif::default(), spec.dt, Mode::Clocked).is_ok());
+        assert!(l.respond(Lif::default(), Lif::default(), spec.dt, 30e-3, &input).is_ok());
+    }
+
     #[test]
     fn the_same_spec_builds_the_same_liquid() {
         let spec = LiquidSpec::maass_column();
@@ -2914,10 +3973,51 @@ mod tests {
         assert_eq!(f.state()[0], 0.0);
     }
 
+    /// [`SpikeFilter::decay`] is a cache of `exp(-dt/tau)` and all three fields are public, so a
+    /// hand-written `tau` leaves the filter decaying at the old rate with nothing to show for it.
+    #[test]
+    fn retuning_the_filter_moves_the_cached_decay_with_its_time_constant() {
+        let mut f = SpikeFilter::new(2, 30e-3, 1e-4).unwrap();
+        assert!(f.decay_is_current());
+        f.step(&[0]);
+        assert_eq!(f.state()[0], 1.0);
+
+        // The trap, named: writing one field of the pair breaks the invariant and says nothing.
+        f.tau = 5e-3;
+        assert!(!f.decay_is_current(), "a hand-written tau left the decay looking current");
+        f.tau = 30e-3;
+        assert!(f.decay_is_current());
+
+        // `retune` moves both, and keeps the history, which is what a tau sweep over one recorded
+        // spike train needs.
+        f.retune(5e-3, 1e-4).unwrap();
+        assert!(f.decay_is_current());
+        assert!((f.decay - (-1e-4f64 / 5e-3).exp()).abs() < 1e-15, "decay {}", f.decay);
+        assert_eq!(f.state()[0], 1.0, "retune dropped the trace");
+        f.step(&[]);
+        assert!((f.state()[0] - (-1e-4f64 / 5e-3).exp()).abs() < 1e-15, "trace {}", f.state()[0]);
+
+        // A refused retune leaves the filter exactly as it was, rather than half-applied.
+        let before = f.clone();
+        assert!(matches!(
+            f.retune(0.0, 1e-4).unwrap_err(),
+            ReservoirError::OutOfRange { what: "tau", .. }
+        ));
+        assert!(matches!(
+            f.retune(5e-3, f64::NAN).unwrap_err(),
+            ReservoirError::OutOfRange { what: "dt", .. }
+        ));
+        assert_eq!(f, before, "a refused retune changed the filter");
+    }
+
     /// The liquid, end to end: two different input streams must drive it to different states, the
     /// same stream twice to identical ones, and a bigger column to a larger separation.
     ///
     /// Measured at 45, 135 and 225 neurons: 1.46, 2.80 and 3.86, with `sep(a, a)` exactly zero.
+    ///
+    /// Same caveat as the rate-model separation tests: the two streams differ throughout, so this
+    /// shows that the liquid distinguishes them and not that the distinction is carried by the
+    /// column's recurrence rather than by the input sites and the readout filter.
     #[test]
     fn a_liquid_separates_two_input_streams_and_separates_more_when_it_is_larger() {
         let dt = LiquidSpec::maass_column().dt;

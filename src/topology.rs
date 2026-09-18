@@ -58,20 +58,32 @@
 //! Bull. 50:349-350, 1999) document that Dale himself said something narrower and that the modern
 //! statement is a useful misreading.
 //!
-//! Every generator here is Dale-compliant by construction, because [`Wiring`] assigns a sign per
-//! **presynaptic** neuron and never per synapse. The reason [`dale_check`] exists anyway is that a
-//! network which quietly violates Dale's law is **biologically meaningless and computationally
-//! fine** — it trains, it fires, it produces a plausible raster — which is exactly how such a
-//! network survives review. The violation has to be caught by an assertion or it is not caught.
+//! Every **[`Wiring`]-based** generator here is Dale-compliant by construction, because `Wiring`
+//! assigns a sign per **presynaptic** neuron and never per synapse. [`winner_take_all`] is the
+//! exception and takes no `Wiring`: with `w_self > 0` a unit excites itself while inhibiting
+//! everyone else, which is a mixed-sign neuron and a Dale violation by construction — stated here
+//! rather than discovered later, and asserted in
+//! `winner_take_all_refuses_a_positive_inhibition_or_a_single_unit`. The reason [`dale_check`]
+//! exists anyway is that a network which quietly violates Dale's law is **biologically meaningless
+//! and computationally fine** — it trains, it fires, it produces a plausible raster — which is
+//! exactly how such a network survives review. The violation has to be caught by an assertion or it
+//! is not caught.
 //!
 //! The 80/20 excitatory/inhibitory split is the modelling convention, from Brunel (J. Comput.
 //! Neurosci. 8:183-208, 2000, `N_E = 4 N_I`) and Maass et al. (Neural Computation 14(11):2531-2560,
 //! 2002, 20% inhibitory). **Caveat beside the figure:** the anatomy it abstracts is 15-20%
-//! inhibitory and varies by area and species — Beaulieu and Colonnier (J. Comp. Neurol.
-//! 231:180-189, 1985) count roughly 15% GABA-immunoreactive neurons in cat area 17, and
-//! Braitenberg and Schüz (*Cortex: Statistics and Geometry of Neuronal Connectivity*, 2nd ed.,
-//! Springer, 1998) put pyramidal cells near 85% of mouse cortex. 80/20 is a round number chosen
-//! inside that range, not a measurement.
+//! inhibitory and varies by area and species — the roughly 15% GABA-immunoreactive neurons of cat
+//! area 17 are Gabbott and Somogyi's count (Exp. Brain Res. 61:323-331, 1986), and Braitenberg and
+//! Schüz (*Cortex: Statistics and Geometry of Neuronal Connectivity*, 2nd ed., Springer, 1998) put
+//! pyramidal cells near 85% of mouse cortex. 80/20 is a round number chosen inside that range, not
+//! a measurement.
+//!
+//! **Correction, and a caution about second-hand citations:** an earlier revision of this doc
+//! attributed that 15% to Beaulieu and Colonnier, J. Comp. Neurol. 231:180-189, 1985. That paper
+//! is a laminar count of round-asymmetrical and flat-symmetrical **synapses** in cat area 17, not
+//! a count of GABA-immunoreactive **neurons**; the neuron proportion belongs to Gabbott and
+//! Somogyi. This module read neither source directly — both attributions are from the secondary
+//! literature — so check them before a published figure rests on either.
 //!
 //! # Units, determinism, and what a hardware fabric will refuse
 //!
@@ -151,6 +163,13 @@ pub enum TopologyError {
         /// The value as supplied, metres.
         value: f64,
     },
+    /// A per-neuron Dale partition whose length is not the network's neuron count.
+    SignsLength {
+        /// Signs supplied.
+        declared: usize,
+        /// Neurons the generator was asked to build.
+        neurons: usize,
+    },
     /// A layered network needs at least an input and an output layer.
     TooFewLayers {
         /// How many layer sizes were supplied.
@@ -190,6 +209,9 @@ impl core::fmt::Display for TopologyError {
             }
             Self::Length { name, value } => {
                 write!(f, "{name} = {value} m is not a finite positive length")
+            }
+            Self::SignsLength { declared, neurons } => {
+                write!(f, "{declared} declared signs for a network of {neurons} neurons")
             }
             Self::TooFewLayers { layers } => {
                 write!(f, "{layers} layer sizes given; a feedforward net needs at least 2")
@@ -242,9 +264,10 @@ impl Sign {
 /// is 15-20% and area-dependent; see the module doc. Dimensionless, in `[0, 1]`.
 pub const CORTICAL_INHIBITORY_FRACTION: f64 = 0.2;
 
-/// Maass's inhibition-to-excitation weight ratio for a network balanced at the 80/20 split.
+/// Brunel's inhibition-to-excitation weight ratio for a network balanced at the 80/20 split.
 ///
-/// Brunel's `g = |J_I| / J_E`: with four times as many excitatory neurons as inhibitory ones, the
+/// `g = |J_I| / J_E` of Brunel, J. Comput. Neurosci. 8:183-208, 2000 — **not** a constant of Maass
+/// et al. 2002, which defines no `g`: with four times as many excitatory neurons as inhibitory ones, the
 /// mean drive on a neuron cancels exactly at `g = 4`. Dimensionless. [`Wiring::balanced`] applies
 /// it and [`Wiring::expected_drive`] is the arithmetic that makes the cancellation checkable.
 pub const BALANCED_G: f64 = 4.0;
@@ -256,6 +279,14 @@ pub const BALANCED_G: f64 = 4.0;
 /// Neurons `0 .. n - n_inhibitory` are excitatory and the remaining block is inhibitory — a
 /// contiguous partition, so `Wiring` plus `n` is enough to reconstruct which is which without
 /// carrying a per-neuron vector around.
+///
+/// **Contiguity is a real modelling choice, not a detail, as soon as the index means something.**
+/// [`Grid3`] maps index to position with x fastest, so a contiguous inhibitory block on a grid is a
+/// spatial **slab** rather than a scattered 20%: for [`Grid3::maass_column`] all 27 inhibitory
+/// neurons land on the single face `z = 2`. Under a distance-dependent rule that puts a systematic
+/// drive gradient across the sheet — measured on that column at 1.60, −1.58 and −0.38 mV of mean
+/// incoming weight by z-slab. Use [`shuffled_partition`] with [`distance_dependent_signed`] when
+/// the geometry matters; see [`distance_dependent`]'s doc for which papers it matters for.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Wiring {
     /// Weight of a synapse whose **presynaptic** neuron is excitatory, in volts of membrane
@@ -363,24 +394,52 @@ impl Wiring {
     /// The weight of a synapse leaving neuron `pre` in a network of `n`, volts per spike.
     #[must_use]
     pub fn weight_of(&self, n: usize, pre: usize) -> f64 {
-        match self.sign_of(n, pre) {
+        self.weight_for(self.sign_of(n, pre))
+    }
+
+    /// The weight a synapse leaving a neuron of Dale type `sign` carries, volts per spike.
+    ///
+    /// `0.0` for [`Sign::Silent`], which is what "no transmitter" has to mean at a synapse: a
+    /// weight of zero transmits nothing and carries no sign back through [`dale_signs`]. This is
+    /// the entry point [`distance_dependent_signed`] uses, where the partition is a slice rather
+    /// than an index range.
+    #[must_use]
+    pub fn weight_for(&self, sign: Sign) -> f64 {
+        match sign {
             Sign::Excitatory => self.w_exc,
             Sign::Inhibitory => self.w_inh,
             Sign::Silent => 0.0,
         }
     }
 
-    /// The expected sum of a neuron's **incoming** weights in a `G(n, p)` graph, volts per spike.
+    /// The expected sum of a neuron's **incoming** weights in a `G(n, p)` graph, volts per spike,
+    /// averaged over the `n` neurons.
     ///
-    /// `p * (n_exc * w_exc + n_inh * w_inh)`. This is the balance condition in closed form: it is
-    /// zero exactly when `|w_inh| / w_exc` equals the excitatory-to-inhibitory count ratio, which is
-    /// what [`Wiring::balanced`] arranges. A network whose expected drive is far from zero either
-    /// saturates or falls silent, and which one it does is decided here rather than in simulation.
+    /// `p * (n - 1) / n * (n_exc * w_exc + n_inh * w_inh)`. **The `(n - 1) / n` is the self term**:
+    /// every generator in this module excludes self-loops, so neuron `i` has `n - 1` possible
+    /// presynaptic partners and not `n`, and its own expectation is `p * (S - w_i)` with
+    /// `S = n_exc * w_exc + n_inh * w_inh`. Averaging that over `i` removes the dependence on which
+    /// neuron is asked and leaves `p * S * (n - 1) / n`. Dropping the factor overstates the drive
+    /// by `1 / n` — 11.1% at `n = 10`, 0.200% at `n = 500` — and
+    /// `the_expected_drive_counts_n_minus_one_presynaptic_partners` measures it exactly at
+    /// `p = 1.0`, where the graph is complete-minus-diagonal and there is no sampling noise at all.
+    ///
+    /// This is the balance condition in closed form: it is zero exactly when `|w_inh| / w_exc`
+    /// equals the excitatory-to-inhibitory count ratio, which is what [`Wiring::balanced`]
+    /// arranges — the `(n - 1) / n` is a positive factor and moves no zero. A network whose
+    /// expected drive is far from zero either saturates or falls silent, and which one it does is
+    /// decided here rather than in simulation.
+    ///
+    /// `0.0` at `n == 0` and at `n == 1`: a lone neuron with no self-loop receives nothing.
     #[must_use]
     pub fn expected_drive(&self, n: usize, p: f64) -> f64 {
+        if n == 0 {
+            return 0.0;
+        }
         let n_inh = self.n_inhibitory(n);
         let n_exc = n - n_inh;
-        p * (n_exc as f64 * self.w_exc + n_inh as f64 * self.w_inh)
+        let self_excluded = (n - 1) as f64 / n as f64;
+        p * self_excluded * (n_exc as f64 * self.w_exc + n_inh as f64 * self.w_inh)
     }
 }
 
@@ -505,6 +564,39 @@ pub fn dale_partition(n: usize, inhibitory_fraction: f64) -> Result<Vec<Sign>, T
     check_probability("inhibitory_fraction", inhibitory_fraction)?;
     let w = Wiring { inhibitory_fraction, ..Wiring::default() };
     Ok(w.signs(n))
+}
+
+/// The same 80/20-style partition as [`dale_partition`], with the inhibitory neurons chosen **at
+/// random** instead of as a trailing block.
+///
+/// Exactly `round(inhibitory_fraction * n)` neurons are inhibitory — the count is
+/// [`Wiring::n_inhibitory`]'s, not a per-neuron coin flip — and *which* ones is a uniform
+/// permutation drawn from `seed` by Fisher-Yates, so the same seed gives the same partition on
+/// every platform.
+///
+/// **Why this exists.** A contiguous partition is fine when the index means nothing. The moment it
+/// means a position — [`Grid3`] maps index to coordinate, x fastest — a contiguous inhibitory block
+/// becomes a spatial slab, and a distance-dependent rule reads that slab as anatomy. Maass,
+/// Natschläger and Markram choose their 20% inhibitory neurons at random, so this is the partition
+/// to hand [`distance_dependent_signed`] when reproducing them.
+///
+/// # Errors
+///
+/// [`TopologyError::Probability`] if `inhibitory_fraction` is not a finite number in `[0, 1]`.
+pub fn shuffled_partition(
+    n: usize,
+    inhibitory_fraction: f64,
+    seed: u64,
+) -> Result<Vec<Sign>, TopologyError> {
+    let mut signs = dale_partition(n, inhibitory_fraction)?;
+    let mut rng = Rng::new(seed);
+    // Fisher-Yates downward: element i trades places with a uniform index in 0..=i, which is the
+    // permutation that is uniform over all n! orders rather than the naive swap-with-anything.
+    for i in (1..signs.len()).rev() {
+        let j = below_u64(&mut rng, i as u64 + 1) as usize;
+        signs.swap(i, j);
+    }
+    Ok(signs)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -770,13 +862,18 @@ pub fn barabasi_albert(
             // terminates (the array holds at least m + 1 distinct nodes at this point) and it keeps
             // the generator's draw count independent of the graph, which is what makes two runs of
             // the same seed produce the same graph on any platform.
-            for step in 0..repeated.len() {
-                let cand = repeated[(start + step) % repeated.len()];
-                if !targets.contains(&cand) {
-                    targets.push(cand);
-                    break;
-                }
-            }
+            //
+            // "Always" is an argument, not a check, so the failure is an error and not a silent
+            // short edge list: an arriving node that got fewer than m edges would leave the degree
+            // distribution wrong in a way no assertion downstream looks for.
+            let Some(cand) = probe_distinct(&repeated, &targets, start) else {
+                return Err(TopologyError::TooSmall {
+                    n: targets.len(),
+                    needed: m,
+                    what: "barabasi_albert's endpoint array ran out of distinct nodes to attach to",
+                });
+            };
+            targets.push(cand);
         }
         for &t in &targets {
             edges.push((v as u32, t));
@@ -821,10 +918,15 @@ impl Grid3 {
         Self { nx: 15, ny: 3, nz: 3, spacing }
     }
 
-    /// Neurons in the grid: `nx * ny * nz`.
+    /// Neurons in the grid: `nx * ny * nz`, **saturating** at `usize::MAX`.
+    ///
+    /// Saturating and not wrapping: a wrapped product is a small number that
+    /// [`crate::net::NetBuilder`] would accept, so `Grid3 { nx: usize::MAX, ny: 2, nz: 2, .. }`
+    /// would build a four-neuron network and call it a lattice. [`Grid3::validate`] rejects any
+    /// grid whose product does not fit, so no generator here ever sees the saturated value.
     #[must_use]
     pub fn len(&self) -> usize {
-        self.nx * self.ny * self.nz
+        self.nx.saturating_mul(self.ny).saturating_mul(self.nz)
     }
 
     /// Whether any dimension is zero, which makes the grid hold no neurons.
@@ -864,11 +966,14 @@ impl Grid3 {
         Some(d2.sqrt())
     }
 
-    /// Reject a grid with a zero dimension or a non-positive spacing.
+    /// Reject a grid with a zero dimension, a product that overflows a `usize`, or a non-positive
+    /// spacing.
     ///
     /// # Errors
     ///
-    /// [`TopologyError::TooSmall`] for a zero dimension, [`TopologyError::Length`] for a spacing
+    /// [`TopologyError::TooSmall`] for a zero dimension, [`TopologyError::IndexSpace`] if
+    /// `nx * ny * nz` overflows — [`Grid3::len`] saturates there, and a saturated length is a
+    /// different grid from the one that was asked for — and [`TopologyError::Length`] for a spacing
     /// that is not finite and strictly positive.
     pub fn validate(&self) -> Result<(), TopologyError> {
         if self.nx == 0 || self.ny == 0 || self.nz == 0 {
@@ -878,6 +983,11 @@ impl Grid3 {
                 what: "Grid3 needs every dimension to be at least 1",
             });
         }
+        let fits = self.nx.checked_mul(self.ny).and_then(|a| a.checked_mul(self.nz));
+        let Some(n) = fits else {
+            return Err(TopologyError::IndexSpace { n: usize::MAX });
+        };
+        check_n(n)?;
         if !self.spacing.is_finite() || self.spacing <= 0.0 {
             return Err(TopologyError::Length { name: "Grid3::spacing", value: self.spacing });
         }
@@ -964,6 +1074,24 @@ impl MaassC {
 /// Self-connections are excluded. At `D = 0` the rule would give `P = C`, which for a neuron onto
 /// itself is an autapse; they exist in tissue and are not what this generator is for.
 ///
+/// # This generator's E/I geometry is not the paper's, unless you give it a partition
+///
+/// [`Wiring`] assigns the inhibitory population as a **contiguous index block** and [`Grid3`] maps
+/// index to position with x fastest. Compose the two and the inhibitory population is a **slab**,
+/// not a scattered fifth: on [`Grid3::maass_column`] with [`Wiring::default`] — 135 neurons, 27
+/// inhibitory — every inhibitory neuron lands on the single face `z = 2`, and the mean incoming
+/// weight of the built network then runs 1.60, −1.58, −0.38 mV by z-slab and 1.52, 1.04, −0.48,
+/// −1.41, −1.26 mV by x-slab (measured at seed 1 with [`MAASS_2002`] and `lambda = 2` grid steps).
+/// That 3.18 mV spread is an artefact of the index convention and of nothing in the model; a random
+/// partition leaves 0.88 mV, averaged over five seeds.
+///
+/// Maass, Natschläger and Markram choose their 20% inhibitory neurons **at random**, which is the
+/// only assignment under which a distance-dependent rule means what their paper says. So: a figure
+/// reproduced by calling this function with a `Wiring` is not their figure. Use
+/// [`distance_dependent_signed`] with [`shuffled_partition`] for that. This entry point keeps the
+/// contiguous partition because it is the one every other generator here uses and because changing
+/// it would silently move every network already built with it.
+///
 /// # Errors
 ///
 /// [`TopologyError::Length`] for a `lambda` that is not finite and positive, plus the [`Grid3`],
@@ -975,6 +1103,9 @@ pub fn distance_dependent(
     wiring: &Wiring,
     seed: u64,
 ) -> Result<Net, TopologyError> {
+    // Every argument is validated here as well as in the delegate, so that the *order* in which a
+    // caller learns about two bad arguments is the one this function has always had — and so that
+    // a grid too large to index is refused before `wiring.signs(n)` allocates for it.
     grid.validate()?;
     c.validate()?;
     wiring.validate()?;
@@ -983,18 +1114,62 @@ pub fn distance_dependent(
     }
     let n = grid.len();
     check_n(n)?;
+    distance_dependent_signed(grid, c, lambda, wiring, &wiring.signs(n), seed)
+}
+
+/// [`distance_dependent`] with the excitatory/inhibitory partition supplied per neuron.
+///
+/// The rule, the lattice and the draw order are identical; only the source of each neuron's Dale
+/// type changes, from `Wiring`'s contiguous index block to `signs[i]`. Hand it
+/// [`shuffled_partition`] to get the random 20% that Maass, Natschläger and Markram specify, or a
+/// partition of your own when the geometry is the experiment.
+///
+/// A [`Sign::Silent`] entry is honoured rather than ignored: [`MaassC::c_for`] gives it probability
+/// zero and [`Wiring::weight_for`] gives it weight zero, so a neuron declared `Silent` is generated
+/// with no outgoing synapses at all. That is the one way to leave a neuron out of the graph without
+/// changing `n`.
+///
+/// `distance_dependent(grid, c, lambda, wiring, seed)` is exactly
+/// `distance_dependent_signed(grid, c, lambda, wiring, &wiring.signs(grid.len()), seed)` — the same
+/// synapses, bit for bit, which `the_contiguous_partition_is_the_shuffled_path_with_a_block_input`
+/// asserts.
+///
+/// # Errors
+///
+/// [`TopologyError::SignsLength`] if `signs` is not `grid.len()` long,
+/// [`TopologyError::Length`] for a `lambda` that is not finite and positive, plus the [`Grid3`],
+/// [`MaassC`] and [`Wiring`] validation errors.
+pub fn distance_dependent_signed(
+    grid: &Grid3,
+    c: &MaassC,
+    lambda: f64,
+    wiring: &Wiring,
+    signs: &[Sign],
+    seed: u64,
+) -> Result<Net, TopologyError> {
+    grid.validate()?;
+    c.validate()?;
+    wiring.validate()?;
+    if !lambda.is_finite() || lambda <= 0.0 {
+        return Err(TopologyError::Length { name: "lambda", value: lambda });
+    }
+    let n = grid.len();
+    check_n(n)?;
+    if signs.len() != n {
+        return Err(TopologyError::SignsLength { declared: signs.len(), neurons: n });
+    }
     let mut rng = Rng::new(seed);
     let mut b = NetBuilder::new(n);
     for a in 0..n {
-        let sa = wiring.sign_of(n, a);
-        let w = wiring.weight_of(n, a);
+        let sa = signs[a];
+        let w = wiring.weight_for(sa);
         for d in 0..n {
             if a == d {
                 continue;
             }
             let dist = grid.distance(a, d).unwrap_or(f64::INFINITY);
             let ratio = dist / lambda;
-            let p = c.c_for(sa, wiring.sign_of(n, d)) * (-(ratio * ratio)).exp();
+            let p = c.c_for(sa, signs[d]) * (-(ratio * ratio)).exp();
             if rng.next_f64() < p {
                 b.connect(a as u32, d as u32, w, wiring.delay)?;
             }
@@ -1424,6 +1599,21 @@ pub fn in_weight_sums(net: &Net) -> Vec<f64> {
 // Internals
 // ---------------------------------------------------------------------------------------------
 
+/// The first node at or after `start` in the repeated-endpoint array that is not already a target,
+/// scanning cyclically; `None` if every entry is already taken.
+///
+/// Factored out of [`barabasi_albert`] so that the `None` branch — unreachable from the generator,
+/// which always probes an array holding at least `m + 1` distinct nodes — can be reached by a test
+/// instead of only argued about.
+fn probe_distinct(repeated: &[u32], targets: &[u32], start: usize) -> Option<u32> {
+    if repeated.is_empty() {
+        return None;
+    }
+    (0..repeated.len())
+        .map(|step| repeated[(start + step) % repeated.len()])
+        .find(|cand| !targets.contains(cand))
+}
+
 /// Normalise an undirected edge so that the duplicate test sees `(a, b)` and `(b, a)` as one edge.
 fn norm(a: u32, b: u32) -> (u32, u32) {
     if a <= b { (a, b) } else { (b, a) }
@@ -1439,17 +1629,48 @@ fn reciprocal(n: usize, edges: &[(u32, u32)], wiring: &Wiring) -> Result<Net, To
     Ok(b.build())
 }
 
+/// The largest `zone` such that accepting a 64-bit draw `v <= zone` and returning `v % n` is
+/// exactly uniform on `[0, n)`.
+///
+/// The acceptance region must hold a **whole number of residue classes**, so its size `zone + 1`
+/// has to be the largest multiple of `n` that fits in `2^64`. That size is `2^64 - (2^64 mod n)`,
+/// and `2^64 mod n` is computed as `(u64::MAX mod n + 1) mod n` because `2^64` does not fit in a
+/// `u64`. The trailing `mod n` is what makes `n` a power of two accept every draw rather than
+/// rejecting one class.
+///
+/// **The obvious-looking `u64::MAX - (u64::MAX % n) - (n - 1)` is wrong**, and was what this module
+/// shipped: its acceptance region is `(q - 1) n + 2` wide, so residues 0 and 1 are over-represented
+/// by one slot in `2^64 / n` for *every* `n`. The practical bias is under `2.3e-10` at any `n` this
+/// crate reaches, but the failure at large `n` is not cosmetic: for `n > 2^63` the old region
+/// collapses to `{0, 1}`, so the draw returns only 0 or 1 and its rejection loop expects `2^63`
+/// iterations — a hang. `n = 2^63 + 7` is reachable through the type system, since
+/// [`check_n`] admits `n` up to `u32::MAX` and `erdos_renyi_gnm`'s pair space `n(n-1)` crosses
+/// `2^63` at `n` near `3.04e9`.
+///
+/// `unbiased_zone_holds_whole_residue_classes` asserts `(zone + 1) % n == 0` exactly, in `u128`,
+/// over the whole range including that one.
+///
+/// `n` must be at least 1; `n == 0` divides by zero, and the only caller has already ruled it out.
+fn unbiased_zone(n: u64) -> u64 {
+    u64::MAX - (u64::MAX % n).wrapping_add(1) % n
+}
+
 /// A uniform integer in `[0, n)` for an `n` that may exceed `u32`, without modulo bias.
 ///
 /// The pair space of `G(n, m)` is `n(n-1)`, which passes `u32::MAX` at about 65,000 neurons — a
 /// perfectly ordinary network size — so the 32-bit draw is not enough on its own. Delegates to
 /// [`crate::rng::Rng::below`] below that point so that small graphs consume exactly the draws they
 /// consumed before this path existed.
+///
+/// # Panics
+///
+/// Never for `n >= 1`. `n == 0` panics inside [`crate::rng::Rng::below`], which has no value to
+/// return; no caller here passes it.
 fn below_u64(rng: &mut Rng, n: u64) -> u64 {
     if n <= u64::from(u32::MAX) {
         return u64::from(rng.below(n as u32));
     }
-    let zone = u64::MAX - (u64::MAX % n) - (n - 1);
+    let zone = unbiased_zone(n);
     loop {
         let v = (u64::from(rng.next_u32()) << 32) | u64::from(rng.next_u32());
         if v <= zone {
@@ -1497,11 +1718,12 @@ mod tests {
         BALANCED_G, CORTICAL_INHIBITORY_FRACTION, DaleViolation, Grid3, MAASS_2002, MaassC,
         PathStats, Sign, TopologyError, Wiring, barabasi_albert, characteristic_path_length,
         clustering_coefficient, dale_check, dale_partition, dale_signs, distance_dependent,
-        erdos_renyi_gnm, erdos_renyi_gnp, feedforward, hops_from, in_weight_sums, layer_ranges,
-        path_stats, power_law_exponent, undirected_degrees, watts_strogatz, weak_components,
-        winner_take_all, wta_inhibition_floor,
+        distance_dependent_signed, erdos_renyi_gnm, erdos_renyi_gnp, feedforward, hops_from,
+        in_weight_sums, layer_ranges, norm, path_stats, power_law_exponent, shuffled_partition,
+        undirected_degrees, watts_strogatz, weak_components, winner_take_all, wta_inhibition_floor,
     };
     use crate::net::NetBuilder;
+    use std::collections::BTreeSet;
     use crate::neuron::Lif;
     use crate::rng::Rng;
     use crate::sim::{Mode, Sim};
@@ -1624,10 +1846,34 @@ mod tests {
             l.push(stats.mean_hops.unwrap());
             c.push(clustering_coefficient(&net).unwrap());
         }
-        // The lattice end: both measures at their closed forms.
+        // The lattice end: both measures at their closed forms. `L(0)` has one too — the ring
+        // lattice's shortest path from any node to the node `j` places away is exactly
+        // `ceil(min(j, n - j) / (k / 2))`, which test (b.2) checks hop by hop — so the mean over
+        // destinations is an exact prediction and not a "> 15".
         assert!((c[0] - 3.0 * 8.0 / (4.0 * 9.0)).abs() < 1e-12, "C(0) = {}", c[0]);
-        assert!(l[0] > 15.0, "L(0) = {} should be about n / (2k) = 20", l[0]);
-        // The random end: clustering has collapsed with it.
+        let want_l0: f64 = (1..n).map(|j| j.min(n - j).div_ceil(k / 2) as f64).sum::<f64>()
+            / (n as f64 - 1.0);
+        assert!((want_l0 - 20.451_127_820).abs() < 1e-9, "the closed form itself moved: {want_l0}");
+        assert!((l[0] - want_l0).abs() < 1e-12, "L(0) = {} against the closed form {want_l0}", l[0]);
+        // The random end, against the random-graph values rather than against a fraction of the
+        // lattice's. Clustering is the edge density `k / (n - 1)` = 0.02506 (measured 0.02354, and
+        // 0.0212 to 0.0251 over five seeds), and the characteristic path length of a random graph
+        // of mean degree `k` is `(ln n - gamma) / ln k + 1/2` = 2.8514 with Euler's gamma
+        // (measured 2.8375, within 0.5% for every seed tried).
+        let want_c1 = k as f64 / (n as f64 - 1.0);
+        assert!(
+            c[8] > 0.7 * want_c1 && c[8] < 1.3 * want_c1,
+            "C(1) = {} is not the random-graph density {want_c1}",
+            c[8]
+        );
+        let gamma = 0.577_215_664_901_532_9f64;
+        let want_l1 = ((n as f64).ln() - gamma) / (k as f64).ln() + 0.5;
+        assert!(
+            (l[8] - want_l1).abs() < 0.05 * want_l1,
+            "L(1) = {} is not the random-graph estimate {want_l1}",
+            l[8]
+        );
+        // And the collapse itself, which is what the figure is about.
         assert!(c[8] < 0.1 * c[0], "C(1) = {} vs C(0) = {}", c[8], c[0]);
         assert!(l[8] < 0.25 * l[0], "L(1) = {} vs L(0) = {}", l[8], l[0]);
         // The finding: a regime where L has collapsed and C has not.
@@ -1646,6 +1892,48 @@ mod tests {
             (l[0] - l[i]) / l[0],
             (c[0] - c[i]) / c[0]
         );
+    }
+
+    /// (finding 3) The rewiring's own promise: **no self-loop and no duplicate**, at every `beta`.
+    ///
+    /// `assert_eq!(net.n_syn, n * k)` cannot see either, because `reciprocal` emits exactly two
+    /// synapses per edge slot however corrupt the slot is. Two mutations survive every other test
+    /// in this module and both are caught here: making [`norm`] the identity, which lets a
+    /// rewiring re-create an edge that already exists in the other direction, and writing
+    /// `edges[e] = (w, v)`, which moves the endpoint Watts and Strogatz hold fixed and
+    /// desynchronises `edges` from the `present` set that polices duplicates.
+    ///
+    /// A duplicate is not merely untidy: [`crate::net::Net`] stores each synapse once, so two of
+    /// them double-bill every joule the ledger charges for that connection.
+    #[test]
+    fn watts_strogatz_rewiring_keeps_every_synapse_distinct() {
+        let (n, k) = (200usize, 6usize);
+        for &beta in &[0.0f64, 0.1, 0.5, 1.0] {
+            for seed in [1u64, 7] {
+                let net = watts_strogatz(n, k, beta, &exc(1e-3), seed).unwrap();
+                assert_eq!(net.n_syn, n * k, "beta {beta} seed {seed}");
+                let mut seen = BTreeSet::new();
+                for pre in 0..n {
+                    for (post, _, _) in net.out_of(pre) {
+                        assert_ne!(post as usize, pre, "beta {beta} seed {seed}: self-loop at {pre}");
+                        assert!(
+                            seen.insert((pre as u32, post)),
+                            "beta {beta} seed {seed}: duplicate synapse {pre} -> {post}"
+                        );
+                    }
+                }
+                // Undirected too: every synapse must be half of a reciprocal pair, so the
+                // undirected degree sum is exactly n * k and the edge set is half the size.
+                let undirected: BTreeSet<(u32, u32)> =
+                    seen.iter().map(|&(a, b)| norm(a, b)).collect();
+                assert_eq!(undirected.len(), n * k / 2, "beta {beta} seed {seed}");
+                assert_eq!(
+                    undirected_degrees(&net).iter().sum::<usize>(),
+                    n * k,
+                    "beta {beta} seed {seed}"
+                );
+            }
+        }
     }
 
     #[test]
@@ -1678,24 +1966,98 @@ mod tests {
         }
     }
 
+    /// The exponent [`power_law_exponent`] returns in the large-sample limit on integers produced
+    /// by a given continuous draw, summed in closed form rather than sampled.
+    ///
+    /// `lower_edge(k)` is the value of the underlying Pareto variate `T` (supported on `[1, inf)`,
+    /// with `P(T >= t) = t^-(alpha - 1)`) at which the integer result becomes `k`, so
+    /// `P(K = k) = P(T >= lower_edge(k)) - P(T >= lower_edge(k + 1))`. Flooring `k_min * T` and
+    /// rounding `(k_min - 0.5) * T` are two different discretisations of the same continuous law
+    /// and this evaluates the estimator's expectation under either.
+    fn exact_discretised_mle(k_min: usize, alpha: f64, lower_edge: impl Fn(f64) -> f64) -> f64 {
+        let shift = k_min as f64 - 0.5;
+        let tail = |t: f64| t.powf(-(alpha - 1.0));
+        let (mut mass, mut weighted) = (0.0f64, 0.0f64);
+        for k in k_min..=10_000_000usize {
+            let kf = k as f64;
+            let p = tail(lower_edge(kf)) - tail(lower_edge(kf + 1.0));
+            mass += p;
+            weighted += p * (kf / shift).ln();
+        }
+        1.0 + 1.0 / (weighted / mass)
+    }
+
     /// The fitter is checked before it is trusted: draw from a continuous power law by inverse CDF,
-    /// floor to integers, and require the estimator to recover the exponent it was given.
+    /// discretise, and require the estimator to return **the number the estimator must return on
+    /// that sample**, which is not always the exponent the sample was drawn at.
     ///
     /// `x = k_min * (1 - u)^(-1 / (alpha - 1))` has `P(X > x) ~ x^(1 - alpha)`, which is exponent
-    /// `alpha`. Recovery at `alpha = 2.5`, `k_min = 10`, 100,000 samples lands inside 0.02 here.
+    /// `alpha`. **Flooring it does not preserve the exponent.** At `alpha = 2.5`, `k_min = 10` the
+    /// estimator's expectation on `floor(X)` is 2.45237, not 2.5: the discretisation and the
+    /// continuity correction disagree, and the 0.0476 offset is *ten times* the sampling error
+    /// `(alpha - 1) / sqrt(N) = 0.00474` at 100,000 samples. This test used to assert
+    /// `|got - 2.5| < 0.05` and passed with 6% of its tolerance to spare, on a bias it did not
+    /// name. Both the biased value and the sampling error are now predicted in closed form and
+    /// checked against the draw.
+    ///
+    /// The sampler Clauset, Shalizi and Newman give for the *discrete* law —
+    /// `round((k_min - 0.5) * (1 - u)^(-1 / (alpha - 1)))` — is the one the estimator is derived
+    /// for, and it recovers 2.4982 against an expectation of 2.49734, inside half a sigma of both.
     #[test]
     fn the_power_law_fitter_recovers_a_known_exponent() {
-        let mut rng = Rng::new(31);
         let alpha = 2.5f64;
         let k_min = 10usize;
-        let mut sample = Vec::with_capacity(100_000);
-        for _ in 0..100_000 {
-            let u = rng.next_f64();
-            let x = k_min as f64 * (1.0 - u).powf(-1.0 / (alpha - 1.0));
-            sample.push(x.floor() as usize);
-        }
+        let draw = |corrected: bool| {
+            let mut rng = Rng::new(31);
+            let mut sample = Vec::with_capacity(100_000);
+            for _ in 0..100_000 {
+                let t = (1.0 - rng.next_f64()).powf(-1.0 / (alpha - 1.0));
+                let x = if corrected {
+                    ((k_min as f64 - 0.5) * t + 0.5).floor()
+                } else {
+                    (k_min as f64 * t).floor()
+                };
+                sample.push(x as usize);
+            }
+            sample
+        };
+        // The estimator's own standard error, which is what every tolerance below is written in.
+        let sigma = (alpha - 1.0) / 100_000.0f64.sqrt();
+        assert!((sigma - 0.004_743).abs() < 1e-6, "sigma {sigma}");
+
+        // (i) Floored continuous Pareto: biased, by a predictable amount.
+        let biased = exact_discretised_mle(k_min, alpha, |k| k / k_min as f64);
+        assert!((biased - 2.452_373).abs() < 1e-5, "the closed form moved: {biased}");
+        assert!(
+            (alpha - biased) / sigma > 8.0,
+            "the discretisation bias is {:.1} sigma, so it is not noise",
+            (alpha - biased) / sigma
+        );
+        let sample = draw(false);
         let got = power_law_exponent(&sample, k_min).unwrap();
-        assert!((got - alpha).abs() < 0.05, "fitted {got:.4} for a sample drawn at {alpha}");
+        assert!(
+            (got - biased).abs() < 4.0 * sigma,
+            "fitted {got:.5} against the floored-Pareto expectation {biased:.5}, \
+             {:.1} sigma out",
+            (got - biased).abs() / sigma
+        );
+
+        // (ii) The discrete sampler the continuity correction is derived for: unbiased, so the
+        // estimator recovers the exponent it was drawn at.
+        let corrected_prediction =
+            exact_discretised_mle(k_min, alpha, |k| (k - 0.5) / (k_min as f64 - 0.5));
+        assert!((corrected_prediction - 2.497_344).abs() < 1e-5, "{corrected_prediction}");
+        let got_corrected = power_law_exponent(&draw(true), k_min).unwrap();
+        assert!(
+            (got_corrected - corrected_prediction).abs() < 4.0 * sigma,
+            "fitted {got_corrected:.5} against {corrected_prediction:.5}"
+        );
+        assert!(
+            (got_corrected - alpha).abs() < 4.0 * sigma,
+            "fitted {got_corrected:.5} for a sample drawn at {alpha}"
+        );
+        // The two discretisations really do differ by more than the noise they are measured in.
+        assert!((got - got_corrected).abs() > 8.0 * sigma);
         // And the estimator's arithmetic at a degenerate input, where it has a closed form: every
         // sample equal to k_min gives alpha = 1 + 1 / ln(k_min / (k_min - 0.5)).
         let flat = vec![4usize; 1000];
@@ -1779,14 +2141,29 @@ mod tests {
         assert!((ladder[5] - 3.0).abs() < 1e-3, "k_min = 10,000 predicts {}", ladder[5]);
 
         for &m in &[2usize, 3] {
-            for &seed in &[77u64, 5, 1234] {
+            for &seed in &[77u64, 5, 1234, 0, 4, 6, 9, 11] {
                 let net = barabasi_albert(20_000, m, &exc(1e-3), seed).unwrap();
                 let deg = undirected_degrees(&net);
                 let got = power_law_exponent(&deg, 6).unwrap();
+                // In sigma, like the sibling test, and for the same reason. The maximum-likelihood
+                // exponent's own standard error is `(alpha - 1) / sqrt(N)` with `N` the number of
+                // samples at or above `k_min`: 0.0333 at m = 2 (N is about 2,870 of 20,000 nodes)
+                // and 0.0234 at m = 3. The `< 0.03` this test used to assert is tighter than one
+                // sigma at m = 2 — seed 6 returns 2.74804, which is a perfectly ordinary 1.1 sigma
+                // and misses that band, as would about one seed in six.
+                //
+                // The nominal sigma is conservative here: measured over twelve seeds at m = 2 the
+                // seed-to-seed spread is 0.0165, about half of it, because a single grown graph's
+                // degree sum is fixed by construction rather than sampled. Every seed below lands
+                // inside 1.2 nominal sigma, so the 3.0 band is not fitted to them.
+                let n_at = deg.iter().filter(|&&d| d >= 6).count();
+                let sigma = (got - 1.0) / (n_at as f64).sqrt();
                 assert!(
-                    (got - ladder[0]).abs() < 0.03,
-                    "m = {m}, seed {seed}: fitted {got:.4} vs the model's own MLE {:.4}",
-                    ladder[0]
+                    (got - ladder[0]).abs() < 3.0 * sigma,
+                    "m = {m}, seed {seed}: fitted {got:.4} vs the model's own MLE {:.4}, \
+                     which is {:.2} sigma at sigma = {sigma:.4} over {n_at} samples",
+                    ladder[0],
+                    (got - ladder[0]).abs() / sigma
                 );
                 // Hubs: the largest degree of a BA graph grows as sqrt(n), so at n = 20,000 it is
                 // hundreds against a mean of 2m. This is the property that breaks a fan-in limit.
@@ -1894,11 +2271,33 @@ mod tests {
         assert!(g.position(135).is_none());
         assert!((g.distance(0, 1).unwrap() - 50e-6).abs() < 1e-18);
         assert!((g.lambda_of(2.0) - 100e-6).abs() < 1e-18);
-        let net = distance_dependent(&g, &MAASS_2002, g.lambda_of(2.0), &Wiring::default(), 1)
-            .unwrap();
-        assert!(net.n_syn > 0);
-        // Dale by construction, with the 80/20 split the wiring declares.
-        dale_check(&net, &Wiring::default().signs(135)).unwrap();
+        let w = Wiring::default();
+        let net = distance_dependent(&g, &MAASS_2002, g.lambda_of(2.0), &w, 1).unwrap();
+        // Not `n_syn > 0`, which the four scale factors cannot move: the synapse count of a column
+        // built by this rule is a Poisson-binomial sum with a closed-form mean and variance, and
+        // this one has to land on it. (Measured 619 against a predicted 623.7 +/- 21.4.)
+        let signs = w.signs(135);
+        let (mut mean, mut var) = (0.0f64, 0.0f64);
+        for a in 0..135 {
+            for d in 0..135 {
+                if a == d {
+                    continue;
+                }
+                let ratio = g.distance(a, d).unwrap() / g.lambda_of(2.0);
+                let p = MAASS_2002.c_for(signs[a], signs[d]) * (-(ratio * ratio)).exp();
+                mean += p;
+                var += p * (1.0 - p);
+            }
+        }
+        assert!(
+            (net.n_syn as f64 - mean).abs() < 4.0 * var.sqrt(),
+            "{} synapses against a predicted {mean:.1} +/- {:.1}",
+            net.n_syn,
+            var.sqrt()
+        );
+        // Dale by construction, with the 80/20 split the wiring declares. The *geometry* of that
+        // split is not the paper's; see `a_contiguous_partition_makes_the_inhibitory_population_a_slab`.
+        dale_check(&net, &signs).unwrap();
     }
 
     #[test]
@@ -2031,33 +2430,60 @@ mod tests {
         ));
     }
 
-    /// Every generator is Dale-compliant by construction, checked against the partition the wiring
-    /// declares rather than against itself.
+    /// Every generator, checked against the partition it was given rather than against itself.
+    ///
+    /// **Seven generators, not six.** The module doc used to say "every generator here is
+    /// Dale-compliant by construction" and this list quietly held six of them:
+    /// [`winner_take_all`] takes no [`Wiring`], and with `w_self > 0` it builds a unit that excites
+    /// itself while inhibiting everyone else, which is a mixed-sign neuron and the one thing
+    /// Dale's law forbids. Both of its forms are here, with the partition each one actually has.
     #[test]
     fn every_generator_obeys_dale_by_construction() {
         let w = Wiring::default();
-        let nets = vec![
-            ("gnp", erdos_renyi_gnp(60, 0.1, &w, 1).unwrap()),
-            ("gnm", erdos_renyi_gnm(60, 300, &w, 1).unwrap()),
-            ("ws", watts_strogatz(60, 6, 0.1, &w, 1).unwrap()),
-            ("ba", barabasi_albert(60, 2, &w, 1).unwrap()),
+        let grid = Grid3::new(5, 4, 3, 50e-6);
+        let scattered = shuffled_partition(60, CORTICAL_INHIBITORY_FRACTION, 1).unwrap();
+        let nets: Vec<(&str, crate::net::Net, Vec<Sign>)> = vec![
+            ("gnp", erdos_renyi_gnp(60, 0.1, &w, 1).unwrap(), w.signs(60)),
+            ("gnm", erdos_renyi_gnm(60, 300, &w, 1).unwrap(), w.signs(60)),
+            ("ws", watts_strogatz(60, 6, 0.1, &w, 1).unwrap(), w.signs(60)),
+            ("ba", barabasi_albert(60, 2, &w, 1).unwrap(), w.signs(60)),
             (
                 "maass",
-                distance_dependent(
-                    &Grid3::new(5, 4, 3, 50e-6),
+                distance_dependent(&grid, &MAASS_2002, grid.lambda_of(2.0), &w, 1).unwrap(),
+                w.signs(60),
+            ),
+            (
+                "maass_signed",
+                distance_dependent_signed(
+                    &grid,
                     &MAASS_2002,
-                    Grid3::new(5, 4, 3, 50e-6).lambda_of(2.0),
+                    grid.lambda_of(2.0),
                     &w,
+                    &scattered,
                     1,
                 )
                 .unwrap(),
+                scattered,
             ),
-            ("ff", feedforward(&[20, 20, 20], 1.0, &w, 1).unwrap()),
+            ("ff", feedforward(&[20, 20, 20], 1.0, &w, 1).unwrap(), w.signs(60)),
+            ("wta", winner_take_all(60, -1e-3, 0.0, 1).unwrap(), vec![Sign::Inhibitory; 60]),
         ];
-        for (name, net) in nets {
+        // Seven generators, and the distance rule twice — once per partition it accepts.
+        assert_eq!(nets.len(), 8, "the generator list changed without this test changing");
+        for (name, net, declared) in nets {
             assert!(net.n_syn > 0, "{name} produced an empty network");
-            dale_check(&net, &w.signs(net.n))
+            dale_check(&net, &declared)
                 .unwrap_or_else(|e| panic!("{name} violates Dale's law: {e}"));
+        }
+        // The exception, stated rather than discovered: self-excitation makes a mixed-sign unit,
+        // and no declaration can rescue it.
+        let self_exciting = winner_take_all(5, -1e-3, 1e-3, 1).unwrap();
+        assert_eq!(
+            dale_signs(&self_exciting).unwrap_err(),
+            DaleViolation::Mixed { neuron: 0, positive: 1, negative: 4 }
+        );
+        for declared in [Sign::Excitatory, Sign::Inhibitory, Sign::Silent] {
+            assert!(dale_check(&self_exciting, &[declared; 5]).is_err(), "{declared:?}");
         }
     }
 
@@ -2091,27 +2517,137 @@ mod tests {
     /// The balance condition in closed form, then measured off the graph. `expected_drive` is
     /// exactly zero for the balanced wiring, and the built network's mean incoming weight sits
     /// within a few standard errors of it.
+    ///
+    /// **The grand mean is not enough and this test used to stop there.** Summing
+    /// `in_weight_sums` over all neurons gives the total weight in the graph, which is the same
+    /// number whichever endpoint of a synapse it is attributed to: attributing every weight to its
+    /// *presynaptic* neuron instead — a one-word mutation of [`in_weight_sums`] — moves that mean
+    /// by 4.2e-17 V and nothing else here noticed. Balance is a **per-neuron** property, so the
+    /// per-neuron spread is checked too, and the two readings are 7.5x apart: incoming sums have
+    /// closed-form sd 1.340e-2 V, outgoing sums 1.007e-1 V, because an outgoing row is a single
+    /// sign times a binomial count and is therefore bimodal.
     #[test]
     fn a_balanced_wiring_has_zero_expected_drive_and_the_graph_agrees() {
         let w = Wiring::balanced(1e-3, 1);
         let (n, p) = (500usize, 0.1);
         assert!(w.expected_drive(n, p).abs() < 1e-18, "drive {}", w.expected_drive(n, p));
         assert!((w.w_inh / w.w_exc + BALANCED_G).abs() < 1e-18);
-        let net = erdos_renyi_gnp(n, p, &w, 2).unwrap();
-        let sums = in_weight_sums(&net);
-        let mean = sums.iter().sum::<f64>() / n as f64;
-        // Per-neuron variance: p(1-p) * sum of w^2 over presynaptic candidates.
         let n_inh = w.n_inhibitory(n);
-        let var = p * (1.0 - p)
-            * ((n - n_inh) as f64 * w.w_exc * w.w_exc + n_inh as f64 * w.w_inh * w.w_inh);
-        let sem = (var / n as f64).sqrt();
-        assert!(mean.abs() < 4.0 * sem, "mean incoming weight {mean:.3e} vs 4 sem {:.3e}", 4.0 * sem);
+        // Sum of w^2 over the whole population, the quantity both spreads are built from.
+        let s2 = (n - n_inh) as f64 * w.w_exc * w.w_exc + n_inh as f64 * w.w_inh * w.w_inh;
+        // Incoming: n - 1 independent Bernoulli(p) draws, one per possible presynaptic partner.
+        let var_in = p * (1.0 - p) * s2 * (n as f64 - 1.0) / n as f64;
+        // Outgoing: one Binomial(n - 1, p) count times this neuron's own weight. The spread is
+        // dominated by which sign the row carries, not by the count.
+        let e_w2 = s2 / n as f64;
+        let var_out =
+            p * (1.0 - p) * (n as f64 - 1.0) * e_w2 + (n as f64 - 1.0).powi(2) * p * p * e_w2;
+        // The sd of an sd estimated from n samples is sd / sqrt(2n).
+        let sd_err = var_in.sqrt() / (2.0 * n as f64).sqrt();
+        let spread = |v: &[f64]| {
+            let m = v.iter().sum::<f64>() / v.len() as f64;
+            (v.iter().map(|x| (x - m) * (x - m)).sum::<f64>() / v.len() as f64).sqrt()
+        };
+        for seed in [2u64, 3, 4, 5] {
+            let net = erdos_renyi_gnp(n, p, &w, seed).unwrap();
+            let sums = in_weight_sums(&net);
+            let mean = sums.iter().sum::<f64>() / n as f64;
+            let sem = (var_in / n as f64).sqrt();
+            assert!(
+                mean.abs() < 4.0 * sem,
+                "seed {seed}: mean incoming weight {mean:.3e} vs 4 sem {:.3e}",
+                4.0 * sem
+            );
+            let mut outs = vec![0.0f64; n];
+            for pre in 0..n {
+                for (_, weight, _) in net.out_of(pre) {
+                    outs[pre] += weight;
+                }
+            }
+            let (sd_in, sd_out) = (spread(&sums), spread(&outs));
+            assert!(
+                (sd_in - var_in.sqrt()).abs() < 4.0 * sd_err,
+                "seed {seed}: incoming sd {sd_in:.4e} vs closed form {:.4e}, 4 sd_err {:.4e}",
+                var_in.sqrt(),
+                4.0 * sd_err
+            );
+            // Measured deviation from the closed form is 0.9% at seed 2; the band is 5%.
+            assert!(
+                (sd_out - var_out.sqrt()).abs() < 0.05 * var_out.sqrt(),
+                "seed {seed}: outgoing sd {sd_out:.4e} vs closed form {:.4e}",
+                var_out.sqrt()
+            );
+            // And the two really are different measurements, which is the point.
+            assert!(sd_out > 5.0 * sd_in, "seed {seed}: sd_out {sd_out:.4e} sd_in {sd_in:.4e}");
+        }
+        // A fixture with no statistics in it at all. A 5-chain's incoming sums are [0, w, w, w, w]
+        // and its outgoing sums are [w, w, w, w, 0]: the head receives nothing, the tail sends
+        // nothing, and no reading of the graph can confuse the two lists.
+        let mut b = NetBuilder::new(5);
+        for i in 0..4u32 {
+            b.connect(i, i + 1, 2e-3, 0).unwrap();
+        }
+        let chain = b.build();
+        assert_eq!(in_weight_sums(&chain), vec![0.0, 2e-3, 2e-3, 2e-3, 2e-3]);
         // An unbalanced wiring must fail the same measurement, or the measurement proves nothing.
         let hot = Wiring { w_inh: -1e-3, ..w };
         assert!(hot.expected_drive(n, p) > 0.0);
         let hot_net = erdos_renyi_gnp(n, p, &hot, 2).unwrap();
-        let hot_mean = in_weight_sums(&hot_net).iter().sum::<f64>() / n as f64;
-        assert!(hot_mean > 4.0 * sem, "unbalanced network's drive {hot_mean:.3e} is not positive");
+        let hot_sums = in_weight_sums(&hot_net);
+        let hot_mean = hot_sums.iter().sum::<f64>() / n as f64;
+        // Against its own closed form, not merely against a threshold: the hot wiring's expected
+        // drive is 3.98e-2 V and the measured mean has to land on it within a few sem.
+        let hot_s2 = (n - n_inh) as f64 * hot.w_exc * hot.w_exc + n_inh as f64 * hot.w_inh * hot.w_inh;
+        let hot_sem = (p * (1.0 - p) * hot_s2 * (n as f64 - 1.0) / n as f64 / n as f64).sqrt();
+        let want = hot.expected_drive(n, p);
+        assert!(
+            (hot_mean - want).abs() < 4.0 * hot_sem,
+            "unbalanced drive: measured {hot_mean:.6e} vs expected {want:.6e}, 4 sem {:.3e}",
+            4.0 * hot_sem
+        );
+        assert!(hot_mean > 4.0 * (var_in / n as f64).sqrt());
+    }
+
+    /// (finding 7) `expected_drive` counts `n - 1` presynaptic partners, because every generator
+    /// here excludes self-loops.
+    ///
+    /// Measured at `p = 1.0`, where `G(n, 1)` is the complete graph minus its diagonal and the
+    /// measurement has **no sampling error at all**: neuron `i`'s incoming sum is exactly `S - w_i`
+    /// and the mean over neurons is exactly `S (n - 1) / n`. The old formula returned `S`, which is
+    /// 11.1% high at `n = 10` and 0.200% high at `n = 500` — small, systematic, and invisible in
+    /// the balanced test above because `S = 0` makes both formulas exactly zero.
+    #[test]
+    fn the_expected_drive_counts_n_minus_one_presynaptic_partners() {
+        let hot = Wiring { w_inh: -1e-3, ..Wiring::balanced(1e-3, 1) };
+        for &n in &[10usize, 100, 500] {
+            let net = erdos_renyi_gnp(n, 1.0, &hot, 0).unwrap();
+            assert_eq!(net.n_syn, n * (n - 1), "p = 1 is the complete graph minus the diagonal");
+            let sums = in_weight_sums(&net);
+            let measured = sums.iter().sum::<f64>() / n as f64;
+            let want = hot.expected_drive(n, 1.0);
+            // Twelve significant digits: the measurement is a sum of n - 1 float additions in the
+            // builder's order and the closed form multiplies once, so they agree to rounding and
+            // not bit for bit.
+            assert!(
+                (measured - want).abs() < 1e-12 * measured.abs(),
+                "n = {n}: measured {measured:.14e} vs expected_drive {want:.14e}"
+            );
+            // And the per-neuron form the mean is an average of: S - w_i, exactly.
+            let s: f64 = (0..n).map(|i| hot.weight_of(n, i)).sum();
+            for i in 0..n {
+                let want_i = s - hot.weight_of(n, i);
+                assert!((sums[i] - want_i).abs() < 1e-15 * s.abs().max(1e-3), "n = {n}, neuron {i}");
+            }
+            // The self term is the whole difference, and it is not zero.
+            let without_self_term = s; // what the dropped-factor formula returns at p = 1
+            assert!(
+                (without_self_term - want).abs() > 0.9 * s.abs() / n as f64,
+                "n = {n}: the n - 1 factor made no difference"
+            );
+        }
+        // Degenerate counts: no neuron, and one neuron with nobody to hear from.
+        assert!(Wiring::default().expected_drive(0, 0.5).abs() < 1e-18);
+        assert!(Wiring::default().expected_drive(1, 0.5).abs() < 1e-18);
     }
 
     #[test]
@@ -2179,6 +2715,41 @@ mod tests {
         assert_eq!(weak_components(&b.build()), vec![0, 0, 1, 1]);
     }
 
+    /// (finding 2) **Weak** means the edge direction is ignored, and only an in-star says so.
+    ///
+    /// Every fixture above is a fixed point of the mistake: four isolated neurons and `0 -> 1`,
+    /// `2 -> 3` come out the same whether the search follows synapses or forgets their direction,
+    /// because forward reachability from the lowest-indexed member already covers each component.
+    /// An in-star does not: `1 -> 0`, `2 -> 0` is one weak component and three strong ones, so
+    /// replacing [`undirected_neighbours`] with the plain out-edge adjacency — deleting the word
+    /// the function is named for — turns `[0, 0, 0]` into `[0, 1, 2]`.
+    #[test]
+    fn weak_components_ignore_the_direction_of_a_synapse() {
+        let mut b = NetBuilder::new(3);
+        b.connect(1, 0, 1e-3, 0).unwrap();
+        b.connect(2, 0, 1e-3, 0).unwrap();
+        let in_star = b.build();
+        assert_eq!(weak_components(&in_star), vec![0, 0, 0], "an in-star is one weak component");
+        // The same graph read directedly is three separate reachability classes, which is what
+        // `hops_from` reports and what `weak_components` must not.
+        assert_eq!(hops_from(&in_star, 1).unwrap()[2], None);
+        assert_eq!(hops_from(&in_star, 2).unwrap()[1], None);
+        // A directed cycle and a reversed chain, for the same reason at a second shape.
+        let mut b = NetBuilder::new(5);
+        for i in 0..4u32 {
+            b.connect(i + 1, i, 1e-3, 0).unwrap();
+        }
+        b.connect(0, 4, 1e-3, 0).unwrap();
+        assert_eq!(weak_components(&b.build()), vec![0; 5]);
+        // Two in-stars stay two components: the undirected reading must not merge everything.
+        let mut b = NetBuilder::new(6);
+        b.connect(1, 0, 1e-3, 0).unwrap();
+        b.connect(2, 0, 1e-3, 0).unwrap();
+        b.connect(4, 3, 1e-3, 0).unwrap();
+        b.connect(5, 3, 1e-3, 0).unwrap();
+        assert_eq!(weak_components(&b.build()), vec![0, 0, 0, 1, 1, 1]);
+    }
+
     /// The winner-take-all regime, simulated. Above the mean-field floor there is exactly one
     /// winner in the steady state, and its rate is the rate it would have alone.
     #[test]
@@ -2186,11 +2757,44 @@ mod tests {
         let lif = Lif::default();
         let currents = [6e-9, 4e-9, 3.5e-9, 3e-9];
         let floor = wta_inhibition_floor(&lif, currents[0], currents[1]).unwrap();
-        // 9.7 mV per spike at the default LIF; sanity-check the closed form itself.
-        let r_win = lif.rate(currents[0]).unwrap();
-        let want = (lif.v_inf(currents[1]) - lif.v_th) / (r_win * lif.tau_m);
-        assert!((floor - want).abs() < 1e-15);
+        // The closed form, re-derived from the LIF's own equations with the default's printed
+        // constants as literals — NOT by calling `v_inf` and `rate` again, which is what this test
+        // used to do and which cannot fail, because it is the body of `wta_inhibition_floor`
+        // written out a second time:
+        //   v_inf(4 nA)  = -65 mV + 10 MΩ * 4 nA              = -25 mV, so the excess is 25 mV
+        //   v_inf(6 nA)  = -65 mV + 10 MΩ * 6 nA              = -5 mV
+        //   isi(6 nA)    = 2 ms + 20 ms ln((-5 + 65)/(-5 + 50)) = 7.75364 ms -> 128.9717 Hz
+        //   floor        = 25 mV / (128.9717 Hz * 20 ms)      = 9.692052 mV
+        let by_hand = 25e-3 / ((1.0 / (2e-3 + 20e-3 * (60.0f64 / 45.0).ln())) * 20e-3);
+        assert!((by_hand - 9.692_051_811_3e-3).abs() < 1e-12, "the derivation moved: {by_hand}");
+        assert!((floor - by_hand).abs() < 1e-15, "floor {floor:.12e} vs {by_hand:.12e}");
         assert!((floor - 9.69e-3).abs() < 0.2e-3, "floor {floor:.4} V is not the expected 9.7 mV");
+        // A second parameter set, so that the check is of the formula and not of one cancellation:
+        //   tau_m 15 ms, rest -70 mV, threshold -52 mV, reset -60 mV, 8 MΩ, t_ref 3 ms,
+        //   i_win 8 nA, i_other 6 nA -> excess 30 mV, isi 5.40514 ms, rate 185.0048 Hz,
+        //   floor 30 mV / (185.0048 * 15 ms) = 10.81028 mV.
+        let other = Lif {
+            tau_m: 15e-3,
+            v_rest: -70e-3,
+            v_th: -52e-3,
+            v_reset: -60e-3,
+            r_m: 8e6,
+            t_ref: 3e-3,
+            v: -70e-3,
+            refractory: 0.0,
+        };
+        let other_by_hand = 30e-3 / ((1.0 / (3e-3 + 15e-3 * (54.0f64 / 46.0).ln())) * 15e-3);
+        assert!((other_by_hand - 1.081_027_950_2e-2).abs() < 1e-12, "{other_by_hand}");
+        assert!(
+            (wta_inhibition_floor(&other, 8e-9, 6e-9).unwrap() - other_by_hand).abs() < 1e-15,
+            "the floor disagrees with the hand derivation at a second parameter set"
+        );
+        // The floor is the weight at which the loser's MEAN potential sits exactly at threshold,
+        // which is the statement its doc makes. Checked forwards, in volts, from the definition:
+        // v_inf(i_other) - |w| * r_win * tau_m == v_th.
+        let r_win = lif.rate(currents[0]).unwrap();
+        let held_at = lif.v_inf(currents[1]) - floor * r_win * lif.tau_m;
+        assert!((held_at - lif.v_th).abs() < 1e-15, "the floor holds the loser at {held_at} V");
 
         let dt = 1e-4;
         let counts = |w_inh: f64| -> Vec<u32> {
@@ -2337,6 +2941,404 @@ mod tests {
         assert_eq!(lattice, rewired, "a saturated ring was rewired anyway");
         assert_eq!(clustering_coefficient(&rewired), Some(1.0));
         assert_eq!(characteristic_path_length(&rewired), Some(1.0));
+    }
+
+    /// (finding 17) The two probability boundaries of `G(n, p)`, which `feedforward` short-circuits
+    /// and this generator does not.
+    ///
+    /// `p = 1.0` gives the complete graph only because [`crate::rng::Rng::next_f64`] never returns
+    /// exactly 1.0 — a guarantee that module makes and tests, and that
+    /// `path_length_matches_its_closed_forms` silently depends on when it asserts 380 synapses.
+    /// Asserted here over several seeds so the dependency is visible at least once.
+    #[test]
+    fn gnp_at_the_probability_boundaries_is_complete_or_empty() {
+        for seed in 0..6u64 {
+            let full = erdos_renyi_gnp(40, 1.0, &exc(1e-3), seed).unwrap();
+            assert_eq!(full.n_syn, 40 * 39, "p = 1 dropped a synapse at seed {seed}");
+            let empty = erdos_renyi_gnp(40, 0.0, &exc(1e-3), seed).unwrap();
+            assert_eq!(empty.n_syn, 0, "p = 0 invented a synapse at seed {seed}");
+        }
+    }
+
+    /// (finding 14) The `Silent` arm of [`MaassC::c_for`], which no [`Wiring`] can reach and which
+    /// [`distance_dependent_signed`] can.
+    ///
+    /// Zero, both ways round, for every scale factor: a neuron whose transmitter is unknown gets no
+    /// synapses rather than a probability this rule invented for it. Changing the arm to `1.0`
+    /// leaves every other test in this module green.
+    #[test]
+    fn the_scale_factor_of_a_silent_endpoint_is_zero() {
+        for c in [MAASS_2002, MaassC::uniform(1.0), MaassC::uniform(0.0)] {
+            for other in [Sign::Excitatory, Sign::Inhibitory, Sign::Silent] {
+                assert!(c.c_for(Sign::Silent, other).abs() < 1e-18, "{c:?} pre = Silent");
+                assert!(c.c_for(other, Sign::Silent).abs() < 1e-18, "{c:?} post = Silent");
+            }
+        }
+        // The four live arms, in the paper's order, which also pins the pre/post convention: a
+        // swap of the two cross terms shows up here and nowhere else.
+        assert!((MAASS_2002.c_for(Sign::Excitatory, Sign::Excitatory) - 0.3).abs() < 1e-18);
+        assert!((MAASS_2002.c_for(Sign::Excitatory, Sign::Inhibitory) - 0.2).abs() < 1e-18);
+        assert!((MAASS_2002.c_for(Sign::Inhibitory, Sign::Excitatory) - 0.4).abs() < 1e-18);
+        assert!((MAASS_2002.c_for(Sign::Inhibitory, Sign::Inhibitory) - 0.1).abs() < 1e-18);
+        // And a Silent neuron really does drop out of a built graph rather than joining it.
+        let g = Grid3::new(4, 4, 1, 50e-6);
+        let mut signs = vec![Sign::Excitatory; 16];
+        signs[7] = Sign::Silent;
+        let net = distance_dependent_signed(
+            &g,
+            &MaassC::uniform(1.0),
+            g.lambda_of(2.0),
+            &Wiring::default(),
+            &signs,
+            3,
+        )
+        .unwrap();
+        assert_eq!(net.out_of(7).count(), 0, "a Silent neuron sent a synapse");
+        assert!(net.n_syn > 0, "the rest of the network was built");
+        assert_eq!(dale_signs(&net).unwrap()[7], Sign::Silent);
+    }
+
+    /// (finding 15) The preferential-attachment probe reports failure instead of returning a short
+    /// edge list.
+    ///
+    /// [`barabasi_albert`] can argue that the probe always finds a node — its array holds at least
+    /// `m + 1` distinct ones — but an argument is not a check, and the old loop could fall through
+    /// in silence and leave an arriving node with fewer than `m` edges. The branch is unreachable
+    /// from the generator, so it is tested on the helper directly.
+    #[test]
+    fn the_preferential_attachment_probe_refuses_rather_than_returning_a_short_edge_list() {
+        // Every entry already taken: the probe has nothing to return and says so.
+        assert_eq!(super::probe_distinct(&[3, 3, 4], &[3, 4], 0), None);
+        assert_eq!(super::probe_distinct(&[], &[], 0), None);
+        // The ordinary case: the first entry at or after `start`, cyclically, that is free.
+        assert_eq!(super::probe_distinct(&[5, 6, 7], &[], 1), Some(6));
+        assert_eq!(super::probe_distinct(&[5, 6, 7], &[6, 7], 1), Some(5));
+        assert_eq!(super::probe_distinct(&[5, 6, 7], &[5], 0), Some(6));
+        // Degree weighting survives the refactor: a node that appears twice is twice as likely to
+        // be the first one found, which is the whole of Batagelj and Brandes' trick.
+        let repeated = [1u32, 1, 2];
+        let hits = (0..3).filter(|&s| super::probe_distinct(&repeated, &[], s) == Some(1)).count();
+        assert_eq!(hits, 2, "the repeated endpoint lost its extra weight");
+        // And the generator itself still gives every arriving node exactly m edges.
+        for &(n, m) in &[(60usize, 3usize), (60, 5)] {
+            let net = barabasi_albert(n, m, &exc(1e-3), 11).unwrap();
+            let deg = undirected_degrees(&net);
+            for (v, d) in deg.iter().enumerate().skip(m + 1) {
+                assert!(*d >= m, "node {v} arrived with {d} edges, fewer than m = {m}");
+            }
+        }
+    }
+
+    /// (finding 16) A grid whose dimensions overflow a `usize` is refused, not wrapped.
+    ///
+    /// `nx * ny * nz` wrapping in release is the dangerous case: the wrapped product is a small,
+    /// plausible neuron count that [`crate::net::NetBuilder`] would accept, so the caller gets a
+    /// four-neuron network where they asked for an impossible one. [`Grid3::len`] saturates and
+    /// [`Grid3::validate`] rejects.
+    #[test]
+    fn a_grid_whose_dimensions_overflow_is_refused_rather_than_wrapped() {
+        let huge = Grid3::new(usize::MAX, 2, 2, 50e-6);
+        assert_eq!(huge.len(), usize::MAX, "the product wrapped instead of saturating");
+        assert!(matches!(huge.validate().unwrap_err(), TopologyError::IndexSpace { .. }));
+        assert!(matches!(
+            distance_dependent(&huge, &MAASS_2002, 1e-4, &Wiring::default(), 0).unwrap_err(),
+            TopologyError::IndexSpace { .. }
+        ));
+        // Past u32 but inside usize: still refused, by the index-space rule every generator obeys.
+        let wide = Grid3::new(5_000_000_000, 1, 1, 50e-6);
+        assert_eq!(wide.len(), 5_000_000_000);
+        assert!(matches!(
+            wide.validate().unwrap_err(),
+            TopologyError::IndexSpace { n: 5_000_000_000 }
+        ));
+        // A grid that fits is untouched.
+        assert!(Grid3::new(15, 3, 3, 50e-6).validate().is_ok());
+        assert!(!Grid3::new(15, 3, 3, 50e-6).is_empty());
+        assert!(Grid3::new(15, 0, 3, 50e-6).is_empty());
+    }
+
+    /// (finding 9) The rejection zone holds a **whole number of residue classes**, which is the
+    /// entire content of the phrase "without modulo bias".
+    ///
+    /// The shipped form, `u64::MAX - (u64::MAX % n) - (n - 1)`, does not: its acceptance region is
+    /// `(q - 1) n + 2` wide, so residues 0 and 1 are over-represented for every `n`, and for
+    /// `n > 2^63` it collapses to `{0, 1}` — a draw that returns only 0 or 1 and loops about `2^63`
+    /// times to do it. This assertion is exact and in `u128`, so it fails in microseconds rather
+    /// than hanging.
+    #[test]
+    fn unbiased_zone_holds_whole_residue_classes() {
+        let ns = [
+            2u64,
+            3,
+            7,
+            400,
+            1000,
+            1_000_000,
+            (1u64 << 32) + 1,
+            (1u64 << 40) + 12_345,
+            1u64 << 62,
+            (1u64 << 62) + 1,
+            (1u64 << 63) + 7,
+            u64::MAX,
+            u64::MAX - 1,
+        ];
+        for n in ns {
+            let zone = super::unbiased_zone(n);
+            let size = u128::from(zone) + 1;
+            assert_eq!(size % u128::from(n), 0, "n = {n}: acceptance region {size} is not n * q");
+            // It is also the LARGEST such region: one more class would not fit in 2^64.
+            assert!(size + u128::from(n) > 1u128 << 64, "n = {n}: the zone left a class on the table");
+            // Which means at least half of the 64-bit range is accepted, so the rejection loop
+            // terminates in about two draws however large n is.
+            assert!(size * 2 > 1u128 << 64, "n = {n}: rejection is more likely than acceptance");
+        }
+        // A power of two rejects nothing at all.
+        assert_eq!(super::unbiased_zone(1u64 << 62), u64::MAX);
+        // And the draw itself stays in range and spreads over it for an n past 2^63, where the old
+        // formula returned only 0 and 1.
+        let mut rng = Rng::new(17);
+        let n = (1u64 << 63) + 7;
+        let mut above = 0u32;
+        for _ in 0..400 {
+            let v = super::below_u64(&mut rng, n);
+            assert!(v < n, "draw {v} escaped [0, {n})");
+            if v > (1u64 << 62) {
+                above += 1;
+            }
+        }
+        assert!(above > 100, "only {above} of 400 draws from a 2^63 range exceeded 2^62");
+    }
+
+    /// (finding 4a) **The four Maass scale factors are load-bearing here and nowhere else.**
+    ///
+    /// Until this test existed, `MAASS_2002` was inert: swapping `ei` and `ie`, or setting all four
+    /// factors to 0.01, left every test in this module green, because the only one that built a
+    /// network with them asserted `n_syn > 0`. What pins them is the **rate of each pair type**:
+    /// with a random partition the four types all have thousands of candidate pairs, so the
+    /// expected count of each is a Poisson-binomial sum with a closed-form mean and variance, and
+    /// each factor is separately visible in the result.
+    ///
+    /// The last two assertions are the test checking itself: the same measurement is compared
+    /// against the predictions a **wrong** parameter set would make, and has to be many sigma from
+    /// them. A test that cannot reject the alternative is not testing the constant.
+    #[test]
+    fn the_maass_scale_factors_set_the_rate_of_each_pair_type() {
+        let grid = Grid3::new(12, 12, 3, 50e-6);
+        let n = grid.len();
+        let lambda = grid.lambda_of(2.0);
+        let wiring = Wiring::default();
+        let slot = |pre: Sign, post: Sign| {
+            2 * usize::from(pre == Sign::Inhibitory) + usize::from(post == Sign::Inhibitory)
+        };
+        // The paper's four factors, transcribed a second time and independently of the constant
+        // under test, so that this measurement fails when `MAASS_2002` moves rather than moving
+        // with it: a prediction computed from the same constant the generator used would agree
+        // with any value at all.
+        let paper = MaassC { ee: 0.3, ei: 0.2, ie: 0.4, ii: 0.1 };
+        assert_eq!(paper, MAASS_2002, "MAASS_2002 is no longer the paper's parameter list");
+        // Mean and variance of the count of each pair type under a given parameter set.
+        let predict = |c: &MaassC, signs: &[Sign]| {
+            let (mut mean, mut var) = ([0.0f64; 4], [0.0f64; 4]);
+            for a in 0..n {
+                for d in 0..n {
+                    if a == d {
+                        continue;
+                    }
+                    let ratio = grid.distance(a, d).unwrap() / lambda;
+                    let p = c.c_for(signs[a], signs[d]) * (-(ratio * ratio)).exp();
+                    mean[slot(signs[a], signs[d])] += p;
+                    var[slot(signs[a], signs[d])] += p * (1.0 - p);
+                }
+            }
+            (mean, var)
+        };
+        for seed in [5u64, 6] {
+            let signs = shuffled_partition(n, CORTICAL_INHIBITORY_FRACTION, seed).unwrap();
+            let net =
+                distance_dependent_signed(&grid, &MAASS_2002, lambda, &wiring, &signs, seed).unwrap();
+            let mut obs = [0u64; 4];
+            for a in 0..n {
+                for (post, _, _) in net.out_of(a) {
+                    obs[slot(signs[a], signs[post as usize])] += 1;
+                }
+            }
+            let (mean, var) = predict(&paper, &signs);
+            let names = ["EE", "EI", "IE", "II"];
+            for t in 0..4 {
+                let sigma = var[t].sqrt();
+                assert!(
+                    (obs[t] as f64 - mean[t]).abs() < 4.0 * sigma,
+                    "seed {seed} {}: {} synapses against a predicted {:.1} +/- {sigma:.1}",
+                    names[t],
+                    obs[t],
+                    mean[t]
+                );
+            }
+            // Would this measurement notice if `ei` and `ie` were transposed? They are 0.2 and 0.4,
+            // so the two cross terms swap and the observed counts land 10+ sigma from the wrong
+            // prediction. (Measured at seed 5: EI 313 against a swapped prediction of 642.8.)
+            let swapped = MaassC { ei: paper.ie, ie: paper.ei, ..paper };
+            let (bad_mean, bad_var) = predict(&swapped, &signs);
+            for t in [1usize, 2] {
+                let z = (obs[t] as f64 - bad_mean[t]).abs() / bad_var[t].sqrt();
+                assert!(z > 8.0, "seed {seed} {}: a swapped ei/ie is only {z:.1} sigma away", names[t]);
+            }
+            // And if every factor were 0.01 — the other mutation that used to survive.
+            let flat = MaassC::uniform(0.01);
+            let (flat_mean, flat_var) = predict(&flat, &signs);
+            for t in 0..4 {
+                let z = (obs[t] as f64 - flat_mean[t]).abs() / flat_var[t].sqrt();
+                assert!(z > 8.0, "seed {seed} {}: a 0.01 rule is only {z:.1} sigma away", names[t]);
+            }
+        }
+    }
+
+    /// (finding 4b) **A contiguous E/I partition on a lattice is a slab, and the slab is visible in
+    /// the built network's drive.**
+    ///
+    /// [`Wiring`] numbers the inhibitory neurons last and [`Grid3`] numbers positions x-fastest, so
+    /// on the 15x3x3 Maass column all 27 inhibitory neurons land on the single face `z = 2`. Under
+    /// a distance-dependent rule that is a systematic gradient across the column — 1.600, −1.578,
+    /// −0.378 mV of mean incoming weight by z-slab, a 3.18 mV spread that exists only because of
+    /// the index convention. Maass, Natschläger and Markram pick their inhibitory neurons at
+    /// random, which is what [`shuffled_partition`] does, and the spread then averages 0.88 mV over
+    /// five seeds.
+    ///
+    /// Both halves are asserted, because the first is the one a reader has to know before
+    /// reproducing a figure with [`distance_dependent`].
+    #[test]
+    fn a_contiguous_partition_makes_the_inhibitory_population_a_slab() {
+        let g = Grid3::maass_column(50e-6);
+        let lambda = g.lambda_of(2.0);
+        let wiring = Wiring::default();
+        let block = wiring.signs(135);
+        assert_eq!(block.iter().filter(|s| **s == Sign::Inhibitory).count(), 27);
+        // Every inhibitory neuron is on the face z = 2, and z = 2 is 45 of the 135 neurons.
+        for (i, sign) in block.iter().enumerate() {
+            if *sign == Sign::Inhibitory {
+                let z = g.position(i).unwrap()[2];
+                assert!((z - 2.0 * 50e-6).abs() < 1e-18, "inhibitory neuron {i} is not on z = 2");
+            }
+        }
+        let zmeans = |net: &crate::net::Net| -> [f64; 3] {
+            let ins = in_weight_sums(net);
+            let mut out = [0.0f64; 3];
+            for (i, v) in ins.iter().enumerate() {
+                out[i / 45] += v / 45.0;
+            }
+            out
+        };
+        let spread = |m: [f64; 3]| {
+            m.iter().cloned().fold(f64::MIN, f64::max) - m.iter().cloned().fold(f64::MAX, f64::min)
+        };
+        let contiguous = distance_dependent(&g, &MAASS_2002, lambda, &wiring, 1).unwrap();
+        let cz = zmeans(&contiguous);
+        // The exact gradient, as a golden value: this is a deterministic generator on a fixed seed,
+        // and the numbers are the ones the module doc quotes.
+        for (got, want) in cz.iter().zip([1.600e-3, -1.577_777_777_777_777e-3, -0.377_777_777_777_777e-3]) {
+            assert!((got - want).abs() < 1e-15, "z-slab drive {cz:?} moved");
+        }
+        assert!((spread(cz) - 3.177_777_777_777_78e-3).abs() < 1e-15, "spread {}", spread(cz));
+
+        // The random partition: the same 27 inhibitory neurons, scattered.
+        let mut total = 0.0f64;
+        let seeds = [1u64, 2, 3, 4, 5];
+        for seed in seeds {
+            let signs = shuffled_partition(135, CORTICAL_INHIBITORY_FRACTION, seed).unwrap();
+            assert_eq!(
+                signs.iter().filter(|s| **s == Sign::Inhibitory).count(),
+                27,
+                "seed {seed}: the shuffle changed the inhibitory count"
+            );
+            // Hypergeometric: 9 per z-slab in expectation, sd 2.2, so every slab is populated.
+            for z in 0..3 {
+                let c = (0..135).filter(|i| i / 45 == z && signs[*i] == Sign::Inhibitory).count();
+                assert!(
+                    c.abs_diff(9) <= 8,
+                    "seed {seed}: z-slab {z} holds {c} of the 27 inhibitory neurons"
+                );
+            }
+            let net =
+                distance_dependent_signed(&g, &MAASS_2002, lambda, &wiring, &signs, 1).unwrap();
+            // The network is wired to the partition it was given, not to the index block.
+            dale_check(&net, &signs).unwrap();
+            total += spread(zmeans(&net));
+        }
+        let mean_spread = total / seeds.len() as f64;
+        assert!(
+            mean_spread < 0.5 * spread(cz),
+            "the scattered partition's mean z-slab spread is {mean_spread:.3e} V against the \
+             contiguous {:.3e} V",
+            spread(cz)
+        );
+    }
+
+    /// [`shuffled_partition`] is a permutation of [`dale_partition`], drawn from the seed.
+    #[test]
+    fn a_shuffled_partition_is_a_seeded_permutation_of_the_contiguous_one() {
+        for n in [1usize, 2, 10, 135, 500] {
+            let block = dale_partition(n, CORTICAL_INHIBITORY_FRACTION).unwrap();
+            let shuffled = shuffled_partition(n, CORTICAL_INHIBITORY_FRACTION, 9).unwrap();
+            assert_eq!(shuffled.len(), n);
+            for sign in [Sign::Excitatory, Sign::Inhibitory] {
+                assert_eq!(
+                    block.iter().filter(|s| **s == sign).count(),
+                    shuffled.iter().filter(|s| **s == sign).count(),
+                    "n = {n}: the shuffle changed how many neurons are {sign:?}"
+                );
+            }
+        }
+        // Same seed, same partition; a different seed moves it. (n = 135, 27 inhibitory: the
+        // chance of two seeds agreeing by accident is 1 / C(135, 27), about 1e-29.)
+        assert_eq!(shuffled_partition(135, 0.2, 4).unwrap(), shuffled_partition(135, 0.2, 4).unwrap());
+        assert_ne!(shuffled_partition(135, 0.2, 4).unwrap(), shuffled_partition(135, 0.2, 5).unwrap());
+        assert_ne!(shuffled_partition(135, 0.2, 4).unwrap(), dale_partition(135, 0.2).unwrap());
+        // Degenerate fractions still land exactly on the block partition's counts.
+        assert!(shuffled_partition(20, 0.0, 1).unwrap().iter().all(|s| *s == Sign::Excitatory));
+        assert!(shuffled_partition(20, 1.0, 1).unwrap().iter().all(|s| *s == Sign::Inhibitory));
+        assert!(matches!(
+            shuffled_partition(10, 1.5, 0).unwrap_err(),
+            TopologyError::Probability { name: "inhibitory_fraction", .. }
+        ));
+    }
+
+    /// [`distance_dependent`] is [`distance_dependent_signed`] fed the contiguous block, **bit for
+    /// bit** — the refactor that introduced the signed entry point moved no synapse.
+    ///
+    /// Pinned by a fingerprint as well as by equality, so that a future change to the draw order
+    /// has to be deliberate: the Maass column at seed 1 is 619 synapses hashing to
+    /// `0x10faf783b3eee553` under FNV-1a over `(pre, post, weight bits, delay)`.
+    #[test]
+    fn the_contiguous_partition_is_the_shuffled_path_with_a_block_input() {
+        let g = Grid3::maass_column(50e-6);
+        let w = Wiring::default();
+        let lambda = g.lambda_of(2.0);
+        let direct = distance_dependent(&g, &MAASS_2002, lambda, &w, 1).unwrap();
+        let signed =
+            distance_dependent_signed(&g, &MAASS_2002, lambda, &w, &w.signs(135), 1).unwrap();
+        assert_eq!(direct, signed, "the two entry points disagree");
+        assert_eq!(direct.n_syn, 619);
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        for pre in 0..direct.n {
+            for (post, weight, delay) in direct.out_of(pre) {
+                for b in [pre as u64, u64::from(post), weight.to_bits(), u64::from(delay)] {
+                    h ^= b;
+                    h = h.wrapping_mul(0x100_0000_01b3);
+                }
+            }
+        }
+        assert_eq!(h, 0x10fa_f783_b3ee_e553, "the Maass column at seed 1 is not the graph it was");
+        // The length of the partition is checked, not assumed.
+        assert_eq!(
+            distance_dependent_signed(&g, &MAASS_2002, lambda, &w, &w.signs(134), 1).unwrap_err(),
+            TopologyError::SignsLength { declared: 134, neurons: 135 }
+        );
+        assert_eq!(
+            distance_dependent_signed(&g, &MAASS_2002, lambda, &w, &[], 1).unwrap_err(),
+            TopologyError::SignsLength { declared: 0, neurons: 135 }
+        );
+        let e = TopologyError::SignsLength { declared: 134, neurons: 135 };
+        assert!(e.to_string().contains("134") && e.to_string().contains("135"), "{e}");
     }
 
     #[test]

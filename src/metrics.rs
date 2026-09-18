@@ -209,11 +209,49 @@ pub enum MetricError {
     /// In this crate a neuron fires at most once per tick, so a train with more spikes than
     /// `neurons * ticks` describes a run that did not happen — usually two trains concatenated, or
     /// a tick count taken from the wrong variable.
+    ///
+    /// This is the *gross* form of that error. The subtle forms — a train under capacity that
+    /// still names one neuron-timestep twice, or one outside the run — are
+    /// [`MetricError::ImpossibleSpike`].
     TooManySpikes {
         /// Spikes in the train.
         spikes: u64,
         /// Neuron-timesteps available, `neurons * ticks`.
         capacity: u64,
+    },
+    /// One spike could not have come from the run it is being measured against.
+    ///
+    /// Either it names a tick at or past the end of the run, or it names a neuron-timestep a
+    /// second time — and in this crate a neuron fires at most once per tick. Both shapes usually
+    /// mean two trains were concatenated, or a tick count was taken from the wrong variable.
+    ///
+    /// Refused rather than counted, because [`activation_sparsity_of_run`] credits one active
+    /// neuron-timestep per spike: a train that repeats a spike reports a run as denser than it
+    /// was, by an amount no plot would show as wrong. [`crate::spike::Train::push`] and
+    /// [`crate::spike::Train::from_spikes`] are both public and neither enforces one spike per
+    /// neuron per tick, so it is enforced at the metric.
+    ImpossibleSpike {
+        /// The tick the offending spike names.
+        t: u64,
+        /// The neuron the offending spike names.
+        source: u32,
+        /// What is wrong with it, as a phrase completing "the spike … ". One of
+        /// `"is on a tick at or past the end of the run"` or
+        /// `"repeats a neuron-timestep, and a neuron fires at most once per tick"`.
+        why: &'static str,
+    },
+    /// More connections were counted than the declared architecture holds.
+    ///
+    /// Raised when a zero-weight count exceeds the total connection count, or when a [`Net`]
+    /// connects more distinct ordered pairs than the declared dense count allows. Kept apart from
+    /// [`MetricError::TooManySpikes`] because these quantities are weights, not spikes, and an
+    /// error message that says "spikes in neuron-timesteps" sends a reader to the wrong half of
+    /// their pipeline.
+    TooManyConnections {
+        /// Connections counted.
+        counted: u64,
+        /// Connections the declared architecture holds.
+        declared: u64,
     },
     /// A count exceeded `u64`. Reported rather than wrapped, because a wrapped synaptic-operation
     /// count is a small number where an enormous one belongs.
@@ -255,6 +293,12 @@ impl fmt::Display for MetricError {
             }
             Self::TooManySpikes { spikes, capacity } => {
                 write!(f, "{spikes} spikes in {capacity} neuron-timesteps")
+            }
+            Self::ImpossibleSpike { t, source, why } => {
+                write!(f, "the spike at tick {t} from neuron {source} {why}")
+            }
+            Self::TooManyConnections { counted, declared } => {
+                write!(f, "{counted} connections against a declared {declared}")
             }
             Self::Overflow { what } => write!(f, "{what} overflowed a u64 count"),
         }
@@ -362,9 +406,18 @@ impl ActivationCensus {
 
     /// Fraction of activations that were non-zero — the firing density, `1 - sparsity`.
     ///
-    /// `None` on an empty census, for the same reason as [`ActivationCensus::sparsity`]. Computed
-    /// from the counts rather than as `1.0 - sparsity()` so that the two agree to the last bit at
-    /// the ends of the range, where `1 - (1 - x)` does not return `x`.
+    /// `None` on an empty census, for the same reason as [`ActivationCensus::sparsity`].
+    ///
+    /// # Why this is a division and not `1.0 - sparsity()`
+    ///
+    /// Because the two are different numbers in the middle of the range, and this one is the
+    /// correctly rounded quotient. At the *ends* they agree exactly — `sparsity()` is exactly
+    /// `0.0` or exactly `1.0` there and subtracting from one is exact — so the ends cannot tell
+    /// them apart. One zero in three can: `(3 - 1) as f64 / 3.0` is the double nearest 2/3,
+    /// `0.666_666_666_666_666_63`, while `1.0 - (1.0 / 3.0)` is one ulp above it,
+    /// `0.666_666_666_666_666_74`. `sparsity() + density() == 1.0` holds under **both** forms at
+    /// every ratio, so it is not a check on this choice;
+    /// `the_density_is_the_quotient_and_not_one_minus_the_sparsity` in this module's tests is.
     #[must_use]
     pub fn density(&self) -> Option<f64> {
         if self.total == 0 {
@@ -391,18 +444,70 @@ impl ActivationCensus {
     }
 }
 
+/// Refuse a train that could not have come from one run of `neurons` neurons over `ticks` ticks.
+///
+/// Three ways it could not: a spike from a neuron the run does not have, a spike on a tick at or
+/// past the end of the run, and the same neuron-timestep named twice. The counts of
+/// [`activation_sparsity_of_run`] rest on each spike being one distinct active neuron-timestep
+/// inside the window, and none of the three is caught by comparing the spike count against the
+/// capacity: three spikes on `(t = 0, source = 0)` over two neurons and five ticks are well under
+/// a capacity of ten and describe a run that did not happen.
+fn check_one_run(train: &Train, neurons: u64, ticks: u64) -> Result<(), MetricError> {
+    let spikes = train.spikes();
+    for s in spikes {
+        if u64::from(s.source) >= neurons {
+            return Err(MetricError::SourceOutOfRange {
+                source: s.source,
+                n: usize::try_from(neurons).unwrap_or(usize::MAX),
+            });
+        }
+        if s.t >= ticks {
+            return Err(MetricError::ImpossibleSpike {
+                t: s.t,
+                source: s.source,
+                why: "is on a tick at or past the end of the run",
+            });
+        }
+    }
+    // A `Train` is documented as sorted by `(t, source)`, so the usual case finds a repeat among
+    // neighbours and allocates nothing. `Train::push` checks only that ticks do not go backwards,
+    // so a hand-assembled train may be unordered *within* a tick; that case is sorted here rather
+    // than trusted, because an unnoticed repeat is exactly the defect this function exists for.
+    let repeat = if spikes.windows(2).all(|w| w[0] <= w[1]) {
+        spikes.windows(2).find(|w| w[0] == w[1]).map(|w| w[0])
+    } else {
+        let mut sorted = spikes.to_vec();
+        sorted.sort_unstable();
+        sorted.windows(2).find(|w| w[0] == w[1]).map(|w| w[0])
+    };
+    if let Some(s) = repeat {
+        return Err(MetricError::ImpossibleSpike {
+            t: s.t,
+            source: s.source,
+            why: "repeats a neuron-timestep, and a neuron fires at most once per tick",
+        });
+    }
+    Ok(())
+}
+
 /// Activation sparsity of a recorded spiking run: the fraction of neuron-timesteps on which
 /// nothing fired.
 ///
 /// A spiking activation is binary, so the general definition collapses to counting: there are
 /// `neurons * ticks` activations and `train.len()` of them are one.
 ///
+/// That collapse needs the train to be one run's worth of distinct neuron-timesteps, so the train
+/// is checked against `neurons` and `ticks` before it is counted rather than assumed to be
+/// well-formed — see [`MetricError::ImpossibleSpike`].
+///
 /// # Errors
 ///
 /// [`MetricError::Empty`] when `neurons` or `ticks` is zero — no neuron-timesteps means no ratio;
 /// [`MetricError::TooManySpikes`] when the train holds more spikes than there are neuron-timesteps,
 /// which in this crate cannot happen from one run and usually means two trains were concatenated;
-/// [`MetricError::Overflow`] if `neurons * ticks` exceeds `u64`.
+/// [`MetricError::SourceOutOfRange`] for a spike from a neuron the run does not have;
+/// [`MetricError::ImpossibleSpike`] for a spike outside the run's ticks or a neuron-timestep named
+/// twice; [`MetricError::Overflow`] if `neurons * ticks` exceeds `u64`.
 pub fn activation_sparsity_of_run(
     train: &Train,
     neurons: u64,
@@ -416,6 +521,7 @@ pub fn activation_sparsity_of_run(
     if spikes > capacity {
         return Err(MetricError::TooManySpikes { spikes, capacity });
     }
+    check_one_run(train, neurons, ticks)?;
     Ok((capacity - spikes) as f64 / capacity as f64)
 }
 
@@ -459,26 +565,36 @@ pub struct SynOps {
 }
 
 impl SynOps {
-    /// Effective operations of both kinds added together.
+    /// Effective operations of both kinds added together, or `None` when the sum does not fit in
+    /// a `u64`.
     ///
     /// Provided as a named method rather than a field so that adding a `MAC` to an `AC` is
     /// something a caller writes deliberately. The two are not interchangeable in energy: an
     /// integer accumulate is cheaper than a multiply-accumulate at every bit-width anyone has
     /// published, and by how much depends on the datapath, which is why this crate declines to
     /// supply a ratio.
+    ///
+    /// # Why `Option` rather than a `u64`
+    ///
+    /// The fields are public and [`SynOps::add`] checks each of the three counts *separately*, so
+    /// a pair of counts that each fit can still have a sum that does not. A bare `+` panics on
+    /// that pair in a debug build and wraps in a release one, and a wrapped synaptic-operation
+    /// count is precisely what [`MetricError::Overflow`]'s own doc says must not happen: a small
+    /// number where an enormous one belongs. `None` says "does not fit", which is the only true
+    /// answer; [`Footprint::bytes`] returns `None` on its own overflow for the same reason.
     #[must_use]
-    pub fn effective_total(&self) -> u64 {
-        self.effective_macs + self.effective_acs
+    pub fn effective_total(&self) -> Option<u64> {
+        self.effective_macs.checked_add(self.effective_acs)
     }
 
     /// How many times fewer effective operations than dense ones, as `dense / effective`.
     ///
-    /// `None` when the effective count is zero. A network that did nothing has not achieved
-    /// infinite efficiency; it has produced no output, and an infinity in a results table reads as
-    /// the former.
+    /// `None` when the effective count is zero, and also when it does not fit in a `u64`. A
+    /// network that did nothing has not achieved infinite efficiency; it has produced no output,
+    /// and an infinity in a results table reads as the former.
     #[must_use]
     pub fn reduction(&self) -> Option<f64> {
-        let e = self.effective_total();
+        let e = self.effective_total()?;
         if e == 0 {
             return None;
         }
@@ -487,12 +603,12 @@ impl SynOps {
 
     /// Fraction of effective operations that were accumulates rather than multiply-accumulates.
     ///
-    /// `None` when there were no effective operations at all. `1.0` for a purely binary spiking
-    /// network, which is the regime the hardware argument assumes and which a hybrid model quietly
-    /// leaves.
+    /// `None` when there were no effective operations at all, and when their sum does not fit in a
+    /// `u64`. `1.0` for a purely binary spiking network, which is the regime the hardware argument
+    /// assumes and which a hybrid model quietly leaves.
     #[must_use]
     pub fn ac_fraction(&self) -> Option<f64> {
-        let e = self.effective_total();
+        let e = self.effective_total()?;
         if e == 0 {
             return None;
         }
@@ -652,6 +768,11 @@ pub struct SpikeAccounting {
     pub zero_weight: u64,
 }
 
+/// One more of something, or an overflow error naming the counter.
+fn bump(x: u64, what: &'static str) -> Result<u64, MetricError> {
+    x.checked_add(1).ok_or(MetricError::Overflow { what })
+}
+
 /// Count what a recorded train did to a network, over a run of `ticks` ticks.
 ///
 /// A spike emitted on tick `t` across a synapse of delay `d` arrives on tick `t + 1 + d`, which is
@@ -659,10 +780,18 @@ pub struct SpikeAccounting {
 /// [`crate::sim::Sim::step`]'s posting rule, not a convention chosen here, and getting it wrong
 /// moves the count by one tick's worth of deliveries in a way that no plot would show as wrong.
 ///
+/// # Arithmetic at the end of `u64`
+///
+/// [`crate::spike::Spike::t`] is a public `u64` and [`crate::net::Net::delay`] a public `u32`, so
+/// `t + 1 + d` can leave the range — `Train::from_spikes(vec![Spike { t: u64::MAX, source: 0 }])`
+/// is an ordinary call and made the sum panic in a debug build and wrap in a release one. The
+/// arrival tick is computed with checked adds, and an arrival that does not fit in a `u64` is past
+/// the end of every finite run, so it counts as in flight.
+///
 /// # Errors
 ///
 /// [`MetricError::SourceOutOfRange`] if the train names a neuron the network does not have, and
-/// [`MetricError::Overflow`] if `n_syn * ticks` exceeds `u64`.
+/// [`MetricError::Overflow`] if `n_syn * ticks` exceeds `u64` or a delivery counter does.
 pub fn account_for_train(
     net: &Net,
     train: &Train,
@@ -675,16 +804,18 @@ pub fn account_for_train(
             return Err(MetricError::SourceOutOfRange { source: s.source, n: net.n });
         }
         for (_post, w, d) in net.out_of(s.source as usize) {
-            acc.posted += 1;
-            if s.t + 1 + u64::from(d) < ticks {
-                acc.delivered += 1;
-                if w == 0.0 {
-                    acc.zero_weight += 1;
-                } else {
-                    acc.ops.effective_acs += 1;
+            acc.posted = bump(acc.posted, "posted deliveries")?;
+            let arrival = s.t.checked_add(1).and_then(|x| x.checked_add(u64::from(d)));
+            match arrival {
+                Some(at) if at < ticks => {
+                    acc.delivered = bump(acc.delivered, "delivered spikes")?;
+                    if w == 0.0 {
+                        acc.zero_weight = bump(acc.zero_weight, "zero-weight deliveries")?;
+                    } else {
+                        acc.ops.effective_acs = bump(acc.ops.effective_acs, "effective ACs")?;
+                    }
                 }
-            } else {
-                acc.in_flight += 1;
+                _ => acc.in_flight = bump(acc.in_flight, "in-flight deliveries")?,
             }
         }
     }
@@ -779,14 +910,14 @@ impl Footprint {
 /// # Errors
 ///
 /// [`MetricError::Empty`] when `total` is zero — a model with no connections has no ratio — and
-/// [`MetricError::TooManySpikes`] when `zero > total`, which is the closest this error type has to
-/// "you counted more zeros than there are weights" and names both numbers.
+/// [`MetricError::TooManyConnections`] when `zero > total`, which names both numbers in the unit
+/// they were counted in.
 pub fn connection_sparsity(zero: u64, total: u64) -> Result<f64, MetricError> {
     if total == 0 {
         return Err(MetricError::Empty { what: "connections" });
     }
     if zero > total {
-        return Err(MetricError::TooManySpikes { spikes: zero, capacity: total });
+        return Err(MetricError::TooManyConnections { counted: zero, declared: total });
     }
     Ok(zero as f64 / total as f64)
 }
@@ -807,17 +938,64 @@ pub fn connection_sparsity(zero: u64, total: u64) -> Result<f64, MetricError> {
 /// every network as 0% sparse, which is the flattering direction for a footprint claim and the
 /// unflattering one for an efficiency claim.
 ///
+/// # Parallel synapses are one connection, not several
+///
+/// A [`Net`] may hold several synapses between the same ordered pair — two edges `0 -> 1` at
+/// delays 1 and 2 is how a delay line is built, and [`crate::net::NetBuilder::connect`] accepts
+/// it. The denominator here counts *connections of the architecture*, `n * n` for a
+/// fully-connected recurrent network, so the numerator has to as well: this function counts
+/// distinct `(pre, post)` pairs, not [`Net::n_syn`]. Counting stored synapses instead subtracts
+/// one connection too many from the absent ones for every extra delay line — a two-neuron network
+/// with one pair wired twice reported `0.5` where the architecture has three of its four
+/// connections absent, `0.75`.
+///
+/// A pair counts as zero only when **every** synapse on it is exactly zero. A pair with one live
+/// delay line and one pruned to zero still carries signal, and is not an absent connection.
+///
 /// # Errors
 ///
-/// [`MetricError::Empty`] if `dense_connections` is zero, [`MetricError::TooManySpikes`] if the
-/// network stores more synapses than the declared dense count allows.
+/// [`MetricError::Empty`] if `dense_connections` is zero, [`MetricError::TooManyConnections`] if
+/// the network connects more distinct pairs than the declared dense count allows.
 pub fn connection_sparsity_of(net: &Net, dense_connections: u64) -> Result<f64, MetricError> {
-    let stored = net.n_syn as u64;
+    let (stored, stored_zero) = connection_pairs(net);
     if stored > dense_connections {
-        return Err(MetricError::TooManySpikes { spikes: stored, capacity: dense_connections });
+        return Err(MetricError::TooManyConnections {
+            counted: stored,
+            declared: dense_connections,
+        });
     }
-    let stored_zero = net.w.iter().filter(|w| **w == 0.0).count() as u64;
     connection_sparsity(dense_connections - stored + stored_zero, dense_connections)
+}
+
+/// Distinct ordered pairs a [`Net`] connects, and how many of those carry no non-zero weight.
+///
+/// Returned as `(pairs, zero_pairs)`. See [`connection_sparsity_of`] for why the unit is the pair
+/// and not the stored synapse.
+fn connection_pairs(net: &Net) -> (u64, u64) {
+    let mut pairs = 0u64;
+    let mut zero_pairs = 0u64;
+    let mut row: Vec<(u32, bool)> = Vec::new();
+    for pre in 0..net.n {
+        row.clear();
+        row.extend(net.out_of(pre).map(|(post, w, _)| (post, w == 0.0)));
+        // `NetBuilder::build` leaves each CSR row in ascending `post` order, but `Net`'s fields
+        // are public and a hand-assembled one need not be, so this sorts rather than trusting it.
+        row.sort_unstable_by_key(|&(post, _)| post);
+        let mut i = 0;
+        while i < row.len() {
+            let post = row[i].0;
+            let mut all_zero = true;
+            while i < row.len() && row[i].0 == post {
+                all_zero &= row[i].1;
+                i += 1;
+            }
+            pairs += 1;
+            if all_zero {
+                zero_pairs += 1;
+            }
+        }
+    }
+    (pairs, zero_pairs)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1131,13 +1309,13 @@ impl RunSummary {
     /// The two communities compute the same ratio and give it different names, and having both
     /// printed from one run is how a reader notices.
     ///
-    /// `None` when the dense count is zero.
+    /// `None` when the dense count is zero, or when the effective count does not fit in a `u64`.
     #[must_use]
     pub fn effective_density(&self) -> Option<f64> {
         if self.ops.dense == 0 {
             return None;
         }
-        Some(self.ops.effective_total() as f64 / self.ops.dense as f64)
+        Some(self.ops.effective_total()? as f64 / self.ops.dense as f64)
     }
 }
 
@@ -1149,14 +1327,40 @@ impl fmt::Display for RunSummary {
             self.neurons, self.synapses, self.ticks, self.spikes
         )?;
         writeln!(f, "  activation sparsity   {:.6}", self.activation_sparsity)?;
+        match self.ops.effective_total() {
+            Some(e) => writeln!(
+                f,
+                "  synaptic ops          dense {}, effective {} ({} AC + {} MAC)",
+                self.ops.dense, e, self.ops.effective_acs, self.ops.effective_macs
+            )?,
+            None => writeln!(
+                f,
+                "  synaptic ops          dense {}, effective OVERFLOWED u64 ({} AC + {} MAC)",
+                self.ops.dense, self.ops.effective_acs, self.ops.effective_macs
+            )?,
+        }
         writeln!(
             f,
-            "  synaptic ops          dense {}, effective {} ({} AC + {} MAC)",
-            self.ops.dense,
-            self.ops.effective_total(),
-            self.ops.effective_acs,
-            self.ops.effective_macs
+            "  deliveries            posted {}, delivered {}, in flight at the end {}",
+            self.accounting.posted, self.accounting.delivered, self.accounting.in_flight
         )?;
+        // The cross-check is printed, not merely stored. A disagreement means the ledger and the
+        // train are from different runs, and every line below this one — spikes per synapse and
+        // all three published verdicts — is computed from the ledger. Reporting those while the
+        // check silently reads `false` is the failure this pairing exists to prevent.
+        if self.agrees_with_ledger {
+            writeln!(
+                f,
+                "  ledger cross-check    {} delivered == {} billed",
+                self.accounting.delivered, self.ledger_syn_ops
+            )?;
+        } else {
+            writeln!(
+                f,
+                "  ledger cross-check    DISAGREES — {} delivered vs {} billed; the verdicts below are from the ledger, not from this train",
+                self.accounting.delivered, self.ledger_syn_ops
+            )?;
+        }
         match self.spikes_per_synapse {
             Some(x) => writeln!(f, "  spikes per synapse    {x:.6} per inference")?,
             None => writeln!(f, "  spikes per synapse    no answer (no synapses or no inferences)")?,
@@ -1184,7 +1388,8 @@ impl fmt::Display for RunSummary {
 /// [`MetricError::Empty`] if `ticks` is zero or the network has no neurons;
 /// [`MetricError::SourceOutOfRange`] if the train names a neuron outside the network;
 /// [`MetricError::TooManySpikes`] if the train holds more spikes than neuron-timesteps;
-/// [`MetricError::Overflow`] on a count past `u64`.
+/// [`MetricError::ImpossibleSpike`] if a spike falls outside the run's ticks or repeats a
+/// neuron-timestep; [`MetricError::Overflow`] on a count past `u64`.
 pub fn summarise(
     net: &Net,
     ledger: &Ledger,
@@ -1229,6 +1434,7 @@ mod tests {
         mean_squared_error, r_squared, summarise, top_k_accuracy,
     };
     use crate::crossover::Verdict;
+    use crate::ledger::Ledger;
     use crate::net::NetBuilder;
     use crate::neuron::Lif;
     use crate::sim::{Mode, Sim};
@@ -1247,8 +1453,140 @@ mod tests {
         assert_eq!(c.zeros, 6);
         assert_eq!(c.sparsity().unwrap(), 0.75);
         assert_eq!(c.density().unwrap(), 0.25);
-        // Density is computed from counts, not as 1 - sparsity, so the two agree exactly.
-        assert_eq!(c.sparsity().unwrap() + c.density().unwrap(), 1.0);
+    }
+
+    /// `density()` is the correctly rounded quotient `(total - zeros) / total`, and that is a
+    /// DIFFERENT double from `1.0 - sparsity()` wherever the ratio is not exact in binary.
+    ///
+    /// The assertion this replaced was `sparsity() + density() == 1.0` on six zeros in eight, and
+    /// it cannot fail: the sum is exactly one under both forms at every ratio tried — 6/8, 1/3,
+    /// 2/3, 1/7, 3/10 — including the ratios where the two forms return different doubles. One
+    /// zero in three does discriminate, so that is the case pinned here.
+    #[test]
+    fn the_density_is_the_quotient_and_not_one_minus_the_sparsity() {
+        let mut c = ActivationCensus::default();
+        c.observe(&[0.0, 1.0, 1.0]).unwrap();
+        assert_eq!(c.zeros, 1);
+        assert_eq!(c.total, 3);
+
+        // The quotient, correctly rounded: the nearest double to 2/3.
+        assert_eq!(c.density().unwrap(), 2.0 / 3.0);
+        // One minus the sparsity is one ulp above it. If `density()` were implemented as
+        // `1.0 - sparsity()` this assertion would fail, and the sum-is-one assertion would not.
+        let subtracted = 1.0 - c.sparsity().unwrap();
+        assert_ne!(subtracted, c.density().unwrap(), "the two forms coincided; pick another ratio");
+        assert_eq!(subtracted.to_bits(), c.density().unwrap().to_bits() + 1);
+
+        // And the ends, where both forms are exact and therefore cannot tell them apart — stated
+        // so that the doc's claim about where they diverge is pinned from both sides.
+        for (zeros, total) in [(0u64, 8u64), (8, 8)] {
+            let c = ActivationCensus { zeros, total };
+            assert_eq!(c.density().unwrap(), 1.0 - c.sparsity().unwrap());
+        }
+    }
+
+    /// `observe_counts` is `observe` for a caller that never materialised the vector, and it must
+    /// credit the FIRED activations as non-zero. Recording them as zeros instead — one `n - fired`
+    /// written as `fired` — inverts the module's headline metric: a wide layer reporting 3 of 100
+    /// fired would come out 0.03 sparse where the run was 0.97.
+    #[test]
+    fn observe_counts_credits_the_fired_activations_as_non_zero() {
+        let mut c = ActivationCensus::default();
+        c.observe_counts(3, 100).unwrap();
+        assert_eq!(c.zeros, 97);
+        assert_eq!(c.total, 100);
+        assert_eq!(c.sparsity().unwrap(), 0.97);
+        assert_eq!(c.density().unwrap(), 0.03);
+
+        // The two ends, where the arms are as far apart as they get.
+        let mut all_fired = ActivationCensus::default();
+        all_fired.observe_counts(8, 8).unwrap();
+        assert_eq!(all_fired.sparsity().unwrap(), 0.0);
+        let mut none_fired = ActivationCensus::default();
+        none_fired.observe_counts(0, 8).unwrap();
+        assert_eq!(none_fired.sparsity().unwrap(), 1.0);
+    }
+
+    /// The counted path and the vector path are the same metric, so they must agree bit for bit on
+    /// the same timestep.
+    #[test]
+    fn observe_counts_agrees_with_observe_on_the_same_timestep() {
+        let activations = [0.0, 1.0, 0.0, 2.5, 0.0, -1.0];
+        let mut by_vector = ActivationCensus::default();
+        by_vector.observe(&activations).unwrap();
+        let fired = activations.iter().filter(|x| **x != 0.0).count() as u64;
+        let mut by_counts = ActivationCensus::default();
+        by_counts.observe_counts(fired, activations.len() as u64).unwrap();
+        assert_eq!(by_vector, by_counts);
+        assert_eq!(by_vector.sparsity(), by_counts.sparsity());
+    }
+
+    /// More activations fired than existed is a timestep that did not happen, and it is refused
+    /// without half-counting the census.
+    #[test]
+    fn observe_counts_refuses_more_fired_than_present() {
+        let mut c = ActivationCensus::default();
+        assert_eq!(
+            c.observe_counts(9, 8).unwrap_err(),
+            MetricError::TooManySpikes { spikes: 9, capacity: 8 }
+        );
+        assert_eq!(c, ActivationCensus::default(), "a rejected observation must change nothing");
+        // And the boundary is inclusive: every activation firing is legal.
+        c.observe_counts(8, 8).unwrap();
+        assert_eq!(c.total, 8);
+        assert_eq!(c.zeros, 0);
+    }
+
+    /// `merge` folds — two workers, two layers, two runs — and the fold is an addition, not a
+    /// replacement and not a no-op. A merge that did nothing at all would leave the receiver
+    /// reporting only its own share of the run.
+    #[test]
+    fn merge_adds_both_counts_rather_than_replacing_or_ignoring_them() {
+        let mut a = ActivationCensus::default();
+        a.observe(&[0.0, 0.0, 1.0]).unwrap(); // 2 of 3 zero
+        let mut b = ActivationCensus::default();
+        b.observe(&[0.0, 1.0, 1.0, 1.0, 1.0]).unwrap(); // 1 of 5 zero
+        let before = a;
+        a.merge(b).unwrap();
+        assert_ne!(a, before, "the merge did nothing");
+        assert_ne!(a, b, "the merge replaced rather than folded");
+        assert_eq!(a.zeros, 3);
+        assert_eq!(a.total, 8);
+        assert_eq!(a.sparsity().unwrap(), 0.375);
+
+        // Pooling, not averaging: the mean of the two per-census sparsities is 2/3 + 1/5 over 2,
+        // which is 0.4333..., and it is NOT what a merged census reports.
+        let mean_of_ratios = (2.0 / 3.0 + 1.0 / 5.0) / 2.0;
+        assert!((a.sparsity().unwrap() - mean_of_ratios).abs() > 0.05);
+
+        // Merging an empty census is the identity, and merging into an empty one is a copy.
+        let kept = a;
+        a.merge(ActivationCensus::default()).unwrap();
+        assert_eq!(a, kept);
+        let mut fresh = ActivationCensus::default();
+        fresh.merge(kept).unwrap();
+        assert_eq!(fresh, kept);
+    }
+
+    /// Both of `merge`'s counters overflow loudly rather than wrapping, and each is checked on its
+    /// own — a census that wrapped its total would report a sparsity above one or below zero.
+    #[test]
+    fn merge_reports_overflow_rather_than_wrapping() {
+        let mut zeros_full = ActivationCensus { zeros: u64::MAX, total: u64::MAX };
+        assert_eq!(
+            zeros_full.merge(ActivationCensus { zeros: 1, total: 0 }).unwrap_err(),
+            MetricError::Overflow { what: "zero activations" }
+        );
+        let mut total_full = ActivationCensus { zeros: 0, total: u64::MAX };
+        assert_eq!(
+            total_full.merge(ActivationCensus { zeros: 0, total: 1 }).unwrap_err(),
+            MetricError::Overflow { what: "total activations" }
+        );
+        let mut c = ActivationCensus { zeros: 0, total: u64::MAX };
+        assert_eq!(
+            c.observe_counts(0, 1).unwrap_err(),
+            MetricError::Overflow { what: "total activations" }
+        );
     }
 
     /// Negative zero is zero. IEEE 754 says `-0.0 == 0.0`, hardware that skips zeros skips it, and
@@ -1331,6 +1669,81 @@ mod tests {
         assert_eq!(e, MetricError::TooManySpikes { spikes: 3, capacity: 2 });
     }
 
+    /// The SUBTLE form of the same error, which the capacity guard above cannot see. Three spikes
+    /// on `(t = 0, source = 0)` is three spikes in a capacity of ten, so it passes the count
+    /// check — and it credits one neuron-timestep three times, returning 0.7 where the run that
+    /// could have produced those spikes was 0.9 sparse. Two recordings of one run merged with
+    /// `Train::from_spikes` is exactly this shape, and neither `from_spikes` nor `Train::push`
+    /// enforces one spike per neuron per tick.
+    #[test]
+    fn a_neuron_timestep_named_twice_is_refused_rather_than_counted_twice() {
+        let repeated = Train::from_spikes(vec![
+            Spike { t: 0, source: 0 },
+            Spike { t: 0, source: 0 },
+            Spike { t: 0, source: 0 },
+        ]);
+        assert!(repeated.len() as u64 <= 2 * 5, "the fixture must be under capacity to be the case");
+        assert_eq!(
+            activation_sparsity_of_run(&repeated, 2, 5).unwrap_err(),
+            MetricError::ImpossibleSpike {
+                t: 0,
+                source: 0,
+                why: "repeats a neuron-timestep, and a neuron fires at most once per tick",
+            }
+        );
+
+        // The run those three spikes could have come from — one of them — is 9 of 10 silent.
+        let once = Train::from_spikes(vec![Spike { t: 0, source: 0 }]);
+        assert_eq!(activation_sparsity_of_run(&once, 2, 5).unwrap(), 0.9);
+
+        // A repeat that is NOT adjacent in the stored order, because the train was assembled by
+        // `push`, which checks only that ticks do not go backwards. Sources 2, 1, 2 within tick 0.
+        let mut unordered = Train::new();
+        for source in [2u32, 1, 2] {
+            unordered.push(Spike { t: 0, source });
+        }
+        assert_eq!(
+            activation_sparsity_of_run(&unordered, 4, 5).unwrap_err(),
+            MetricError::ImpossibleSpike {
+                t: 0,
+                source: 2,
+                why: "repeats a neuron-timestep, and a neuron fires at most once per tick",
+            }
+        );
+        // Distinct sources in a non-ascending order are a legal train and are counted.
+        let mut distinct = Train::new();
+        for source in [2u32, 1, 3] {
+            distinct.push(Spike { t: 0, source });
+        }
+        assert_eq!(activation_sparsity_of_run(&distinct, 4, 5).unwrap(), 17.0 / 20.0);
+    }
+
+    /// A spike on a tick the run does not contain is refused too. It is the same defect wearing a
+    /// different hat — a tick count taken from the wrong variable, or the second half of a train
+    /// measured against the first half's length — and counting it removes a neuron-timestep from
+    /// the silent pile that was never in the window.
+    #[test]
+    fn a_spike_outside_the_runs_ticks_is_refused() {
+        let late = Train::from_spikes(vec![Spike { t: 0, source: 0 }, Spike { t: 100, source: 1 }]);
+        assert_eq!(
+            activation_sparsity_of_run(&late, 2, 5).unwrap_err(),
+            MetricError::ImpossibleSpike {
+                t: 100,
+                source: 1,
+                why: "is on a tick at or past the end of the run",
+            }
+        );
+        // The last legal tick is `ticks - 1`, and it is legal.
+        let last = Train::from_spikes(vec![Spike { t: 4, source: 1 }]);
+        assert_eq!(activation_sparsity_of_run(&last, 2, 5).unwrap(), 0.9);
+        // A neuron the run does not have is named as such.
+        let absent = Train::from_spikes(vec![Spike { t: 0, source: 7 }]);
+        assert_eq!(
+            activation_sparsity_of_run(&absent, 2, 5).unwrap_err(),
+            MetricError::SourceOutOfRange { source: 7, n: 2 }
+        );
+    }
+
     // ---- (b) effective synaptic operations by hand ----------------------------------------------
 
     /// A 4-input, 3-neuron layer, counted by hand.
@@ -1355,7 +1768,7 @@ mod tests {
         assert_eq!(ops.dense, 12);
         assert_eq!(ops.effective_acs, 6);
         assert_eq!(ops.effective_macs, 0);
-        assert_eq!(ops.effective_total(), 6);
+        assert_eq!(ops.effective_total(), Some(6));
         assert_eq!(ops.reduction().unwrap(), 2.0);
         assert_eq!(ops.ac_fraction().unwrap(), 1.0);
     }
@@ -1398,7 +1811,7 @@ mod tests {
         assert_eq!(full.reduction().unwrap(), 1.0);
 
         let silent = layer_synops(&[0.0; 3], &[1.0; 12], 4, ActivationKind::Spiking).unwrap();
-        assert_eq!(silent.effective_total(), 0);
+        assert_eq!(silent.effective_total(), Some(0));
         assert!(silent.reduction().is_none(), "a silent network is not infinitely efficient");
         assert!(silent.ac_fraction().is_none());
     }
@@ -1443,6 +1856,28 @@ mod tests {
         let mut c = ActivationCensus::default();
         assert!(c.observe(&[0.0, f64::INFINITY]).is_err());
         assert_eq!(c.total, 0, "a rejected observation must not have been half-counted");
+    }
+
+    /// A non-finite WEIGHT is refused as well, and named as a weight. Without the guard a `NaN`
+    /// weight passes the `!= 0.0` test — `NaN` is not equal to anything, including zero — and
+    /// silently inflates the effective count by counting a weight that is not a number as a live
+    /// synapse. Both `# Errors` blocks promise this error; only the activation half was pinned.
+    #[test]
+    fn a_non_finite_weight_is_named_rather_than_counted_as_live() {
+        let e = layer_synops(&[1.0, 1.0], &[1.0, f64::NAN], 1, ActivationKind::Spiking).unwrap_err();
+        assert_eq!(e, MetricError::NonFinite { what: "weight", index: 1 });
+        let e = layer_synops(&[1.0], &[f64::INFINITY], 1, ActivationKind::RealValued).unwrap_err();
+        assert_eq!(e, MetricError::NonFinite { what: "weight", index: 0 });
+
+        // What the guard prevents: with the same shape and a finite zero in that slot, the
+        // effective count is 1 — so an unguarded `NaN` would have reported 2.
+        let ok = layer_synops(&[1.0, 1.0], &[1.0, 0.0], 1, ActivationKind::Spiking).unwrap();
+        assert_eq!(ok.effective_acs, 1);
+
+        // And through the meter, which documents the same error.
+        let mut m = SynOpMeter::default();
+        assert!(m.layer(&[1.0], &[f64::NAN], 1, ActivationKind::Spiking).is_err());
+        assert_eq!(m.layers_seen, 0, "a rejected layer must not have been counted");
     }
 
     // ---- (d) footprint arithmetic ----------------------------------------------------------------
@@ -1501,6 +1936,71 @@ mod tests {
         assert_eq!(connection_sparsity(1_000, 1_000).unwrap(), 1.0);
         assert!(connection_sparsity(1, 0).is_err());
         assert!(connection_sparsity(2, 1).is_err());
+    }
+
+    /// The error a connection-sparsity path raises must name CONNECTIONS. It used to borrow
+    /// `TooManySpikes`, so `connection_sparsity(16, 2)` told a user "16 spikes in 2
+    /// neuron-timesteps" about a weight count, which sends them to the wrong half of a pipeline
+    /// that has both.
+    #[test]
+    fn a_connection_error_names_connections_and_not_spikes() {
+        let e = connection_sparsity(16, 2).unwrap_err();
+        assert_eq!(e, MetricError::TooManyConnections { counted: 16, declared: 2 });
+        let text = e.to_string();
+        assert!(text.contains("connections"), "{text}");
+        assert!(!text.contains("spike"), "{text}");
+        assert!(!text.contains("neuron-timestep"), "{text}");
+
+        let mut b = NetBuilder::new(4);
+        b.connect(0, 1, 5e-3, 1).unwrap();
+        b.connect(1, 2, 5e-3, 1).unwrap();
+        b.connect(2, 3, 5e-3, 1).unwrap();
+        let net = b.build();
+        let e = connection_sparsity_of(&net, 2).unwrap_err();
+        assert_eq!(e, MetricError::TooManyConnections { counted: 3, declared: 2 });
+        assert!(!e.to_string().contains("spike"), "{e}");
+
+        // The spike path keeps its own nouns.
+        let spikes = MetricError::TooManySpikes { spikes: 3, capacity: 2 }.to_string();
+        assert!(spikes.contains("spikes") && spikes.contains("neuron-timesteps"), "{spikes}");
+    }
+
+    /// Two synapses between one ordered pair — an ordinary delay line — are ONE connection of the
+    /// architecture, not two. Counting `Net::n_syn` instead subtracts one connection too many from
+    /// the absent pile: this two-neuron network reported 0.5 where three of its four connections
+    /// are absent, 0.75.
+    #[test]
+    fn parallel_synapses_between_one_pair_are_one_connection() {
+        let mut b = NetBuilder::new(2);
+        b.connect(0, 1, 5e-3, 1).unwrap();
+        b.connect(0, 1, 5e-3, 2).unwrap(); // the same pair, a second delay line
+        let net = b.build();
+        assert_eq!(net.n_syn, 2, "the builder accepts the parallel edge");
+        assert_eq!(connection_sparsity_of(&net, 4).unwrap(), 0.75);
+
+        // A pair counts as ZERO only when every synapse on it is zero. One live line and one
+        // pruned still carries signal.
+        let mut mixed = NetBuilder::new(2);
+        mixed.connect(0, 1, 5e-3, 1).unwrap();
+        mixed.connect(0, 1, 0.0, 2).unwrap();
+        assert_eq!(connection_sparsity_of(&mixed.build(), 4).unwrap(), 0.75);
+
+        let mut both_zero = NetBuilder::new(2);
+        both_zero.connect(0, 1, 0.0, 1).unwrap();
+        both_zero.connect(0, 1, 0.0, 2).unwrap();
+        assert_eq!(connection_sparsity_of(&both_zero.build(), 4).unwrap(), 1.0);
+
+        // And the declared-count guard counts pairs too: two pairs are more than one declared
+        // connection, three parallel edges on one pair are not.
+        let mut two_pairs = NetBuilder::new(2);
+        two_pairs.connect(0, 1, 5e-3, 1).unwrap();
+        two_pairs.connect(1, 0, 5e-3, 1).unwrap();
+        assert!(connection_sparsity_of(&two_pairs.build(), 1).is_err());
+        let mut one_pair = NetBuilder::new(2);
+        for d in 1..4 {
+            one_pair.connect(0, 1, 5e-3, d).unwrap();
+        }
+        assert_eq!(connection_sparsity_of(&one_pair.build(), 1).unwrap(), 0.0);
     }
 
     /// A sparse `Net` does not store the absent connections, so the dense count is supplied. Four
@@ -1628,6 +2128,33 @@ mod tests {
         assert_eq!(average_precision(&scores, &[false, false, false, true]).unwrap(), 0.25);
     }
 
+    /// The documented tie-break, exhibited: equal scores keep ASCENDING INDEX order, and that
+    /// choice moves the number. On two tied items labelled `[false, true]` the documented order
+    /// puts the positive second, precision 1/2, AP 0.5; the reverse order puts it first, precision
+    /// 1/1, AP 1.0. Every other fixture in this module uses strictly distinct scores, so none of
+    /// them can see this.
+    #[test]
+    fn average_precision_breaks_ties_by_ascending_index() {
+        assert_eq!(average_precision(&[1.0, 1.0], &[false, true]).unwrap(), 0.5);
+        assert_eq!(average_precision(&[1.0, 1.0], &[true, false]).unwrap(), 1.0);
+
+        // A tie wide enough that an unstable sort actually permutes it, with the answer pinned to
+        // a closed form. Forty items: the even indices score 1.0 and are all negative, the odd
+        // indices score 0.5 and the first five of THOSE are positive. Under ascending-index ties
+        // the positives land at ranks 21..=25, so
+        // `AP = (1/21 + 2/22 + 3/23 + 4/24 + 5/25) / 5`.
+        let n = 40usize;
+        let scores: Vec<f64> = (0..n).map(|i| if i % 2 == 0 { 1.0 } else { 0.5 }).collect();
+        let labels: Vec<bool> = (0..n).map(|i| i % 2 == 1 && i <= 9).collect();
+        let want = (1.0 / 21.0 + 2.0 / 22.0 + 3.0 / 23.0 + 4.0 / 24.0 + 5.0 / 25.0) / 5.0;
+        assert_eq!(average_precision(&scores, &labels).unwrap(), want);
+
+        // `-0.0` sorts below `0.0` under `total_cmp`, which is the one place it differs from
+        // `partial_cmp` on finite input, and the doc says so.
+        assert_eq!(average_precision(&[0.0, -0.0], &[false, true]).unwrap(), 0.5);
+        assert_eq!(average_precision(&[-0.0, 0.0], &[false, true]).unwrap(), 1.0);
+    }
+
     /// With no positives there is no precision to average, and the answer is a refusal rather than
     /// a zero that would read as "the model failed" on a class the test set simply does not carry.
     #[test]
@@ -1656,9 +2183,15 @@ mod tests {
 
     /// **The cross-check.** `Ledger::syn_ops` is counted by the simulator as deliveries happen;
     /// `account_for_train` recounts them afterwards from the train and the network's delay
-    /// structure. Two entirely separate paths to one integer, and they must agree exactly — which
-    /// also pins the `t + 1 + d < ticks` arrival rule, since an off-by-one there moves one tick's
-    /// worth of deliveries.
+    /// structure. Two entirely separate paths to one integer, and they must agree exactly.
+    ///
+    /// It does **not** pin the `t + 1 + d < ticks` arrival rule, although an earlier version of
+    /// this comment claimed it did. Measured on this fixture: 138 posted, 137 delivered, 1 in
+    /// flight, and that one crosses the delay-7 recurrent edge from a spike at tick 2996, so it
+    /// arrives at 3004 against a 3000-tick run — four ticks clear of the boundary, where a `<`
+    /// written as `<=` or a dropped `+ 1` moves nothing. Both of those mutants survive this test
+    /// and die in `a_delivery_scheduled_past_the_end_of_the_run_is_in_flight_not_delivered`, which
+    /// is where the rule is actually pinned.
     #[test]
     fn the_ledger_and_the_metric_agree_on_a_real_run() {
         let n = 6usize;
@@ -1690,9 +2223,21 @@ mod tests {
         assert_eq!(acc.ops.effective_acs, sim.ledger.syn_ops);
         assert_eq!(acc.ops.effective_macs, 0);
         assert_eq!(acc.zero_weight, 0);
-        // The bookkeeping identity: nothing is lost between posting and arriving.
+
+        // `posted == delivered + in_flight` is an invariant of this loop's own shape — it does one
+        // `posted += 1` and then exactly one of the other two — so it can only ever detect a
+        // structural edit. The independent statement is that `posted` is the sum of the firing
+        // neurons' out-degrees, computed here from the net rather than from the accounting.
+        let by_degree: u64 =
+            train.spikes().iter().map(|s| net.out_degree(s.source as usize) as u64).sum();
+        assert_eq!(acc.posted, by_degree, "posted is not the sum of the out-degrees that fired");
         assert_eq!(acc.posted, acc.delivered + acc.in_flight);
-        assert_eq!(acc.ops.dense, net.n_syn as u64 * ticks);
+
+        // 6 neurons: 5 chain synapses plus 1 recurrent edge, over 3,000 ticks, is 18,000 dense
+        // synapse-ticks. Stated as the literal rather than re-typing `n_syn * ticks`, which is the
+        // expression the code under test evaluates.
+        assert_eq!(net.n_syn, 6);
+        assert_eq!(acc.ops.dense, 18_000);
     }
 
     /// The summary carries both stories from the same run, and the identity between them holds:
@@ -1718,7 +2263,11 @@ mod tests {
         assert!(s.agrees_with_ledger, "{} vs {}", s.accounting.delivered, s.ledger_syn_ops);
         assert_eq!(s.neurons, 5);
         assert_eq!(s.synapses, 4);
-        assert_eq!(s.spikes, train.len() as u64);
+        // Counted through a different accessor than the one `summarise` uses, so this compares two
+        // paths rather than re-typing `train.len()`.
+        let per_neuron: u64 = (0..5u32).map(|i| train.of(i).len() as u64).sum();
+        assert_eq!(s.spikes, per_neuron);
+        assert!(per_neuron > 0, "the fixture produced no spikes at all");
         // Activation sparsity, recomputed by hand from the counts.
         let want = (5.0 * 2000.0 - train.len() as f64) / (5.0 * 2000.0);
         assert!((s.activation_sparsity - want).abs() < 1e-15);
@@ -1742,6 +2291,79 @@ mod tests {
         // And the honest part: nothing here is a joule.
         let text = format!("{s}");
         assert!(text.contains("NOT MEASURED"), "{text}");
+        // The cross-check is on the printed surface, not only in the struct.
+        assert!(text.contains("ledger cross-check"), "{text}");
+        assert!(!text.contains("DISAGREES"), "{text}");
+    }
+
+    /// **The cross-check has to be able to read false, and the report has to say so.** `summarise`
+    /// adjudicates three published crossover thresholds from `Ledger::syn_ops`; if that ledger is
+    /// not the one this train came from, all three verdicts are about a different run. Hardcoding
+    /// `agrees_with_ledger: true` passed every test in this module, and no line of the printed
+    /// report mentioned the check at all.
+    #[test]
+    fn the_summary_says_when_its_two_counts_disagree() {
+        let mut b = NetBuilder::new(2);
+        b.connect(0, 1, 20e-3, 1).unwrap();
+        let net = b.build();
+        let train = Train::from_spikes(vec![Spike { t: 0, source: 0 }, Spike { t: 4, source: 0 }]);
+        let fp = Footprint::new(1, 8, 2, 32).unwrap();
+
+        // The honest ledger: both spikes cross the one synapse and arrive inside a 10-tick run.
+        let honest = Ledger { syn_ops: 2, ..Ledger::default() };
+        let good = summarise(&net, &honest, &train, 10, 10, fp).unwrap();
+        assert_eq!(good.accounting.delivered, 2);
+        assert!(good.agrees_with_ledger);
+        assert!(format!("{good}").contains("2 delivered == 2 billed"), "{good}");
+
+        // A ledger from some other run, a hundred times the recount. `summarise` still returns
+        // `Ok` — it is a report, not a gate — but the flag reads false and the report says so
+        // ABOVE the verdicts, which are computed from that ledger and not from this train.
+        let foreign = Ledger { syn_ops: 200, ..Ledger::default() };
+        let bad = summarise(&net, &foreign, &train, 10, 10, fp).unwrap();
+        assert_eq!(bad.accounting.delivered, 2);
+        assert!(!bad.agrees_with_ledger, "the cross-check cannot read false");
+        let text = format!("{bad}");
+        assert!(text.contains("DISAGREES"), "{text}");
+        assert!(text.contains("2 delivered vs 200 billed"), "{text}");
+        let disagreement = text.find("DISAGREES").unwrap();
+        let first_verdict = text.find("    vs ").unwrap();
+        assert!(disagreement < first_verdict, "the warning must precede the verdicts:\n{text}");
+        // And the verdicts really are adjudicated, which is why the warning has to be there.
+        assert_eq!(bad.verdicts.len(), 3);
+    }
+
+    /// **The in-flight path, through `summarise`.** A delivery posted late enough that its arrival
+    /// tick is past the end of the run is not delivered, is not an effective operation, and is not
+    /// billed by the ledger either. No summary fixture in this module exercised it — both measure
+    /// `in_flight == 0` — so the whole systematic under-count that
+    /// `SpikeAccounting::in_flight` documents was pinned by a single delivery in a single test.
+    #[test]
+    fn the_summary_accounts_for_deliveries_still_in_flight() {
+        let mut b = NetBuilder::new(2);
+        b.connect(0, 1, 20e-3, 5).unwrap();
+        let net = b.build();
+        // Tick 0 arrives at 6, inside a 10-tick run. Tick 9 arrives at 15, which is not.
+        let train = Train::from_spikes(vec![Spike { t: 0, source: 0 }, Spike { t: 9, source: 0 }]);
+        let ledger = Ledger { syn_ops: 1, ..Ledger::default() };
+        let fp = Footprint::new(1, 8, 2, 32).unwrap();
+        let s = summarise(&net, &ledger, &train, 10, 10, fp).unwrap();
+
+        assert_eq!(s.accounting.posted, 2);
+        assert_eq!(s.accounting.delivered, 1);
+        assert_eq!(s.accounting.in_flight, 1, "the fixture must leave a delivery in flight");
+        assert_eq!(s.ops.effective_acs, 1, "an in-flight delivery is not an effective operation");
+        // The simulator never saw it either, so the two counts still agree — which is the point:
+        // the under-count is shared, not a disagreement, and that is why it needs saying out loud.
+        assert!(s.agrees_with_ledger);
+        assert!(format!("{s}").contains("in flight at the end 1"), "{s}");
+
+        // Run the same train two ticks longer and the delivery lands: 16 ticks puts the arrival at
+        // 15 inside the run, and the in-flight count falls to zero.
+        let longer = summarise(&net, &Ledger { syn_ops: 2, ..Ledger::default() }, &train, 16, 16, fp)
+            .unwrap();
+        assert_eq!(longer.accounting.delivered, 2);
+        assert_eq!(longer.accounting.in_flight, 0);
     }
 
     /// A zero-weight synapse is charged by the ledger — the hardware fetched it and added it — and
@@ -1802,12 +2424,77 @@ mod tests {
         assert_eq!(long.delivered, 1);
     }
 
-    /// `SynOps::add` must overflow loudly rather than wrap. A wrapped operation count is a small
-    /// number where an enormous one belongs, which is the direction that flatters a result.
+    /// `SynOps::add` must overflow loudly rather than wrap, on EACH of its three counts. A wrapped
+    /// operation count is a small number where an enormous one belongs, which is the direction
+    /// that flatters a result — and `dense` is only the denominator, while the two effective
+    /// counts are what a submission reports.
     #[test]
     fn an_overflowing_count_is_an_error_rather_than_a_wrap() {
         let mut a = SynOps { dense: u64::MAX, ..SynOps::default() };
         let e = a.add(SynOps { dense: 1, ..SynOps::default() }).unwrap_err();
         assert_eq!(e, MetricError::Overflow { what: "dense ops" });
+        assert_eq!(a.dense, u64::MAX, "a refused add must not have wrapped the field");
+
+        let mut m = SynOps { effective_macs: u64::MAX, ..SynOps::default() };
+        assert_eq!(
+            m.add(SynOps { effective_macs: 1, ..SynOps::default() }).unwrap_err(),
+            MetricError::Overflow { what: "effective MACs" }
+        );
+        assert_eq!(m.effective_macs, u64::MAX);
+
+        let mut c = SynOps { effective_acs: u64::MAX, ..SynOps::default() };
+        assert_eq!(
+            c.add(SynOps { effective_acs: 1, ..SynOps::default() }).unwrap_err(),
+            MetricError::Overflow { what: "effective ACs" }
+        );
+        assert_eq!(c.effective_acs, u64::MAX);
+    }
+
+    /// `effective_total` adds two public `u64` fields, and `add` checks them SEPARATELY, so a pair
+    /// that each fit can have a sum that does not. A bare `+` panicked here in a debug build and
+    /// wrapped in a release one, handing `reduction()` and `ac_fraction()` a tiny denominator.
+    #[test]
+    fn an_effective_total_that_does_not_fit_is_none_rather_than_a_panic_or_a_wrap() {
+        let over = SynOps { dense: 10, effective_macs: u64::MAX, effective_acs: 1 };
+        assert_eq!(over.effective_total(), None);
+        assert_eq!(over.reduction(), None);
+        assert_eq!(over.ac_fraction(), None);
+
+        // Both counts can be assembled this way through the CHECKED path: each `add` succeeds.
+        let mut built = SynOps::default();
+        built.add(SynOps { effective_macs: u64::MAX, ..SynOps::default() }).unwrap();
+        built.add(SynOps { effective_acs: 1, ..SynOps::default() }).unwrap();
+        assert_eq!(built.effective_total(), None);
+
+        // One less and it fits exactly, which is where the boundary is.
+        let fits = SynOps { dense: 10, effective_macs: u64::MAX - 1, effective_acs: 1 };
+        assert_eq!(fits.effective_total(), Some(u64::MAX));
+    }
+
+    /// `account_for_train` computes an arrival tick as `t + 1 + d`, and `Spike::t` is a public
+    /// `u64`. At the top of the range that sum left it: this exact train panicked in a debug build
+    /// and wrapped in a release one, where the wrap made a delivery that can never arrive look
+    /// like one that arrived on tick 0.
+    #[test]
+    fn a_spike_at_the_end_of_time_is_in_flight_rather_than_a_panic() {
+        let mut b = NetBuilder::new(2);
+        b.connect(0, 1, 1e-3, 5).unwrap();
+        let net = b.build();
+
+        let t = Train::from_spikes(vec![Spike { t: u64::MAX, source: 0 }]);
+        let acc = account_for_train(&net, &t, 10).unwrap();
+        assert_eq!(acc.posted, 1);
+        assert_eq!(acc.delivered, 0, "a wrapped arrival tick would have landed inside the run");
+        assert_eq!(acc.in_flight, 1);
+        assert_eq!(acc.ops.effective_acs, 0);
+
+        // Every offset that overflows behaves the same way, including the one that wraps to
+        // exactly zero: `t = u64::MAX`, `d = 0` gives `t + 1 == 0` in wrapping arithmetic.
+        let mut b0 = NetBuilder::new(2);
+        b0.connect(0, 1, 1e-3, 0).unwrap();
+        let net0 = b0.build();
+        let acc0 = account_for_train(&net0, &t, 10).unwrap();
+        assert_eq!(acc0.delivered, 0);
+        assert_eq!(acc0.in_flight, 1);
     }
 }

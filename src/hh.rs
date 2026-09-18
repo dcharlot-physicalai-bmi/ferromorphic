@@ -32,8 +32,14 @@
 //! dm/dt = alpha_m(V)·(1-m) - beta_m(V)·m       (and likewise h and n)
 //! ```
 //!
-//! The exponents 3 and 4 are not derived from anything. They are the smallest integers that fit the
-//! measured sigmoid rise of each conductance, and the 1952 paper says so.
+//! The exponents 3 and 4 are not derived from anything, and the paper does not claim they are the
+//! smallest that would do. It reaches them from curve shape: a first-order variable cannot reproduce
+//! the inflexion at the start of the potassium rise, for which "a third- or fourth-order equation is
+//! needed", and supposing the conductance proportional to the fourth power of a first-order variable
+//! is the "useful simplification" that produces it — `(1 - e^-t)^4` rises with an inflexion while
+//! `e^-4t` falls as a simple exponential. Sodium gets the cube by "a similar assumption using a cube
+//! instead of a fourth power", plus an inactivation term. Minimality is not argued in the paper and
+//! is not claimed here.
 //!
 //! # What it buys, and what it costs
 //!
@@ -78,9 +84,18 @@
 //! and this module performs it in the open: [`rates`] gives the modern rate functions, [`rates_1952`]
 //! transcribes the six equations exactly as the paper prints them in its own frame, and the test
 //! `the_paper_s_own_rate_functions_transform_into_the_modern_ones` checks that the substitution maps
-//! one onto the other to 1e-12 across 640 voltages. That test is the module's provenance receipt:
-//! it is the difference between constants copied from the primary source and constants copied from
-//! somebody's copy of it.
+//! one onto the other across 641 voltages — bit for bit, as it turns out, because on that grid the
+//! substitution is exact in floating point rather than merely accurate.
+//!
+//! **What that test can and cannot show.** It pins every constant in one frame against a
+//! differently-written constant in the other, so a transposed digit on either side moves one of them
+//! and fails; that is worth having. What it cannot do is tell a transcription of the paper from a
+//! transcription of somebody's copy of the paper, because two transcriptions of the same wrong
+//! source agree with each other perfectly. The check that does that is the citation on
+//! [`rates_1952`] — six equation numbers and a page, verifiable against the source in an afternoon —
+//! and this module's citation named the wrong equations until an audit went and read the paper. The
+//! same test also pins the sign convention itself, by requiring the paper's `V = 0`, `V = -115` and
+//! `V = +12` to be the modern -65, +50 and -77 mV.
 //!
 //! # Units: the paper's frame inside, SI at the boundary
 //!
@@ -111,8 +126,10 @@
 //! - spike peak and width against the published range, with the measured values in the doc;
 //! - the refractory period emerging from `h` and `n` with nothing imposed, and the threshold
 //!   emerging as a 92 mV response gap across a 2% change in stimulus;
-//! - convergence in the step size at a **measured** rate of 3.8x to 4.0x per halving, with a
-//!   stated bound: below `dt = 0.0125 ms` the spike time moves by under 2 µs in total;
+//! - convergence in the step size at a **measured** rate of 3.93x, 4.02x and 4.16x over the four
+//!   halvings from `dt = 0.05 ms` to `dt = 0.003125 ms` — near second order, not exactly it, and
+//!   stated as the three numbers rather than as a range that excluded one of them — with a stated
+//!   bound: below `dt = 0.0125 ms` the spike time moves by under 2 µs in total;
 //! - an independent integrator ([`Integrator::Rk4`]) agreeing on the spike time.
 //!
 //! # Quickstart
@@ -161,6 +178,87 @@ fn exprel_recip(x: f64) -> f64 {
     }
 }
 
+/// How far outside `[0,1]` a gating variable may sit and still be called an occupancy.
+///
+/// 1e-9 is about seven orders of magnitude above the rounding a single exponential update can
+/// produce and eight below any excursion a failing integrator produces — forward Euler's first
+/// illegal `m` in this module's own demonstration is 4.3, not 1.000000001. The number is a property
+/// of the guard rather than of the model, so it is pinned directly by
+/// `the_state_guard_is_a_tolerance_and_this_is_exactly_where_it_sits` and not left to be inferred
+/// from a run.
+const GATE_SLACK: f64 = 1e-9;
+
+/// Whether `x` is a legal gating occupancy: inside `[0,1]` up to [`GATE_SLACK`].
+///
+/// `false` for `NaN`, because every comparison against `NaN` is false and this is written as a range
+/// containment rather than as a pair of negated comparisons. Shared by both models so their guards
+/// cannot drift apart; they had, by eight orders of magnitude.
+fn gate_is_legal(x: f64) -> bool {
+    (-GATE_SLACK..=1.0 + GATE_SLACK).contains(&x)
+}
+
+/// The spike detector, shared by both models: an **upward crossing** of `level`, re-armed below
+/// `reset`.
+///
+/// `prev` is the potential before the substep and `now` the potential after it, and both are needed.
+/// A level test on `now` alone reports a spike for a membrane that was already above `level` when
+/// the caller handed it over — [`HodgkinHuxley::at`] above the level, a large
+/// [`crate::neuron::Neuron::bump`], a state reconstructed field by field — while the potential is on
+/// its way **down**: `HodgkinHuxley::at(10.0)` reported `fired = true` on its first 1 µs step, on
+/// which the membrane fell from +10 to +7.68 mV, and `at(1.0)` reported one while falling clean
+/// through the level to -0.91 mV. A trajectory that starts above the level reports nothing until it
+/// has fallen below `reset` and come back up through `level`, which is what `armed` being public is
+/// for.
+fn detect_crossing(armed: &mut bool, prev: f64, now: f64, level: f64, reset: f64) -> bool {
+    if *armed && prev < level && now >= level {
+        *armed = false;
+        return true;
+    }
+    if !*armed && now <= reset {
+        *armed = true;
+    }
+    false
+}
+
+/// Bisect `f` for a sign change, to machine precision, on the `[-90, -40]` mV resting bracket.
+///
+/// Shared by [`HodgkinHuxley::rest_potential_mv`] and [`ReducedHh::rest_potential_mv`] so that the
+/// two cannot say different things: the reduced copy of this loop was missing the finiteness guard,
+/// and since every comparison against `NaN` is false, a cell with one `NaN` parameter ran the
+/// bisection on `NaN`, took the same branch two hundred times and returned the bracket endpoint
+/// **-40.0 mV as a resting potential** — which [`ReducedHh::default`] and
+/// [`crate::neuron::Neuron::reset`] would then have sat a cell at.
+///
+/// `None` unless both endpoints are finite and their values straddle zero: a root this bracket
+/// cannot see is reported as absent rather than as an endpoint.
+///
+/// `f(lo)` is carried rather than recomputed, and the loop stops when the bracket reaches one ulp,
+/// where every further iteration is a fixed point of the update and cannot move the answer. Both are
+/// exact: the returned root is bit-identical to the 200-iteration, 400-evaluation version, at about
+/// a seventh of the transcendental evaluations — which `ReducedHh::default` pays on construction and
+/// `Neuron::reset` pays again.
+fn bisect_rest(f: impl Fn(f64) -> f64) -> Option<f64> {
+    let (mut lo, mut hi) = (-90.0_f64, -40.0_f64);
+    let (mut flo, fhi) = (f(lo), f(hi));
+    if !flo.is_finite() || !fhi.is_finite() || flo * fhi > 0.0 {
+        return None;
+    }
+    for _ in 0..200 {
+        let mid = 0.5 * (lo + hi);
+        if mid == lo || mid == hi {
+            break;
+        }
+        let fmid = f(mid);
+        if flo * fmid <= 0.0 {
+            hi = mid;
+        } else {
+            lo = mid;
+            flo = fmid;
+        }
+    }
+    Some(0.5 * (lo + hi))
+}
+
 /// The six voltage-dependent transition rates, all in **reciprocal milliseconds**.
 ///
 /// `alpha_x` is the opening rate of gate `x` and `beta_x` its closing rate, both functions of the
@@ -205,9 +303,12 @@ impl Rates {
     /// The gate time constants `1/(alpha+beta)`, in **milliseconds**.
     ///
     /// The separation between them is the model's engine: at rest this implementation computes
-    /// `tau_m = 0.237 ms`, `tau_h = 8.52 ms` and `tau_n = 5.46 ms`, so sodium activation is
-    /// effectively instantaneous on the timescale over which the other two move — a factor of 23 at
-    /// rest, and more when depolarised. That separation is what [`ReducedHh`] exploits.
+    /// `tau_m = 0.2368 ms`, `tau_h = 8.5160 ms` and `tau_n = 5.4586 ms`, so sodium activation is
+    /// effectively instantaneous on the timescale over which the other two move — a factor of
+    /// **23.1 against `tau_n` and 36.0 against `tau_h`** at rest, and more when depolarised, since
+    /// `tau_m` never exceeds 0.501 ms at any voltage. That separation is what [`ReducedHh`] exploits,
+    /// and `the_gate_time_constants_are_separated_and_peak_where_this_implementation_says` is where
+    /// every number in this paragraph and in [`Taus`] is measured rather than remembered.
     #[must_use]
     pub fn time_constants_ms(&self) -> Taus {
         Taus {
@@ -241,9 +342,12 @@ pub struct Taus {
     /// Time constant of sodium activation, ms. Sub-millisecond at every voltage: 0.237 ms at rest,
     /// 0.111 ms at +50 mV.
     pub tau_m: f64,
-    /// Time constant of sodium inactivation, ms. Peaks near 8-9 ms around -50 mV.
+    /// Time constant of sodium inactivation, ms. Swept at 0.1 µV resolution this implementation
+    /// measures the peak at **8.582 ms, at -66.81 mV** — just below rest, not at the -50 mV a
+    /// hand-drawn figure suggests, where it is already down to 4.641 ms.
     pub tau_h: f64,
-    /// Time constant of potassium activation, ms. Peaks near 5.6 ms around -55 mV.
+    /// Time constant of potassium activation, ms. Same sweep: the peak is **5.792 ms at -77.17 mV**,
+    /// and at -55 mV — which is `alpha_n`'s singular voltage, not its slowest one — it is 4.755 ms.
     pub tau_n: f64,
 }
 
@@ -310,8 +414,10 @@ pub enum Integrator {
     /// trade for a stiff system whose stiffness varies 55-fold within one spike.
     ///
     /// The scheme is formally first order. **Measured on this problem it behaves as second order**:
-    /// halving the step cuts the spike-time error by a factor of 3.8 to 4.0 over five halvings, which
-    /// is what `halving_the_step_converges_at_the_measured_rate` records. This module reports the
+    /// the four halvings from `dt = 0.05 ms` to `dt = 0.003125 ms` shrink the successive changes in
+    /// the interpolated spike time by 3.93x, 4.02x and 4.16x, which is what
+    /// `halving_the_step_converges_at_the_measured_rate` records and pins to 1%. This module reports
+    /// the
     /// measurement rather than the textbook order, because the ordering used here — gates at the old
     /// voltage, then the voltage with the new gates — is a splitting whose order this implementation
     /// has not derived.
@@ -348,9 +454,15 @@ pub enum HhError {
     NonPositiveStep,
     /// The injected current was `NaN` or an infinity.
     NonFiniteCurrent,
-    /// The state left its legal region during the step: a gate outside `[0,1]` by more than 1e-9,
-    /// or a non-finite potential. Unreachable with [`Integrator::ExponentialEuler`], which is the
-    /// point of that variant's guarantees; reachable with the other two at a large step.
+    /// The state left its legal region during the step: a gate outside `[0,1]` by more than
+    /// [`GATE_SLACK`], or a non-finite potential.
+    ///
+    /// [`Integrator::ExponentialEuler`] cannot **produce** this from a legal state at any step size,
+    /// which is the point of that variant's guarantees, and the other two can at a large step. It is
+    /// not the same as being unreachable under the default: every state field is public, so a gate
+    /// written outside `[0,1]` by hand is reported here rather than integrated; and a cell whose
+    /// three conductances sum to zero has a `v_inf` of `0/0`, which is a non-finite potential the
+    /// exponential update produces from a state that was perfectly legal.
     Diverged,
 }
 
@@ -382,7 +494,9 @@ pub struct SpikeShape {
     /// -65 mV rest; this implementation measures **+40.27 mV** under a sustained 10 µA/cm² and
     /// +40.32 mV after a brief 30 µA/cm² pulse.
     pub peak_mv: f64,
-    /// Time of `peak_mv` relative to the start of the run, ms.
+    /// Time of `peak_mv` relative to the start of the run, ms — the time of the **sample** that was
+    /// the peak, which is the end of the step that produced it and is therefore a multiple of
+    /// `dt_ms`. It was reported one step early until an audit checked it against a hand-run replay.
     pub peak_time_ms: f64,
     /// Time the potential spent continuously above `level_mv` on this spike, ms. The conventional
     /// "spike width" for squid at 6.3 °C is of order 1-2 ms; this implementation measures **1.165 ms**
@@ -391,7 +505,9 @@ pub struct SpikeShape {
     /// The level the width was measured at, mV, carried so a figure can state its own definition.
     /// A spike width without its level is not a number.
     pub level_mv: f64,
-    /// Time of the first upward crossing of `level_mv`, ms.
+    /// Time of the first sample at or above `level_mv`, ms. The crossing itself lies somewhere in
+    /// the `dt_ms` before it, so this is an upper bound on the crossing time and never an earlier
+    /// one; `width_ms` is a difference of two such times and is unaffected by the convention.
     pub upstroke_time_ms: f64,
     /// The lowest potential reached after the spike fell back through `level_mv`, mV — the
     /// after-hyperpolarisation. Measured at -75.1 mV under a sustained 10 µA/cm² and -76.2 mV after
@@ -417,11 +533,21 @@ pub struct SpikeShape {
 /// The 1952 measurements were made at 6.3 °C and the rate functions here are the 6.3 °C ones. Warmer
 /// preparations are usually modelled by multiplying every rate by `Q10^((T-6.3)/10)` with `Q10 = 3`,
 /// which at mammalian body temperature is a factor of about 24 and turns the 1 ms spike into a
-/// 0.1 ms one. **That factor is not implemented here**, deliberately: the correct `Q10` differs
-/// between the gating rates and the conductances, this implementation did not locate a single
-/// authoritative set for the squid equations, and a silently applied temperature scaling is the kind
-/// of hidden multiplier that makes two people's "Hodgkin-Huxley" disagree by an order of magnitude
-/// in spike width. Scale the rates yourself, in the open, if you need them.
+/// 0.1 ms one.
+///
+/// **The paper states that scaling itself**, on the page that carries the constants this module
+/// transcribed: "The expressions for the α's and β's are appropriate to a temperature of 6.3 °C; for
+/// other temperatures they must be scaled with a `Q10` of 3. The constants in eqn. (26) are taken as
+/// independent of temperature." So the authoritative set is `Q10 = 3` on all six rates and none on
+/// the conductances or the capacitance, and an earlier version of this doc was wrong to say no such
+/// set could be located.
+///
+/// **It is still not implemented here**, and the reason is a choice rather than an absence: a
+/// temperature multiplier applied inside the rate functions is invisible at the call site, and it is
+/// exactly the kind of hidden factor that makes two people's "Hodgkin-Huxley" disagree by an order
+/// of magnitude in spike width with both of them reading the same source. Scale the rates yourself,
+/// in the open — multiply all six by `3f64.powf((t_celsius - 6.3) / 10.0)` and leave `g_na`, `g_k`,
+/// `g_leak` and `c_m` alone — if you need a temperature other than the paper's.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct HodgkinHuxley {
     /// Specific membrane capacitance, µF/cm². The paper's value is 1.0, and it is the one parameter
@@ -435,11 +561,15 @@ pub struct HodgkinHuxley {
     pub g_k: f64,
     /// Leak conductance, mS/cm². The paper's 0.3, and the only conductance here that does not gate.
     pub g_leak: f64,
-    /// Sodium reversal potential, mV. +50 in the modern convention — the paper writes +115 as a
-    /// displacement from rest, and `115 - 65 = 50`.
+    /// Sodium reversal potential, mV. +50 in the modern convention. The paper writes it as a
+    /// displacement from rest in its own frame, where depolarisation is **negative**, so the paper's
+    /// number is `V_Na = -115` and the module's substitution `V_paper = -(V_modern + 65)` takes
+    /// `+50` to `-(50 + 65) = -115`. It is 115 mV *above* rest; the sign is the paper's convention,
+    /// not its physics, and reading it as `+115` inverts the one thing this module's sign section
+    /// exists to get right.
     pub e_na: f64,
-    /// Potassium reversal potential, mV. -77 in the modern convention, from the paper's -12
-    /// displacement.
+    /// Potassium reversal potential, mV. -77 in the modern convention, 12 mV **below** rest, which
+    /// in the paper's depolarisation-negative frame is written `V_K = +12`: `-(-77 + 65) = +12`.
     pub e_k: f64,
     /// Leak reversal potential, mV. -54.4 is the value in general circulation, and it is not an
     /// independent measurement: it is chosen so that the three currents cancel at -65 mV and the
@@ -484,14 +614,29 @@ pub struct HodgkinHuxley {
     /// has to decide when to tell the network a spike happened, and a fixed level partway up a
     /// 100 mV upstroke is the standard choice because the upstroke is so steep that the crossing
     /// time is insensitive to where exactly the level sits.
+    ///
+    /// It is a **crossing** and not a level: the potential must have been below this value before
+    /// the substep and at or above it after. A cell handed over already above the level therefore
+    /// reports nothing until it has come back down through `detect_reset` — see [`detect_crossing`],
+    /// which is where a level test was found reporting a spike for a membrane on its way down.
     pub v_detect: f64,
     /// The level, mV, the potential must fall back below before another spike can be reported.
-    /// Default -20 mV. Without this hysteresis a membrane sitting just above `v_detect` during a
-    /// depolarisation block would report a spike on every single tick.
+    /// Default -20 mV.
+    ///
+    /// This is what makes the detector report one spike per excursion rather than one per crossing:
+    /// without it, a trajectory that dips a hair below `v_detect` and comes back — a shrinking limit
+    /// cycle near depolarisation block, a noisy synaptic drive — reports a second spike for the same
+    /// action potential. The default cell does not need it: at 10 µA/cm² this implementation counts
+    /// **21 spikes in 300 ms with `detect_reset = -20` and the same 21 with `detect_reset = 0`**,
+    /// because a squid upstroke crosses 0 mV exactly once on the way up. It is insurance, and its
+    /// cost is that a membrane parked above `v_detect` never re-arms.
     pub detect_reset: f64,
     /// Whether the detector is ready to report the next upward crossing. False between the crossing
     /// and the fall back below `detect_reset`. Public because a caller reconstructing state has to
     /// be able to set it; it is not part of the differential equations.
+    ///
+    /// `true` in a cell that is above `v_detect` is not a contradiction and does not mean the next
+    /// tick reports a spike: the crossing test needs a step that *enters* the level from below.
     pub armed: bool,
 }
 
@@ -557,14 +702,26 @@ pub fn rates(v_mv: f64) -> Rates {
 /// resting value, with **depolarisation NEGATIVE**. So the paper's `V = 0` is the modern -65 mV, and
 /// the paper's `V = -115` is the modern +50 mV.
 ///
-/// From Hodgkin and Huxley, *J. Physiol.* 117:500-544, 1952, equations (12), (13), (16), (17), (20)
-/// and (21):
+/// From Hodgkin and Huxley, *J. Physiol.* 117:500-544, 1952. The six rate functions are equations
+/// **(12), (13), (20), (21), (23) and (24)**, each first given where its curve is fitted in Part II
+/// and all six restated together under eqn. (26) in the summary of equations that opens Part III,
+/// pp. 518-519. One per line below, with its own number:
 ///
 /// ```text
-/// alpha_n = 0.01(V+10) / (exp((V+10)/10) - 1)      beta_n = 0.125·exp(V/80)
-/// alpha_m = 0.1(V+25)  / (exp((V+25)/10) - 1)      beta_m = 4·exp(V/18)
-/// alpha_h = 0.07·exp(V/20)                         beta_h = 1 / (exp((V+30)/10) + 1)
+/// (12) alpha_n = 0.01(V+10) / (exp((V+10)/10) - 1)   (13) beta_n = 0.125·exp(V/80)
+/// (20) alpha_m = 0.1(V+25)  / (exp((V+25)/10) - 1)   (21) beta_m = 4·exp(V/18)
+/// (23) alpha_h = 0.07·exp(V/20)                      (24) beta_h = 1 / (exp((V+30)/10) + 1)
 /// ```
+///
+/// An earlier version of this citation read "(12), (13), (16), (17), (20) and (21)", which is wrong
+/// in the one place the module declares itself a receipt: (16) is `dh/dt = alpha_h(1-h) - beta_h·h`
+/// and (17) is `m = m_inf - (m_inf - m_0)·exp(-t/tau_m)`. Neither is a rate function. The transcribed
+/// formulas were right and only the numbers were wrong, which is the failure a receipt is supposed
+/// to make impossible and the reason this doc now names each equation on its own line.
+///
+/// The sign convention is the paper's own, stated on its p. 505: "V is the displacement of the
+/// membrane potential from its resting value (depolarization negative)". That is why the paper's
+/// sodium reversal potential is `V_Na = -115` and its potassium reversal potential is `V_K = +12`.
 ///
 /// This function exists to be *checked against*, not to be used: it is the receipt that the
 /// constants in [`rates`] came from the primary source rather than from a copy of a copy. Use
@@ -611,29 +768,15 @@ impl HodgkinHuxley {
     /// The resting potential: the voltage at which the three ionic currents cancel with the gates at
     /// their steady state, mV.
     ///
-    /// Found by 200 bisections on `[-90, -40]` mV, which is machine precision. Returns `None` if the
-    /// total ionic current has the same sign at both ends of that bracket, which happens for
-    /// parameter sets whose fixed point lies outside it — a real answer that this method cannot see
-    /// is reported as `None` rather than as a bracket endpoint.
+    /// Bisected to machine precision on `[-90, -40]` mV by [`bisect_rest`]. Returns `None` if the
+    /// total ionic current is non-finite at either end of that bracket or has the same sign at both,
+    /// which happens for parameter sets whose fixed point lies outside it — a real answer that this
+    /// method cannot see is reported as `None` rather than as a bracket endpoint.
     ///
     /// For the default parameters this returns -65.00 mV, which is the point of `e_leak = -54.4`.
     #[must_use]
     pub fn rest_potential_mv(&self) -> Option<f64> {
-        let f = |v: f64| self.i_ion_at(v, steady_state_gates(v));
-        let (mut lo, mut hi) = (-90.0_f64, -40.0_f64);
-        let (flo, fhi) = (f(lo), f(hi));
-        if !flo.is_finite() || !fhi.is_finite() || flo * fhi > 0.0 {
-            return None;
-        }
-        for _ in 0..200 {
-            let mid = 0.5 * (lo + hi);
-            if f(lo) * f(mid) <= 0.0 {
-                hi = mid;
-            } else {
-                lo = mid;
-            }
-        }
-        Some(0.5 * (lo + hi))
+        bisect_rest(|v| self.i_ion_at(v, steady_state_gates(v)))
     }
 
     /// A copy of this cell moved to its own resting potential with the gates settled there.
@@ -686,10 +829,15 @@ impl HodgkinHuxley {
 
     /// The instantaneous membrane time constant `C / g_total`, ms.
     ///
-    /// This implementation measures 1.477 ms at rest and 0.027 ms at the peak of the sodium
-    /// conductance. That 55-fold swing **is** the stiffness of the system, and it is why a fixed step
-    /// chosen from the resting time constant integrates the upstroke wrongly. Always positive:
-    /// `g_leak > 0` and the gated conductances cannot be negative.
+    /// This implementation measures 1.4766 ms at rest and 0.02707 ms at the peak of the sodium
+    /// conductance, a swing of 54.5. That swing **is** the stiffness of the system, and it is why a
+    /// fixed step chosen from the resting time constant integrates the upstroke wrongly.
+    ///
+    /// Positive whenever `g_leak > 0`, since the gated conductances cannot be negative — but nothing
+    /// in the type enforces `g_leak > 0`, every conductance is a public field, and a cell with all
+    /// three set to zero has a total conductance of zero and returns `+inf` here. That cell is not a
+    /// membrane with an infinitely slow time constant; it is a membrane with no ionic path at all,
+    /// and [`crate::neuron::Neuron::step`] refuses to advance it.
     #[must_use]
     pub fn membrane_time_constant_ms(&self) -> f64 {
         self.c_m / self.conductances().total
@@ -719,7 +867,11 @@ impl HodgkinHuxley {
     }
 
     /// One substep of length `h_ms`. Returns whether a spike was reported during it.
+    ///
+    /// The potential before the substep is kept so the detector can test a **crossing** rather than
+    /// a level; see [`detect_crossing`] for why that distinction is not cosmetic.
     fn sub_step(&mut self, h_ms: f64, i_ext: f64) -> bool {
+        let prev = self.v;
         match self.integrator {
             Integrator::ExponentialEuler => {
                 // Gates first, at the OLD voltage; then the voltage, with the NEW gates. Both halves
@@ -767,28 +919,16 @@ impl HodgkinHuxley {
                 self.n = y[3];
             }
         }
-        self.detect()
+        detect_crossing(&mut self.armed, prev, self.v, self.v_detect, self.detect_reset)
     }
 
-    /// The spike detector: an upward crossing of `v_detect`, re-armed below `detect_reset`.
-    fn detect(&mut self) -> bool {
-        if self.armed && self.v >= self.v_detect {
-            self.armed = false;
-            return true;
-        }
-        if !self.armed && self.v <= self.detect_reset {
-            self.armed = true;
-        }
-        false
-    }
-
+    /// Whether the state is one [`HodgkinHuxley::advance`] will return `Ok` for: a finite potential
+    /// and three gates inside `[0,1]` up to [`GATE_SLACK`].
     fn state_is_legal(&self) -> bool {
-        const LO: f64 = -1e-9;
-        const HI: f64 = 1.0 + 1e-9;
         self.v.is_finite()
-            && (LO..=HI).contains(&self.m)
-            && (LO..=HI).contains(&self.h)
-            && (LO..=HI).contains(&self.n)
+            && gate_is_legal(self.m)
+            && gate_is_legal(self.h)
+            && gate_is_legal(self.n)
     }
 
     /// Advance by `dt_ms` **milliseconds** under an injected current density of `i_ua_cm2`
@@ -804,8 +944,10 @@ impl HodgkinHuxley {
     ///
     /// [`HhError::NonFiniteStep`] or [`HhError::NonPositiveStep`] for a `dt_ms` that is not a
     /// positive finite number; [`HhError::NonFiniteCurrent`] for a non-finite current;
-    /// [`HhError::Diverged`] if the step left a gate outside `[0,1]` or the potential non-finite,
-    /// which [`Integrator::ExponentialEuler`] cannot do at any step size and the other two can.
+    /// [`HhError::Diverged`] if the step left a gate outside `[0,1]` by more than [`GATE_SLACK`] or
+    /// the potential non-finite. [`Integrator::ExponentialEuler`] cannot produce either from a legal
+    /// state at any step size and the other two can — but see [`HhError::Diverged`] for the two ways
+    /// the default integrator reaches it anyway, both of them through public fields.
     pub fn advance(&mut self, dt_ms: f64, i_ua_cm2: f64) -> Result<bool, HhError> {
         if !dt_ms.is_finite() {
             return Err(HhError::NonFiniteStep);
@@ -829,18 +971,56 @@ impl HodgkinHuxley {
     ///
     /// A simulation, not a bifurcation analysis: it answers for the stimulus it was given, over the
     /// window it was given. `false` from a short window is not a statement about the cell.
+    ///
+    /// **A run that leaves the legal state region also answers `false`**, so this `bool` carries two
+    /// different facts. [`HodgkinHuxley::fires_checked`] separates them, and every search over
+    /// currents in this module uses that one instead.
     #[must_use]
     pub fn fires(&self, i_ua_cm2: f64, dt_ms: f64, probe_ms: f64) -> bool {
+        self.fires_checked(i_ua_cm2, dt_ms, probe_ms).unwrap_or(false)
+    }
+
+    /// [`HodgkinHuxley::fires`] with the divergence separated from the verdict.
+    ///
+    /// The window is run **to its end even after a spike is seen**, which is the expensive choice and
+    /// the correct one: a spike reported on a trajectory that later leaves the legal region is not
+    /// evidence that this cell fires, and the state at the moment of such a spike can be perfectly
+    /// legal. Measured, on the integrator that has no invariants:
+    /// `Integrator::ForwardEuler` at `dt = 0.5 ms` reports a 0 mV crossing at 0.5214 µA/cm² — the `m`
+    /// gate is oscillating with a growing amplitude, `m = 0.064` and `v = +32.9 mV` are both inside
+    /// their legal ranges at that instant — and the state is illegal one step later. Folded into a
+    /// `bool`, that made [`HodgkinHuxley::rheobase_ua_cm2`] report **0.5214 µA/cm² against the
+    /// true 2.2493**, a 4.3x error with no error and no warning.
+    ///
+    /// # Errors
+    ///
+    /// Whatever [`HodgkinHuxley::advance`] returned: [`HhError::Diverged`] for a run that left the
+    /// legal region, or [`HhError::NonFiniteStep`], [`HhError::NonPositiveStep`] or
+    /// [`HhError::NonFiniteCurrent`] for a step or current that is not finite and positive. Those
+    /// three are checked once here rather than only inside the loop, so that a `dt_ms` of zero is
+    /// named instead of turning into a step count of `u64::MAX`.
+    pub fn fires_checked(
+        &self,
+        i_ua_cm2: f64,
+        dt_ms: f64,
+        probe_ms: f64,
+    ) -> Result<bool, HhError> {
+        if !dt_ms.is_finite() {
+            return Err(HhError::NonFiniteStep);
+        }
+        if dt_ms <= 0.0 {
+            return Err(HhError::NonPositiveStep);
+        }
+        if !i_ua_cm2.is_finite() {
+            return Err(HhError::NonFiniteCurrent);
+        }
         let mut c = *self;
         let steps = (probe_ms / dt_ms).ceil().max(0.0) as u64;
+        let mut fired = false;
         for _ in 0..steps {
-            match c.advance(dt_ms, i_ua_cm2) {
-                Ok(true) => return true,
-                Ok(false) => {}
-                Err(_) => return false,
-            }
+            fired |= c.advance(dt_ms, i_ua_cm2)?;
         }
-        false
+        Ok(fired)
     }
 
     /// Steady firing rate under a sustained current, in **hertz**, or `None` if the cell does not
@@ -856,6 +1036,13 @@ impl HodgkinHuxley {
     /// sub-rheobase Hodgkin-Huxley cell has no firing rate at all, and the Class 2 onset means that
     /// the rates just above rheobase are not small either — they start near 50 Hz. There is no
     /// continuum between the two answers to interpolate across.
+    ///
+    /// `None` **also** when the run left its legal state region, exactly as
+    /// [`HodgkinHuxley::voltage_range_mv`] does and for the same reason: there is nowhere in an
+    /// `Option<f64>` to put the difference. It cannot happen under the default integrator, which has
+    /// no divergence to report; under the other two at a coarse step it can, and a caller who needs
+    /// to tell the two `None`s apart should step the cell through [`HodgkinHuxley::advance`] or ask
+    /// [`HodgkinHuxley::fires_checked`] first.
     #[must_use]
     pub fn firing_rate_hz(
         &self,
@@ -913,6 +1100,13 @@ impl HodgkinHuxley {
     ///
     /// The answer is a simulation result at the step and window you supplied, not a bifurcation
     /// point.
+    ///
+    /// **`None` also when any probe leaves the legal state region**, because a diverging integrator
+    /// has no verdict to give and does not get to guess: every probe here goes through
+    /// [`HodgkinHuxley::fires_checked`]. That case is not hypothetical —
+    /// `Integrator::ForwardEuler` with one substep at `dt = 0.5 ms` used to answer this question with
+    /// 0.5214 µA/cm² against the default integrator's 2.2493, from a 0 mV crossing produced by its
+    /// own instability.
     #[must_use]
     pub fn rheobase_ua_cm2(
         &self,
@@ -928,7 +1122,7 @@ impl HodgkinHuxley {
         let mut hi = None;
         let mut i = coarse;
         while i <= i_max {
-            if self.fires(i, dt_ms, probe_ms) {
+            if self.fires_checked(i, dt_ms, probe_ms).ok()? {
                 hi = Some(i);
                 break;
             }
@@ -938,7 +1132,7 @@ impl HodgkinHuxley {
         let mut hi = hi?;
         for _ in 0..40 {
             let mid = 0.5 * (lo + hi);
-            if self.fires(mid, dt_ms, probe_ms) {
+            if self.fires_checked(mid, dt_ms, probe_ms).ok()? {
                 hi = mid;
             } else {
                 lo = mid;
@@ -1004,11 +1198,24 @@ impl HodgkinHuxley {
     ///
     /// This exists because **the spike detector and the cell disagree about where firing stops**,
     /// and only one of them is physics. As the injected current rises, the limit cycle's amplitude
-    /// shrinks continuously. This implementation measures the swing falling from 105 mV at
-    /// 10 µA/cm² to 69 mV at 60, 40 mV at 100, 8.2 mV at 150 and 0.007 mV at 160 — the last being a
-    /// fixed point, the genuine depolarisation block, in agreement with the classical figure of
-    /// about 154 µA/cm² for the upper limit of repetitive firing in this parameter set (Rinzel and
-    /// Miller, *Mathematical Biosciences* 49:27-59, 1980).
+    /// shrinks continuously: with 5 s of settling discarded this implementation measures the swing
+    /// falling from 105.33 mV at 10 µA/cm² to 69.46 at 60, 40.47 at 100, 8.216 at 150, 4.704 at 153
+    /// and 2.750 at 154 — every one of those a converged limit cycle, unchanged to six figures
+    /// between 5 s and 20 s of settling. At **155 µA/cm² it collapses**: 6.4e-5 mV after 5 s and
+    /// 3.3e-10 mV after 20 s, a number still falling because it is a decaying spiral onto a
+    /// depolarised fixed point at -43.03 mV. That is the genuine depolarisation block, and the
+    /// bracket it puts the bifurcation in — between 154 and 155 — agrees with the classical figure
+    /// of about 154 µA/cm² for the upper limit of repetitive firing in this parameter set (Rinzel
+    /// and Miller, *Mathematical Biosciences* 49:27-59, 1980). At 154.5 this implementation cannot
+    /// decide: 20 s of settling leaves 0.62 mV of swing and still shrinking, which is what a slow
+    /// spiral next to a bifurcation looks like from inside a finite window.
+    ///
+    /// **`settle_ms` is load-bearing near the block and this doc used to get it wrong.** An earlier
+    /// version quoted "0.007 mV at 160 — the last being a fixed point" from a 300 ms settle. At
+    /// 160 µA/cm² the converged answer is 4.3e-11 mV; 0.007 was a transient that had not finished
+    /// decaying, and reading a bracket off it put the collapse between 154 and 160 instead of
+    /// between 154 and 155. Near a bifurcation, settle for seconds and check the number twice at
+    /// different settles before calling anything a fixed point.
     ///
     /// But [`HodgkinHuxley::firing_rate_hz`] stops reporting anything above about 62 µA/cm², because
     /// past there the oscillation no longer rises to `v_detect` and fall back to `detect_reset`. The
@@ -1069,7 +1276,9 @@ impl HodgkinHuxley {
         let mut peak_t = 0.0;
         let mut ahp = f64::INFINITY;
         for k in 0..steps {
-            let t = k as f64 * dt_ms;
+            // The time of the state AFTER this step, which is the state every test below reads.
+            // `k * dt_ms` is the time of `prev`, and using it reported the peak one step early.
+            let t = (k + 1) as f64 * dt_ms;
             let prev = c.v;
             c.advance(dt_ms, i_ua_cm2).ok()?;
             if up.is_none() && prev < level_mv && c.v >= level_mv {
@@ -1117,16 +1326,24 @@ impl Neuron for HodgkinHuxley {
     /// `dt` in **seconds**, `i` in **amperes**: the SI boundary. Both are converted here into the
     /// paper's milliseconds and µA/cm², the latter through [`HodgkinHuxley::area_cm2`].
     ///
-    /// Unlike [`HodgkinHuxley::advance`] this cannot report a problem, so it defends what it can and
-    /// documents the rest: a non-finite or non-positive `dt`, or a non-finite `i`, leaves the state
-    /// **untouched** and returns `false`, rather than writing `NaN` into a membrane potential that
-    /// then silently poisons every spike time downstream of it. It does **not** check the state
-    /// afterwards; with the default [`Integrator::ExponentialEuler`] it does not need to, and with
-    /// the other two variants at a large step you want [`HodgkinHuxley::advance`].
+    /// Unlike [`HodgkinHuxley::advance`] this cannot report a problem, so it defends the state and
+    /// documents the rest. A non-finite or non-positive `dt`, or a non-finite `i`, leaves the state
+    /// **untouched** and returns `false`. So does a step whose *result* would be illegal — a gate
+    /// outside `[0,1]` by more than [`GATE_SLACK`], or a non-finite potential: the step is rolled
+    /// back rather than written, because a `NaN` membrane potential silently poisons every spike
+    /// time downstream of it and a frozen cell does not.
+    ///
+    /// That second case is not only about the non-default integrators. Every conductance is a public
+    /// field, and `g_na = g_k = g_leak = 0` makes the exponential update's `v_inf` a `0/0`: this
+    /// method used to write `NaN` into the membrane there and return `false`, with the doc claiming
+    /// it did not need to check. [`HodgkinHuxley::advance`] answers the same state with
+    /// [`HhError::Diverged`], which is where to go to find out *why* a cell stopped moving — a
+    /// rolled-back step is indistinguishable from a quiet one through the trait's `bool`.
     fn step(&mut self, dt: f64, i: f64) -> bool {
         if !dt.is_finite() || dt <= 0.0 || !i.is_finite() {
             return false;
         }
+        let before = *self;
         let dt_ms = dt * 1e3;
         let i_density = i * 1e6 / self.area_cm2;
         let n = self.substeps.max(1);
@@ -1135,7 +1352,12 @@ impl Neuron for HodgkinHuxley {
         for _ in 0..n {
             fired |= self.sub_step(h, i_density);
         }
-        fired
+        if self.state_is_legal() {
+            fired
+        } else {
+            *self = before;
+            false
+        }
     }
 
     /// `dv` in volts, converted to the model's millivolts and added to the membrane.
@@ -1346,31 +1568,21 @@ impl ReducedHh {
 
     /// The reduced model's resting potential, mV, or `None` if no root lies in `[-90, -40]` mV.
     ///
-    /// Same 200-bisection method as [`HodgkinHuxley::rest_potential_mv`], but on the reduced
-    /// system's own current-balance equation, where `h` comes from the affine relation rather than
-    /// from `h_inf`.
+    /// Literally the same bisection as [`HodgkinHuxley::rest_potential_mv`] — both call
+    /// [`bisect_rest`] — differing only in the current-balance equation handed to it, where `h`
+    /// comes from the affine relation rather than from `h_inf`. It was a second copy of the loop
+    /// until an audit found the copy missing the finiteness guard, so that `ReducedHh { e_leak: NaN,
+    /// .. }` answered `Some(-40.0)`, the bracket endpoint, and [`ReducedHh::settled`] sat the cell
+    /// there.
     #[must_use]
     pub fn rest_potential_mv(&self) -> Option<f64> {
-        let f = |v: f64| {
+        bisect_rest(|v| {
             let g = steady_state_gates(v);
             let h = (self.h_intercept - self.h_slope * g.n).clamp(0.0, 1.0);
             self.g_na * g.m * g.m * g.m * h * (v - self.e_na)
                 + self.g_k * g.n * g.n * g.n * g.n * (v - self.e_k)
                 + self.g_leak * (v - self.e_leak)
-        };
-        let (mut lo, mut hi) = (-90.0_f64, -40.0_f64);
-        if f(lo) * f(hi) > 0.0 {
-            return None;
-        }
-        for _ in 0..200 {
-            let mid = 0.5 * (lo + hi);
-            if f(lo) * f(mid) <= 0.0 {
-                hi = mid;
-            } else {
-                lo = mid;
-            }
-        }
-        Some(0.5 * (lo + hi))
+        })
     }
 
     /// A copy of this cell at its own fixed point with `n` settled there.
@@ -1382,7 +1594,13 @@ impl ReducedHh {
         Some(Self { v, n: steady_state_gates(v).n, armed: true, ..*self })
     }
 
+    /// One substep of length `h_ms`. Returns whether a spike was reported during it.
+    ///
+    /// The detector is [`detect_crossing`], the same function the full model uses rather than a
+    /// second copy of it: the copy that used to live here inherited the level-versus-crossing defect
+    /// and would have had to be fixed twice.
     fn sub_step(&mut self, h_ms: f64, i_ext: f64) -> bool {
+        let prev = self.v;
         let r = rates(self.v);
         let n_inf = r.alpha_n / (r.alpha_n + r.beta_n);
         self.n = n_inf + (self.n - n_inf) * (-h_ms * (r.alpha_n + r.beta_n)).exp();
@@ -1390,14 +1608,7 @@ impl ReducedHh {
         let v_inf =
             (c.g_na * self.e_na + c.g_k * self.e_k + c.g_leak * self.e_leak + i_ext) / c.total;
         self.v = v_inf + (self.v - v_inf) * (-h_ms * c.total / self.c_m).exp();
-        if self.armed && self.v >= self.v_detect {
-            self.armed = false;
-            return true;
-        }
-        if !self.armed && self.v <= self.detect_reset {
-            self.armed = true;
-        }
-        false
+        detect_crossing(&mut self.armed, prev, self.v, self.v_detect, self.detect_reset)
     }
 
     /// Advance by `dt_ms` milliseconds under `i_ua_cm2` µA/cm². Returns whether a spike was
@@ -1410,9 +1621,16 @@ impl ReducedHh {
     /// # Errors
     ///
     /// [`HhError::NonFiniteStep`], [`HhError::NonPositiveStep`] or [`HhError::NonFiniteCurrent`] for
-    /// inputs that are not a positive finite step and a finite current. [`HhError::Diverged`] is
-    /// declared for symmetry with [`HodgkinHuxley::advance`] and is not reachable here, because this
-    /// model has only the one integrator and that integrator cannot produce it.
+    /// inputs that are not a positive finite step and a finite current. [`HhError::Diverged`] if the
+    /// step left `n` outside `[0,1]` by more than [`GATE_SLACK`] or the potential non-finite.
+    ///
+    /// The integrator cannot *produce* either, and an earlier version of this doc concluded from
+    /// that that `Diverged` was unreachable. It is not: `n` is a public field, so
+    /// `ReducedHh { n: 1.5, ..Default::default() }.advance(0.01, 0.0)` is `Err(Diverged)` — the
+    /// guard is there for the state a caller hands over, exactly as in the full model. The tolerance
+    /// is [`GATE_SLACK`] for the same reason it is there: this check used to be an exact
+    /// `(0.0..=1.0)`, eight orders of magnitude stricter than the full model's, which is a
+    /// difference no doc mentioned and no test would have caught.
     pub fn advance(&mut self, dt_ms: f64, i_ua_cm2: f64) -> Result<bool, HhError> {
         if !dt_ms.is_finite() {
             return Err(HhError::NonFiniteStep);
@@ -1429,7 +1647,7 @@ impl ReducedHh {
         for _ in 0..n {
             fired |= self.sub_step(h, i_ua_cm2);
         }
-        if self.v.is_finite() && (0.0..=1.0).contains(&self.n) {
+        if self.v.is_finite() && gate_is_legal(self.n) {
             Ok(fired)
         } else {
             Err(HhError::Diverged)
@@ -1443,11 +1661,15 @@ impl Neuron for ReducedHh {
     const EXACT_OVER_GAPS: bool = false;
 
     /// `dt` in seconds and `i` in amperes, converted at this boundary. A non-finite or non-positive
-    /// `dt`, or a non-finite `i`, leaves the state untouched and returns `false`.
+    /// `dt`, or a non-finite `i`, leaves the state untouched and returns `false` — and so does a step
+    /// whose result would be illegal, which is rolled back rather than written, for the same reason
+    /// and in the same cases as [`HodgkinHuxley`]'s: all three conductances are public and all three
+    /// set to zero makes `v_inf` a `0/0`.
     fn step(&mut self, dt: f64, i: f64) -> bool {
         if !dt.is_finite() || dt <= 0.0 || !i.is_finite() {
             return false;
         }
+        let before = *self;
         let n = self.substeps.max(1);
         let h = dt * 1e3 / f64::from(n);
         let i_density = i * 1e6 / self.area_cm2;
@@ -1455,7 +1677,12 @@ impl Neuron for ReducedHh {
         for _ in 0..n {
             fired |= self.sub_step(h, i_density);
         }
-        fired
+        if self.v.is_finite() && gate_is_legal(self.n) {
+            fired
+        } else {
+            *self = before;
+            false
+        }
     }
 
     /// `dv` in volts, added to the membrane in millivolts.
@@ -1490,8 +1717,8 @@ impl Neuron for ReducedHh {
 #[cfg(test)]
 mod tests {
     use super::{
-        HhError, HodgkinHuxley, Integrator, ReducedHh, exprel_recip, rates, rates_1952,
-        steady_state_gates,
+        GATE_SLACK, HhError, HodgkinHuxley, Integrator, ReducedHh, Taus, exprel_recip,
+        gate_is_legal, rates, rates_1952, steady_state_gates,
     };
     use crate::net::NetBuilder;
     use crate::neuron::Neuron;
@@ -1542,13 +1769,22 @@ mod tests {
         (peak, spikes, x)
     }
 
-    /// **The provenance receipt.** The rate functions in [`rates`] must be the 1952 paper's own six
-    /// equations under the paper's sign convention, `V_paper = -(V_modern + 65)`, and this checks it
-    /// at 641 voltages spanning everything the model ever visits.
+    /// **The two transcriptions agree.** The rate functions in [`rates`] must be the 1952 paper's
+    /// own six equations under the paper's sign convention, `V_paper = -(V_modern + 65)`, and this
+    /// checks it at 641 voltages spanning everything the model ever visits.
     ///
     /// This is the one test in the module that checks the constants themselves rather than the
     /// behaviour they produce. Without it, a transposed digit in `beta_n`'s 80 would be caught by
     /// nothing else here: the spike would still look like a spike.
+    ///
+    /// **It is not a provenance receipt and this module used to call it one.** Two transcriptions of
+    /// the same wrong source agree with each other perfectly, and the algebra that turns one into the
+    /// other was done by hand here (see the comment in `rates_1952` about `y/(exp(y)-1)`), so a
+    /// `rates_1952` derived FROM `rates` would pass identically. What backs provenance is the
+    /// citation — and the citation named the wrong equations. What this test does pin, beyond the
+    /// constants, is the sign convention: the paper's `V = 0`, `V = -115` and `V = +12` are the
+    /// modern -65, +50 and -77 mV, which is the claim two of the reversal-potential docs stated
+    /// backwards.
     #[test]
     fn the_paper_s_own_rate_functions_transform_into_the_modern_ones() {
         let mut worst = 0.0_f64;
@@ -1571,8 +1807,32 @@ mod tests {
                 assert!(rel < 1e-12, "{name} at V = {v} mV: modern {a} vs paper {b}");
             }
         }
-        // Not asserted as a bound, printed as a fact: the transformation is exact to rounding.
-        assert!(worst < 1e-12, "worst relative disagreement {worst}");
+        // Stronger than the loop, and not a restatement of it: on this grid every voltage is a
+        // multiple of 0.25 mV, so the substitution's arithmetic is exact in f64 and both sides hand
+        // `exp` bit-identical arguments. The two forms therefore agree bit for bit, not merely to
+        // 1e-12 — and a `worst` of 1e-16 would mean they had stopped being the same function and
+        // started being two approximations of it. (The line this replaces asserted `worst < 1e-12`
+        // under a comment saying it was not asserted, and duplicated the in-loop check.)
+        assert_eq!(worst, 0.0, "worst relative disagreement {worst}");
+
+        // **The sign convention, which is prose everywhere else in this module and was wrong twice.**
+        // Depolarisation is NEGATIVE in the paper's frame, so the paper's sodium reversal potential
+        // is -115 and its potassium reversal potential is +12, not the +115 and -12 the field docs
+        // used to claim.
+        let c = HodgkinHuxley::default();
+        for (name, v_paper, v_modern) in
+            [("rest", 0.0, -65.0), ("E_Na", -115.0, c.e_na), ("E_K", 12.0, c.e_k)]
+        {
+            assert_eq!(v_paper, -(v_modern + 65.0), "{name}: the substitution does not map them");
+            let (paper, modern) = (rates_1952(v_paper), rates(v_modern));
+            assert_eq!(
+                (paper.alpha_m, paper.beta_h, paper.beta_n),
+                (modern.alpha_m, modern.beta_h, modern.beta_n),
+                "{name}: the two frames disagree at the reversal potential"
+            );
+        }
+        // And the direction is not symmetric: reading the paper's E_Na as +115 lands 230 mV away.
+        assert!((rates_1952(115.0).alpha_m - rates_1952(-115.0).alpha_m).abs() > 1.0);
     }
 
     /// The two removable singularities must equal their L'Hôpital limits, and the series branch must
@@ -1598,13 +1858,18 @@ mod tests {
         }
         // The series branch is used below 1e-8; just above it the direct `exp_m1` branch must give
         // the same answer, or the function has a step in it at the threshold.
-        for &x in &[1e-8, 2e-8, 1e-7, 1e-6] {
-            let direct = exprel_recip(x);
+        for &x in &[1e-8_f64, 2e-8, 1e-7, 1e-6] {
+            let direct = x / -((-x).exp_m1());
             let series = 1.0 + 0.5 * x + x * x / 12.0;
             assert!(
                 (direct - series).abs() < 1e-15,
                 "branches disagree at x = {x}: {direct} vs {series}"
             );
+            // ...and the function is on the accurate side of the seam. Written as
+            // `exprel_recip(x)` vs `series`, the check above would compare the series against
+            // itself for any threshold wide enough to swallow these four points, which is a test
+            // that a later change could make unfalsifiable without touching the test.
+            assert!((exprel_recip(x) - direct).abs() < 1e-15, "exprel_recip({x}) took the series");
         }
         // **An independent identity, because the check above recomputes the implementation.**
         // `1/(1-e^-x) + 1/(1-e^x) = 1` for every x, so `f(x) - f(-x) = x` EXACTLY, for both
@@ -1959,7 +2224,26 @@ mod tests {
     fn the_threshold_is_all_or_none_and_nothing_in_the_model_imposes_it() {
         let c = HodgkinHuxley::default();
         let fires = |amp: f64| pulse(c, amp, 0.5, 10.0, 0.005).1 > 0;
-        let (mut lo, mut hi) = (0.0_f64, 200.0_f64);
+        // **The bracket is measured, not assumed.** `rheobase_ua_cm2`'s own doc warns that bisecting
+        // a wide range reports the wrong boundary when the firing set is an interval rather than a
+        // ray, and this test used to bisect [0, 200] on exactly that assumption. Swept at
+        // 0.5 µA/cm², the 0.5 ms pulse's firing set flips once — silent below 13.0, firing from 13.5
+        // — and never flips back, so a bisection inside that one bracket is entitled to its answer.
+        let mut flips = Vec::new();
+        let mut firing = fires(0.0);
+        let mut amp = 0.5;
+        while amp <= 200.0 {
+            let f = fires(amp);
+            if f != firing {
+                flips.push(amp);
+                firing = f;
+            }
+            amp += 0.5;
+        }
+        assert_eq!(flips.len(), 1, "the pulse firing set is not an interval: flips at {flips:?}");
+        assert!((flips[0] - 13.5).abs() < 1e-9, "the scan put the boundary at {}", flips[0]);
+        assert!(firing, "the top of the range does not fire, so there is no bracket to bisect");
+        let (mut lo, mut hi) = (flips[0] - 0.5, flips[0]);
         for _ in 0..40 {
             let mid = 0.5 * (lo + hi);
             if fires(mid) {
@@ -2020,9 +2304,11 @@ mod tests {
     /// reports convergence the integrator has not achieved.
     ///
     /// Measured: halving the step from 0.05 ms down to 0.003125 ms changes the 0 mV crossing by
-    /// 4.8 ms/1000, 1.2 ms/1000, 3.0e-4 ms and 7.3e-5 ms — a factor of 3.8 to 4.0 each time. **The
-    /// stated bound: from `dt = 0.0125 ms` downward the crossing time moves by less than 2 µs in
-    /// total.**
+    /// 4.772e-3, 1.214e-3, 3.017e-4 and 7.258e-5 ms — ratios of **3.933, 4.022 and 4.157**, which is
+    /// near second order and is not exactly second order. The doc used to quote "3.8 to 4.0", a
+    /// range containing none of the first and last of those; the band asserted below was 3.0 to 5.0
+    /// and could not contradict it, so the three ratios are now pinned to 1% as well. **The stated
+    /// bound: from `dt = 0.0125 ms` downward the crossing time moves by less than 2 µs in total.**
     #[test]
     fn halving_the_step_converges_at_the_measured_rate() {
         let steps = [0.05, 0.025, 0.0125, 0.00625, 0.003125];
@@ -2031,9 +2317,15 @@ mod tests {
             .map(|&d| crossing_ms(d, 1, Integrator::ExponentialEuler, 10.0).expect("fires"))
             .collect();
         let deltas: Vec<f64> = times.windows(2).map(|w| (w[1] - w[0]).abs()).collect();
-        for w in deltas.windows(2) {
-            let ratio = w[0] / w[1];
+        let ratios: Vec<f64> = deltas.windows(2).map(|w| w[0] / w[1]).collect();
+        for &ratio in &ratios {
             assert!((3.0..=5.0).contains(&ratio), "convergence ratio {ratio}, deltas {deltas:?}");
+        }
+        // The band above is the claim "near second order". These are the measured numbers, to 1%,
+        // and they are what stops the doc drifting away from the code again: the quoted range used
+        // to exclude two of the three.
+        for (&got, want) in ratios.iter().zip([3.9325, 4.0224, 4.1568]) {
+            assert!((got - want).abs() < 0.04, "ratio {got} vs the measured {want}, all {ratios:?}");
         }
         let total = (times[4] - times[2]).abs();
         assert!(total < 2e-3, "moved {total} ms below dt = 0.0125 ms");
@@ -2143,6 +2435,31 @@ mod tests {
         let (lo, hi) = c.voltage_range_mv(200.0, 0.01, 300.0, 60.0).expect("no divergence");
         assert!((-45.0..=-35.0).contains(&lo), "the blocked cell sits at {lo} mV");
         assert_eq!(lo, hi, "a fixed point has no range at all");
+
+        // **A small swing after a short settle is not a fixed point.** This is the test that tells
+        // the two apart, and it is here because the doc on `voltage_range_mv` quoted "0.007 mV at
+        // 160 — the last being a fixed point" off a 300 ms settle, and read a bifurcation bracket of
+        // 154-to-160 off a transient that had not finished decaying.
+        let amp_after = |i: f64, settle: f64| {
+            let (lo, hi) = c.voltage_range_mv(i, 0.01, settle, 60.0).expect("no divergence");
+            hi - lo
+        };
+        // 154 µA/cm² is a converged limit cycle: the same swing after 2 s and after 5 s.
+        let (a154_2s, a154_5s) = (amp_after(154.0, 2000.0), amp_after(154.0, 5000.0));
+        assert!((a154_2s - a154_5s).abs() < 1e-3, "154 has not converged: {a154_2s} then {a154_5s}");
+        assert!((a154_5s - 2.7498).abs() < 0.01, "the converged swing at 154 is {a154_5s} mV");
+        // 155 is a decaying spiral onto the depolarised fixed point: four orders of magnitude
+        // smaller after 5 s than after 2, and still falling.
+        let (a155_2s, a155_5s) = (amp_after(155.0, 2000.0), amp_after(155.0, 5000.0));
+        assert!(a155_5s * 100.0 < a155_2s, "155 is not collapsing: {a155_2s} then {a155_5s}");
+        assert!(a155_5s < 1e-3, "the swing at 155 after 5 s is {a155_5s} mV");
+        // So the collapse is between 154 and 155, which is where the classical figure puts it.
+        assert!(a154_5s > 1000.0 * a155_5s, "154 {a154_5s} and 155 {a155_5s} are the same thing");
+        // And the number that used to be quoted as a fixed point, shown to be a transient.
+        let (a160_short, a160_long) = (amp_after(160.0, 300.0), amp_after(160.0, 3000.0));
+        assert!((a160_short - 0.00706).abs() < 1e-4, "160 after 300 ms is {a160_short} mV");
+        assert!(a160_long < 1e-9, "160 after 3 s is {a160_long} mV");
+        assert!(a160_short > 1e6 * a160_long, "the 300 ms number was not a transient after all");
     }
 
     /// A sub-threshold cell has **no** firing rate. Not a small one, not zero — none, and `None` is
@@ -2224,7 +2541,12 @@ mod tests {
         let mut b = c;
         b.bump(7e-3);
         assert!((b.v - (c.v + 7.0)).abs() < 1e-12, "a 7 mV bump moved v to {}", b.v);
-        assert!((b.potential() - b.v * 1e-3).abs() < 1e-18);
+        // `potential()` against a number worked out away from the model, not against a copy of its
+        // own body: -65 mV plus a 7 mV bump is -58 mV, which is -0.058 V. The line this replaces
+        // compared `b.potential()` with `b.v * 1e-3`, which is `potential()`'s entire implementation,
+        // so its left-hand side was exactly 0.0 for every possible `b` and its 1e-18 was decoration.
+        assert!((b.potential() - -0.058).abs() < 1e-15, "a bumped cell reads {} V", b.potential());
+        assert!((c.potential() - -0.065).abs() < 1e-15, "a resting cell reads {} V", c.potential());
         // 7 mV of synaptic input fires this cell from rest and 6.5 mV does not — the same emergent
         // threshold as the current-pulse test, reached through the synaptic interface.
         let fires_from_bump = |mv: f64| {
@@ -2252,6 +2574,17 @@ mod tests {
         }
         let gap = (one.v - four.v).abs();
         assert!(gap > 1.0, "jumping the gap changed v by only {gap} mV");
+
+        // And the reduction, whose declaration was asserted as a constant and demonstrated by
+        // nothing. Same experiment, and it is worse: 72 mV apart.
+        let rproto = ReducedHh { v: -50.0, substeps: 1, ..ReducedHh::default() };
+        let (mut rone, mut rfour) = (rproto, rproto);
+        rone.advance(0.4, 0.0).expect("no divergence");
+        for _ in 0..4 {
+            rfour.advance(0.1, 0.0).expect("no divergence");
+        }
+        let rgap = (rone.v - rfour.v).abs();
+        assert!(rgap > 1.0, "jumping the gap changed the reduction's v by only {rgap} mV");
     }
 
     /// The crate's simulator enforces the declaration, and the model runs inside a network on the
@@ -2405,6 +2738,172 @@ mod tests {
         assert!(full.firing_rate_hz(5.0, 0.01, 150.0, 300.0).is_none(), "the full model fires at 5.0");
     }
 
+    /// **Four public methods had no test at all, and two of them carried numbers that were wrong.**
+    /// [`Rates::time_constants_ms`] is the first: mutating its `1.0/(alpha+beta)` to `2.0/(...)`
+    /// passed the whole module. The peaks are swept at 1 µV here because the two documented ones
+    /// were not merely imprecise — `tau_h` was said to peak "near 8-9 ms around -50 mV" and it peaks
+    /// at 8.582 ms at -66.8 mV, where -50 mV is already down to 4.641; `tau_n` was said to peak
+    /// "near 5.6 ms around -55 mV" and it peaks at 5.792 ms at -77.2 mV, with -55 mV, which is
+    /// `alpha_n`'s singular voltage rather than its slowest one, at 4.755.
+    #[test]
+    fn the_gate_time_constants_are_separated_and_peak_where_this_implementation_says() {
+        // **The meaning, measured independently of the expression.** A gate held at a fixed voltage
+        // from x = 0 reaches `x_inf·(1 - 1/e)` after exactly one time constant, so integrating the
+        // gate's own ODE by hand — not through any integrator in this module — and timing that
+        // crossing measures `tau` without recomputing `1/(alpha+beta)`.
+        let dt = 1e-5;
+        for &v in &[-80.0, -65.0, -40.0, 0.0] {
+            let r = rates(v);
+            let inf = r.steady_state();
+            let taus = r.time_constants_ms();
+            for (name, alpha, beta, x_inf, tau) in [
+                ("m", r.alpha_m, r.beta_m, inf.m, taus.tau_m),
+                ("h", r.alpha_h, r.beta_h, inf.h, taus.tau_h),
+                ("n", r.alpha_n, r.beta_n, inf.n, taus.tau_n),
+            ] {
+                let target = x_inf * (1.0 - (-1.0_f64).exp());
+                let (mut x, mut t) = (0.0_f64, 0.0_f64);
+                while x < target {
+                    x += dt * (alpha * (1.0 - x) - beta * x);
+                    t += dt;
+                    assert!(t < 100.0, "{name} at {v} mV never reached 1 - 1/e of its steady state");
+                }
+                assert!(
+                    (t - tau).abs() < 2e-3,
+                    "{name} at {v} mV relaxed in {t} ms, tau_{name} says {tau} ms"
+                );
+            }
+        }
+
+        // At rest, the three numbers the `time_constants_ms` doc quotes, and the separation that is
+        // the reason [`ReducedHh`] exists.
+        let r = rates(-65.0).time_constants_ms();
+        assert!((r.tau_m - 0.236_767).abs() < 1e-5, "tau_m at rest {}", r.tau_m);
+        assert!((r.tau_h - 8.516_011).abs() < 1e-5, "tau_h at rest {}", r.tau_h);
+        assert!((r.tau_n - 5.458_585).abs() < 1e-5, "tau_n at rest {}", r.tau_n);
+        assert!((r.tau_n / r.tau_m - 23.054).abs() < 0.01, "tau_n/tau_m = {}", r.tau_n / r.tau_m);
+        assert!((r.tau_h / r.tau_m - 35.968).abs() < 0.01, "tau_h/tau_m = {}", r.tau_h / r.tau_m);
+        assert!((rates(50.0).time_constants_ms().tau_m - 0.111_015).abs() < 1e-5);
+
+        // The peaks, swept at 1 µV over everything the model visits.
+        let mut peak = Taus { tau_m: 0.0, tau_h: 0.0, tau_n: 0.0 };
+        let mut arg = Taus { tau_m: 0.0, tau_h: 0.0, tau_n: 0.0 };
+        for k in 0..=180_000 {
+            let v = -120.0 + f64::from(k) * 0.001;
+            let t = rates(v).time_constants_ms();
+            if t.tau_m > peak.tau_m {
+                peak.tau_m = t.tau_m;
+                arg.tau_m = v;
+            }
+            if t.tau_h > peak.tau_h {
+                peak.tau_h = t.tau_h;
+                arg.tau_h = v;
+            }
+            if t.tau_n > peak.tau_n {
+                peak.tau_n = t.tau_n;
+                arg.tau_n = v;
+            }
+        }
+        assert!((peak.tau_h - 8.5824).abs() < 1e-3, "tau_h peaks at {} ms", peak.tau_h);
+        assert!((arg.tau_h - -66.81).abs() < 0.01, "tau_h peaks at {} mV", arg.tau_h);
+        assert!((peak.tau_n - 5.7923).abs() < 1e-3, "tau_n peaks at {} ms", peak.tau_n);
+        assert!((arg.tau_n - -77.17).abs() < 0.01, "tau_n peaks at {} mV", arg.tau_n);
+        assert!((peak.tau_m - 0.5014).abs() < 1e-3, "tau_m peaks at {} ms", peak.tau_m);
+        assert!((arg.tau_m - -38.84).abs() < 0.01, "tau_m peaks at {} mV", arg.tau_m);
+        // `tau_m` stays sub-millisecond everywhere, which is the reduction's first premise.
+        assert!(peak.tau_m < 1.0, "tau_m reaches {} ms somewhere", peak.tau_m);
+        // The two voltages the docs used to name are nowhere near the peaks, by a factor this
+        // assertion would have failed on before they were corrected.
+        let at_50 = rates(-50.0).time_constants_ms().tau_h;
+        let at_55 = rates(-55.0).time_constants_ms().tau_n;
+        assert!((at_50 - 4.6406).abs() < 1e-3, "tau_h at -50 mV is {at_50} ms");
+        assert!((at_55 - 4.7548).abs() < 1e-3, "tau_n at -55 mV is {at_55} ms");
+        assert!(peak.tau_h > at_50 * 1.8, "tau_h at -50 mV is not far from its peak after all");
+        assert!(peak.tau_n > at_55 * 1.2, "tau_n at -55 mV is not far from its peak after all");
+    }
+
+    /// [`HodgkinHuxley::membrane_time_constant_ms`] had no test either: doubling its numerator
+    /// passed the module. The check that kills that is the one cell where `C/g` is exact.
+    #[test]
+    fn the_membrane_time_constant_is_capacitance_over_conductance_and_swings_54_fold() {
+        // With both gated conductances switched off the membrane is a pure RC: tau = 1/0.3 ms, and a
+        // displacement must decay by exactly 1/e over one tau under the model's own integrator.
+        // Nothing about `m`, `h` or `n` enters, so this is the definition and not a restatement of
+        // the expression.
+        let rc =
+            HodgkinHuxley { g_na: 0.0, g_k: 0.0, v: -44.4, substeps: 1, ..Default::default() };
+        let tau = rc.membrane_time_constant_ms();
+        assert!((tau - 1.0 / 0.3).abs() < 1e-12, "the pure-RC time constant is {tau} ms");
+        let mut x = rc;
+        x.advance(tau, 0.0).expect("no divergence");
+        let left = (x.v - rc.e_leak) / (rc.v - rc.e_leak);
+        assert!((left - (-1.0_f64).exp()).abs() < 1e-12, "one tau left {left} of the displacement");
+        // Two taus leave 1/e².
+        x.advance(tau, 0.0).expect("no divergence");
+        let left2 = (x.v - rc.e_leak) / (rc.v - rc.e_leak);
+        assert!((left2 - (-2.0_f64).exp()).abs() < 1e-12, "two taus left {left2}");
+
+        // The documented numbers for the real cell, and the swing that is its stiffness.
+        let c = HodgkinHuxley::default();
+        assert!((c.membrane_time_constant_ms() - 1.4766).abs() < 1e-3);
+        let mut y = c;
+        let mut fastest = f64::INFINITY;
+        for k in 0..20_000u64 {
+            let i = if (k as f64) * 0.001 < 0.5 { 30.0 } else { 0.0 };
+            y.advance(0.001, i).expect("no divergence");
+            fastest = fastest.min(y.membrane_time_constant_ms());
+        }
+        assert!((fastest - 0.027_068).abs() < 1e-5, "the fastest is {fastest} ms");
+        let swing = c.membrane_time_constant_ms() / fastest;
+        assert!((swing - 54.55).abs() < 0.05, "the stiffness swing is {swing}, not 54.5");
+        // A cell with no ionic path at all is +inf, which the doc now says instead of claiming the
+        // result is always positive because `g_leak > 0` in a type that does not require it.
+        let dead = HodgkinHuxley { g_na: 0.0, g_k: 0.0, g_leak: 0.0, ..Default::default() };
+        assert_eq!(dead.membrane_time_constant_ms(), f64::INFINITY);
+    }
+
+    /// [`HodgkinHuxley::at`] is the doc's "right way to initialise a voltage-clamp experiment" and
+    /// [`HodgkinHuxley::steady_state_here`] reports what it set; neither had a test, and mutating
+    /// `at`'s gates to zero or shifting `steady_state_here` by 10 mV passed the module.
+    #[test]
+    fn a_voltage_clamped_cell_starts_at_the_steady_state_of_its_own_voltage() {
+        for &v in &[-90.0, -65.0, -55.0, -40.0, 0.0, 30.0] {
+            let cell = HodgkinHuxley::at(v);
+            assert_eq!(cell.v, v, "at({v}) is not at {v}");
+            // **The property, not the expression**: every gate derivative is zero there. Comparing
+            // the gates against `steady_state_gates(v)` would be the code agreeing with itself.
+            let r = rates(v);
+            for (name, alpha, beta, x) in [
+                ("m", r.alpha_m, r.beta_m, cell.m),
+                ("h", r.alpha_h, r.beta_h, cell.h),
+                ("n", r.alpha_n, r.beta_n, cell.n),
+            ] {
+                let d = alpha * (1.0 - x) - beta * x;
+                assert!(d.abs() < 1e-12, "d{name}/dt = {d} at {v} mV, so {name} is not settled");
+                assert!((0.0..=1.0).contains(&x), "{name} = {x} at {v} mV");
+            }
+            // And `steady_state_here` reports that state rather than a shifted one.
+            let g = cell.steady_state_here();
+            assert_eq!((g.m, g.h, g.n), (cell.m, cell.h, cell.n), "steady_state_here at {v} mV");
+        }
+        // At rest it is exactly the default cell, gates included.
+        assert_eq!(HodgkinHuxley::at(-65.0), HodgkinHuxley::default());
+        // The gates really do move with the voltage: sodium activation runs from 0.002 to 0.997
+        // across the same sweep, so the zero-derivative check above is not being satisfied by a
+        // constant.
+        assert!((HodgkinHuxley::at(-90.0).m - 0.002_110).abs() < 1e-5);
+        assert!((HodgkinHuxley::at(30.0).m - 0.997_095).abs() < 1e-5);
+        assert!(HodgkinHuxley::at(30.0).h < 0.001, "h should be inactivated at +30 mV");
+        // Everything else is the default: `at` changes the state, not the parameters.
+        let a = HodgkinHuxley::at(-40.0);
+        let d = HodgkinHuxley::default();
+        assert_eq!((a.c_m, a.g_na, a.g_k, a.g_leak), (d.c_m, d.g_na, d.g_k, d.g_leak));
+        assert_eq!(
+            (a.area_cm2, a.substeps, a.v_detect, a.armed),
+            (d.area_cm2, d.substeps, d.v_detect, d.armed)
+        );
+    }
+
     /// The reduction's invariants are the full model's: `n` cannot leave `[0,1]` and, with no input,
     /// `v` cannot leave the reversal-potential band — at any step size, because it uses the same
     /// exponential update.
@@ -2437,5 +2936,264 @@ mod tests {
             x.advance(0.5, i).expect("no divergence");
             assert!((0.0..=1.0).contains(&x.n), "n = {} at step {k}", x.n);
         }
+    }
+
+    /// **A spike is a crossing, and the detector used to test a level.** A cell handed over above
+    /// `v_detect` — through [`HodgkinHuxley::at`], through a large `bump`, or field by field — was
+    /// reported as spiking on its first step while its membrane was on the way *down*.
+    #[test]
+    fn the_detector_reports_a_crossing_and_not_a_level() {
+        let mut high = HodgkinHuxley::at(10.0);
+        let before = high.v;
+        let fired = high.advance(0.001, 0.0).expect("no divergence");
+        assert!(high.v < before, "this membrane should be falling: {before} -> {}", high.v);
+        assert!(!fired, "a falling membrane reported a spike");
+        assert!(high.armed, "and it is still waiting for a spike that has not happened");
+
+        // The same through the synaptic boundary, which is how a network reaches it.
+        let mut bumped = HodgkinHuxley::default();
+        bumped.bump(80e-3);
+        assert!((bumped.v - 15.0).abs() < 1e-12, "an 80 mV bump put v at {}", bumped.v);
+        assert!(
+            !bumped.advance(0.001, 0.0).expect("no divergence"),
+            "the bump reported a spike by itself"
+        );
+
+        // It is not deaf afterwards. Let it fall back to rest and drive it, and the crossings it
+        // does make are reported.
+        let mut later = HodgkinHuxley::at(10.0);
+        for _ in 0..20_000 {
+            later.advance(0.005, 0.0).expect("no divergence");
+        }
+        assert!((later.v - -65.0).abs() < 0.2, "it did not return to rest: {} mV", later.v);
+        let mut spikes = 0u32;
+        for _ in 0..20_000 {
+            if later.advance(0.005, 10.0).expect("no divergence") {
+                spikes += 1;
+            }
+        }
+        assert!(spikes > 3, "only {spikes} spikes on 100 ms of suprathreshold drive");
+
+        // Genuine detection is untouched: 21 spikes in 300 ms at 10 µA/cm². And the hysteresis is
+        // not what produces that count — `detect_reset` at the detection level gives the same 21,
+        // because a squid upstroke crosses 0 mV exactly once, which is what the `detect_reset` doc
+        // now claims and used to claim the opposite of.
+        let count = |reset: f64| {
+            let mut x = HodgkinHuxley { detect_reset: reset, ..HodgkinHuxley::default() };
+            let mut n = 0u32;
+            for _ in 0..30_000 {
+                if x.advance(0.01, 10.0).expect("no divergence") {
+                    n += 1;
+                }
+            }
+            n
+        };
+        assert_eq!(count(-20.0), 21, "the default cell's spike count moved");
+        assert_eq!(count(0.0), 21, "the hysteresis turns out to be load-bearing after all");
+
+        // And the reduction shares the detector rather than carrying a second copy of it.
+        let mut r = ReducedHh { v: 10.0, ..ReducedHh::default() };
+        assert!(!r.advance(0.001, 0.0).expect("no divergence"), "the reduction reported a level");
+    }
+
+    /// **A diverged run has no verdict, and folding it into `false` cost a factor of 4.3.**
+    /// `Integrator::ForwardEuler` at `dt = 0.5 ms` reports a 0 mV crossing at 0.5214 µA/cm² from a
+    /// state that is still legal — its `m` gate is oscillating with a growing amplitude — and is
+    /// illegal one step later. [`HodgkinHuxley::rheobase_ua_cm2`] used to believe it.
+    #[test]
+    fn a_run_that_diverges_has_no_verdict_about_whether_the_cell_fires() {
+        let fe =
+            HodgkinHuxley { integrator: Integrator::ForwardEuler, substeps: 1, ..Default::default() };
+        assert_eq!(fe.fires_checked(0.5214, 0.5, 50.0), Err(HhError::Diverged));
+        assert!(!fe.fires(0.5214, 0.5, 50.0), "a diverged run answered yes");
+        assert_eq!(fe.rheobase_ua_cm2(0.5, 50.0, 40.0, 0.5), None, "forward Euler answered anyway");
+
+        // The default integrator cannot diverge, so it answers — and answers 2.2493, four times the
+        // number the unstable integrator produced.
+        let c = HodgkinHuxley::default();
+        let r = c.rheobase_ua_cm2(0.5, 50.0, 40.0, 0.5).expect("the default cannot diverge");
+        assert!((r - 2.2493).abs() < 0.01, "rheobase {r} µA/cm²");
+        assert!(r > 4.0 * 0.5214, "the two answers are not far apart after all: {r}");
+
+        // `fires` and `fires_checked` agree wherever there is anything to agree about.
+        assert_eq!(c.fires_checked(10.0, 0.01, 50.0), Ok(true));
+        assert_eq!(c.fires_checked(1.0, 0.01, 50.0), Ok(false));
+        assert!(c.fires(10.0, 0.01, 50.0) && !c.fires(1.0, 0.01, 50.0));
+
+        // Bad inputs are named rather than turned into a step count.
+        assert_eq!(c.fires_checked(10.0, 0.0, 50.0), Err(HhError::NonPositiveStep));
+        assert_eq!(c.fires_checked(10.0, f64::NAN, 50.0), Err(HhError::NonFiniteStep));
+        assert_eq!(c.fires_checked(f64::NAN, 0.01, 50.0), Err(HhError::NonFiniteCurrent));
+        assert!(!c.fires(10.0, 0.0, 50.0), "a zero step reported firing");
+    }
+
+    /// **A `NaN` parameter must not come back as a resting potential.** Every comparison against
+    /// `NaN` is false, so the reduced model's copy of the bisection — which was missing the
+    /// finiteness guard the full model had — ran 200 iterations on `NaN`, took the same branch every
+    /// time and returned the bracket endpoint. A cell then sat at -40.0 mV as though that were rest.
+    #[test]
+    fn a_non_finite_parameter_is_refused_rather_than_answered_with_a_bracket_endpoint() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let r = ReducedHh { e_leak: bad, ..Default::default() };
+            assert_eq!(r.rest_potential_mv(), None, "the reduction answered for e_leak = {bad}");
+            assert!(r.settled().is_none(), "and settled it");
+            let f = HodgkinHuxley { e_leak: bad, ..Default::default() };
+            assert_eq!(f.rest_potential_mv(), None, "the full model answered for e_leak = {bad}");
+            assert!(f.settled().is_none());
+        }
+        // `reset` falls back to -65 mV rather than to the endpoint.
+        let mut r = ReducedHh { e_leak: f64::NAN, v: 0.0, n: 0.9, armed: false, ..Default::default() };
+        r.reset();
+        assert_eq!(r.v, -65.0, "reset put the cell at {} mV", r.v);
+        assert_eq!(r.n, steady_state_gates(-65.0).n);
+        assert!(r.armed);
+        // And the legal cells still answer, at the same roots as before the two loops became one.
+        let full = HodgkinHuxley::default().rest_potential_mv().expect("bracketed");
+        let red = ReducedHh::default().rest_potential_mv().expect("bracketed");
+        assert!((full - -64.999_722_433_734_58).abs() < 1e-12, "full rest moved to {full}");
+        assert!((red - -65.097_766_252_847_98).abs() < 1e-12, "reduced rest moved to {red}");
+        assert_eq!(ReducedHh::default().v, red, "the default is not at its own fixed point");
+    }
+
+    /// **The reduction can diverge, its doc said it could not, and its guard was eight orders of
+    /// magnitude stricter than the full model's.** `n` is a public field; the guard exists for the
+    /// state a caller hands over, not for the one the integrator produces.
+    #[test]
+    fn the_reduced_model_can_diverge_and_its_guard_is_the_full_model_s() {
+        let mut wild = ReducedHh { n: 1.5, ..Default::default() };
+        assert_eq!(wild.advance(0.01, 0.0), Err(HhError::Diverged), "n = 1.5 was accepted");
+        let mut negative = ReducedHh { n: -0.5, ..Default::default() };
+        assert_eq!(negative.advance(0.01, 0.0), Err(HhError::Diverged), "n = -0.5 was accepted");
+
+        // The tolerance, at a step short enough that the update cannot pull the gate back inside on
+        // its own: 1e-10 outside is accepted and 1e-8 outside is refused, by BOTH models. The
+        // reduced check used to be an exact `(0.0..=1.0)`, which refused all four of these.
+        for &n in &[1.0 + 1e-10, -1e-10] {
+            let mut r = ReducedHh { n, ..Default::default() };
+            assert_eq!(r.advance(1e-11, 0.0), Ok(false), "the reduction refused n = {n}");
+        }
+        for &n in &[1.0 + 1e-8, -1e-8] {
+            let mut r = ReducedHh { n, ..Default::default() };
+            assert_eq!(r.advance(1e-11, 0.0), Err(HhError::Diverged), "the reduction took n = {n}");
+        }
+        let mut ok = HodgkinHuxley { m: 1.0 + 1e-10, substeps: 1, ..Default::default() };
+        assert_eq!(ok.advance(1e-9, 0.0), Ok(false), "the full model refused m = 1 + 1e-10");
+        let mut bad = HodgkinHuxley { m: 1.0 + 1e-8, substeps: 1, ..Default::default() };
+        assert_eq!(bad.advance(1e-9, 0.0), Err(HhError::Diverged), "the full model took m = 1 + 1e-8");
+    }
+
+    /// **The only state guard's tolerance, pinned at both ends.** Widening `LO` from -1e-9 to -1e-1
+    /// passed the whole module, so `advance`'s contract — "a caller who gets `Ok` has gates that are
+    /// occupancies" — was pinned only up to a number that could move by eight orders of magnitude
+    /// unobserved. The guard is private, this test is in the module, and there is no reason to check
+    /// it through a simulation that might pull the value back inside before the check runs.
+    #[test]
+    fn the_state_guard_is_a_tolerance_and_this_is_exactly_where_it_sits() {
+        assert_eq!(GATE_SLACK, 1e-9, "the documented slack");
+        assert!(gate_is_legal(0.0) && gate_is_legal(1.0) && gate_is_legal(0.5));
+        assert!(gate_is_legal(GATE_SLACK.mul_add(-1.0, 0.0)), "exactly -GATE_SLACK is legal");
+        assert!(gate_is_legal(1.0 + GATE_SLACK), "exactly 1 + GATE_SLACK is legal");
+        assert!(gate_is_legal(-1e-10) && gate_is_legal(1.0 + 1e-10), "well inside the slack");
+        assert!(!gate_is_legal(-1e-8), "a hundredth of a part per million below zero is not a gate");
+        assert!(!gate_is_legal(1.0 + 1e-8));
+        assert!(!gate_is_legal(-2e-9) && !gate_is_legal(1.0 + 2e-9), "twice the slack");
+        assert!(!gate_is_legal(f64::NAN), "NaN compares false against everything, including this");
+        assert!(!gate_is_legal(f64::INFINITY) && !gate_is_legal(f64::NEG_INFINITY));
+
+        // And every field is actually consulted, one at a time.
+        let g = steady_state_gates(-65.0);
+        let cell = |m: f64, h: f64, n: f64, v: f64| {
+            HodgkinHuxley { m, h, n, v, ..HodgkinHuxley::default() }.state_is_legal()
+        };
+        assert!(cell(g.m, g.h, g.n, -65.0), "the default state is illegal");
+        assert!(!cell(1.0 + 1e-8, g.h, g.n, -65.0), "m was not checked");
+        assert!(!cell(g.m, -1e-8, g.n, -65.0), "h was not checked");
+        assert!(!cell(g.m, g.h, 1.0 + 1e-8, -65.0), "n was not checked");
+        assert!(!cell(g.m, g.h, g.n, f64::NAN), "v was not checked");
+        assert!(!cell(g.m, g.h, g.n, f64::INFINITY));
+        // A potential of ±10^6 mV is legal: the guard is about finiteness and occupancies, and the
+        // `[e_k, e_na]` band is a zero-input property of the integrator rather than a state check.
+        assert!(cell(g.m, g.h, g.n, 1e6));
+    }
+
+    /// **`Neuron::step` could write `NaN` into a membrane, and its doc said it did not need to
+    /// check.** Every conductance is public; all three at zero makes the exponential update's
+    /// `v_inf` a `0/0`. The trait has nowhere to put an error, so the step is rolled back.
+    #[test]
+    fn a_step_that_would_write_a_non_finite_state_is_rolled_back_rather_than_taken() {
+        let dead = HodgkinHuxley { g_na: 0.0, g_k: 0.0, g_leak: 0.0, ..Default::default() };
+        let mut x = dead;
+        assert!(!x.step(1e-5, 0.0), "a rolled-back step is not a spike");
+        assert!(x.v.is_finite(), "v = {} is the whole reason this guard exists", x.v);
+        assert_eq!(x, dead, "the illegal step was written anyway");
+        // The checked path says why, in a variant that names the quantity.
+        let mut y = dead;
+        assert_eq!(y.advance(0.01, 0.0), Err(HhError::Diverged));
+        // The reduction has the same public fields and the same guard.
+        let rdead = ReducedHh { g_na: 0.0, g_k: 0.0, g_leak: 0.0, ..Default::default() };
+        let mut r = rdead;
+        assert!(!r.step(1e-5, 0.0));
+        assert_eq!(r, rdead, "the reduction wrote its illegal step");
+        assert!(r.v.is_finite());
+        // Forward Euler at a step it cannot handle, through the trait: frozen, not `NaN`.
+        let fe = HodgkinHuxley {
+            integrator: Integrator::ForwardEuler,
+            substeps: 1,
+            v: 50.0,
+            ..Default::default()
+        };
+        let mut f = fe;
+        assert!(!f.step(5e-4, 0.0), "forward Euler reported a spike on a step it cannot take");
+        assert_eq!(f, fe, "and it wrote an m of 4.3 into the state");
+        // The guard refuses illegal outcomes, not every outcome: a legal cell still moves.
+        let mut live = HodgkinHuxley::default();
+        assert!(!live.step(1e-5, 1e-9), "no spike is expected on the first tick");
+        assert!(live.v > -65.0, "a legal step must still move the membrane, v = {}", live.v);
+        assert!(live.v < -64.0, "and not by much in 10 µs, v = {}", live.v);
+    }
+
+    /// The times in a [`SpikeShape`] are the times of the samples they measured. They were reported
+    /// one step early — `k * dt` is the time *before* the step whose result is being tested — which
+    /// no assertion here could see, because `width_ms` is a difference of two of them and cancels.
+    #[test]
+    fn spike_shape_reports_the_times_of_the_samples_it_measured() {
+        let c = HodgkinHuxley::default();
+        let dt = 0.005;
+        let s = c.spike_shape(10.0, dt, 20.0, 0.0).expect("10 µA/cm² is above rheobase");
+
+        // Replay the same run by hand, counting the state after step k as being at (k+1)·dt.
+        let mut x = c;
+        let (mut peak, mut peak_t) = (f64::NEG_INFINITY, f64::NAN);
+        let mut up_t = None;
+        for k in 0..(20.0 / dt) as u64 {
+            let prev = x.v;
+            x.advance(dt, 10.0).expect("no divergence");
+            let t = (k + 1) as f64 * dt;
+            if up_t.is_none() && prev < 0.0 && x.v >= 0.0 {
+                up_t = Some(t);
+            }
+            if x.v > peak {
+                peak = x.v;
+                peak_t = t;
+            }
+        }
+        assert_eq!(s.peak_mv, peak, "the peak value itself");
+        assert_eq!(s.peak_time_ms, peak_t, "the peak's time");
+        assert_eq!(s.upstroke_time_ms, up_t.expect("it crossed"), "the upstroke's time");
+
+        // Which lands one step later than it used to, and is a whole number of steps.
+        assert!((s.peak_time_ms - 2.140).abs() < 1e-9, "peak at {} ms", s.peak_time_ms);
+        assert!((s.upstroke_time_ms - 1.905).abs() < 1e-9, "upstroke at {} ms", s.upstroke_time_ms);
+        let ticks = s.peak_time_ms / dt;
+        assert!((ticks - ticks.round()).abs() < 1e-6, "{ticks} is not a whole number of steps");
+        // The width is a difference of two such times and did not move when they did.
+        assert!((s.width_ms - 1.165).abs() < 1e-9, "width {} ms", s.width_ms);
+        // The peak is the top of the excursion, so the sample one step earlier is lower — which is
+        // what makes "one step early" a wrong answer rather than a convention.
+        let mut y = c;
+        for _ in 0..(s.peak_time_ms / dt).round() as u64 - 1 {
+            y.advance(dt, 10.0).expect("no divergence");
+        }
+        assert!(y.v < s.peak_mv, "the sample before the peak is {} mV", y.v);
     }
 }

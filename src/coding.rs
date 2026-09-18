@@ -12,13 +12,22 @@
 //!
 //! | code | where the information is | spikes per value | invariant to | destroyed by |
 //! |---|---|---|---|---|
-//! | [`GaussianPopulation`] | which cells are active, and how much | `n` × window | the loss of any one cell | noise correlated across the population |
+//! | [`GaussianPopulation`] | which cells are active, and how much | `n` × window | nothing exactly: one lost cell costs 51× | noise correlated across the population |
 //! | [`CosinePopulation`] | the vector sum of preferred directions | `n` × window | the tuning baseline `b0`, **exactly** | preferred directions that do not tile evenly |
 //! | [`RankOrderCode`] | the ORDER of the first spikes | one per cell, once | **any positive rescaling of the input** | jitter larger than the gap between arrivals |
 //! | [`PhaseEncoder`] | spike time within an oscillation cycle | one per cycle | the oscillation's amplitude | a shift in the oscillation's phase |
 //! | [`BurstCode`] | number of spikes in a burst | `k ≤ max_spikes` | spike times inside the burst | one lost or one inserted spike |
-//! | [`Bsa`], [`Hsa`] | the whole train, read through a filter | about one per sample | slow baseline drift | signal energy above the filter's cutoff |
+//! | [`Bsa`], [`Hsa`] | the whole train, read through a filter | about one per sample | nothing exactly: the level **is** the code | signal energy above the filter's cutoff |
 //! | [`TemporalContrast`] | threshold crossings of the signal | one per crossing | any constant offset | slew faster than one threshold per sample |
+//!
+//! The fourth column means **the output does not change at all** under that transformation, and
+//! each of those cells is an assertion in this module's tests, not a disposition. Two rows say
+//! "nothing exactly" because measurement says so: silencing one cell of a 24-cell Gaussian tiling
+//! multiplies the interior decode error by 51 (`2.40e-4` to `1.23e-2`), and a baseline drift of
+//! 0.2 of full scale moves [`Bsa`]'s spike count from 395 to 494 and changes 395 of 1000 firing
+//! decisions — because the spike density of a deconvolution code **equals** the signal level, so
+//! it tracks a drift one for one rather than rejecting it. Both are graceful and neither is
+//! invariance, and calling them invariance is how a caveat becomes a claim.
 //!
 //! # Population coding: spend neurons to buy precision
 //!
@@ -316,23 +325,116 @@ pub fn angular_difference(a: f64, b: f64) -> f64 {
     if d > PI { d - TAU } else { d }
 }
 
+/// Means at or above this are drawn by transformed rejection; below it, by the chunked product
+/// method. Dimensionless (it is a mean count).
+///
+/// The product method costs one uniform per spike, so its run time is `O(lambda)`. Measured on
+/// this machine at the seam: `4.45 ms` for one draw of mean `999_000` by the product method
+/// against `116 ns` by transformed rejection, a factor of 38,000 — and a mean of `1e12` would not
+/// finish today. The seam is placed at `1e6` rather than at the `lambda >= 10` the rejection
+/// algorithm is valid from, so that every mean a spiking experiment can plausibly ask for keeps
+/// the exact product-method draw it had in earlier releases of this crate, bit for bit.
+const POISSON_REJECTION_FLOOR: f64 = 1.0e6;
+
+/// Means above this are refused, because the count itself would not be representable.
+///
+/// A Poisson draw of mean `9e18` lands within a few times `3e9` of its mean, which still fits a
+/// `u64` (`1.8e19`); a mean an order of magnitude higher does not, and a saturating cast would
+/// return a count that is quietly wrong. Dimensionless.
+const POISSON_MAX_MEAN: f64 = 9.0e18;
+
+/// `ln P(K = k)` for a Poisson of mean `lambda`, computed so that no cancellation survives.
+///
+/// The textbook form `-lambda + k·ln(lambda) - ln(k!)` subtracts two numbers of size `k·ln k`,
+/// which at `k ~ 1e18` is `4e19` and leaves an absolute error of thousands in a quantity of order
+/// one — enough to turn a rejection test into a coin flip. Writing `k = lambda + d` and using
+/// `ln_1p` instead gives
+///
+/// ```text
+/// ln P = d − (lambda + d)·ln1p(d/lambda) − ½·ln(2πk) − s(k)
+/// ```
+///
+/// where `s(k) = lnΓ(k+1) − (k ln k − k + ½ ln 2πk)` is Stirling's tail, `1/(12k) − 1/(360k³) +
+/// 1/(1260k⁵)`. The leading pair now cancels to `−d²/(2·lambda)` from terms of size `d`, so the
+/// error is `1e-16·d` — `1e-13` at a mean of `1e6`. Truncating Stirling's series costs
+/// `1/(1680·k⁷)`: below `1e-10` from `k = 10` upward, hence exact for every `k` this path can
+/// accept, and at most `3e-4` at `k = 1`, where the answer only has to be very negative. Both
+/// bounds are measured in `the_poisson_log_probability_survives_the_cancellation_it_avoids`.
+fn poisson_ln_pmf(k: f64, lambda: f64) -> f64 {
+    if k < 0.5 {
+        return -lambda;
+    }
+    let d = k - lambda;
+    let k2 = k * k;
+    let stirling_tail = 1.0 / (12.0 * k) - 1.0 / (360.0 * k2 * k) + 1.0 / (1260.0 * k2 * k2 * k);
+    d - (lambda + d) * (d / lambda).ln_1p() - 0.5 * (TAU * k).ln() - stirling_tail
+}
+
+/// Hörmann's transformed-rejection draw (*Insurance: Mathematics and Economics* 12:39-45, 1993),
+/// the `PTRS` algorithm, in the form `NumPy` uses for `lambda >= 10`.
+///
+/// Constant time in `lambda`: it proposes from a scaled logistic-like envelope and accepts against
+/// the Poisson log-probability, so the run time does not grow with the mean. The five constants
+/// (`0.931`, `2.53`, `-0.059`, `0.02483`, `1.1239`, `1.1328`, `0.9277`, `3.6224`) are the paper's
+/// own, kept verbatim. Caller guarantees `lambda >= 10`.
+fn poisson_transformed_rejection(rng: &mut Rng, lambda: f64) -> u64 {
+    let smu = lambda.sqrt();
+    let b = 0.931 + 2.53 * smu;
+    let a = -0.059 + 0.02483 * b;
+    let inv_alpha = 1.1239 + 1.1328 / (b - 3.4);
+    let v_r = 0.9277 - 3.6224 / (b - 2.0);
+    loop {
+        let u = rng.next_f64() - 0.5;
+        let v = rng.next_f64();
+        let us = 0.5 - u.abs();
+        let k = ((2.0 * a / us + b) * u + lambda + 0.43).floor();
+        // The squeeze: the overwhelming majority of draws leave here without a logarithm.
+        if us >= 0.07 && v <= v_r {
+            return k as u64;
+        }
+        if k < 0.0 || (us < 0.013 && v > us) {
+            continue;
+        }
+        if (v * inv_alpha / (a / (us * us) + b)).ln() <= poisson_ln_pmf(k, lambda) {
+            return k as u64;
+        }
+    }
+}
+
 /// A Poisson draw with mean `lambda`, deterministic for a given [`Rng`] state.
 ///
-/// `None` when `lambda` is negative or not finite; a mean of exactly zero returns `Some(0)`,
-/// because a cell driven at zero hertz emits zero spikes and that is a fact rather than a refusal.
+/// `None` when `lambda` is negative, not finite, or above `POISSON_MAX_MEAN` (`9e18`) — a mean whose
+/// count would not fit a `u64`. A mean of exactly zero returns `Some(0)`, because a cell driven at
+/// zero hertz emits zero spikes and that is a fact rather than a refusal.
 ///
 /// # Algorithm, and why it is not the textbook one line
 ///
 /// Knuth's product method multiplies uniforms until the product falls below `exp(-lambda)`. At
 /// `lambda > 745` that exponential underflows to exactly zero in `f64` and the loop never
 /// terminates — a hang, not a wrong answer, and one that only appears when somebody raises a
-/// firing rate or lengthens a window. The fix used here is exact rather than approximate: a
-/// Poisson variable of mean `lambda` is the sum of independent Poisson variables whose means sum
-/// to `lambda`, so the mean is split into chunks of at most 500 and the draws are added.
+/// firing rate or lengthens a window. The fix for that is exact rather than approximate: a Poisson
+/// variable of mean `lambda` is the sum of independent Poisson variables whose means sum to
+/// `lambda`, so the mean is split into chunks of at most 500 and the draws are added.
+///
+/// Chunking removes the underflow and **not** the cost, and the first version of this function
+/// stopped there — which left two hangs a binade apart. The loop `left -= left.min(500.0)` does
+/// not terminate at all above `2^62 ≈ 4.6e18`, where `left - 500.0 == left` in `f64`; and long
+/// before that the `O(lambda)` uniform draws are their own hang, since a mean of `1e12` is two
+/// million million multiplications. Both are reachable from the public API, because `r_max` and
+/// `window_s` are only checked finite and `lambda = r · window_s`.
+///
+/// So the mean decides the algorithm. Below `POISSON_REJECTION_FLOOR` (`1e6`) the chunked product
+/// method runs exactly as it always has, bit for bit. At or above it the draw comes from Hörmann's
+/// transformed rejection, which is constant time in `lambda` and is the same algorithm `NumPy`
+/// uses above `lambda = 10`; `a_mean_far_past_the_chunking_limit_terminates_and_is_unbiased` is
+/// the test, at a mean of `5e18`.
 #[must_use]
 pub fn poisson_count(rng: &mut Rng, lambda: f64) -> Option<u64> {
-    if !lambda.is_finite() || lambda < 0.0 {
+    if !lambda.is_finite() || lambda < 0.0 || lambda > POISSON_MAX_MEAN {
         return None;
+    }
+    if lambda >= POISSON_REJECTION_FLOOR {
+        return Some(poisson_transformed_rejection(rng, lambda));
     }
     let mut total = 0u64;
     let mut left = lambda;
@@ -376,6 +478,16 @@ pub fn sinc(x: f64) -> f64 {
 /// a constant input of `c` is encoded at a spike density of `c`, and that identity is what the
 /// round-trip test for a constant signal checks.
 ///
+/// # The two tap counts where `cutoff` cannot matter
+///
+/// `taps == 1` returns `[1.0]` and `taps == 2` returns `[0.5, 0.5]`, for **every** cutoff in
+/// range. That is not the argument being discarded, it is what unit DC gain forces: a one-tap
+/// filter summing to 1 is the identity, and the two-tap Hamming window is `0.08` at both ends, so
+/// the pair of sinc values it multiplies are equal by symmetry and normalise to a half each. A
+/// one-tap "low-pass" therefore performs no low-pass action at all, and a caller who wants one
+/// needs at least three taps — which is stated here because the cutoff is validated before those
+/// two cases are reached, and validation reads as relevance.
+///
 /// # Errors
 ///
 /// [`CodeError::Empty`] for `taps == 0`, [`CodeError::NotPositive`] for a `cutoff` outside
@@ -390,6 +502,8 @@ pub fn fir_lowpass(taps: usize, cutoff: f64) -> Result<Vec<f64>, CodeError> {
         return Err(CodeError::NotPositive { what: "cutoff (cycles/sample, in (0, 0.5))", value: cutoff });
     }
     if taps == 1 {
+        // Not a shortcut: `m = taps - 1` is zero below, and the Hamming window would divide by it.
+        // A single tap normalised to unit DC gain has no other value it could take.
         return Ok(vec![1.0]);
     }
     let m = taps - 1;
@@ -465,12 +579,22 @@ pub fn rates_from_counts(counts: &[u64], window_s: f64) -> Result<Vec<f64>, Code
 /// The refinement is a parabola through the best grid point and its two neighbours, which removes
 /// the grid quantisation from the estimate; without it the estimator's variance is inflated by
 /// `h² / 12` and a Cramér-Rao comparison measures the grid rather than the code.
+///
+/// `wrap` says whether `lo` and `hi` are the same point. On a **line** the two ends have no
+/// outward neighbour, so a maximum there is reported at the grid node and the answer is clamped
+/// into the range — there is nothing outside to interpolate toward. On a **circle** they do: the
+/// probe one step below `lo` is the probe one step below `hi`, so the seam is refined like any
+/// other point and the result is left unclamped for the caller to wrap. Without that, a circular
+/// estimate landing at the seam is grid-snapped while every other estimate is refined — measured
+/// at `grid = 361`, a stimulus half a step above zero decoded to exactly `0.0`, an error of
+/// `8.7e-3` rad against `7.6e-4` rad for the same offset near `π`.
 fn ml_on_grid<F>(
     counts: &[u64],
     window_s: f64,
     lo: f64,
     hi: f64,
     grid: usize,
+    wrap: bool,
     mut rate_at: F,
 ) -> Result<f64, CodeError>
 where
@@ -512,10 +636,17 @@ where
         return Err(CodeError::NoEvidence { what: "a stimulus consistent with these counts" });
     }
     let x0 = lo + h * best as f64;
-    if best == 0 || best + 1 == grid {
-        return Ok(x0);
-    }
-    let (y1, y2, y3) = (logl[best - 1], logl[best], logl[best + 1]);
+    let (below, above) = if best == 0 || best + 1 == grid {
+        if !wrap {
+            return Ok(x0);
+        }
+        // Index `grid - 1` IS index `0` one turn on, so the seam's neighbours are the second and
+        // the second-to-last probes, whichever end `best` landed on.
+        (grid - 2, 1)
+    } else {
+        (best - 1, best + 1)
+    };
+    let (y1, y2, y3) = (logl[below], logl[best], logl[above]);
     if !y1.is_finite() || !y3.is_finite() {
         return Ok(x0);
     }
@@ -524,7 +655,13 @@ where
         return Ok(x0);
     }
     let shift = (h * (y1 - y3) / (2.0 * denom)).clamp(-h, h);
-    Ok((x0 + shift).clamp(lo, hi))
+    if wrap {
+        // Past either end by up to one step; the caller wraps, and clamping here would put the
+        // seam back exactly where it was.
+        Ok(x0 + shift)
+    } else {
+        Ok((x0 + shift).clamp(lo, hi))
+    }
 }
 
 /// A population of cells with Gaussian tuning curves evenly tiling `[lo, hi]`.
@@ -649,12 +786,17 @@ impl GaussianPopulation {
     /// Draw Poisson spike counts for a `window_s`-second observation of stimulus `x`.
     ///
     /// Deterministic for a given [`Rng`] state, which is what makes the Cramér-Rao test in this
-    /// module reproducible rather than flaky.
+    /// module reproducible rather than flaky. Cost is bounded rather than proportional to the
+    /// rate: an expected count `r · window_s` below `1e6` costs one uniform per spike, and
+    /// anything above it is drawn in constant time however large it is (see [`poisson_count`]).
     ///
     /// # Errors
     ///
     /// [`CodeError::NotFinite`] for a non-finite `x`; [`CodeError::NotPositive`] for a non-positive
-    /// `window_s`.
+    /// `window_s`; [`CodeError::NotFinite`] with `what: "expected count"` when `r_max · window_s`
+    /// overflows to infinity **or** exceeds `9e18`, the largest mean whose count still fits a
+    /// `u64`. That second case is a refusal rather than a saturated count, and before this crate
+    /// had it, it was a hang.
     pub fn sample_counts(&self, rng: &mut Rng, x: f64, window_s: f64) -> Result<Vec<u64>, CodeError> {
         if !(window_s > 0.0) || !window_s.is_finite() {
             return Err(CodeError::NotPositive { what: "window_s", value: window_s });
@@ -760,7 +902,7 @@ impl GaussianPopulation {
         if counts.len() != self.n {
             return Err(CodeError::LengthMismatch { expected: self.n, got: counts.len() });
         }
-        ml_on_grid(counts, window_s, self.lo, self.hi, grid, |i, x| self.rate_of(i, x))
+        ml_on_grid(counts, window_s, self.lo, self.hi, grid, false, |i, x| self.rate_of(i, x))
     }
 
     /// Fisher information about `x` carried by one `window_s`-second Poisson observation, in
@@ -806,19 +948,47 @@ impl GaussianPopulation {
 
     /// The sub-range over which the noise-free centre-of-mass decode is accurate to `tol`.
     ///
-    /// Computed, not asserted: the interior is found by scanning inward from each end until the
-    /// noise-free round-trip error falls below `tol` and stays there. Returns `None` when no such
-    /// sub-range exists, which is the honest answer for a population of one or two cells, or for a
-    /// `sigma` so wide that the whole range is edge.
+    /// Computed, not asserted, and computed as a **run** rather than as two independent ends: the
+    /// range is probed at `max(401, 16·(n − 1) + 1)` equally spaced points and the longest
+    /// unbroken run of probes whose noise-free round-trip error is at most `tol` is returned.
+    /// `None` when no two adjacent probes pass — the honest answer for a population of one or two
+    /// cells, and for a `sigma` so narrow that the decode is accurate only in islands around the
+    /// preferred values.
     ///
-    /// The number this returns is the one to quote beside a population-coded result. Quoting the
-    /// full `[lo, hi]` overstates the usable range of every finite tiling ever built.
+    /// # Why it is a run
+    ///
+    /// The first version of this method took the first passing probe from each end and never
+    /// looked between them, which returns the **whole range** in exactly the case the method
+    /// exists to catch. Cells `0` and `n − 1` sit on `lo` and `hi`, so with narrow tuning curves
+    /// each end decodes to its own cell's preferred value and passes on the first probe, while the
+    /// error halfway between two preferred values is large. Measured at `n = 24`, `sigma = 0.3 ×`
+    /// spacing, `tol = 1e-3`: the old scan reported `(0.0000, 1.0000)` while 3696 of 4001 points
+    /// inside it missed the tolerance, the worst by a factor of 8.8.
+    ///
+    /// # What the number is, and what it is not
+    ///
+    /// It is the range to quote beside a population-coded result; quoting the full `[lo, hi]`
+    /// overstates the usable range of every finite tiling ever built. It is a statement about a
+    /// finite set of probes, and the number of them is tied to `n` for a reason worth writing
+    /// down: the centre-of-mass error of a Gaussian tiling is zero at each preferred value **and**
+    /// zero by symmetry at each midpoint between two of them, peaking near the quarter points. A
+    /// fixed 401-point grid on `n = 201` probes every `0.0025` while the preferred values sit
+    /// every `0.005`, so it lands only on those two families of zeros: measured, it saw a worst
+    /// error of `1.9e-8` over all 401 probes on a population whose true worst error is `1.7e-3`,
+    /// and reported the whole range. Sixteen probes per spacing puts one exactly on the quarter
+    /// point instead. Below `sigma ≈ 0.6 ×` spacing what comes back is a small fraction of the
+    /// range or nothing at all, which is not a defect of the method — it is what a tiling that
+    /// narrow can do.
+    ///
+    /// Tying the probe count to `n` makes this `O(16 n²)` tuning-curve evaluations: measured,
+    /// `112 µs` at `n = 24`, `8.3 ms` at `n = 200` and `128 ms` at `n = 1000`. It is a diagnostic
+    /// to call once beside a figure, not a decoder to call per sample.
     #[must_use]
     pub fn interior(&self, tol: f64) -> Option<(f64, f64)> {
         if self.n < 3 || !(tol > 0.0) {
             return None;
         }
-        let steps = 400usize;
+        let steps = 400.max(16 * (self.n - 1));
         let h = (self.hi - self.lo) / steps as f64;
         let ok = |x: f64| {
             self.rates(x)
@@ -826,23 +996,29 @@ impl GaussianPopulation {
                 .and_then(|r| self.decode_center_of_mass(&r).ok())
                 .is_some_and(|xh| (xh - x).abs() <= tol)
         };
-        let mut a = None;
+        // Longest unbroken run of passing probes. `best_b == best_a` means "nothing yet": a single
+        // passing probe is a point, not a sub-range, and is not reported as one.
+        let (mut best_a, mut best_b) = (0usize, 0usize);
+        let mut run_a = 0usize;
+        let mut in_run = false;
         for s in 0..=steps {
             if ok(self.lo + h * s as f64) {
-                a = Some(self.lo + h * s as f64);
-                break;
+                if !in_run {
+                    run_a = s;
+                    in_run = true;
+                }
+                if s - run_a > best_b - best_a {
+                    best_a = run_a;
+                    best_b = s;
+                }
+            } else {
+                in_run = false;
             }
         }
-        let mut b = None;
-        for s in (0..=steps).rev() {
-            if ok(self.lo + h * s as f64) {
-                b = Some(self.lo + h * s as f64);
-                break;
-            }
-        }
-        match (a, b) {
-            (Some(a), Some(b)) if b > a => Some((a, b)),
-            _ => None,
+        if best_b > best_a {
+            Some((self.lo + h * best_a as f64, self.lo + h * best_b as f64))
+        } else {
+            None
         }
     }
 }
@@ -951,7 +1127,9 @@ impl CosinePopulation {
     /// # Errors
     ///
     /// [`CodeError::NotFinite`] for a non-finite `theta`; [`CodeError::NotPositive`] for a
-    /// non-positive `window_s`.
+    /// non-positive `window_s`; [`CodeError::NotFinite`] with `what: "expected count"` when
+    /// `(b0 + b1) · window_s` is not finite or exceeds `9e18`, as
+    /// [`GaussianPopulation::sample_counts`].
     pub fn sample_counts(
         &self,
         rng: &mut Rng,
@@ -1022,7 +1200,11 @@ impl CosinePopulation {
     ///
     /// The grid spans a full turn. The wrap is handled by searching `[0, 2π]` inclusive and
     /// wrapping the answer, which costs one duplicated grid point and avoids the usual bug of a
-    /// circular estimator that cannot return an angle near zero.
+    /// circular estimator that cannot return an angle near zero. The parabolic refinement wraps
+    /// with it: an estimate at the seam is interpolated against the probe on the other side of
+    /// zero rather than snapped to the node, so the error near zero is the error anywhere else —
+    /// `the_circular_maximum_likelihood_decoder_is_as_sharp_at_the_seam_as_in_the_middle` measures
+    /// both.
     ///
     /// # Errors
     ///
@@ -1038,7 +1220,8 @@ impl CosinePopulation {
         if counts.len() != self.n {
             return Err(CodeError::LengthMismatch { expected: self.n, got: counts.len() });
         }
-        let theta = ml_on_grid(counts, window_s, 0.0, TAU, grid, |i, x| self.rate_of(i, x).max(0.0))?;
+        let theta =
+            ml_on_grid(counts, window_s, 0.0, TAU, grid, true, |i, x| self.rate_of(i, x).max(0.0))?;
         Ok(wrap_angle(theta))
     }
 }
@@ -1455,7 +1638,10 @@ pub struct Burst {
 ///
 /// `x` in `[0, 1]` becomes `round(x · max_spikes)` spikes, `intra_ticks` apart, and the value is
 /// read back by counting. The code carries `log2(max_spikes + 1)` bits
-/// ([`BurstCode::capacity_bits`]) and is quantised at `0.5 / max_spikes` of full scale.
+/// ([`BurstCode::capacity_bits`]). Two numbers, kept apart because they differ by a factor of two:
+/// the **step** between adjacent representable values is `1 / max_spikes` of full scale, and the
+/// worst-case **round-trip error** is half a step, `0.5 / max_spikes`, which is what
+/// [`BurstCode::quantisation`] returns.
 ///
 /// # The zero problem, which is the reason there are two decoders
 ///
@@ -1468,9 +1654,10 @@ pub struct Burst {
 ///
 /// # What it is fragile to
 ///
-/// One lost spike is a full quantum of error — `1 / max_spikes` of full scale — with no
-/// redundancy to absorb it. Burst coding buys robustness *of transmission* and spends it on
-/// precision; it is not a robust code for the value it carries.
+/// One lost spike costs a whole step — `1 / max_spikes` of full scale, twice
+/// [`BurstCode::quantisation`] — with no redundancy to absorb it. Rounding and damage are not the
+/// same size, and this crate does not use one word for both. Burst coding buys robustness *of
+/// transmission* and spends it on precision; it is not a robust code for the value it carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BurstCode {
     /// Spikes representing full scale. The code has `max_spikes + 1` distinguishable values.
@@ -1512,6 +1699,10 @@ impl BurstCode {
     }
 
     /// Worst-case round-trip error from spike quantisation, in units of full scale.
+    ///
+    /// Half the step `1 / max_spikes` between adjacent representable values, because a value is
+    /// rounded to the nearest reachable count. A spike **lost in the channel** costs a whole step
+    /// instead, so the fragility of this code is twice the number returned here.
     #[must_use]
     pub fn quantisation(&self) -> f64 {
         0.5 / f64::from(self.max_spikes)
@@ -1665,9 +1856,17 @@ pub fn rms_error(a: &[f64], b: &[f64]) -> Option<f64> {
 /// `h[k] ∝ 0.5 · (1 − cos(2π (k+1) / (taps+1)))`, so no tap is zero or negative and the
 /// reconstruction is a non-negative superposition of identical bumps: a spike can only add. Use
 /// this where that monotonicity is wanted, and [`fir_lowpass`] where a sharper frequency response
-/// matters more. On this module's reference sinusoid a 24-tap Hann kernel gives [`Bsa`] a
-/// root-mean-square error of 0.007 against 0.009 for a 32-tap windowed sinc, so the two are close
-/// and the choice is about shape rather than accuracy.
+/// matters more.
+///
+/// The two are close **only where the sinc's cutoff is matched to the signal**, and the earlier
+/// version of this sentence left the cutoff out. Measured on this module's reference sinusoid
+/// (1000 samples of `0.5 + 0.4·sin(2π·0.01·t)`, [`Bsa`] at a threshold of 0.955, error over
+/// samples 30 to 970): a 24-tap Hann kernel gives a root-mean-square error of 0.0071, a 32-tap
+/// windowed sinc gives 0.0084 at a cutoff of 0.04 cycles/sample, 0.0125 at 0.02, 0.0192 at 0.05
+/// and **0.0687 at 0.1** — the cutoff this module's other tests use, and 9.7 times the Hann
+/// kernel. So the choice is about shape rather than accuracy at one cutoff and about accuracy
+/// everywhere else, which `the_two_reconstruction_kernels_are_close_only_at_a_matched_cutoff`
+/// pins to the digit.
 ///
 /// It does **not** affect [`Hsa`]'s under-reconstruction guarantee, which depends on the signal
 /// rather than on the kernel — see [`Hsa`].
@@ -2134,8 +2333,10 @@ impl TemporalContrast {
 mod tests {
     use super::{
         Bsa, BurstCode, CodeError, ContrastMode, CosinePopulation, GaussianPopulation, Hsa,
-        Oscillator, PhaseEncoder, RankOrderCode, TemporalContrast, angular_difference, fir_hann,
-        fir_lowpass, poisson_count, rates_from_counts, rms_error, sinc, spike_convolve, wrap_angle,
+        Oscillator, POISSON_MAX_MEAN, POISSON_REJECTION_FLOOR, PhaseEncoder, RankOrderCode,
+        TemporalContrast, angular_difference, fir_hann, fir_lowpass, poisson_count, poisson_ln_pmf,
+        poisson_transformed_rejection, rates_from_counts, rms_error, sinc, spike_convolve,
+        wrap_angle,
     };
     use crate::encode::DeltaEncoder;
     use crate::rng::Rng;
@@ -2173,20 +2374,60 @@ mod tests {
     /// spike density equal to a signal level.
     #[test]
     fn both_reconstruction_kernels_have_unit_dc_gain() {
-        for taps in [1usize, 2, 7, 16, 24, 33, 64] {
+        // Every tap count for BOTH kernels, including 1, 2 and 3: the earlier version guarded the
+        // windowed sinc with `if taps >= 4`, so the three tap counts where its behaviour is
+        // special were the three it never tested.
+        for taps in [1usize, 2, 3, 7, 16, 24, 33, 64] {
             let h = fir_hann(taps).expect("taps > 0");
             let s: f64 = h.iter().sum();
             assert!((s - 1.0).abs() < 1e-14, "hann {taps} sums to {s}");
             assert!(h.iter().all(|&v| v > 0.0), "hann {taps} has a non-positive tap");
-            if taps >= 4 {
-                let g = fir_lowpass(taps, 0.1).expect("valid cutoff");
+            for &cut in &[0.001f64, 0.1, 0.45] {
+                let g = fir_lowpass(taps, cut).expect("valid cutoff");
+                assert_eq!(g.len(), taps);
                 let s: f64 = g.iter().sum();
-                assert!((s - 1.0).abs() < 1e-14, "sinc {taps} sums to {s}");
+                assert!((s - 1.0).abs() < 1e-14, "sinc {taps} at cutoff {cut} sums to {s}");
             }
         }
         // A windowed sinc really does have negative taps; the HSA invariant test depends on it.
         let g = fir_lowpass(24, 0.1).expect("valid cutoff");
         assert!(g.iter().filter(|&&v| v < 0.0).count() >= 4, "no negative side lobes to test with");
+    }
+
+    /// The two tap counts at which `fir_lowpass` cannot honour its cutoff, stated as a test rather
+    /// than left as a shortcut in the code: unit DC gain forces a one-tap filter to be the identity
+    /// and a two-tap one to be a half each, so neither low-passes anything.
+    #[test]
+    fn a_one_or_two_tap_low_pass_is_forced_by_its_own_dc_gain_and_filters_nothing() {
+        for &cut in &[0.001f64, 0.01, 0.1, 0.25, 0.499] {
+            assert_eq!(fir_lowpass(1, cut).expect("valid"), vec![1.0], "cutoff {cut}");
+            assert_eq!(fir_lowpass(2, cut).expect("valid"), vec![0.5, 0.5], "cutoff {cut}");
+        }
+        // Three taps is where the cutoff starts to move the kernel, and it moves it a long way.
+        let sharp = fir_lowpass(3, 0.001).expect("valid");
+        let wide = fir_lowpass(3, 0.499).expect("valid");
+        assert!(sharp[0] > 0.06 && sharp[0] < 0.07, "3-tap at 0.001: {sharp:?}");
+        assert!(wide[0] < 1e-3, "3-tap at 0.499: {wide:?}");
+        // What "filters nothing" means at the only place it matters: a one-tap kernel passes a
+        // signal at the Nyquist limit through untouched, where a real low-pass would remove it.
+        let s = sine(200, 0.45, 0.4, 0.5);
+        let ident = spike_convolve(&[true; 200], &fir_lowpass(1, 0.01).expect("valid"));
+        assert!(ident.iter().all(|&v| (v - 1.0).abs() < 1e-15), "a one-tap kernel is not the identity");
+        // Sample 105 is a crest of the 0.45 cycles/sample tone: 0.45 x 105 = 47.25 turns.
+        assert!((s[105] - 0.9).abs() < 1e-12, "the probe sample is not on a crest: {}", s[105]);
+        let via_16 = {
+            let g = fir_lowpass(16, 0.01).expect("valid");
+            let mut out = 0.0f64;
+            for (k, &h) in g.iter().enumerate() {
+                out += h * s[105 - k];
+            }
+            out
+        };
+        let via_1 = fir_lowpass(1, 0.01).expect("valid")[0] * s[105];
+        assert!(
+            (via_16 - 0.5).abs() < 0.05 && (via_1 - 0.5).abs() > 0.2,
+            "16 taps removed the 0.45 cycles/sample content ({via_16}) and 1 tap did not ({via_1})"
+        );
     }
 
     #[test]
@@ -2249,6 +2490,139 @@ mod tests {
         assert!((mean - lam).abs() < tol, "mean {mean} vs {lam}, tolerance {tol}");
     }
 
+    /// The SECOND hang, one binade past the first. Chunking removed the `exp(-lambda)` underflow
+    /// and left `left -= left.min(500.0)`, which above `2^62` subtracts nothing at all in `f64`:
+    /// the loop is immortal. On the chunked-only version this test does not fail, it never
+    /// returns — which is why the arithmetic that causes it is asserted first, and why the mean
+    /// used here is past `2^62` rather than merely past 745.
+    #[test]
+    fn a_mean_far_past_the_chunking_limit_terminates_and_is_unbiased() {
+        assert_eq!(5.0e18f64 - 500.0, 5.0e18, "the test is not exercising the defect");
+        assert_ne!(4.0e18f64 - 500.0, 4.0e18, "the defect starts at 2^62, not below it");
+        let lam = 5.0e18f64;
+        let sd = lam.sqrt();
+        let n = 2_000usize;
+        let mut rng = Rng::new(5);
+        let mut dev = 0.0f64;
+        for _ in 0..n {
+            let k = poisson_count(&mut rng, lam).expect("a representable mean") as f64;
+            assert!((k - lam).abs() < 8.0 * sd, "draw {k} is {} sd from the mean", (k - lam) / sd);
+            dev += k - lam;
+        }
+        let mean_dev = dev / n as f64;
+        let se = sd / (n as f64).sqrt();
+        assert!(mean_dev.abs() < 6.0 * se, "mean is off by {mean_dev} ({} se)", mean_dev / se);
+        // Past the point where the COUNT stops being representable it refuses, rather than
+        // returning a saturated `u64` that would read as a number.
+        assert!(poisson_count(&mut rng, POISSON_MAX_MEAN).is_some());
+        assert_eq!(poisson_count(&mut rng, 1.0e19), None);
+        assert_eq!(poisson_count(&mut rng, f64::MAX), None);
+        // And it is fast because it is constant time: a mean of 1e12 would be two million million
+        // uniforms under the product method, and is one rejection loop here.
+        assert!(poisson_count(&mut rng, 1.0e12).is_some());
+    }
+
+    /// The draw above the seam must BE the Poisson distribution, not merely share its mean. A
+    /// histogram against the exact probability mass function, cell by cell, at means where that
+    /// mass function can still be computed directly.
+    #[test]
+    fn the_large_mean_sampler_matches_the_exact_poisson_distribution() {
+        for &lam in &[15.0f64, 30.0, 100.0] {
+            let n = 400_000usize;
+            let mut rng = Rng::new(17);
+            let lo = (lam - 6.0 * lam.sqrt()).max(0.0).floor() as usize;
+            let hi = (lam + 7.0 * lam.sqrt()).ceil() as usize;
+            let mut hist = vec![0u64; hi - lo + 1];
+            let mut inside = 0usize;
+            for _ in 0..n {
+                let k = poisson_transformed_rejection(&mut rng, lam) as usize;
+                if k >= lo && k <= hi {
+                    hist[k - lo] += 1;
+                    inside += 1;
+                }
+            }
+            let mut lnf = 0.0f64;
+            let mut pmf = vec![0.0f64; hi + 1];
+            for k in 0..=hi {
+                if k > 0 {
+                    lnf += (k as f64).ln();
+                }
+                pmf[k] = (-lam + k as f64 * lam.ln() - lnf).exp();
+            }
+            assert!(inside > n * 999 / 1000, "{inside} of {n} draws landed in +-7 sd at lam {lam}");
+            let (mut worst_z, mut chi2, mut cells) = (0.0f64, 0.0f64, 0usize);
+            for k in lo..=hi {
+                let p = pmf[k];
+                let expect = p * (n as f64);
+                if expect < 5.0 {
+                    continue;
+                }
+                let obs = hist[k - lo] as f64;
+                let z = (obs - expect) / (expect * (1.0 - p)).sqrt();
+                worst_z = worst_z.max(z.abs());
+                chi2 += (obs - expect) * (obs - expect) / expect;
+                cells += 1;
+            }
+            // Measured: worst |z| 2.11 / 2.25 / 3.27 and chi-square 26.4 / 34.8 / 82.5 against
+            // 31 / 45 / 79 degrees of freedom. The bounds are what those statistics ARE, not what
+            // the sampler happens to produce: a chi-square at twice its degrees of freedom is a
+            // distribution that is wrong, and one at half is a sampler that is not random.
+            assert!(cells >= 30, "lam {lam}: only {cells} cells had enough mass to test");
+            assert!(worst_z < 4.5, "lam {lam}: worst cell is {worst_z} standard deviations out");
+            let df = (cells - 1) as f64;
+            assert!(chi2 < 2.0 * df, "lam {lam}: chi-square {chi2} against {df} df");
+            assert!(chi2 > 0.4 * df, "lam {lam}: chi-square {chi2} is too GOOD for {df} df");
+        }
+    }
+
+    /// The rejection test is only as good as the log-probability it compares against, and the
+    /// textbook form of that quantity is a difference of two numbers of size `k ln k`. Here it is
+    /// checked against the textbook form where the textbook form is still exact, and against
+    /// normalisation where it is not.
+    #[test]
+    fn the_poisson_log_probability_survives_the_cancellation_it_avoids() {
+        let lam = 20.0f64;
+        let mut lnfact = 0.0f64;
+        let (mut worst_all, mut worst_from_ten) = (0.0f64, 0.0f64);
+        for k in 0..=80u32 {
+            if k > 0 {
+                lnfact += f64::from(k).ln();
+            }
+            let exact = -lam + f64::from(k) * lam.ln() - lnfact;
+            let err = (poisson_ln_pmf(f64::from(k), lam) - exact).abs();
+            worst_all = worst_all.max(err);
+            if k >= 10 {
+                worst_from_ten = worst_from_ten.max(err);
+            }
+        }
+        // Stirling's truncated tail: 3e-4 at k = 1, and 1/(1680 k^7) from there on.
+        assert!(worst_all < 3.0e-4, "worst log-pmf error {worst_all}");
+        assert!(worst_from_ten < 1.0e-10, "worst log-pmf error from k = 10 up: {worst_from_ten}");
+        // Where the textbook form has lost its digits, normalisation is the check that remains:
+        // the mass inside +-8 standard deviations of a Poisson is 1 to well past f64's reach.
+        for &big in &[1.0e6f64, 1.0e9] {
+            let sd = big.sqrt();
+            let mut total = 0.0f64;
+            let mut k = (big - 8.0 * sd).floor();
+            while k <= big + 8.0 * sd {
+                total += poisson_ln_pmf(k, big).exp();
+                k += 1.0;
+            }
+            assert!((total - 1.0).abs() < 1e-8, "mass at lam {big} sums to {total}");
+        }
+    }
+
+    /// The seam is a promise, not an implementation detail: every mean a spiking experiment can
+    /// plausibly ask for keeps the exact product-method draw it had before the large-mean path
+    /// existed. These two are that promise, pinned to the bit.
+    #[test]
+    fn the_product_method_draws_below_the_seam_are_unchanged() {
+        const { assert!(POISSON_REJECTION_FLOOR >= 1.0e6, "the seam moved into ordinary means") };
+        assert_eq!(poisson_count(&mut Rng::new(5), 800.0), Some(793));
+        assert_eq!(poisson_count(&mut Rng::new(5), 999_999.0), Some(999_681));
+        assert_eq!(poisson_count(&mut Rng::new(7), 20.0), Some(19));
+    }
+
     #[test]
     fn angular_difference_takes_the_short_way_round() {
         assert!((angular_difference(0.01, TAU - 0.003) - 0.013).abs() < 1e-12);
@@ -2308,6 +2682,129 @@ mod tests {
         let mut bad = vec![1.0; 8];
         bad[3] = f64::NAN;
         assert!(matches!(p.decode_population_vector(&bad), Err(CodeError::NotFinite { .. })));
+    }
+
+    /// The population vector's LENGTH is what its doc sells as the confidence readout, and the
+    /// length has a closed form: `b1 · n / 2`, independent of the direction and of the baseline.
+    /// Nothing in this module called [`CosinePopulation::population_vector`] before.
+    #[test]
+    fn the_population_vector_length_is_the_confidence_its_doc_sells() {
+        for &(n, b0, b1, off) in &[(3usize, 50.0, 20.0, 0.0), (12, 50.0, 20.0, 0.37), (37, 5.0, 5.0, 2.9)] {
+            let p = CosinePopulation::new(n, b0, b1, off).expect("valid");
+            let want = b1 * n as f64 / 2.0;
+            for s in 0..360 {
+                let th = TAU * f64::from(s) / 360.0;
+                let r = p.rates(th).expect("finite");
+                // The tuning curve itself, against the formula in the type doc.
+                for i in 0..n {
+                    let closed = b0 + b1 * (th - p.preferred(i)).cos();
+                    assert!((p.rate_of(i, th) - closed).abs() < 1e-12, "cell {i} at {th}");
+                    assert!((r[i] - closed).abs() < 1e-12);
+                }
+                let (x, y) = p.population_vector(&r).expect("valid");
+                let len = (x * x + y * y).sqrt();
+                assert!(
+                    (len / want - 1.0).abs() < 1e-12,
+                    "n {n}: vector length {len} against the closed form {want} at {th} rad"
+                );
+            }
+            // A population that agrees has a long vector; one firing equally has none at all, and
+            // that is the difference `atan2` destroys.
+            let flat = vec![b0 + b1; n];
+            let (x, y) = p.population_vector(&flat).expect("valid");
+            assert!((x * x + y * y).sqrt() < 1e-11 * want, "a uniform population had a direction");
+        }
+        let p = CosinePopulation::new(8, 20.0, 10.0, 0.0).expect("valid");
+        assert!(matches!(p.population_vector(&[1.0, 2.0]), Err(CodeError::LengthMismatch { .. })));
+        assert!(matches!(
+            p.population_vector(&[f64::NAN, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]),
+            Err(CodeError::NotFinite { .. })
+        ));
+    }
+
+    /// The circular maximum-likelihood decoder had no test at all, and its doc makes a claim about
+    /// the seam at zero. A grid estimator that refines everywhere EXCEPT at the wrap is snapped to
+    /// the node exactly there: measured before the refinement wrapped, a stimulus half a grid step
+    /// above zero came back as exactly 0.0.
+    #[test]
+    fn the_circular_maximum_likelihood_decoder_is_as_sharp_at_the_seam_as_in_the_middle() {
+        let p = CosinePopulation::new(12, 20.0, 20.0, 0.0).expect("valid");
+        let grid = 361usize;
+        let h = TAU / (grid - 1) as f64;
+        let window = 100.0;
+        let mut at_seam = Vec::new();
+        let mut in_middle = Vec::new();
+        for &frac in &[0.5f64, 1.0 / 3.0, 0.25, 0.8] {
+            for &(base, seam) in &[(0.0f64, true), (TAU - h, true), (PI, false), (2.0, false)] {
+                let want = wrap_angle(base + h * frac);
+                let counts: Vec<u64> = p
+                    .rates(want)
+                    .expect("finite")
+                    .iter()
+                    .map(|r| (r * window).round() as u64)
+                    .collect();
+                let est = p.decode_max_likelihood(&counts, window, grid).expect("consistent");
+                assert!((0.0..TAU).contains(&est), "decoded {est} is not a wrapped angle");
+                let err = angular_difference(est, want).abs();
+                assert!(err < h / 8.0, "at {want} rad: error {err} rad, grid step {h}");
+                if seam { at_seam.push(err) } else { in_middle.push(err) }
+            }
+        }
+        // Not merely "small at the seam": the SAME size as away from it, because the seam is now
+        // interpolated against the probe on the other side of zero rather than snapped.
+        let worst_seam = at_seam.iter().fold(0.0f64, |a, &b| a.max(b));
+        let worst_mid = in_middle.iter().fold(0.0f64, |a, &b| a.max(b));
+        assert!(
+            worst_seam < 2.0 * worst_mid + 1e-12,
+            "seam error {worst_seam} against middle error {worst_mid}"
+        );
+        assert!(worst_seam < h / 8.0 && worst_mid > 0.0);
+        assert!(matches!(
+            p.decode_max_likelihood(&[1, 2], window, grid),
+            Err(CodeError::LengthMismatch { expected: 12, got: 2 })
+        ));
+        assert!(matches!(
+            p.decode_max_likelihood(&[1; 12], 0.0, grid),
+            Err(CodeError::NotPositive { .. })
+        ));
+        assert!(matches!(
+            p.decode_max_likelihood(&[1; 12], window, 2),
+            Err(CodeError::NotPositive { .. })
+        ));
+    }
+
+    /// The reason to pay for a grid search on a circle: it knows the noise model and the population
+    /// vector does not. Measured on the same counts, so the comparison is of estimators rather
+    /// than of draws.
+    #[test]
+    fn the_circular_maximum_likelihood_decoder_beats_the_population_vector_under_poisson_noise() {
+        for &n in &[6usize, 12, 24] {
+            let p = CosinePopulation::new(n, 20.0, 20.0, 0.0).expect("valid");
+            let window = 0.5;
+            let trials = 2_000usize;
+            let mut rng = Rng::new(23);
+            let (mut ml2, mut pv2, mut ml_bias) = (0.0f64, 0.0f64, 0.0f64);
+            for t in 0..trials {
+                let th = wrap_angle(TAU * (t as f64 * 0.618_033_988_749_894_9));
+                let c = p.sample_counts(&mut rng, th, window).expect("valid");
+                let ml = p.decode_max_likelihood(&c, window, 721).expect("consistent");
+                let pv = p
+                    .decode_population_vector(&rates_from_counts(&c, window).expect("positive"))
+                    .expect("driven");
+                let dm = angular_difference(ml, th);
+                ml2 += dm * dm;
+                ml_bias += dm;
+                let dp = angular_difference(pv, th);
+                pv2 += dp * dp;
+            }
+            let ml_rms = (ml2 / trials as f64).sqrt();
+            let pv_rms = (pv2 / trials as f64).sqrt();
+            // Measured: 0.792, 0.742, 0.730 of the population vector's error at n = 6, 12, 24.
+            assert!(ml_rms > 0.0, "n {n}: zero error means no noise was applied");
+            assert!(ml_rms < 0.85 * pv_rms, "n {n}: ML {ml_rms} against population vector {pv_rms}");
+            let bias = ml_bias / trials as f64;
+            assert!(bias.abs() < 3.0 * ml_rms / (trials as f64).sqrt(), "n {n}: ML bias {bias}");
+        }
     }
 
     /// The exactness is a property of the un-rectified cosine. Real cells cannot fire negatively,
@@ -2398,24 +2895,129 @@ mod tests {
         assert!(worst_edge > 1e-2, "the edge bias disappeared ({worst_edge}); it is real and large");
     }
 
-    /// The reported interior must be the range where the decode actually holds, on both sides.
+    /// A population is robust to losing a cell, and it is NOT invariant to losing one — the header
+    /// table said invariant until this test measured it. Both numbers are asserted, because the
+    /// honest claim lives between them.
     #[test]
-    fn the_reported_interior_is_exactly_where_the_decode_holds() {
+    fn losing_one_cell_degrades_the_gaussian_decode_by_fifty_times_and_does_not_break_it() {
         let n = 24;
         let p = GaussianPopulation::new(n, 0.0, 1.0, 2.0 / (n - 1) as f64, 100.0, 2.0)
             .expect("valid");
-        let (a, b) = p.interior(1e-3).expect("a 24-cell population has an interior");
-        assert!(a > 0.0 && b < 1.0 && b > a, "interior ({a}, {b}) is not a sub-range");
-        for s in 0..=100 {
-            let x = a + (b - a) * f64::from(s) / 100.0;
-            let est = p.decode_center_of_mass(&p.rates(x).expect("finite")).expect("driven");
-            assert!((est - x).abs() <= 1.1e-3, "inside the interior at {x}: error {}", est - x);
+        let probe = |rates: &dyn Fn(f64) -> Vec<f64>| {
+            let mut worst = 0.0f64;
+            for s in 0..=200 {
+                let x = 0.25 + 0.5 * f64::from(s) / 200.0;
+                let est = p.decode_center_of_mass(&rates(x)).expect("driven");
+                worst = worst.max((est - x).abs());
+            }
+            worst
+        };
+        let intact = probe(&|x| p.rates(x).expect("finite"));
+        let mut worst_lost = 0.0f64;
+        let mut which = 0usize;
+        for dead in 0..n {
+            let e = probe(&|x| {
+                let mut r = p.rates(x).expect("finite");
+                r[dead] = p.r_base; // silenced to baseline: the decoder's weight for it is zero
+                r
+            });
+            if e > worst_lost {
+                worst_lost = e;
+                which = dead;
+            }
         }
-        let outside = p
-            .decode_center_of_mass(&p.rates(0.0).expect("finite"))
-            .expect("driven");
-        assert!(outside.abs() > 1e-3, "the range end was not biased, so `interior` is not measuring");
+        // Measured: 2.40e-4 intact, 1.23e-2 with cell 4 silenced — a factor of 51.
+        assert!(intact < 3e-4, "intact interior error {intact}");
+        assert!(
+            worst_lost > 20.0 * intact,
+            "one lost cell (worst was cell {which}) cost only {}x; the table's 'invariant' would \
+             then be closer to true than measured",
+            worst_lost / intact
+        );
+        // ...and still smaller than the edge bias the module already treats as its headline
+        // caveat, which is what "graceful" means here rather than "unaffected".
+        let edge = (p.decode_center_of_mass(&p.rates(0.0).expect("finite")).expect("driven")).abs();
+        assert!(worst_lost < edge, "one lost cell ({worst_lost}) hurt more than the edge ({edge})");
+        assert!(worst_lost < 0.05, "one lost cell broke the decode outright: {worst_lost}");
+    }
+
+    /// The reported interior must be the range where the decode actually holds — EVERYWHERE inside
+    /// it, not merely at its two ends. Scanning in from each end and never looking between them
+    /// returns the full range for a narrow tiling, because cell 0 and cell n−1 sit exactly on `lo`
+    /// and `hi` and each decodes to its own preferred value.
+    #[test]
+    fn the_reported_interior_holds_at_every_point_inside_it_and_not_only_at_its_ends() {
+        let mut reported = 0usize;
+        for &n in &[3usize, 5, 12, 24, 40, 101, 201] {
+            let spacing = 1.0 / (n - 1) as f64;
+            for i in (2..=30usize).step_by(2) {
+                let k = i as f64 / 10.0;
+                for &tol in &[1e-4f64, 1e-3, 1e-2, 5e-2] {
+                    let p = GaussianPopulation::new(n, 0.0, 1.0, k * spacing, 100.0, 2.0)
+                        .expect("valid");
+                    let Some((a, b)) = p.interior(tol) else { continue };
+                    assert!(b > a, "n {n} sigma {k}x: interior ({a}, {b}) is not a sub-range");
+                    reported += 1;
+                    // 2001 points, deliberately NOT the probe grid the method used.
+                    let mut worst = 0.0f64;
+                    for s in 0..=2_000 {
+                        let x = a + (b - a) * f64::from(s) / 2_000.0;
+                        let est =
+                            p.decode_center_of_mass(&p.rates(x).expect("finite")).expect("driven");
+                        worst = worst.max((est - x).abs());
+                    }
+                    assert!(
+                        worst <= tol,
+                        "n {n} sigma {k}x tol {tol:e}: reported ({a}, {b}) but the error inside \
+                         reaches {worst}"
+                    );
+                }
+            }
+        }
+        assert!(reported > 300, "only {reported} populations reported an interior; sweep is thin");
+    }
+
+    /// The two ways the old scan lied, pinned as numbers: a narrow tiling whose ends both pass on
+    /// the first probe, and a fine tiling whose error is invisible to a fixed grid.
+    #[test]
+    fn a_narrow_tiling_has_no_interior_and_a_fine_one_hides_between_a_fixed_grid() {
+        let n = 24;
+        let spacing = 1.0 / (n - 1) as f64;
+        // 0.3 x spacing: the old scan returned (0.0000, 1.0000) while 3696 of 4001 points inside
+        // it missed the tolerance, the worst by a factor of 8.8.
+        let narrow = GaussianPopulation::new(n, 0.0, 1.0, 0.3 * spacing, 100.0, 2.0).expect("valid");
+        assert!(narrow.decode_center_of_mass(&narrow.rates(0.0).expect("finite")).expect("driven").abs() <= 1e-3,
+            "the end no longer passes, so this population no longer exercises the defect");
+        assert!(narrow.decode_center_of_mass(&narrow.rates(1.0).expect("finite")).expect("driven") - 1.0 >= -1e-3);
+        let worst_between = (0..=4_000)
+            .map(|s| {
+                let x = f64::from(s) / 4_000.0;
+                (narrow.decode_center_of_mass(&narrow.rates(x).expect("finite")).expect("driven") - x).abs()
+            })
+            .fold(0.0f64, f64::max);
+        assert!(worst_between > 8.0e-3, "the interior error collapsed to {worst_between}");
+        assert_eq!(narrow.interior(1e-3), None, "a range with an 8.8e-3 error inside it was reported");
+
+        // A tiling finer than a fixed 401-point grid: the grid lands only on the preferred values
+        // and on the midpoints between them, where the error is zero by symmetry.
+        let fine = GaussianPopulation::new(201, 0.0, 1.0, 0.2 / 200.0, 100.0, 2.0).expect("valid");
+        let err_at = |x: f64| {
+            (fine.decode_center_of_mass(&fine.rates(x).expect("finite")).expect("driven") - x).abs()
+        };
+        let worst_on_a_401_grid = (0..=400)
+            .map(|s| err_at(f64::from(s) / 400.0))
+            .fold(0.0f64, f64::max);
+        assert!(worst_on_a_401_grid < 1e-7, "the fixed grid is not blind here: {worst_on_a_401_grid}");
+        assert!(err_at(0.5 + 0.25 / 200.0) > 1.0e-3, "the quarter-point peak vanished");
+        assert_eq!(fine.interior(1e-4), None, "the full range was reported for a population \
+            whose error between the probes is 1.2e-3");
+
         // A tolerance nothing meets has no interior, and that is the answer, not an empty range.
+        let p = GaussianPopulation::new(n, 0.0, 1.0, 2.0 * spacing, 100.0, 2.0).expect("valid");
+        let (a, b) = p.interior(1e-3).expect("a 24-cell population at 2x spacing has an interior");
+        assert!(a > 0.0 && b < 1.0, "interior ({a}, {b}) reached the biased ends");
+        let outside = p.decode_center_of_mass(&p.rates(0.0).expect("finite")).expect("driven");
+        assert!(outside.abs() > 1e-3, "the range end was not biased, so `interior` is not measuring");
         assert!(p.interior(1e-18).is_none());
         assert!(GaussianPopulation::new(2, 0.0, 1.0, 0.5, 100.0, 1.0).expect("valid").interior(1e-3).is_none());
     }
@@ -2756,6 +3358,35 @@ mod tests {
         assert!(matches!(pe.encode_tick(0.5, u64::MAX), Err(CodeError::NotFinite { .. })));
     }
 
+    /// The reference oscillation's own arithmetic, which nothing called: a period is one over a
+    /// frequency, a phase advances by exactly a turn per period, and the amplitude appears in the
+    /// waveform and nowhere else.
+    #[test]
+    fn an_oscillator_reports_its_own_period_and_phase() {
+        for &(f, amp, p0) in &[(8.0f64, 1.0f64, 0.0f64), (40.0, 2.5, 1.9), (4.5, 1e-6, -2.0)] {
+            let osc = Oscillator::new(f, amp, p0).expect("valid");
+            let period = osc.period_s();
+            assert!((period * f - 1.0).abs() < 1e-15, "period {period} s at {f} Hz");
+            assert!((osc.phase_at(0.0) - wrap_angle(p0)).abs() < 1e-12, "phase at t = 0");
+            for k in 0..8u32 {
+                let t = f64::from(k) * period;
+                // A whole number of periods later, the phase is where it started.
+                assert!(
+                    angular_difference(osc.phase_at(t), wrap_angle(p0)).abs() < 1e-9,
+                    "phase at {t} s drifted from the reference"
+                );
+                // A quarter period later it has advanced by exactly a quarter turn.
+                let q = osc.phase_at(t + 0.25 * period);
+                assert!(angular_difference(q, wrap_angle(p0) + PI / 2.0).abs() < 1e-9, "quarter turn");
+            }
+            // The amplitude is in the waveform and in nothing else: the peak is `amp` at the time
+            // the phase is zero, and `phase_at` never mentions it.
+            let t_peak = (-p0).rem_euclid(TAU) / (TAU * f);
+            assert!((osc.value_at(t_peak) - amp).abs() < 1e-9 * amp.max(1.0), "peak value");
+            assert!((0.0..TAU).contains(&osc.phase_at(1.234)), "phase must be wrapped");
+        }
+    }
+
     #[test]
     fn a_phase_code_round_trips_through_a_train_and_a_silent_line_stays_silent() {
         let pe = PhaseEncoder::new(Oscillator::new(8.0, 1.0, 0.9).expect("valid"), 1e-4)
@@ -2812,18 +3443,29 @@ mod tests {
         assert!((scheduled[2] - 0.7).abs() < 1e-12);
     }
 
-    /// One lost spike is one whole quantum. Stated in the doc; asserted here, because a code whose
-    /// fragility is only in prose is a code whose fragility will be forgotten.
+    /// One lost spike costs a whole STEP, which is twice the quantisation. Stated in the doc;
+    /// asserted here, because a code whose fragility is only in prose is a code whose fragility
+    /// will be forgotten — and because the two numbers are one word apart and a factor of two.
     #[test]
-    fn losing_one_spike_costs_exactly_one_quantum() {
+    fn losing_one_spike_costs_a_whole_step_which_is_twice_the_quantisation() {
         let bc = BurstCode::new(16, 3, 20).expect("valid");
+        let step = 1.0 / f64::from(bc.max_spikes);
+        assert!((bc.quantisation() - step / 2.0).abs() < 1e-15, "quantisation is not half a step");
         let train = bc.encode_sequence(&[0.5], 0, 0).expect("in range");
         assert_eq!(train.len(), 8);
         let mut kept: Vec<_> = train.spikes().to_vec();
         kept.pop();
         let damaged = crate::spike::Train::from_spikes(kept);
         let got = bc.decode_scheduled(&damaged, 0, 0, 1)[0];
-        assert!((got - (0.5 - 2.0 * bc.quantisation())).abs() < 1e-12, "decoded {got}");
+        assert!((got - (0.5 - step)).abs() < 1e-12, "decoded {got}, expected one step below 0.5");
+        // The round trip of an unharmed value is at most HALF a step out, which is the other
+        // number and the reason they are not called the same thing.
+        for s in 0..=200 {
+            let x = f64::from(s) / 200.0;
+            let t = bc.encode_sequence(&[x], 0, 0).expect("in range");
+            let back = bc.decode_scheduled(&t, 0, 0, 1)[0];
+            assert!((back - x).abs() <= bc.quantisation() + 1e-15, "x {x} -> {back}");
+        }
     }
 
     #[test]
@@ -2839,6 +3481,52 @@ mod tests {
         assert!(matches!(BurstCode::new(8, 5, 5), Err(CodeError::NotPositive { .. })));
         assert!(matches!(bc.spikes_for(1.5), Err(CodeError::OutOfUnitRange { .. })));
         assert!(matches!(bc.spikes_for(f64::NAN), Err(CodeError::NotFinite { .. })));
+    }
+
+    /// The geometry the decoders assume, in the two places it is computed rather than measured:
+    /// the spacing a Gaussian tiling is built on, and the stride a scheduled burst decoder counts
+    /// windows at. Neither had a test.
+    #[test]
+    fn the_spacing_and_the_stride_are_the_geometry_the_decoders_assume() {
+        for &n in &[1usize, 2, 3, 24, 97] {
+            let p = GaussianPopulation::new(n, -2.0, 5.0, 0.4, 100.0, 1.0).expect("valid");
+            let spacing = p.spacing();
+            if n == 1 {
+                // One cell has no neighbour, so the spacing IS the range, and it sits in the middle.
+                assert!((spacing - 7.0).abs() < 1e-12, "single-cell spacing {spacing}");
+                assert!((p.preferred(0) - 1.5).abs() < 1e-12);
+            } else {
+                assert!((spacing * (n - 1) as f64 - 7.0).abs() < 1e-12, "spacing {spacing} at n {n}");
+                for i in 1..n {
+                    let step = p.preferred(i) - p.preferred(i - 1);
+                    assert!((step - spacing).abs() < 1e-12, "cells {} and {i} are {step} apart", i - 1);
+                }
+                assert!((p.preferred(0) - (-2.0)).abs() < 1e-12, "cell 0 must sit on lo");
+                assert!((p.preferred(n - 1) - 5.0).abs() < 1e-12, "the last cell must sit on hi");
+            }
+        }
+        // The stride is the tick distance between two bursts, whatever the values being sent: a
+        // full-scale burst plus a full gap. Asserted against the spikes an encode actually emits.
+        for &(max_spikes, intra, gap) in &[(20u32, 2u64, 10u64), (1, 1, 2), (8, 3, 4)] {
+            let bc = BurstCode::new(max_spikes, intra, gap).expect("valid");
+            assert_eq!(bc.stride_ticks(), u64::from(max_spikes - 1) * intra + gap);
+            let train = bc.encode_sequence(&[1.0, 1.0], 0, 0).expect("in range");
+            let ticks: Vec<u64> = train.spikes().iter().map(|s| s.t).collect();
+            assert_eq!(ticks.len(), 2 * max_spikes as usize);
+            let first_of_second = ticks[max_spikes as usize];
+            assert_eq!(first_of_second, bc.stride_ticks(), "the stride is not what the encoder used");
+            // The gap between the last spike of burst one and the first of burst two is exactly
+            // `gap_ticks`, which is what makes `detect` able to segment them.
+            assert_eq!(first_of_second - ticks[max_spikes as usize - 1], gap);
+            assert_eq!(bc.detect(&train, 0).len(), 2, "the stride did not separate two bursts");
+            // `value_of` inverts `spikes_for` on the lattice, and saturates above full scale.
+            for k in 0..=max_spikes {
+                let v = bc.value_of(k);
+                assert!((v - f64::from(k) / f64::from(max_spikes)).abs() < 1e-15);
+                assert_eq!(bc.spikes_for(v).expect("in range"), k, "round trip at {k} spikes");
+            }
+            assert!((bc.value_of(max_spikes + 7) - 1.0).abs() < 1e-15, "a long burst must saturate");
+        }
     }
 
     // ---------------------------------------------------------------------------------------
@@ -2878,7 +3566,11 @@ mod tests {
         let bsa = Bsa::new(h, 0.955).expect("valid");
         let n = 1_000usize;
         let warm = 30usize;
-        // Below the 24-tap Hann kernel's cutoff, which sits near 0.04 cycles/sample.
+        // Up to and a little past the 24-tap Hann kernel's cutoff. The -3 dB point is at 0.0288
+        // cycles/sample, computed in `the_hann_kernel_cutoff_is_where_this_module_says_it_is`, and
+        // NOT the 0.04 this comment used to claim — 0.04 is where the kernel's gain is 0.500, a
+        // full 6 dB down. The last two frequencies here are at gains of 0.849 and 0.686, so the
+        // bound below is a statement about a kernel that is already attenuating.
         for &f in &[0.001f64, 0.002, 0.005, 0.01, 0.02, 0.03] {
             let s = sine(n, f, 0.4, 0.5);
             let bits = bsa.encode(&s).expect("finite");
@@ -2916,6 +3608,82 @@ mod tests {
         assert!(errs[1] > errs[2] && errs[2] > errs[3], "error is not monotone in threshold: {errs:?}");
     }
 
+    /// The kernel's cutoff, computed from the kernel rather than asserted in a comment. The
+    /// comment in `bsa_reconstructs_below_its_kernel_cutoff_and_fails_abruptly_above_it` said
+    /// "near 0.04"; the -3 dB point is at 0.0288, and 0.04 is the -6 dB point.
+    #[test]
+    fn the_hann_kernel_cutoff_is_where_this_module_says_it_is() {
+        let h = fir_hann(24).expect("valid");
+        // |H(f)| by direct summation: no transform library, and none needed for one response.
+        let mag = |f: f64| {
+            let (mut re, mut im) = (0.0f64, 0.0f64);
+            for (k, &v) in h.iter().enumerate() {
+                re += v * (TAU * f * k as f64).cos();
+                im -= v * (TAU * f * k as f64).sin();
+            }
+            (re * re + im * im).sqrt()
+        };
+        assert!((mag(0.0) - 1.0).abs() < 1e-14, "DC gain {} is not 1", mag(0.0));
+        // Monotone down from DC to the first null, so "the cutoff" is a single point rather than
+        // one of several crossings. The null of a 24-tap Hann kernel is at 2/(taps + 1) = 0.08.
+        let mut last = mag(0.0);
+        for s in 1..=160 {
+            let m = mag(f64::from(s) * 0.0005);
+            assert!(m < last + 1e-12, "the response rose at {}", f64::from(s) * 0.0005);
+            last = m;
+        }
+        assert!(mag(0.08) < 1e-12, "the first null is not at 2/(taps + 1): |H(0.08)| = {}", mag(0.08));
+        // Past the null the side lobes are small, which is the other half of "a single crossing".
+        let worst_lobe = (0..=2_000)
+            .map(|s| mag(0.08 + (0.5 - 0.08) * f64::from(s) / 2_000.0))
+            .fold(0.0f64, f64::max);
+        assert!(worst_lobe < 0.03, "a side lobe reaches {worst_lobe}");
+        let half_power = core::f64::consts::FRAC_1_SQRT_2;
+        let (mut lo, mut hi) = (0.001f64, 0.2f64);
+        for _ in 0..80 {
+            let m = 0.5 * (lo + hi);
+            if mag(m) > half_power { lo = m } else { hi = m }
+        }
+        let cutoff = 0.5 * (lo + hi);
+        // Measured 0.02881 cycles/sample. A comment saying 0.04 is high by 39%.
+        assert!((cutoff - 0.02881).abs() < 5e-4, "-3 dB point {cutoff}");
+        assert!((mag(0.03) - 0.686).abs() < 5e-3, "|H(0.03)| = {}", mag(0.03));
+        assert!((mag(0.04) - 0.500).abs() < 5e-3, "|H(0.04)| = {} — 0.04 is the -6 dB point", mag(0.04));
+        assert!(mag(0.08) < 0.1, "the kernel still passes the frequencies BSA collapses on");
+    }
+
+    /// The `fir_hann` doc compares itself with a 32-tap windowed sinc. That comparison holds at one
+    /// cutoff and fails by a factor of ten at another, and the doc used to name no cutoff at all.
+    #[test]
+    fn the_two_reconstruction_kernels_are_close_only_at_a_matched_cutoff() {
+        let n = 1_000usize;
+        let s = sine(n, 0.01, 0.4, 0.5);
+        let err_of = |h: Vec<f64>| {
+            let b = Bsa::new(h, 0.955).expect("valid");
+            let bits = b.encode(&s).expect("finite");
+            rms_error(&s[30..n - 30], &b.decode(&bits)[30..n - 30]).expect("same length")
+        };
+        let hann = err_of(fir_hann(24).expect("valid"));
+        // Measured: 0.00707 for the Hann kernel; 0.01245 / 0.00843 / 0.01921 / 0.06869 for the
+        // 32-tap windowed sinc at cutoffs 0.02 / 0.04 / 0.05 / 0.1.
+        assert!((hann - 0.00707).abs() < 5e-4, "hann24 rms {hann}");
+        let matched = err_of(fir_lowpass(32, 0.04).expect("valid"));
+        assert!((matched - 0.00843).abs() < 5e-4, "sinc32 at 0.04: rms {matched}");
+        assert!(matched < 1.3 * hann, "the doc's 'close' is not close: {matched} vs {hann}");
+        for &(cut, want) in &[(0.02f64, 0.01245f64), (0.05, 0.01921), (0.1, 0.06869)] {
+            let got = err_of(fir_lowpass(32, cut).expect("valid"));
+            assert!((got - want).abs() < 1e-3, "sinc32 at {cut}: rms {got}, expected {want}");
+        }
+        let mismatched = err_of(fir_lowpass(32, 0.1).expect("valid"));
+        // 0.1 is the cutoff every other test in this module uses, and there the two kernels are a
+        // factor of 9.7 apart rather than "close".
+        assert!(
+            mismatched / hann > 8.0,
+            "the mismatched cutoff cost only {}x; the doc's caveat is then unnecessary",
+            mismatched / hann
+        );
+    }
+
     /// The identity a unit-gain kernel buys: a constant signal is encoded at a spike density equal
     /// to its own level, because every spike contributes exactly `Σh = 1` spread over the kernel.
     #[test]
@@ -2937,6 +3705,53 @@ mod tests {
         assert!(d < 0.7 - 0.01, "level 0.7: density {d} did not under-report as measured");
     }
 
+    /// The correction to the header table: a deconvolution code does not reject a slow baseline
+    /// drift, it TRACKS it — and it tracks it for exactly the reason the code works at all, that
+    /// the spike density equals the signal level. Invariance and this identity cannot both hold.
+    #[test]
+    fn the_deconvolution_codes_track_a_baseline_drift_rather_than_rejecting_it() {
+        let h = fir_hann(24).expect("valid");
+        let n = 1_000usize;
+        let flat = sine(n, 0.01, 0.3, 0.4);
+        let drifting: Vec<f64> =
+            flat.iter().enumerate().map(|(t, v)| v + 0.0002 * t as f64).collect();
+        assert!(
+            ((drifting[n - 1] - flat[n - 1]) - 0.2 * (n - 1) as f64 / n as f64).abs() < 1e-3,
+            "the drift is about 0.2 of full scale end to end"
+        );
+        let density = |bits: &[bool]| {
+            bits[40..n - 40].iter().filter(|&&b| b).count() as f64 / (n - 80) as f64
+        };
+        let level = |s: &[f64]| s[40..n - 40].iter().sum::<f64>() / (n - 80) as f64;
+
+        let bsa = Bsa::new(h.clone(), 0.955).expect("valid");
+        let a = bsa.encode(&flat).expect("finite");
+        let b = bsa.encode(&drifting).expect("finite");
+        let (ca, cb) = (a.iter().filter(|&&x| x).count(), b.iter().filter(|&&x| x).count());
+        // Measured: 395 spikes against 494, and 605 of 1000 firing decisions unchanged.
+        assert!(cb > ca + 60, "BSA emitted {ca} then {cb}; a drift it ignored would emit the same");
+        let same = a.iter().zip(b.iter()).filter(|(x, y)| x == y).count();
+        assert!(same < 800, "{same} of {n} decisions survived the drift — that is near-invariance");
+        // The identity, measured on both: density 0.4000 against a level of 0.4002, and 0.5011
+        // against 0.5001. The spike count carries the baseline, which is why it cannot reject one.
+        for (label, sig, bits) in [("flat", &flat, &a), ("drifting", &drifting, &b)] {
+            let (d, l) = (density(bits), level(sig));
+            assert!((d - l).abs() < 0.015, "{label}: density {d} against mean level {l}");
+        }
+        // And the reconstruction still follows the drifting signal: tracking, not failing.
+        let rec = bsa.decode(&b);
+        let e = rms_error(&drifting[30..n - 30], &rec[30..n - 30]).expect("same length");
+        assert!(e < 0.01, "BSA lost the drifting signal entirely: rms {e}");
+
+        let hsa = Hsa::new(h, 0.0).expect("valid");
+        let ha = hsa.encode(&flat).expect("finite");
+        let hb = hsa.encode(&drifting).expect("finite");
+        let (ha_c, hb_c) = (ha.iter().filter(|&&x| x).count(), hb.iter().filter(|&&x| x).count());
+        assert!(hb_c > ha_c + 60, "HSA emitted {ha_c} then {hb_c}");
+        let same = ha.iter().zip(hb.iter()).filter(|(x, y)| x == y).count();
+        assert!(same < 800, "{same} of {n} HSA decisions survived the drift");
+    }
+
     /// The exact invariant, over every filter this module can build — including windowed sincs with
     /// ten negative taps, which the first draft of this module wrongly believed would break it.
     #[test]
@@ -2951,7 +3766,19 @@ mod tests {
         let with_negative_taps =
             filters.iter().filter(|(_, h)| h.iter().any(|&v| v < 0.0)).count();
         assert!(with_negative_taps >= 8, "only {with_negative_taps} filters have negative taps");
+        // `rec[t] <= s[t]` is satisfied by a spike train that is empty, so every pair carries its
+        // own anti-vacuity assertion — and the assertion is an EQUIVALENCE, not a floor. HSA can
+        // fire at `t` only if the residual dominates the filter there, the residual never exceeds
+        // the signal, and at the FIRST sample where the signal dominates the filter the residual
+        // still is the signal unless something fired earlier. So a strict HSA emits at least one
+        // spike exactly when the filter fits under the signal somewhere, boundary included.
+        let fits_somewhere = |sig: &[f64], h: &[f64]| {
+            (0..sig.len()).any(|t| {
+                h.iter().enumerate().all(|(k, &v)| t + k >= sig.len() || sig[t + k] >= v)
+            })
+        };
         let mut worst = f64::NEG_INFINITY;
+        let (mut pairs, mut silent_pairs, mut spikes_seen) = (0usize, 0usize, 0usize);
         for (name, h) in &filters {
             let hsa = Hsa::new(h.clone(), 0.0).expect("valid");
             assert!(hsa.never_over_reconstructs());
@@ -2967,16 +3794,34 @@ mod tests {
             }
             signals.push(step);
             signals.push((0..300).map(|t| f64::from(t) / 300.0).collect());
-            for s in &signals {
+            for (si, s) in signals.iter().enumerate() {
                 let bits = hsa.encode(s).expect("finite");
                 let rec = hsa.decode(&bits);
                 for t in 0..s.len() {
                     worst = worst.max(rec[t] - s[t]);
                     assert!(rec[t] <= s[t] + 1e-15, "{name} at t {t}: {} > {}", rec[t], s[t]);
                 }
+                let fired = bits.iter().filter(|&&b| b).count();
+                pairs += 1;
+                spikes_seen += fired;
+                assert_eq!(
+                    fired > 0,
+                    fits_somewhere(s, h),
+                    "{name} on signal {si}: {fired} spikes, but the filter {} fit under the signal",
+                    if fits_somewhere(s, h) { "does" } else { "does not" }
+                );
+                if fired == 0 {
+                    silent_pairs += 1;
+                }
             }
         }
         assert!(worst <= 1e-15, "worst over-reconstruction {worst}");
+        // Measured: 5 of 440 pairs cannot fire at all — the 8- and 16-tap kernels on the two
+        // signals whose peaks are below the kernel's own. Pinned, so the number of pairs over
+        // which this invariant is VACUOUS cannot grow without this test saying so.
+        assert_eq!(pairs, 440, "the sweep changed size");
+        assert_eq!(silent_pairs, 5, "{silent_pairs} of {pairs} pairs emitted nothing at all");
+        assert!(spikes_seen > 20_000, "only {spikes_seen} spikes across the whole sweep");
     }
 
     /// The precondition is on the SIGNAL. Break its non-negativity and the guarantee goes at once.
@@ -3021,7 +3866,12 @@ mod tests {
         assert!(matches!(Hsa::new(vec![0.5], -0.1), Err(CodeError::NotPositive { .. })));
         let b = Bsa::new(fir_hann(4).expect("valid"), 0.9).expect("valid");
         assert!(matches!(b.encode(&[0.1, f64::INFINITY]), Err(CodeError::NotFinite { .. })));
-        assert_eq!(b.filter().len(), 4);
+        // Both accessors hand back the kernel they were built with, tap for tap — the decoder is
+        // that kernel, so a copy that drifted from it would decode every train in the crate wrong.
+        assert_eq!(b.filter(), fir_hann(4).expect("valid").as_slice());
+        let h = Hsa::new(fir_lowpass(9, 0.2).expect("valid"), 0.0).expect("valid");
+        assert_eq!(h.filter(), fir_lowpass(9, 0.2).expect("valid").as_slice());
+        assert!(matches!(h.encode(&[0.1, f64::NAN]), Err(CodeError::NotFinite { .. })));
         assert!(rms_error(&[1.0], &[1.0, 2.0]).is_none());
         assert!(rms_error(&[], &[]).is_none());
         assert!(rms_error(&[f64::NAN], &[0.0]).is_none());
@@ -3164,8 +4014,24 @@ mod tests {
     fn the_statistical_threshold_is_refused_where_it_has_nothing_to_measure() {
         let s = sine(600, 0.01, 0.4, 0.5);
         let th = TemporalContrast::threshold_by_statistics(&s, 1.0).expect("a varying signal");
-        // mean|Δs| + 1 std for this sinusoid; asserted as a range rather than a magic constant.
-        assert!(th > 0.02 && th < 0.03, "statistical threshold {th}");
+        // The closed form, not a 50%-wide bracket. For `A·sin(2πft)` sampled at integer t the
+        // first difference is `2A·sin(πf)·cos(2πf(t + ½))`, so over a whole number of cycles
+        // `mean|Δ| = 2A·sin(πf)·(2/π)` and `std|Δ| = 2A·sin(πf)·sqrt(1/2 − 4/π²)`, and the rule's
+        // `mean + 1·std` is their sum. Measured 0.023710 against 0.023731: 0.09% apart, which is
+        // the 600-sample average of a continuum quantity and nothing else.
+        let (amp, f) = (0.4f64, 0.01f64);
+        let closed = 2.0 * amp * (PI * f).sin() * (2.0 / PI + (0.5 - 4.0 / (PI * PI)).sqrt());
+        assert!((closed - 0.023_731).abs() < 1e-6, "the closed form itself moved: {closed}");
+        assert!(
+            (th / closed - 1.0).abs() < 2e-3,
+            "statistical threshold {th} against its closed form {closed}"
+        );
+        // The factor is a multiplier on the standard deviation, and it must act like one.
+        let th0 = TemporalContrast::threshold_by_statistics(&s, 0.0).expect("a varying signal");
+        let th2 = TemporalContrast::threshold_by_statistics(&s, 2.0).expect("a varying signal");
+        let mean_only = 2.0 * amp * (PI * f).sin() * 2.0 / PI;
+        assert!((th0 / mean_only - 1.0).abs() < 2e-3, "factor 0 must leave mean|delta|: {th0}");
+        assert!((th2 - (2.0 * th - th0)).abs() < 1e-12, "the factor is not linear in std");
         assert!(matches!(
             TemporalContrast::threshold_by_statistics(&[1.0, 1.0, 1.0], 1.0),
             Err(CodeError::NoEvidence { .. })

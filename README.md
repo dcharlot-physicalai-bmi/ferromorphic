@@ -6,7 +6,7 @@ conversion, reservoir computing, every neural code, the standard topologies, har
 models, NIR, event-camera decoders, benchmark metrics, teaching tasks — and a joules ledger that
 charges for the memory traffic a synaptic operation needs.
 
-**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 583 tests.**
+**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 792 tests.**
 
 The Institute's position is that in the era of AI a group should build one source of truth, not a
 constellation of thin wrappers. So this is an ingestion, not a sampler: what is open, public and
@@ -202,7 +202,7 @@ Every neuron model here has a test that runs it against an analytic solution.
 - **A sub-threshold current returns `None`, not a large number.** "Fires rarely" and "does not fire"
   are different statements and a rate-coded readout cannot recover the difference later.
 
-583 unit tests and ten doctests, `cargo clippy --all-targets -- -D warnings` clean, `#![forbid(unsafe_code)]`,
+792 unit tests and ten doctests, `cargo clippy --all-targets -- -D warnings` clean, `#![forbid(unsafe_code)]`,
 and `cargo build --target wasm32-unknown-unknown` compiles the library unchanged.
 
 ## What the encoders cost, on the page
@@ -246,7 +246,7 @@ be reproduced cannot be checked against anything, including itself.
 
 ## Status
 
-**0.4.0.** The core is real and tested; the crate family is not built yet. Planned siblings, each
+**0.5.0.** The core is real and tested; the crate family is not built yet. Planned siblings, each
 following the same rule that a dependency lives outside the core:
 
 | crate | what it would add | why separate |
@@ -255,6 +255,31 @@ following the same rule that a dependency lives outside the core:
 | `ferromorphic-meter` | joules **measured on the machine that ran it** | needs a power sensor |
 | `ferromorphic-silicon` | FPGA spiking fabrics and bitstreams | needs the FPGA toolchain |
 | `ferromorphic-serve` | an HTTP and MCP surface | it is a binary, not a library |
+
+## Every module has been audited, and the audit found things
+
+0.4.0 shipped fourteen modules that were each green in isolation. An adversarial auditor then read
+all fourteen looking specifically for tests that cannot fail, constants transcribed rather than
+checked, and silent failure paths. **It found real defects in every one.** 0.5.0 is the repair: 237
+findings fixed, 39 disputed with evidence and left alone, tests from 583 to 792.
+
+The three that mattered most, all shipped in 0.4.0 and all now fixed:
+
+- **Two `EXACT_OVER_GAPS = true` that were false** — `SpikingRelu` and NIR's `CubaState`. That
+  constant is a safety property: `Sim::new` refuses `Mode::EventDriven` for a model where it is
+  false, so a wrong `true` silently permits spike times that depend on which ticks happened to be
+  quiet. Both are now `false`, each with a test that demonstrates the divergence rather than asserting
+  the constant.
+- **`Eif::isi` panicked** on parameters `Eif::new` accepts. `f64::clamp` panics when its bounds
+  cross, and a reset above the truncation point crosses them — which the shipped firing-pattern
+  taxonomy already does.
+- **AEDAT 2.0 ate valid records.** Any event whose first byte is `0x23` was consumed as a `#` header
+  line.
+
+The repair brief forbade the obvious cheat — making a finding go away by loosening a tolerance or
+deleting an assertion — and a second pass diffed every test module against the original to check.
+Where a repairer believed the auditor wrong, they were asked to say so with evidence rather than
+"fix" correct code; 39 findings were refused that way.
 
 ## Not here, and said so
 

@@ -39,11 +39,17 @@
 //! | Grade | What it means for a structural spec in this module |
 //! |---|---|
 //! | [`Evidence::Unstated`] | No figure located. The `Spec`'s value is `None` and its string says what was looked for. |
-//! | [`Evidence::Projected`] | A design target, a roadmap figure, or a part this review does not know to be fabricated. |
-//! | [`Evidence::Derived`] | **This review computed it** from other stated figures. The arithmetic is shown in the string. |
+//! | [`Evidence::Projected`] | A design target, a roadmap figure, a part this review does not know to be fabricated — **or a figure this review inferred rather than located**: an analogy from a sibling part, a year read off undated material, a schema choice this review made. |
+//! | [`Evidence::Derived`] | **This review computed it** from other stated figures. The arithmetic is shown in the string, and `the_derived_grade_is_an_exact_census` requires every `Derived` string to show an operator and an operand. |
 //! | [`Evidence::Simulated`] | From a simulation of the design rather than from the design's documentation. |
-//! | [`Evidence::Measured`] | Stated for a fabricated part in a primary document — a peer-reviewed paper, or a vendor document for shipping silicon. Where it is a vendor document rather than a paper, **the provenance string says "vendor"**. |
+//! | [`Evidence::Measured`] | Stated for a fabricated part in a primary document — a peer-reviewed paper, a vendor document for shipping silicon, or the part's own reference software's documentation where the figure is a software convention **and the string says which**. Where it is not a paper, **the provenance string says "vendor" or names the software**. |
 //! | [`Evidence::Metered`] | Not used in this module. `Metered` is about an instrument reading, and nothing here is an instrument reading. |
+//!
+//! ⛔ **`Derived` and `Projected` are not interchangeable, and the order matters.** [`Evidence`]
+//! sorts `Projected < Derived`, so grading an inference `Derived` makes "this review guessed a year
+//! off undated vendor material" sort as *stronger* evidence than a maker's published roadmap
+//! figure, and [`Part::weakest_evidence`] inherits that inversion. `Derived` means arithmetic over
+//! figures stated elsewhere in the same record or in the cited document. Nothing else.
 //!
 //! ## The mistake this crate already made once
 //!
@@ -70,7 +76,14 @@
 //! * [`Quantiser`] — weights to a part's bit-width, with the round-trip error reported, in both
 //!   round-to-nearest and stochastic rounding. Round-to-nearest errs by at most half a least
 //!   significant bit and is **biased**; stochastic rounding is **unbiased** and errs by more.
-//!   Both facts are tested against closed forms in this module.
+//!   Three closed forms are checked here, and the third is the one to read carefully. For a weight
+//!   sitting a fraction `f` of a step above a level: round-to-nearest's signed error is
+//!   `-f` steps (or `1-f`) *every time*, so its bias and its RMS error are both exactly
+//!   `min(f, 1-f)`; stochastic rounding's expected error is exactly zero and its RMS error is
+//!   exactly `sqrt(f*(1-f))`. Since `sqrt(f*(1-f)) >= min(f, 1-f)` for every `f`, that is the
+//!   sense — **in expectation** — in which stochastic rounding errs by more. It is not a guarantee
+//!   about any one vector: on a short vector a lucky draw inverts it, and
+//!   [`Quantised::rms_error`] says so rather than promising otherwise.
 //!
 //! # Units
 //!
@@ -217,11 +230,21 @@ pub struct Part {
     /// A string rather than a number on purpose: modern node names are product names, not
     /// dimensions, and two parts on differently-named nodes are not orderable by that name alone.
     pub process: Spec<&'static str>,
-    /// Neurons on one chip where the maker publishes a **chip total** directly.
+    /// Neurons on one chip where the maker publishes a **chip total**, or where this review reads
+    /// an exact figure out of a round one the maker published.
     ///
     /// Separate from the product of `neurons_per_core` and `cores_per_chip` because for several
     /// parts the chip total is the published quantity and the per-core split is not. Use
     /// [`Part::neurons_per_chip`], which prefers a published total and falls back to the product.
+    ///
+    /// ⛔ Two of these entries are **not** a maker's number transcribed. [`LOIHI_2`]'s 1,048,576 is
+    /// this review reading Intel's "up to 1 million" as the power of two 128 cores of 8,192 gives,
+    /// and it is graded [`Evidence::Derived`] with the rounding shown in its string;
+    /// [`AKD1000`]'s 1.2 million is a model-dependent vendor capacity claim graded
+    /// [`Evidence::Projected`]. Neither is a register count, and because the `Loihi` 2 figure is a
+    /// rounding chosen to be consistent with the per-core split, it is **excluded from**
+    /// `a_published_chip_total_agrees_with_the_product_of_the_per_core_figures`'s independent
+    /// cross-checks — a cross-check against a figure derived from the thing it checks is not one.
     pub neurons_per_chip_stated: Spec<u64>,
     /// What a reader has to know about this part that does not fit in a field.
     ///
@@ -455,9 +478,14 @@ pub const LOIHI_2: Part = Part {
     ),
     neurons_per_chip_stated: Spec::known(
         1_048_576,
-        "DERIVED by this review: Intel's vendor brief states up to 1 million neurons per chip, and \
-         this review records the nearest power of two, 1,048,576, which is exactly what 128 cores \
-         of 8,192 gives.",
+        "DERIVED by this review, and READ IT BEFORE QUOTING IT: Intel's vendor brief states 'up to \
+         1 million' neurons per chip, which is a round number and not this one. 1,048,576 is this \
+         review's reading of it as the power of two the per-core split gives, 128 x 8,192 = \
+         1,048,576. Intel does not print 1,048,576 anywhere this review read. Because the figure \
+         is chosen to be consistent with neurons_per_core, checking one against the other is an \
+         identity and not a cross-check, and \
+         a_published_chip_total_agrees_with_the_product_of_the_per_core_figures excludes this \
+         record from its independent count for that reason.",
         Evidence::Derived,
     ),
     note: "The weight width is the field a quantiser needs and it is the field this review could \
@@ -498,8 +526,11 @@ pub const TRUENORTH: Part = Part {
     ),
     synapses_per_core: Spec::known(
         65536,
-        "A full 256x256 binary crossbar per core: 256 input axons by 256 neurons. 4,096 cores \
-         gives 268 M synapses per chip, which is the figure the paper reports.",
+        "Merolla et al., Science 345(6197), 2014: a full 256x256 binary crossbar per core, 256 \
+         input axons by 256 neurons. The paper's abstract reports 256 MILLION configurable \
+         synapses per chip, in BINARY millions: 256 x 2^20 = 268,435,456, which is exactly 4,096 \
+         cores x 65,536. The decimal rendering 268 M is this review's arithmetic and is NOT a \
+         figure the paper prints; the paper's own words are '256 million'.",
         Evidence::Measured,
     ),
     max_fan_in: Spec::known(
@@ -703,9 +734,13 @@ pub const AKD1500: Part = Part {
     max_fan_in: Spec::unlocated("This review did not locate a fan-in cap for AKD1500."),
     weight_bits: Spec::known(
         4,
-        "DERIVED by this review from BrainChip's statement that AKD1500 carries the same Akida 1.0 \
-         IP as AKD1000, whose brief gives 1, 2 and 4 bits. Not separately stated for this part.",
-        Evidence::Derived,
+        "INFERRED by this review, not located and not computed, from BrainChip's statement that \
+         AKD1500 carries the same Akida 1.0 IP as AKD1000, whose brief gives 1, 2 and 4 bits. Not \
+         separately stated for this part. Graded Projected because an analogy is not arithmetic. \
+         The inference is made here and refused for on_chip_learning below on purpose: a datapath \
+         width is a property of the IP itself, whereas whether a learning feature is usable also \
+         depends on the parts of AKD1000 this device drops, including its embedded host processor.",
+        Evidence::Projected,
     ),
     delay_ticks: Spec::unlocated("This review did not locate a delay mechanism for AKD1500."),
     on_chip_learning: Spec::unlocated(
@@ -736,6 +771,16 @@ pub const AKD1500: Part = Part {
 /// deadline**, and a missed deadline changes the answer without saying so. That is a strictly worse
 /// failure mode than [`TRUENORTH`]'s refusal, and it is why `max_fan_in` here is empty rather than
 /// large: an empty field makes [`fits`] report the constraint as *unchecked*, which is true.
+///
+/// ⛔ **`neurons_per_core` and `synapses_per_core` are empty here for exactly the same reason, and
+/// they were not always.** Through v0.4.0 this record carried 1,000 and 1,000,000 — the design
+/// target of ~1,000 neurons at ~1,000 inputs each in biological real time — in fields that
+/// [`Part::neurons_per_chip`] multiplies by the core count and [`fits`] then grades a network
+/// against. A 17,500-neuron network came back `FITS ... 17500 of 18000 (97.2%)`: a **deadline**
+/// reported as a **wall** with headroom, on a part that would have accepted the network and missed
+/// every timestep. The figures are not deleted — they are in the provenance strings below, where
+/// they can be read and not multiplied. This is the same argument that emptied `max_fan_in`,
+/// applied to the two fields that argument originally missed.
 pub const SPINNAKER: Part = Part {
     name: "SpiNNaker",
     vendor: "University of Manchester",
@@ -747,12 +792,14 @@ pub const SPINNAKER: Part = Part {
          completed in 2018; this field records the paper this record rests on.",
         Evidence::Measured,
     ),
-    neurons_per_core: Spec::known(
-        1000,
-        "The design target: ~1,000 neurons per core at ~1,000 inputs each in biological real time \
-         with a 1 ms timestep. A THROUGHPUT BUDGET, not a structural cap — the part will accept \
-         more and miss its deadline. Graded Derived for that reason.",
-        Evidence::Derived,
+    neurons_per_core: Spec::unlocated(
+        "There is NO structural per-core neuron cap, and this empty field is the finding rather \
+         than a gap. The figure everyone quotes - the design target of ~1,000 neurons per core at \
+         ~1,000 inputs each in biological real time with a 1 ms timestep, Furber et al., Proc. \
+         IEEE 102(5), 2014 - is a THROUGHPUT BUDGET and not a capacity: the part accepts more \
+         neurons and misses its deadline instead of refusing. This field is the wrong SHAPE for \
+         that number, because Part::neurons_per_chip would multiply it by the core count and \
+         fits() would then report headroom against a rate.",
     ),
     cores_per_chip: Spec::known(
         18,
@@ -761,12 +808,14 @@ pub const SPINNAKER: Part = Part {
          records the 18 on the die and names the 16 here rather than silently picking one.",
         Evidence::Measured,
     ),
-    synapses_per_core: Spec::known(
-        1_000_000,
-        "DERIVED by this review: 1,000 neurons x 1,000 inputs, the rate the design was sized for. \
-         The hard resources are the chip's 128 MB of die-stacked SDRAM holding synapse rows and the \
-         core's 96 KB of tightly-coupled memory; the 10^6 is a budget, not a capacity.",
-        Evidence::Derived,
+    synapses_per_core: Spec::unlocated(
+        "There is NO structural per-core synapse capacity in the sense this field means. The 10^6 \
+         this review previously recorded here is 1,000 neurons x 1,000 inputs - the same 1 ms \
+         throughput budget seen from the synapse side, a rate rather than a store. The hard \
+         resources are the chip's 128 MB of die-stacked SDRAM holding synapse rows and each core's \
+         96 KB of tightly-coupled memory, and this review did not locate a synapses-per-core \
+         figure derived from those rather than from the deadline. The field is the wrong SHAPE for \
+         a budget: core_count() would pack against it and fits() would report headroom.",
     ),
     max_fan_in: Spec::unlocated(
         "There is NO structural fan-in cap, and this empty field is the finding rather than a gap. \
@@ -776,19 +825,22 @@ pub const SPINNAKER: Part = Part {
     ),
     weight_bits: Spec::known(
         16,
-        "sPyNNaker's standard synapse format uses 16-bit fixed-point weights. A SOFTWARE \
-         convention, not a hardware limit: the cores are 32-bit ARMs and a different synapse format \
-         would be a different number. Graded Derived accordingly.",
-        Evidence::Derived,
+        "Located in the documentation of sPyNNaker, the project's own reference software stack: \
+         the standard synapse format uses 16-bit fixed-point weights. A SOFTWARE convention, not a \
+         hardware limit - the cores are 32-bit ARMs and a different synapse format would be a \
+         different number. Graded Measured because it was READ OFF a document rather than computed \
+         here; the document is a software one and this string says so.",
+        Evidence::Measured,
     ),
     delay_ticks: Spec::known(
         DelayRange { min_ticks: 1, max_ticks: 16 },
         "sPyNNaker delivers 1 to 16 timesteps natively from the synapse row's delay field; longer \
          delays are built from 'delay extension' populations that relay a spike through extra \
-         neurons, at the cost of those neurons. Reported from the software's documented limit \
-         rather than from the JSSC paper, hence Derived. The minimum of 1 is real: there is no \
-         same-tick delivery.",
-        Evidence::Derived,
+         neurons, at the cost of those neurons. Located in the documentation of sPyNNaker, the \
+         project's own reference software stack, rather than in the JSSC paper - a software \
+         document, READ OFF and not computed here, which is why it is Measured and not Derived. \
+         The minimum of 1 is real: there is no same-tick delivery.",
+        Evidence::Measured,
     ),
     on_chip_learning: Spec::known(
         true,
@@ -803,9 +855,16 @@ pub const SPINNAKER: Part = Part {
          constraint was cost per core at a million-core scale.",
         Evidence::Measured,
     ),
-    neurons_per_chip_stated: Spec::unlocated(CHIP_TOTAL_IS_A_PRODUCT),
-    note: "The only part in this table whose limits are deadlines rather than structures. Its \
-           failure mode is a missed deadline, which is quieter and worse than a refusal.",
+    neurons_per_chip_stated: Spec::unlocated(
+        "This review did not locate a per-chip neuron figure that is a CAPACITY. The figure that \
+         exists - 18 cores x ~1,000 neurons - is the 1 ms throughput budget multiplied out, and \
+         recording it here would put a deadline in a capacity field. See neurons_per_core.",
+    ),
+    note: "The only part in this table whose limits are deadlines rather than structures, and the \
+           only one with NO capacity field filled in: the three that were filled held throughput \
+           budgets, so fits() reports every capacity constraint as unchecked and checks only the \
+           delay range, which is the one genuine structure. Its failure mode is a missed deadline, \
+           which is quieter and worse than a refusal.",
 };
 
 /// `SpiNNaker2` — 152 `Cortex-M4F` cores per chip in `GlobalFoundries` 22 nm `FDX`.
@@ -856,10 +915,14 @@ pub const SPINNAKER2: Part = Part {
     ),
     on_chip_learning: Spec::known(
         true,
-        "DERIVED by this review: software plasticity on the Cortex-M4F cores as in SpiNNaker 1, \
-         with hardware MAC and exponential units making the rule cheaper. arXiv:2103.08392 \
-         describes the accelerators; this review did not locate a plasticity benchmark.",
-        Evidence::Derived,
+        "INFERRED by this review, not located and not computed: software plasticity on the \
+         Cortex-M4F cores as in SpiNNaker 1, with hardware MAC and exponential units making the \
+         rule cheaper. arXiv:2103.08392 describes the accelerators; this review did not locate a \
+         statement of on-chip plasticity for this part or a plasticity benchmark. An analogy from \
+         a sibling architecture is an inference, so this is graded Projected and NOT Derived: \
+         there is no arithmetic here, and Derived would sort this guess above a maker's roadmap \
+         figure.",
+        Evidence::Projected,
     ),
     process: Spec::known(
         "GlobalFoundries 22 nm FDX",
@@ -895,10 +958,11 @@ pub const XYLO_AUDIO_2: Part = Part {
                (Yik et al.).",
     year: Spec::known(
         2023,
-        "DERIVED by this review: the year is inferred from the vendor documentation and the \
-         NeuroBench evaluation rather than read off a launch announcement. Treat it as \
-         approximate.",
-        Evidence::Derived,
+        "INFERRED by this review, not located and not computed: the year is read off the vendor \
+         documentation and the NeuroBench evaluation rather than a dated launch announcement. \
+         Treat it as approximate. Graded Projected, because an undated guess is an inference and \
+         not arithmetic over stated figures.",
+        Evidence::Projected,
     ),
     neurons_per_core: Spec::known(
         1000,
@@ -955,9 +1019,11 @@ pub const SPECK: Part = Part {
                builds on comes out of the Institute of Neuroinformatics, Zurich.",
     year: Spec::known(
         2022,
-        "DERIVED by this review from undated vendor material; this review did not locate a dated \
-         launch document, so treat the year as approximate.",
-        Evidence::Derived,
+        "INFERRED by this review from undated vendor material, not located and not computed; this \
+         review did not locate a dated launch document, so treat the year as approximate. Graded \
+         Projected, because a year guessed off undated material is an inference and not arithmetic \
+         over stated figures.",
+        Evidence::Projected,
     ),
     neurons_per_core: Spec::unlocated(
         "This review did not locate a per-core neuron limit. The vendor quotes a device total in \
@@ -1097,8 +1163,9 @@ pub const DYNAP_SE: Part = Part {
     ),
     synapses_per_core: Spec::known(
         16384,
-        "DERIVED by this review: 256 neurons x 64 CAM entries each. The paper states the 64 per \
-         neuron; the product is this review's arithmetic.",
+        "DERIVED by this review: 256 x 64 = 16,384, that is, 256 neurons per core at 64 CAM \
+         entries each. The paper states the 64 per neuron and the 256 per core; the product is \
+         this review's arithmetic.",
         Evidence::Derived,
     ),
     max_fan_in: Spec::known(
@@ -1313,9 +1380,13 @@ pub const BRAINSCALES_2: Part = Part {
     ),
     cores_per_chip: Spec::known(
         1,
-        "One, DERIVED from this review's mapping of the whole chip to one core: see \
-         neurons_per_core. Not a claim about the die's internal structure.",
-        Evidence::Derived,
+        "One, a SCHEMA CHOICE by this review rather than a figure located or computed: this table \
+         maps the whole chip to one core because this review did not confirm the die's internal \
+         partitioning. See neurons_per_core. Graded Projected, because this review's own \
+         convention is an inference about how to read the part and not arithmetic over stated \
+         figures - and because a cores_per_chip of 1 makes the chip-total cross-check an identity, \
+         which is why that test excludes this record from its independent count.",
+        Evidence::Projected,
     ),
     synapses_per_core: Spec::known(
         131072,
@@ -1368,8 +1439,12 @@ pub const BRAINSCALES_2: Part = Part {
 /// Sixteen records. Not one of them is complete: [`Part::weakest_evidence`] returns
 /// [`Evidence::Unstated`] for every single entry, because every part in the open literature has at
 /// least one structural field nobody published. Sort by [`Part::stated_fields`] to see which parts
-/// are actually documented — [`ODIN`] and [`TRUENORTH`] at the top, [`INNATERA_T1`] at the bottom
-/// with one.
+/// are actually documented — **[`TRUENORTH`], [`DYNAP_SE`] and [`BRAINSCALES_2`] at the top with
+/// nine of ten**, [`ODIN`] next with eight, [`INNATERA_T1`] at the bottom with one. (Through
+/// v0.4.0 this sentence named `ODIN` and `TrueNorth` as the top pair, which was simply wrong:
+/// `ODIN` was never in the leading group and two other records tie `TrueNorth`. The census in
+/// `the_completeness_ranking_is_the_one_the_table_doc_claims` is now the thing that has to agree
+/// with this paragraph.)
 ///
 /// Two entries are in the table as corrections rather than as spiking parts: [`NORTHPOLE`], which
 /// has no spikes, and [`BRAINSCALES_2`], which has no tick.
@@ -1497,7 +1572,12 @@ impl Bind {
     /// **By how much**, in the constraint's own units: the excess over a cap, or the shortfall
     /// below a floor.
     ///
-    /// Always at least 1 for a real violation, because a violation by zero is not a violation.
+    /// Always at least 1 for any `Bind` [`fits`] produces, because [`fits`] only produces one for a
+    /// real violation and a violation by zero is not a violation. Saturating rather than
+    /// wrapping, because `Bind`'s fields are `pub` and a caller may hand this method a value that
+    /// is not a violation at all; that case answers 0 instead of panicking or wrapping to 1.8e19.
+    /// Pinned variant by variant, with distinct numbers, in
+    /// `every_bind_variant_reports_its_own_overflow_reach_and_precedence`.
     #[must_use]
     pub fn overflow(&self) -> u64 {
         match self {
@@ -1544,13 +1624,18 @@ impl Bind {
 }
 
 impl fmt::Display for Bind {
+    // ⛔ Every "over by" here is [`Bind::overflow`] and NOT a raw subtraction. `Bind` and its
+    // fields are `pub`, so a caller can construct `Bind::FanIn { fan_in: 1, cap: 5, .. }` — a
+    // nonsensical value, but a legal one — and `fan_in - cap` on it panicked in debug and printed
+    // 18446744073709551612 in release. `overflow()` saturates, which is what the doc promised all
+    // along, so the formatter now agrees with the method instead of duplicating it wrongly.
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let over = self.overflow();
         match self {
             Self::FanIn { neuron, fan_in, cap, offenders } => write!(
                 f,
                 "fan-in: neuron {neuron} has {fan_in} presynaptic sources, cap is {cap} \
-                 (over by {}); {offenders} neuron(s) exceed it",
-                fan_in - cap
+                 (over by {over}); {offenders} neuron(s) exceed it"
             ),
             Self::DelayTooLong { synapse, pre, post, delay, cap, offenders } => write!(
                 f,
@@ -1563,16 +1648,14 @@ impl fmt::Display for Bind {
                  is {floor}; {offenders} synapse(s) fall below it"
             ),
             Self::Neurons { needed, cap } => {
-                write!(f, "neurons: {needed} needed, {cap} per chip (over by {})", needed - cap)
+                write!(f, "neurons: {needed} needed, {cap} per chip (over by {over})")
             }
             Self::Synapses { needed, cap } => {
-                write!(f, "synapses: {needed} needed, {cap} per chip (over by {})", needed - cap)
+                write!(f, "synapses: {needed} needed, {cap} per chip (over by {over})")
             }
-            Self::Cores { needed, cap } => write!(
-                f,
-                "cores: at least {needed} needed, {cap} per chip (over by {})",
-                needed - cap
-            ),
+            Self::Cores { needed, cap } => {
+                write!(f, "cores: at least {needed} needed, {cap} per chip (over by {over})")
+            }
         }
     }
 }
@@ -1693,6 +1776,15 @@ pub struct Fit {
     /// Constraints this part does not state, by the same names [`Bind::constraint`] uses.
     ///
     /// The list a caller has to read before believing a `Some(true)`.
+    ///
+    /// Every entry really is one of the six [`Bind::constraint`] strings, and
+    /// `every_unchecked_name_is_a_bind_constraint_name` asserts it over the whole table so that a
+    /// caller can correlate the two lists by string. One `Spec` covers two of those names: a part
+    /// with no [`Part::delay_ticks`] contributes **both** `"shortest synaptic delay"` and
+    /// `"longest synaptic delay"`, because neither end of the range is known. Through v0.4.0 this
+    /// list instead carried a seventh string, `"synaptic delay range"`, which
+    /// [`Bind::constraint`] never returns — so a caller correlating by name silently dropped the
+    /// delay entry.
     pub unchecked: Vec<&'static str>,
     /// Core allocation, where the part states enough to compute one.
     pub cores: Option<CoreCount>,
@@ -1732,8 +1824,24 @@ impl fmt::Display for Fit {
             writeln!(f, "  BINDS  {b}")?;
         }
         for h in &self.headroom {
-            let pct = h.utilisation().map_or(-1.0, |u| u * 100.0);
-            writeln!(f, "  ok     {}: {} of {} ({pct:.1}%)", h.constraint, h.used, h.cap)?;
+            // A cap of zero has no utilisation, and printing -1.0% for it — as this did through
+            // v0.4.0 — is a number a reader will believe. `Headroom::utilisation` returns None
+            // there and this says so.
+            match h.utilisation() {
+                Some(u) => writeln!(
+                    f,
+                    "  ok     {}: {} of {} ({:.1}%)",
+                    h.constraint,
+                    h.used,
+                    h.cap,
+                    u * 100.0
+                )?,
+                None => writeln!(
+                    f,
+                    "  ok     {}: {} of {} (no utilisation: this part's cap is zero)",
+                    h.constraint, h.used, h.cap
+                )?,
+            }
         }
         for u in &self.unchecked {
             writeln!(f, "  ?      {u}: not stated for this part")?;
@@ -1753,9 +1861,12 @@ impl fmt::Display for Fit {
 /// Can this network be mapped onto one of these parts? Reports **which constraint binds and by how
 /// much**, never a bare boolean.
 ///
-/// Checks, in reporting precedence: per-neuron fan-in, synaptic delay range, neurons per chip,
-/// synapses per chip, and cores per chip against [`CoreCount::lower_bound`]. Every constraint the
-/// part does not state lands in [`Fit::unchecked`] instead of being assumed satisfied.
+/// Checks **six** constraints, reported in the precedence order [`Bind::precedence`] gives:
+/// per-neuron fan-in, the shortest and the longest deliverable synaptic delay, neurons per chip,
+/// synapses per chip, and cores per chip against [`CoreCount::lower_bound`]. The two delay ends
+/// come from one [`Spec`] and are counted separately because they are separate constraints with
+/// separate [`Bind`]s. Every constraint the part does not state lands in [`Fit::unchecked`]
+/// instead of being assumed satisfied.
 ///
 /// ```
 /// use ferromorphic::hardware::{fits, TRUENORTH};
@@ -1836,16 +1947,13 @@ pub fn fits(net: &Net, part: &Part) -> Fit {
                 }
             }
         }
-        if let Some((synapse, pre, post, delay)) = short {
-            binds.push(Bind::DelayTooShort {
-                synapse,
-                pre,
-                post,
-                delay,
-                floor: range.min_ticks,
-                offenders: n_short,
-            });
-        }
+        // Reported in the order the scan above finds them — ceiling first, as the loop body tests
+        // it — and NOT pre-arranged into precedence order. `binds.sort_by_key(Bind::precedence)`
+        // below is what puts them in order, and that is deliberate: while every push here happened
+        // to be in precedence order already, the sort was a no-op that no test could distinguish
+        // from a deleted one, and "most severe first" was a promise kept by accident of layout.
+        // Now the promise is kept by the sort, and
+        // `the_binds_are_reported_most_severe_first` fails if the sort goes away.
         if let Some((synapse, pre, post, delay)) = long {
             binds.push(Bind::DelayTooLong {
                 synapse,
@@ -1856,6 +1964,16 @@ pub fn fits(net: &Net, part: &Part) -> Fit {
                 offenders: n_long,
             });
         }
+        if let Some((synapse, pre, post, delay)) = short {
+            binds.push(Bind::DelayTooShort {
+                synapse,
+                pre,
+                post,
+                delay,
+                floor: range.min_ticks,
+                offenders: n_short,
+            });
+        }
         if short.is_none() && long.is_none() {
             headroom.push(Headroom {
                 constraint: "longest synaptic delay",
@@ -1864,7 +1982,11 @@ pub fn fits(net: &Net, part: &Part) -> Fit {
             });
         }
     } else {
-        unchecked.push("synaptic delay range");
+        // Two names, not one: the Spec is a range and covers both ends, and every string in
+        // `unchecked` has to be one `Bind::constraint()` returns or a caller correlating the two
+        // lists loses the entry silently.
+        unchecked.push("shortest synaptic delay");
+        unchecked.push("longest synaptic delay");
     }
 
     // --- neurons per chip ---
@@ -1910,6 +2032,9 @@ pub fn fits(net: &Net, part: &Part) -> Fit {
         _ => unchecked.push("cores per chip"),
     }
 
+    // Load-bearing, not cosmetic: `Fit::binding()` returns `binds.first()`, so this line is what
+    // makes "the most severe violated constraint" true. The delay pair above is pushed in scan
+    // order rather than precedence order precisely so that this sort has an observable job.
     binds.sort_by_key(Bind::precedence);
     let verdict = if !binds.is_empty() {
         Some(false)
@@ -1927,6 +2052,17 @@ pub fn fits(net: &Net, part: &Part) -> Fit {
 /// `None` when the part does not state `neurons_per_core`, without which there is no bound to
 /// compute. A part that states neurons but not synapses per core still gets a `CoreCount`, with
 /// `by_synapses` and `greedy` empty.
+///
+/// # Zero capacities are refused, not substituted
+///
+/// `None` also when a stated capacity is **zero** — `neurons_per_core == Some(0)` or
+/// `synapses_per_core == Some(0)`. A core that holds nothing admits no assignment of any network
+/// with anything in it, and there is no bound to report. Through v0.4.0 a zero synapse capacity
+/// instead produced `by_synapses = usize::MAX`, which propagated into `lower_bound` and out of
+/// [`CoreCount::chips`] as a nonsense chip count with no indication that anything had gone wrong.
+/// It was the one place in this module where an unreadable input got a substituted value rather
+/// than a refusal. No part in [`PARTS`] states a zero capacity; `Part` is `pub` with `pub` fields,
+/// so a caller can.
 #[must_use]
 pub fn core_count(net: &Net, part: &Part) -> Option<CoreCount> {
     let npc = part.neurons_per_core.value?;
@@ -1936,9 +2072,10 @@ pub fn core_count(net: &Net, part: &Part) -> Option<CoreCount> {
     let npc_u = npc as usize;
     let by_neurons = net.n.div_ceil(npc_u);
     let spc = part.synapses_per_core.value;
-    let by_synapses = spc.map(|s| {
-        if s == 0 { usize::MAX } else { (net.n_syn as u64).div_ceil(s) as usize }
-    });
+    if spc == Some(0) {
+        return None;
+    }
+    let by_synapses = spc.map(|s| (net.n_syn as u64).div_ceil(s) as usize);
     let lower_bound = by_synapses.map_or(by_neurons, |s| by_neurons.max(s));
 
     let deg = net.in_degrees();
@@ -2008,11 +2145,15 @@ pub enum HardwareError {
         /// The offending value.
         value: f64,
     },
-    /// Every weight is zero, so there is no range to quantise over.
+    /// There is no step to quantise with: either every weight is zero, or the full-scale magnitude
+    /// divided by the largest code **underflowed to zero**.
     ///
-    /// Refused rather than answered with a step of zero. A vector of zeros round-trips exactly at
-    /// any step, so a "successful" quantisation here would report a perfect result for a network
-    /// that has no weights — which is almost always a bug upstream and never a useful answer.
+    /// Refused rather than answered with a step of zero, in both cases and for the same reason. A
+    /// vector of zeros round-trips exactly at any step, so a "successful" quantisation there would
+    /// report a perfect result for a network that has no weights — almost always a bug upstream
+    /// and never a useful answer. The underflow case is worse: the weights are real, the step is
+    /// zero, and the round-trip statistics report a near-perfect result for a vector every element
+    /// of which was destroyed. See [`Quantiser::symmetric`] for the worked case.
     NoScale,
     /// An empty weight slice. There is nothing to quantise and no scale to derive.
     NoWeights,
@@ -2045,8 +2186,9 @@ impl fmt::Display for HardwareError {
             }
             Self::NonFiniteScale { value } => write!(f, "scale {value} is not finite"),
             Self::NoScale => f.write_str(
-                "every weight is zero: there is no range to quantise over, and a step of zero \
-                 would report a perfect round trip for a network with no weights",
+                "no usable step: either every weight is zero, or the full scale divided by the \
+                 largest code underflowed to zero. A step of zero reports a near-perfect round \
+                 trip for weights it has destroyed",
             ),
             Self::NoWeights => f.write_str("no weights: nothing to quantise and no scale to derive"),
             Self::BadBits { bits } => write!(
@@ -2079,9 +2221,12 @@ pub enum Rounding {
     ///
     /// **Unbiased**: the expected dequantised value equals the original exactly, which is why it is
     /// the standard choice for quantised training and for accumulating small updates into a
-    /// low-precision weight. What it costs is variance — its RMS error is larger than
-    /// round-to-nearest's, and any single quantisation can be worse. Both facts are tested against
-    /// closed forms in this module.
+    /// low-precision weight. What it costs is variance. For a weight a fraction `f` of a step above
+    /// a level, its RMS error is `step * sqrt(f * (1 - f))` against round-to-nearest's
+    /// `step * min(f, 1 - f)`, and `sqrt(f * (1 - f)) >= min(f, 1 - f)` for every `f` — so it errs
+    /// by more **in expectation**, with equality only where `f` is 0 or 1/2. Both closed forms are
+    /// checked in this module, and neither is a promise about one draw: on a short vector the
+    /// ordering inverts often enough to measure (about 13% of 8-weight vectors at 4 bits).
     ///
     /// Uses [`crate::rng::Rng`], so it is deterministic under a seed: same seed, same codes, every
     /// platform.
@@ -2111,7 +2256,18 @@ impl Quantiser {
     /// # Errors
     ///
     /// [`HardwareError::BadBits`] outside 2..=31, [`HardwareError::NonFiniteScale`] for a
-    /// non-finite `max_abs`, and [`HardwareError::NoScale`] when `max_abs <= 0`.
+    /// non-finite `max_abs`, and [`HardwareError::NoScale`] when `max_abs <= 0` **or when the
+    /// quotient `max_abs / max_code` is not itself a positive normal-or-subnormal number**.
+    ///
+    /// ⛔ The second half of that last clause is not hypothetical. `max_abs` positive does not make
+    /// the step positive: `symmetric(31, 1e-320)` divides a subnormal by 1,073,741,823 and the
+    /// quotient **underflows to exactly zero**, which is the state [`HardwareError::NoScale`]'s
+    /// doc promises is impossible. A quantiser with `step == 0` then divides every weight by zero,
+    /// so a zero weight becomes `0.0/0.0 = NaN` and every other weight becomes an infinity that
+    /// clamps to a code limit; `values()` comes back all zeros while `max_abs_error` reports
+    /// 1e-320 and `mean_error` reports 0 — every weight destroyed, reported as a near-perfect
+    /// round trip. It is checked here, after the division, because that is the only place the
+    /// underflow exists.
     pub fn symmetric(bits: u32, max_abs: f64) -> Result<Self, HardwareError> {
         if !(2..=31).contains(&bits) {
             return Err(HardwareError::BadBits { bits });
@@ -2123,7 +2279,11 @@ impl Quantiser {
             return Err(HardwareError::NoScale);
         }
         let max_code = (1i32 << (bits - 1)) - 1;
-        Ok(Self { bits, step: max_abs / f64::from(max_code), max_code })
+        let step = max_abs / f64::from(max_code);
+        if !(step > 0.0) || !step.is_finite() {
+            return Err(HardwareError::NoScale);
+        }
+        Ok(Self { bits, step, max_code })
     }
 
     /// A quantiser scaled to the largest magnitude present in `w`.
@@ -2287,8 +2447,15 @@ pub struct Quantised {
     pub mean_error: f64,
     /// Root-mean-square error. The magnitude, as opposed to the bias.
     ///
-    /// Larger for [`Rounding::Stochastic`] than for [`Rounding::Nearest`] on the same data. That is
-    /// the trade and it is asserted in `stochastic_rounding_costs_variance_for_its_lack_of_bias`.
+    /// Larger for [`Rounding::Stochastic`] than for [`Rounding::Nearest`] on the same data **in
+    /// expectation, and only in expectation**: the closed forms are `step * sqrt(f * (1 - f))`
+    /// against `step * min(f, 1 - f)` for a weight a fraction `f` of a step above a level, and the
+    /// first dominates the second for every `f`. A *realisation* of stochastic rounding can be
+    /// better, and on short vectors often is — a sweep of 500 eight-weight vectors at 4 bits
+    /// inverted the ordering 65 times. The trade is asserted at both scales:
+    /// `the_stochastic_rms_error_matches_its_closed_form` pins the expectation and
+    /// `stochastic_rounding_costs_variance_for_its_lack_of_bias` pins a vector long enough for the
+    /// expectation to bite.
     pub rms_error: f64,
 }
 
@@ -2309,6 +2476,13 @@ impl Quantised {
     ///
     /// `tol` is a relative slack for floating-point comparison; `1e-12` is ample. Returns `false`
     /// whenever anything clipped, because the bound genuinely does not hold there.
+    ///
+    /// **Both halves are load-bearing and both are pinned.** `clipped == 0` alone would certify a
+    /// vector whose error is unbounded, and it is refused by the edge case in
+    /// `a_clipped_weight_breaks_the_half_lsb_bound_and_says_so`; the numeric bound alone would
+    /// certify a [`Rounding::Stochastic`] vector that missed by 0.7 of a step, and it is refused by
+    /// `an_unclipped_vector_past_the_bound_is_not_certified` — which also uses an error inside
+    /// `1.5 * half_lsb`, so widening the bound does not rescue it.
     #[must_use]
     pub fn within_half_lsb(&self, tol: f64) -> bool {
         self.clipped == 0 && self.max_abs_error <= self.half_lsb() * (1.0 + tol)
@@ -2318,9 +2492,10 @@ impl Quantised {
 #[cfg(test)]
 mod tests {
     use super::{
-        AKD1000, AKD1500, BRAINSCALES_2, Bind, DARWIN, DARWIN3, DYNAP_SE, Evidence, HardwareError,
-        INNATERA_T1, LOIHI, LOIHI_2, NORTHPOLE, ODIN, PARTS, Part, Quantiser, Rounding, SPECK,
-        SPINNAKER, SPINNAKER2, TRUENORTH, XYLO_AUDIO_2, core_count, fits, part_named,
+        AKD1000, AKD1500, BRAINSCALES_2, Bind, CoreCount, DARWIN, DARWIN3, DYNAP_SE, DelayRange,
+        Evidence, Fit, HardwareError, Headroom, INNATERA_T1, LOIHI, LOIHI_2, NORTHPOLE, ODIN,
+        PARTS, Part, Quantiser, Rounding, SPECK, SPINNAKER, SPINNAKER2, Spec, TRUENORTH,
+        XYLO_AUDIO_2, core_count, fits, part_named,
     };
     use crate::net::{Net, NetBuilder};
     use crate::rng::Rng;
@@ -2456,6 +2631,46 @@ mod tests {
         );
     }
 
+    /// ⛔ The other half of [`Quantised::within_half_lsb`], and the half nothing asserted. A
+    /// vector where **nothing clipped** and the error is past half an LSB must not certify.
+    ///
+    /// Without this, `self.clipped == 0 && self.max_abs_error <= self.half_lsb() * (1.0 + tol)`
+    /// could be cut down to `self.clipped == 0` — the entire numeric bound deleted from the
+    /// module's flagship certification predicate — and all 38 tests stayed green. The mirror
+    /// mutation (deleting `clipped == 0`) was caught by the edge case in
+    /// `a_clipped_weight_breaks_the_half_lsb_bound_and_says_so`; this is the complement.
+    ///
+    /// The error is chosen at 0.7 of a step deliberately: past half an LSB, and still inside
+    /// **1.5** half-LSBs, so widening the bound by half does not rescue it either.
+    #[test]
+    fn an_unclipped_vector_past_the_bound_is_not_certified() {
+        let q = Quantiser::symmetric(4, 7.0).expect("step exactly 1.0");
+        assert_eq!(q.step, 1.0);
+        let w = vec![2.3f64; 64];
+        let st = q.quantise_stochastic(&w, &mut Rng::new(4)).expect("finite");
+
+        assert_eq!(st.clipped, 0, "2.3 is far inside -7..=7, so nothing clips");
+        assert!(st.codes.contains(&3), "at least one weight rounded up, which is the 0.7 error");
+        assert!((st.max_abs_error - 0.7).abs() < 1e-12, "{}", st.max_abs_error);
+        assert!(st.max_abs_error > st.half_lsb(), "the bound IS broken: 0.7 > 0.5");
+        assert!(
+            !st.within_half_lsb(1e-12),
+            "an unclipped vector whose error exceeds half an LSB must not certify the bound"
+        );
+        assert!(
+            st.max_abs_error < st.half_lsb() * 1.5,
+            "and it must not certify under a bound loosened by half, either: {} vs {}",
+            st.max_abs_error,
+            st.half_lsb() * 1.5
+        );
+        // The predicate is a conjunction, so the round-to-nearest vector it does certify has to be
+        // right here beside it — otherwise this test would pass against a method returning false.
+        let near = q.quantise_nearest(&w).expect("finite");
+        assert_eq!(near.clipped, 0);
+        assert!(near.max_abs_error <= near.half_lsb());
+        assert!(near.within_half_lsb(1e-12), "round-to-nearest respects it and must still certify");
+    }
+
     // ---------------------------------------------------------------------------------------
     // (b) Stochastic rounding is unbiased; round-to-nearest is not.
     // ---------------------------------------------------------------------------------------
@@ -2546,6 +2761,104 @@ mod tests {
         // And the max error can exceed half an LSB, which round-to-nearest's never does.
         assert!(near.within_half_lsb(1e-9));
         assert!(st.max_abs_error > q.half_lsb(), "{}", st.max_abs_error);
+        // Which means this vector must NOT certify the bound — nothing clipped, and the error is
+        // past it. `clipped == 0` alone would have said it did.
+        assert_eq!(st.clipped, 0, "scaling from the data does not clip");
+        assert!(!st.within_half_lsb(1e-12), "max error {} vs {}", st.max_abs_error, st.half_lsb());
+    }
+
+    /// ⛔ The RMS trade, against its **closed form** rather than one empirical seed pair.
+    ///
+    /// For a weight sitting a fraction `f` of a step above a level, the signed error of
+    /// round-to-nearest is the same every time, so its RMS error is exactly `step * min(f, 1-f)`.
+    /// Stochastic rounding takes `(1-f)` steps up with probability `f` and `f` steps down
+    /// otherwise, so `E[e^2] = f(1-f)^2 + (1-f)f^2 = f(1-f)` in units of `step^2` and its RMS
+    /// error is exactly `step * sqrt(f(1-f))`.
+    ///
+    /// `sqrt(f(1-f)) >= min(f, 1-f)` for every `f`, which is the whole of the claim that
+    /// stochastic rounding errs by more — **in expectation**. The module used to state that as a
+    /// property of the data and test it with a single pair of seeds.
+    #[test]
+    fn the_stochastic_rms_error_matches_its_closed_form() {
+        const N: usize = 40_000;
+        let q = Quantiser::symmetric(4, 7.0).expect("step exactly 1.0");
+        assert_eq!(q.step, 1.0);
+
+        for f in [0.3f64, 0.1, 0.25] {
+            let w = vec![2.0 + f; N];
+            let near = q.quantise_nearest(&w).expect("finite");
+            let want_near = f.min(1.0 - f);
+            assert!(
+                (near.rms_error - want_near).abs() < 1e-12,
+                "f={f}: nearest RMS {} is not the closed form {want_near}",
+                near.rms_error
+            );
+
+            // E[e^2] = f(1-f) exactly. Var[e^2] = f(1-f)^4 + (1-f)f^4 - (f(1-f))^2, so the mean of
+            // N of them has that standard error; six of those is the band.
+            let want_sq = f * (1.0 - f);
+            let var_sq =
+                f * (1.0 - f).powi(4) + (1.0 - f) * f.powi(4) - want_sq * want_sq;
+            let se = (var_sq / N as f64).sqrt();
+            for seed in 0..6u64 {
+                let st = q.quantise_stochastic(&w, &mut Rng::new(seed * 31 + 5)).expect("finite");
+                let got_sq = st.rms_error * st.rms_error;
+                assert!(
+                    (got_sq - want_sq).abs() < 6.0 * se,
+                    "f={f} seed {seed}: mean square error {got_sq} is not f(1-f)={want_sq} \
+                     within six standard errors {}",
+                    6.0 * se
+                );
+                assert!(
+                    st.rms_error > near.rms_error,
+                    "f={f} seed {seed}: sqrt(f(1-f))={} should exceed min(f,1-f)={want_near}",
+                    st.rms_error
+                );
+            }
+        }
+
+        // ⛔ The boundary of the claim, and the reason it is stated as an expectation. At f = 1/2
+        // the two closed forms COINCIDE — `sqrt(1/4) == min(1/2, 1/2)` — and stochastic rounding's
+        // error is +-step/2 on every draw, so its RMS error is EXACTLY round-to-nearest's, on
+        // every seed, with no sampling in it at all. "Larger" is false here and the doc says so.
+        let half = vec![2.5f64; 512];
+        let near_half = q.quantise_nearest(&half).expect("finite");
+        assert_eq!(near_half.rms_error, 0.5);
+        for seed in 0..8u64 {
+            let st = q.quantise_stochastic(&half, &mut Rng::new(seed)).expect("finite");
+            assert_eq!(st.rms_error, near_half.rms_error, "seed {seed}: f=1/2 is the equality case");
+            // The bias, which is what actually separates them here.
+            assert_eq!(near_half.mean_error, 0.5, "ties away from zero, every time");
+            assert!(st.mean_error.abs() < 0.1, "seed {seed}: {}", st.mean_error);
+        }
+    }
+
+    /// ⛔ And the inequality is about the **expectation**, not about any one vector: on short
+    /// vectors a lucky draw inverts it often. This sweep finds the inversions rather than avoiding
+    /// them, so the doc cannot go back to stating the ordering as a property of the data.
+    #[test]
+    fn on_short_vectors_the_rms_ordering_inverts_often_enough_to_measure() {
+        let mut inverted = 0usize;
+        let trials = 500;
+        for seed in 0..trials as u64 {
+            let mut rng = Rng::new(seed);
+            let w: Vec<f64> = (0..8).map(|_| rng.next_f64() * 2.0 - 1.0).collect();
+            let Ok(q) = Quantiser::from_weights(4, &w) else { continue };
+            let near = q.quantise_nearest(&w).expect("finite");
+            let st = q.quantise_stochastic(&w, &mut Rng::new(seed + 9_000)).expect("finite");
+            if st.rms_error <= near.rms_error {
+                inverted += 1;
+            }
+        }
+        assert!(
+            inverted > trials / 50,
+            "only {inverted} of {trials} short vectors inverted the RMS ordering; if that ever \
+             goes to zero, the 'in expectation' wording is the thing to re-examine, not this test"
+        );
+        assert!(
+            inverted < trials / 2,
+            "{inverted} of {trials} inverted: the expectation should still dominate"
+        );
     }
 
     #[test]
@@ -2663,13 +2976,19 @@ mod tests {
     // (c) A network exceeding a fan-in cap is refused with the offending neuron and the numbers.
     // ---------------------------------------------------------------------------------------
 
+    /// ⛔ The offender reported is the WORST one, not the first one seen, and this fixture is built
+    /// so the two differ. Neuron 7 has 100 inputs and neuron 9 has 300, so a scan that kept the
+    /// first neuron past the cap would answer 7 and a scan that keeps the highest in-degree
+    /// answers 9. The fixture used to be the other way round — 300 at index 7, 100 at index 9 —
+    /// under which "first" and "worst" are the same neuron, `worst.is_none_or(|(_, wd)| d > wd)`
+    /// could be cut down to `worst.is_none()`, and every test stayed green.
     #[test]
-    fn a_fan_in_cap_is_refused_with_the_offending_neuron_and_the_numbers() {
+    fn a_fan_in_cap_is_refused_with_the_worst_offending_neuron_and_the_numbers() {
         let mut b = NetBuilder::new(400);
-        for pre in 0..300u32 {
+        for pre in 0..100u32 {
             b.connect(pre, 7, 1e-3, 1).expect("in range");
         }
-        for pre in 0..100u32 {
+        for pre in 0..300u32 {
             b.connect(pre, 9, 1e-3, 1).expect("in range");
         }
         let net = b.build();
@@ -2678,22 +2997,45 @@ mod tests {
         assert_eq!(fit.verdict, Some(false));
         match fit.binding().expect("something binds") {
             Bind::FanIn { neuron, fan_in, cap, offenders } => {
-                assert_eq!(*neuron, 7);
+                assert_eq!(*neuron, 9, "the WORST offender, not the first one scanned");
                 assert_eq!(*fan_in, 300);
                 assert_eq!(*cap, 256);
-                assert_eq!(*offenders, 1, "only neuron 7 exceeds TrueNorth's 256");
+                assert_eq!(*offenders, 1, "only neuron 9 exceeds TrueNorth's 256");
             }
             other => panic!("expected a fan-in bind, got {other:?}"),
         }
         assert_eq!(fit.binding().expect("bind").overflow(), 44);
         assert!(!fit.scales_out(), "fan-in is not relieved by more chips");
-        assert!(fit.to_string().contains("neuron 7"), "{fit}");
+        assert!(fit.to_string().contains("neuron 9"), "{fit}");
 
-        // The same network against the tightest cap in the table: both neurons now offend.
+        // The same network against the tightest cap in the table: both neurons now offend, and the
+        // one reported is still the worse of the two and still not the first.
         let tight = fits(&net, &DYNAP_SE);
         match tight.binding().expect("binds") {
             Bind::FanIn { neuron, fan_in, cap, offenders } => {
-                assert_eq!((*neuron, *fan_in, *cap, *offenders), (7, 300, 64, 2));
+                assert_eq!((*neuron, *fan_in, *cap, *offenders), (9, 300, 64, 2));
+            }
+            other => panic!("expected a fan-in bind, got {other:?}"),
+        }
+    }
+
+    /// The other half of `Bind::FanIn::neuron`'s doc: "ties broken by lowest index". Two neurons
+    /// with the same in-degree over the cap, and the lower index is the one reported — which is
+    /// what makes the report deterministic rather than an artefact of the scan.
+    #[test]
+    fn equal_worst_fan_ins_are_reported_at_the_lowest_index() {
+        let mut b = NetBuilder::new(400);
+        for post in [11u32, 3, 300] {
+            for pre in 0..300u32 {
+                b.connect(pre, post, 1e-3, 1).expect("in range");
+            }
+        }
+        let net = b.build();
+        match fits(&net, &TRUENORTH).binding().expect("binds") {
+            Bind::FanIn { neuron, fan_in, offenders, .. } => {
+                assert_eq!(*neuron, 3, "three neurons tie at 300; the lowest index is reported");
+                assert_eq!(*fan_in, 300);
+                assert_eq!(*offenders, 3);
             }
             other => panic!("expected a fan-in bind, got {other:?}"),
         }
@@ -2724,9 +3066,16 @@ mod tests {
         assert!(fit.binds.is_empty());
         // Xylo states neurons, synapses and cores; it states no fan-in and no delay range.
         assert_eq!(fit.headroom.len(), 3, "{fit}");
-        assert_eq!(fit.unchecked.len(), 2, "{fit}");
+        // Three unchecked, not two: an unstated delay range leaves BOTH ends of it unknown, and
+        // each end is named with the string `Bind::constraint` uses for it.
+        assert_eq!(fit.unchecked.len(), 3, "{fit}");
         assert!(fit.unchecked.contains(&"maximum fan-in per neuron"));
-        assert!(fit.unchecked.contains(&"synaptic delay range"));
+        assert!(fit.unchecked.contains(&"shortest synaptic delay"));
+        assert!(fit.unchecked.contains(&"longest synaptic delay"));
+        assert!(
+            !fit.unchecked.contains(&"synaptic delay range"),
+            "a name no Bind::constraint() returns is uncorrelatable: {fit}"
+        );
         let neurons = fit
             .headroom
             .iter()
@@ -2785,24 +3134,35 @@ mod tests {
         assert_eq!(fit.verdict, None, "Innatera's record states nothing checkable");
         assert!(fit.binds.is_empty());
         assert!(fit.headroom.is_empty());
-        assert_eq!(fit.unchecked.len(), 5, "{fit}");
+        assert_eq!(fit.unchecked.len(), 6, "{fit}");
+        // All six constraint names, because Innatera states none of them.
+        for name in [
+            "maximum fan-in per neuron",
+            "shortest synaptic delay",
+            "longest synaptic delay",
+            "neurons per chip",
+            "synapses per chip",
+            "cores per chip",
+        ] {
+            assert!(fit.unchecked.contains(&name), "{name} missing from {fit}");
+        }
         assert!(fit.cores.is_none());
         assert!(fit.to_string().contains("NO VERDICT"), "{fit}");
     }
 
     /// ⛔ The weaker honesty case, and the reason [`Fit::unchecked`] has to be read first. Darwin3
     /// publishes ONE figure — a chip-level neuron total — so a 50-neuron network gets a
-    /// `Some(true)` verdict off a single satisfied constraint with four unchecked beside it. That
+    /// `Some(true)` verdict off a single satisfied constraint with five unchecked beside it. That
     /// verdict is true and nearly worthless, and the report says both things.
     #[test]
-    fn a_verdict_from_one_checkable_constraint_carries_its_four_unchecked_ones() {
+    fn a_verdict_from_one_checkable_constraint_carries_its_five_unchecked_ones() {
         let net = uniform_net(50, 3, 1);
         let fit = fits(&net, &DARWIN3);
         assert_eq!(fit.verdict, Some(true));
         assert_eq!(fit.headroom.len(), 1, "{fit}");
         assert_eq!(fit.headroom[0].constraint, "neurons per chip");
         assert_eq!(fit.headroom[0].cap, 2_350_000);
-        assert_eq!(fit.unchecked.len(), 4, "{fit}");
+        assert_eq!(fit.unchecked.len(), 5, "{fit}");
         assert!(fit.cores.is_none(), "no core count without neurons per core");
         assert!(fit.chips_lower_bound.is_none());
     }
@@ -2951,26 +3311,129 @@ mod tests {
         }
     }
 
-    /// A derivation has to say it is one. Otherwise this review's arithmetic reads as somebody's
-    /// published figure — which is the exact shape of the error `crate::ledger::LOIHI_2018`
-    /// records.
+    /// Every `(part, field)` graded [`Evidence::Derived`], as an exact list, plus the property the
+    /// grade means: **arithmetic, shown**.
+    ///
+    /// ⛔ The predecessor of this test looked for the substring `"derive"` in the provenance and
+    /// nothing else. That enforces a WORD, not a property: "Graded Derived for that reason."
+    /// satisfies it with no arithmetic anywhere, and nine specs passed it while containing an
+    /// inference, a software convention, an undated guess or a schema choice. The census below
+    /// cannot be satisfied by wording — re-grading a field either shows up as an unexpected entry
+    /// or as a missing one, and either way somebody has to come here and say which document moved.
     #[test]
-    fn every_derived_figure_says_it_was_derived() {
+    fn the_derived_grade_is_an_exact_census() {
+        // The complete list of this review's own arithmetic. Every entry's string shows the sum.
+        let expected: &[(&str, &str)] = &[
+            ("Loihi", "synapses_per_core"),
+            ("Loihi 2", "neurons_per_core"),
+            ("Loihi 2", "synapses_per_core"),
+            ("Loihi 2", "neurons_per_chip_stated"),
+            ("DYNAP-SE", "synapses_per_core"),
+            ("Darwin", "synapses_per_core"),
+            ("BrainScaleS-2", "max_fan_in"),
+        ];
+        let mut found: Vec<(&str, &str)> = Vec::new();
         for p in PARTS {
             for (field, _, source, evidence) in graded(&p) {
-                if evidence == Evidence::Derived {
-                    let lower = source.to_lowercase();
-                    assert!(
-                        lower.contains("derive"),
-                        "{}.{field} is graded Derived and its provenance does not say so: {source}",
-                        p.name
-                    );
+                if evidence != Evidence::Derived {
+                    continue;
                 }
+                found.push((p.name, field));
+                let lower = source.to_lowercase();
+                assert!(
+                    lower.contains("derive"),
+                    "{}.{field} is graded Derived and its provenance does not say so: {source}",
+                    p.name
+                );
+                // And the arithmetic is SHOWN: an operator and a digit on either side of it.
+                assert!(
+                    shows_arithmetic(source),
+                    "{}.{field} is graded Derived and shows no arithmetic. Derived means this \
+                     review COMPUTED the figure; an inference, a convention or a guess is \
+                     Projected. Provenance: {source}",
+                    p.name
+                );
             }
         }
+        found.sort_unstable();
+        let mut want = expected.to_vec();
+        want.sort_unstable();
+        assert_eq!(found, want, "the set of Derived figures changed");
     }
 
-    /// The arithmetic the provenance strings claim, actually done.
+    /// Whether a provenance string actually displays a calculation: some `digit operator digit`,
+    /// ignoring spaces and the thousands separators the strings use.
+    fn shows_arithmetic(source: &str) -> bool {
+        let b: Vec<char> = source.chars().filter(|c| !c.is_whitespace()).collect();
+        for (i, c) in b.iter().enumerate() {
+            if !matches!(c, 'x' | '*' | '/' | '^') {
+                continue;
+            }
+            let before = i > 0 && b[i - 1].is_ascii_digit();
+            let after = i + 1 < b.len() && b[i + 1].is_ascii_digit();
+            if before && after {
+                return true;
+            }
+        }
+        false
+    }
+
+    /// The mirror image: every `(part, field)` graded [`Evidence::Projected`], as an exact list.
+    ///
+    /// This grade is where an **inference** belongs — an analogy from a sibling part, a year read
+    /// off undated material, a vendor capacity claim, a schema choice this review made. It matters
+    /// which side of the line these sit on, because [`Evidence`] sorts `Projected < Derived`: a
+    /// guess graded `Derived` sorts as stronger evidence than a maker's own roadmap figure, and
+    /// [`Part::weakest_evidence`] inherits the inversion. Five of these were graded `Derived`
+    /// through v0.4.0.
+    #[test]
+    fn the_projected_grade_is_an_exact_census_of_this_reviews_inferences() {
+        let expected: &[(&str, &str)] = &[
+            ("Akida AKD1000", "neurons_per_chip_stated"),
+            ("Akida AKD1500", "weight_bits"),
+            ("SpiNNaker2", "on_chip_learning"),
+            ("Xylo Audio 2", "year"),
+            ("Speck", "year"),
+            ("BrainScaleS-2", "cores_per_chip"),
+        ];
+        let mut found: Vec<(&str, &str)> = Vec::new();
+        for p in PARTS {
+            for (field, _, source, evidence) in graded(&p) {
+                if evidence != Evidence::Projected {
+                    continue;
+                }
+                found.push((p.name, field));
+                let lower = source.to_lowercase();
+                assert!(
+                    lower.contains("inferred")
+                        || lower.contains("schema choice")
+                        || lower.contains("capacity claim"),
+                    "{}.{field} is graded Projected and its provenance does not say what kind of \
+                     unlocated figure it is: {source}",
+                    p.name
+                );
+            }
+        }
+        found.sort_unstable();
+        let mut want = expected.to_vec();
+        want.sort_unstable();
+        assert_eq!(found, want, "the set of Projected figures changed");
+        // And the ordering fact the census exists to protect.
+        assert!(
+            Evidence::Projected < Evidence::Derived,
+            "if this ever stops holding, the argument for splitting these two grades changes"
+        );
+    }
+
+    /// The arithmetic the provenance strings claim, actually done — **reading the record's own
+    /// fields**, never a literal retyped from the string.
+    ///
+    /// ⛔ Three of these checks used to compare against `Some(256 * 64)`, `Some(1000 * 1000)` and
+    /// `Some(2048 * 2048)`: literals typed into the test, which is exactly the drift the check
+    /// exists to catch. Under those, `DARWIN.neurons_per_core` could be changed from 2,048 to
+    /// 1,024 and the whole suite stayed green, leaving a record whose synapse count is documented
+    /// as "2,048 squared" beside a neuron count of 1,024. Every multiplicand below now comes out of
+    /// the `Part` itself.
     #[test]
     fn the_derived_figures_reproduce_the_arithmetic_their_provenance_claims() {
         // Loihi: 1,048,576 one-bit synapses per core x 128 cores should land within a few percent
@@ -2984,12 +3447,17 @@ mod tests {
         assert_eq!(LOIHI_2.synapses_per_chip(), Some(120_000_000));
         assert_eq!(LOIHI_2.neurons_per_core.value.map(u64::from), Some(1_048_576 / 128));
 
-        // DYNAP-SE: 256 neurons x 64 CAM entries.
-        assert_eq!(DYNAP_SE.synapses_per_core.value, Some(256 * 64));
-        // SpiNNaker: 1,000 neurons x 1,000 inputs.
-        assert_eq!(SPINNAKER.synapses_per_core.value, Some(1000 * 1000));
-        // Darwin: 2,048 squared.
-        assert_eq!(DARWIN.synapses_per_core.value, Some(2048 * 2048));
+        // DYNAP-SE: neurons per core x CAM entries per neuron, both read off the record.
+        let dyn_n = u64::from(DYNAP_SE.neurons_per_core.value.expect("stated"));
+        let dyn_f = u64::from(DYNAP_SE.max_fan_in.value.expect("stated"));
+        assert_eq!(DYNAP_SE.synapses_per_core.value, Some(dyn_n * dyn_f));
+        // Darwin: its own neuron count squared, read off the record.
+        let dar_n = u64::from(DARWIN.neurons_per_core.value.expect("stated"));
+        assert_eq!(DARWIN.synapses_per_core.value, Some(dar_n * dar_n));
+        // SpiNNaker states NEITHER: both fields held a 1 ms throughput budget and are now empty,
+        // so there is no arithmetic left to reproduce and nothing for fits() to cap against.
+        assert!(SPINNAKER.neurons_per_core.value.is_none());
+        assert!(SPINNAKER.synapses_per_core.value.is_none());
         // BrainScaleS-2: a 512 x 256 array.
         assert_eq!(
             BRAINSCALES_2.synapses_per_core.value,
@@ -3000,24 +3468,57 @@ mod tests {
 
     /// Where a maker publishes a chip total AND per-core figures, the two must agree. A
     /// transcription error in either one shows up here.
+    ///
+    /// ⛔ **Two of the four triples cannot fail, and the count says so.** `Loihi 2`'s
+    /// `neurons_per_core` was *defined* as 1,048,576 / 128, so `1,048,576 == 8,192 * 128` is an
+    /// identity; `BrainScaleS-2`'s `cores_per_chip = 1` is this review's own schema mapping, so
+    /// `512 == 512 * 1` is an identity too. The predecessor of this test asserted `checked >= 4`
+    /// as though all four were independent evidence. The product is still asserted for all four —
+    /// a transcription error in any of them is worth catching — but the number that counts is the
+    /// **independent** one, and a triple is independent only when none of its three figures was
+    /// computed or inferred from the others. `Evidence::Measured` on all three is that test.
     #[test]
     fn a_published_chip_total_agrees_with_the_product_of_the_per_core_figures() {
-        let mut checked = 0;
+        let mut checked: Vec<&str> = Vec::new();
+        let mut independent: Vec<&str> = Vec::new();
         for p in PARTS {
             let (Some(total), Some(per_core), Some(cores)) =
                 (p.neurons_per_chip_stated.value, p.neurons_per_core.value, p.cores_per_chip.value)
             else {
                 continue;
             };
-            checked += 1;
+            checked.push(p.name);
             assert_eq!(
                 total,
                 u64::from(per_core) * u64::from(cores),
                 "{}: published total {total} disagrees with {per_core} x {cores}",
                 p.name
             );
+            let sourced = [
+                p.neurons_per_chip_stated.evidence,
+                p.neurons_per_core.evidence,
+                p.cores_per_chip.evidence,
+            ]
+            .iter()
+            .all(|e| *e == Evidence::Measured);
+            if sourced {
+                independent.push(p.name);
+            }
         }
-        assert!(checked >= 4, "only {checked} records could be cross-checked");
+        checked.sort_unstable();
+        independent.sort_unstable();
+        assert_eq!(checked, ["BrainScaleS-2", "DYNAP-SE", "Loihi 2", "TrueNorth"]);
+        assert_eq!(
+            independent,
+            ["DYNAP-SE", "TrueNorth"],
+            "an independent cross-check needs three separately sourced figures; a record whose \
+             per-core figure was divided out of its chip total is checking itself"
+        );
+        // And the identities really are identities — stated here so nobody re-counts them as
+        // evidence. Each of these is the record's own arithmetic played back.
+        assert_eq!(LOIHI_2.neurons_per_core.evidence, Evidence::Derived);
+        assert_eq!(BRAINSCALES_2.cores_per_chip.value, Some(1));
+        assert_ne!(BRAINSCALES_2.cores_per_chip.evidence, Evidence::Measured);
     }
 
     /// The crossbar parts: synapses per core is neurons per core times the fan-in cap, because the
@@ -3039,22 +3540,109 @@ mod tests {
         }
     }
 
-    /// Not one part in the open literature is fully documented, and the table says so rather than
-    /// implying completeness by filling the gaps.
+    /// ⛔ What Merolla et al. 2014 actually prints, against what this record used to claim it
+    /// printed.
+    ///
+    /// The provenance string for `TRUENORTH.synapses_per_core` said 4,096 cores "gives 268 M
+    /// synapses per chip, which is the figure the paper reports". The paper's abstract reports
+    /// **256 million** configurable synapses. The arithmetic was right and the attribution was
+    /// wrong: 268,435,456 is the decimal rendering of the paper's binary 256 million,
+    /// `256 * 2^20`, and it is this review's rendering rather than a number the paper prints. That
+    /// is the same failure the module doc records for `crate::ledger::LOIHI_2018` — a statement
+    /// about a piece of paper that the paper does not support — so it gets the same treatment: the
+    /// identity is asserted here and the string now names the paper's own words.
     #[test]
-    fn no_part_in_this_table_is_completely_documented() {
+    fn truenorths_chip_synapse_count_is_the_papers_256_million_in_binary() {
+        let chip = TRUENORTH.synapses_per_chip().expect("both stated");
+        assert_eq!(chip, 268_435_456);
+        // The paper's own quantity: 256 million, where a million is 2^20.
+        assert_eq!(chip, 256 * 1024 * 1024);
+        // ...which is also the crossbar read off the die: 4,096 cores of a 256 x 256 array.
+        assert_eq!(chip, 4096 * 256 * 256);
+        // And the record says which of those the paper prints, and which is this review's.
+        let src = TRUENORTH.synapses_per_core.source;
+        assert!(src.contains("256 MILLION"), "{src}");
+        assert!(
+            src.contains("NOT a figure the paper prints"),
+            "the record must not attribute this review's decimal rendering to the paper: {src}"
+        );
+    }
+
+    /// The invariant that ties [`Part::weakest_evidence`] to [`Part::stated_fields`]: a record
+    /// grades `Unstated` **exactly when** it has an empty field.
+    ///
+    /// ⛔ This replaces a gate that asserted `stated_fields() < 10` for every part — which
+    /// required the table to stay incomplete forever and would have failed the day somebody
+    /// sourced a missing figure. That is the wrong direction for a gate: it punishes the work it
+    /// should reward. What is actually worth protecting is that the two summaries cannot
+    /// contradict each other, which holds at ten stated fields as well as at one.
+    #[test]
+    fn a_records_weakest_grade_is_unstated_exactly_when_a_field_is_empty() {
         for p in PARTS {
             assert_eq!(
+                p.weakest_evidence() == Evidence::Unstated,
+                p.stated_fields() < 10,
+                "{}: weakest_evidence() is {:?} beside {} of 10 stated fields",
+                p.name,
                 p.weakest_evidence(),
-                Evidence::Unstated,
-                "{} claims a complete record; check whether a field was guessed",
-                p.name
+                p.stated_fields()
             );
-            assert!(p.stated_fields() < 10, "{} states all ten fields", p.name);
         }
+    }
+
+    /// The completeness census: how much is actually known about each part, as a number, per part.
+    ///
+    /// This is also where the [`PARTS`] doc's ranking claim gets checked. That doc named "`ODIN`
+    /// and `TrueNorth` at the top", which was wrong in both directions — `ODIN` has eight of ten
+    /// and is not in the leading group, and `DYNAP-SE` and `BrainScaleS-2` tie `TrueNorth` at
+    /// nine. The old guard asserted only `TRUENORTH >= 9` and `ODIN >= 8`, which passes no matter
+    /// what sits above them.
+    ///
+    /// When a figure is genuinely sourced and a count here goes up, this table is the place to
+    /// record it, beside the document it came from. That is a legitimate change and the test says
+    /// so; what it refuses is a count moving without anyone noticing.
+    #[test]
+    fn the_completeness_ranking_is_the_one_the_table_doc_claims() {
+        let expected: &[(&str, usize)] = &[
+            ("TrueNorth", 9),
+            ("DYNAP-SE", 9),
+            ("BrainScaleS-2", 9),
+            ("ODIN", 8),
+            ("Loihi", 7),
+            ("Loihi 2", 7),
+            ("Akida AKD1000", 6),
+            ("Xylo Audio 2", 6),
+            ("SpiNNaker", 6),
+            ("Darwin", 5),
+            ("NorthPole", 5),
+            ("SpiNNaker2", 4),
+            ("Speck", 3),
+            ("Akida AKD1500", 3),
+            ("Darwin3", 3),
+            ("Spiking Neural Processor T1", 1),
+        ];
+        for (name, want) in expected {
+            let p = part_named(name).expect("named in the census");
+            assert_eq!(p.stated_fields(), *want, "{name}'s completeness moved");
+        }
+        assert_eq!(expected.len(), PARTS.len(), "a part is missing from the census");
+
+        // The ranking claim in the PARTS doc, computed rather than asserted part by part.
+        let best = PARTS.iter().map(Part::stated_fields).max().expect("non-empty");
+        let mut top: Vec<&str> =
+            PARTS.iter().filter(|p| p.stated_fields() == best).map(|p| p.name).collect();
+        top.sort_unstable();
+        assert_eq!(best, 9);
+        assert_eq!(
+            top,
+            ["BrainScaleS-2", "DYNAP-SE", "TrueNorth"],
+            "the PARTS doc names the best-documented records; keep the two in step"
+        );
+        assert!(!top.contains(&"ODIN"), "ODIN is not in the leading group and the doc said it was");
         assert_eq!(INNATERA_T1.stated_fields(), 1, "Innatera's record is a year and nothing else");
-        assert!(TRUENORTH.stated_fields() >= 9);
-        assert!(ODIN.stated_fields() >= 8);
+        // Not one part in the open literature is fully documented today. Stated as an observation
+        // about the table as it stands, not as a rule the table must keep obeying.
+        assert!(best < 10, "a record reached ten stated fields: update this census and the doc");
     }
 
     /// A record resting on vendor material says so in capitals, where a reader quoting a figure
@@ -3069,15 +3657,63 @@ mod tests {
                 p.citation
             );
         }
-        // And the peer-reviewed ones cite a venue with a volume and a year.
+        // And the peer-reviewed ones cite a venue with a volume locator and a four-digit year, and
+        // do NOT carry a vendor flag.
+        //
+        // ⛔ This used to be `citation.contains("20") && citation.contains(':')`, which "Vendor
+        // blurb 2020: hi" satisfies. A locator here is a digit-colon-digit — `38(1):82-99`,
+        // `16:795876` — which prose with a colon after it does not produce.
         for p in [&LOIHI, &TRUENORTH, &ODIN, &DYNAP_SE, &BRAINSCALES_2, &NORTHPOLE] {
             assert!(
-                p.citation.contains("20") && p.citation.contains(':'),
-                "{} does not cite a volume and year: {}",
+                has_volume_locator(p.citation),
+                "{} cites no volume locator (digits, colon, digits): {}",
+                p.name,
+                p.citation
+            );
+            assert!(
+                four_digit_year(p.citation).is_some_and(|y| (1990..=2030).contains(&y)),
+                "{} cites no plausible year: {}",
+                p.name,
+                p.citation
+            );
+            assert!(
+                !p.citation.contains("VENDOR") && !p.citation.contains("ANNOUNCEMENT"),
+                "{} is in the peer-reviewed list and flags itself as vendor material: {}",
                 p.name,
                 p.citation
             );
         }
+        // The check has teeth: the string the predecessor accepted is rejected.
+        assert!(!has_volume_locator("Vendor blurb 2020: hi"));
+        assert!(has_volume_locator("IEEE Micro 38(1):82-99, 2018."));
+        assert!(has_volume_locator("Frontiers in Neuroscience 16:795876, 2022."));
+    }
+
+    /// A volume locator: a colon with a digit immediately after it and either a digit or a closing
+    /// parenthesis immediately before — `38(1):82-99`, `16:795876`, `345(6197):668-673`. Journal
+    /// citations carry one; prose with a colon in it does not.
+    fn has_volume_locator(s: &str) -> bool {
+        let b = s.as_bytes();
+        (1..b.len().saturating_sub(1)).any(|i| {
+            b[i] == b':'
+                && b[i + 1].is_ascii_digit()
+                && (b[i - 1].is_ascii_digit() || b[i - 1] == b')')
+        })
+    }
+
+    /// The last four-digit run in a citation, which is where the year sits in all of them.
+    fn four_digit_year(s: &str) -> Option<u32> {
+        let b = s.as_bytes();
+        let mut found = None;
+        for i in 0..b.len().saturating_sub(3) {
+            if b[i..i + 4].iter().all(u8::is_ascii_digit)
+                && (i == 0 || !b[i - 1].is_ascii_digit())
+                && (i + 4 == b.len() || !b[i + 4].is_ascii_digit())
+            {
+                found = s[i..i + 4].parse().ok();
+            }
+        }
+        found
     }
 
     #[test]
@@ -3121,6 +3757,428 @@ mod tests {
         let c = core_count(&net, &TRUENORTH).expect("stated");
         assert_eq!(c.lower_bound, 0);
         assert_eq!(c.greedy, Some(0));
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // (f) The wall-versus-budget machinery, pinned variant by variant.
+    //
+    // ⛔ Everything in this block was unasserted. `Bind::overflow` was checked for `FanIn` and
+    // nothing else, so returning 0 for the other five variants was green; `relieved_by_more_chips`
+    // was pinned for `FanIn` and `DelayTooShort` only, so moving `DelayTooLong` to "buy more
+    // chips" was green; and `Fit::scales_out`'s `.all` could be `.any` because no test ever built
+    // a network that violates a wall AND a capacity at once. That distinction is the thing the
+    // module doc says it is written around.
+    // ---------------------------------------------------------------------------------------
+
+    /// A part with every field empty, for tests that need a shape [`PARTS`] does not contain.
+    /// `Part` is `pub` with `pub` fields, so this is a thing a caller can build too.
+    fn bare_part(name: &'static str) -> Part {
+        const WHY: &str = "A fixture for this module's tests; this review did not locate anything, \
+                           because there is nothing to locate.";
+        Part {
+            name,
+            vendor: "test fixture",
+            citation: "A fixture, not a part. Not in PARTS and not a claim about any silicon.",
+            year: Spec::unlocated(WHY),
+            neurons_per_core: Spec::unlocated(WHY),
+            cores_per_chip: Spec::unlocated(WHY),
+            synapses_per_core: Spec::unlocated(WHY),
+            max_fan_in: Spec::unlocated(WHY),
+            weight_bits: Spec::unlocated(WHY),
+            delay_ticks: Spec::unlocated(WHY),
+            on_chip_learning: Spec::unlocated(WHY),
+            process: Spec::unlocated(WHY),
+            neurons_per_chip_stated: Spec::unlocated(WHY),
+            note: WHY,
+        }
+    }
+
+    /// A fixture part that states **every** limit, so one network can violate all six at once.
+    fn tiny_part_stating_everything() -> Part {
+        const WHY: &str = "A fixture figure, chosen small so a small network violates it.";
+        let mut p = bare_part("Tiny");
+        p.neurons_per_core = Spec::known(4, WHY, Evidence::Measured);
+        p.cores_per_chip = Spec::known(2, WHY, Evidence::Measured);
+        p.synapses_per_core = Spec::known(8, WHY, Evidence::Measured);
+        p.max_fan_in = Spec::known(3, WHY, Evidence::Measured);
+        p.delay_ticks =
+            Spec::known(DelayRange { min_ticks: 2, max_ticks: 5 }, WHY, Evidence::Measured);
+        p
+    }
+
+    /// Each variant's `overflow`, `relieved_by_more_chips`, `precedence` and `constraint`, with
+    /// six different numbers so that a version answering 0 — or answering the other subtraction —
+    /// cannot pass.
+    #[test]
+    fn every_bind_variant_reports_its_own_overflow_reach_and_precedence() {
+        let all = [
+            Bind::FanIn { neuron: 3, fan_in: 300, cap: 256, offenders: 2 },
+            Bind::DelayTooShort { synapse: 6, pre: 1, post: 2, delay: 0, floor: 3, offenders: 20 },
+            Bind::DelayTooLong { synapse: 5, pre: 1, post: 2, delay: 40, cap: 16, offenders: 3 },
+            Bind::Neurons { needed: 2000, cap: 1000 },
+            Bind::Synapses { needed: 70_000, cap: 65_536 },
+            Bind::Cores { needed: 12, cap: 4 },
+        ];
+        // (overflow, relieved by more chips, precedence, constraint name, a phrase the Display
+        // must carry so that the numbers reach a reader and not only a matcher)
+        let want = [
+            (44u64, false, 0u8, "maximum fan-in per neuron", "neuron 3 has 300"),
+            (3, false, 1, "shortest synaptic delay", "shortest deliverable is 3"),
+            (24, false, 2, "longest synaptic delay", "longest deliverable is 16"),
+            (1000, true, 3, "neurons per chip", "2000 needed, 1000 per chip"),
+            (4464, true, 4, "synapses per chip", "70000 needed, 65536 per chip"),
+            (8, true, 5, "cores per chip", "at least 12 needed, 4 per chip"),
+        ];
+        for (b, (over, relieved, prec, name, shown)) in all.iter().zip(want) {
+            assert_eq!(b.overflow(), over, "{b:?} overflow");
+            assert_eq!(b.relieved_by_more_chips(), relieved, "{b:?} relieved_by_more_chips");
+            assert_eq!(b.precedence(), prec, "{b:?} precedence");
+            assert_eq!(b.constraint(), name, "{b:?} constraint");
+            assert!(b.to_string().contains(shown), "{b}");
+        }
+        // The two facts the doc says are the same fact: a wall is exactly a constraint more
+        // silicon cannot relieve, and it sorts above every capacity.
+        for b in &all {
+            assert_eq!(
+                b.relieved_by_more_chips(),
+                b.precedence() >= 3,
+                "{b:?}: precedence and relieved_by_more_chips disagree about wall versus budget"
+            );
+        }
+        // Distinct precedences, so "most severe first" is a total order and not a tie.
+        let mut p: Vec<u8> = all.iter().map(Bind::precedence).collect();
+        p.sort_unstable();
+        p.dedup();
+        assert_eq!(p.len(), all.len());
+    }
+
+    /// `Bind`'s fields are `pub`, so `fan_in < cap` is constructible — and the formatter used raw
+    /// subtraction on it while [`Bind::overflow`] saturated. In debug that panicked; in release it
+    /// printed 18446744073709551612. Both are crashes in a published crate, one of them silent.
+    #[test]
+    fn a_bind_displays_a_saturating_overflow_rather_than_panicking() {
+        let cases = [
+            Bind::FanIn { neuron: 0, fan_in: 1, cap: 5, offenders: 1 },
+            Bind::Neurons { needed: 1, cap: 5 },
+            Bind::Synapses { needed: 1, cap: 5 },
+            Bind::Cores { needed: 1, cap: 5 },
+        ];
+        for b in cases {
+            let s = b.to_string();
+            assert_eq!(b.overflow(), 0, "{b:?}");
+            assert!(s.contains("over by 0"), "{s}");
+            assert!(!s.contains("18446744073709551612"), "{s}");
+        }
+        // And on a real violation the formatter and the method still agree.
+        let real = Bind::Cores { needed: 12, cap: 4 };
+        assert!(real.to_string().contains("over by 8"), "{real}");
+    }
+
+    /// ⛔ A network that violates a **wall** and a **capacity** at once must not report "buy more
+    /// chips". No test built one, so `Fit::scales_out`'s `.all` could be `.any` — which is exactly
+    /// backwards, and the backwards answer is the expensive one to act on.
+    #[test]
+    fn a_mixed_bind_network_does_not_report_buy_more_chips() {
+        // 2,000 neurons at 100 inputs each, against DYNAP-SE: 64 inputs (a wall), 1,024 neurons,
+        // 65,536 synapses and 4 cores per chip (three capacities).
+        let net = uniform_net(2000, 100, 1);
+        let fit = fits(&net, &DYNAP_SE);
+        assert_eq!(fit.verdict, Some(false));
+        let kinds: Vec<u8> = fit.binds.iter().map(Bind::precedence).collect();
+        assert_eq!(kinds, vec![0, 3, 4, 5], "a wall and all three capacities should bind: {fit}");
+        assert!(
+            fit.binds.iter().any(|b| !b.relieved_by_more_chips()),
+            "the fan-in wall is in there"
+        );
+        assert!(
+            fit.binds.iter().any(Bind::relieved_by_more_chips),
+            "and so are the capacities, which is what makes this the discriminating case"
+        );
+        assert!(
+            !fit.scales_out(),
+            "a network with a fan-in wall does not become mappable on a bigger machine: {fit}"
+        );
+        // Drop the fan-in below the wall and the very same overflows DO scale out.
+        let ok = uniform_net(2000, 60, 1);
+        let scaled = fits(&ok, &DYNAP_SE);
+        assert_eq!(scaled.verdict, Some(false));
+        assert!(scaled.binds.iter().all(Bind::relieved_by_more_chips));
+        assert!(scaled.scales_out(), "{scaled}");
+    }
+
+    /// "Most severe first" is load-bearing: [`Fit::binding`] returns `binds.first()`. Every test
+    /// that called `binding()` had exactly one bind, so the order was asserted by nothing. This
+    /// builds a network that violates **all six** constraints of one part at once.
+    #[test]
+    fn the_binds_are_reported_most_severe_first() {
+        let part = tiny_part_stating_everything();
+        let mut b = NetBuilder::new(20);
+        // Neuron 5 takes six inputs against a cap of 3, one of them same-tick and one far too
+        // long, so fan-in and both delay ends bind together.
+        for pre in 0..6u32 {
+            let delay = match pre {
+                0 => 0,  // below the floor of 2
+                1 => 9,  // past the ceiling of 5
+                _ => 3,  // inside the range
+            };
+            b.connect(pre, 5, 1e-3, delay).expect("in range");
+        }
+        for pre in 6..30u32 {
+            b.connect(pre % 20, (pre % 19) + 1, 1e-3, 3).expect("in range");
+        }
+        let net = b.build();
+        let fit = fits(&net, &part);
+
+        assert_eq!(fit.verdict, Some(false));
+        let order: Vec<u8> = fit.binds.iter().map(Bind::precedence).collect();
+        assert_eq!(order, vec![0, 1, 2, 3, 4, 5], "all six bind, in precedence order: {fit}");
+        assert!(
+            order.windows(2).all(|w| w[0] <= w[1]),
+            "Fit::binds must be sorted by precedence, because binding() takes the first"
+        );
+        assert!(matches!(fit.binding(), Some(Bind::FanIn { .. })), "{fit}");
+        assert_eq!(
+            fit.binding().map(Bind::precedence),
+            fit.binds.iter().map(Bind::precedence).min(),
+            "binding() must be the most severe bind, not merely the first one found"
+        );
+        assert!(fit.headroom.is_empty(), "{fit}");
+        assert!(fit.unchecked.is_empty(), "this fixture states every limit: {fit}");
+        assert!(!fit.scales_out());
+    }
+
+    /// Every string in [`Fit::unchecked`] is one [`Bind::constraint`] returns, over the whole
+    /// table. Through v0.4.0 an unstated delay range pushed `"synaptic delay range"`, which is not
+    /// one of the six, so a caller correlating the two lists by name dropped it silently.
+    #[test]
+    fn every_unchecked_name_is_a_bind_constraint_name() {
+        let names = [
+            "maximum fan-in per neuron",
+            "shortest synaptic delay",
+            "longest synaptic delay",
+            "neurons per chip",
+            "synapses per chip",
+            "cores per chip",
+        ];
+        let net = uniform_net(40, 3, 1);
+        let mut seen = std::collections::BTreeSet::new();
+        for p in PARTS {
+            let fit = fits(&net, &p);
+            for u in &fit.unchecked {
+                assert!(names.contains(u), "{}: unchecked name {u} is not a Bind::constraint", p.name);
+                seen.insert(*u);
+            }
+            for h in &fit.headroom {
+                assert!(
+                    names.contains(&h.constraint),
+                    "{}: headroom name {} is not a Bind::constraint",
+                    p.name,
+                    h.constraint
+                );
+            }
+            // A constraint is checked or unchecked, never both and never neither.
+            for n in names {
+                let checked = fit.headroom.iter().any(|h| h.constraint == n)
+                    || fit.binds.iter().any(|b| b.constraint() == n);
+                let unchecked = fit.unchecked.contains(&n);
+                // "shortest synaptic delay" gets no Headroom entry of its own — a floor is not a
+                // utilisation — so it is the one name that can be neither, and only when the part
+                // states a range.
+                if n == "shortest synaptic delay" && p.delay_ticks.is_known() {
+                    continue;
+                }
+                assert!(checked != unchecked, "{}: {n} is {checked}/{unchecked}", p.name);
+            }
+        }
+        // Every one of the six really does turn up somewhere in this table.
+        assert_eq!(seen.len(), names.len(), "unchecked names seen: {seen:?}");
+    }
+
+    /// ⛔ The regression this record was corrected for. `SpiNNaker`'s per-core neuron and synapse
+    /// figures were throughput budgets, and [`fits`] multiplied them into capacities: a
+    /// 17,500-neuron network came back `FITS ... neurons per chip: 17500 of 18000 (97.2%)`, a
+    /// deadline reported as a wall with headroom, on a network past the ~16,000 the record's own
+    /// provenance says is deployable. Both fields are empty now, so every capacity is reported as
+    /// unchecked and the one genuine structure — the delay range — is the only thing graded.
+    #[test]
+    fn spinnaker_reports_no_capacity_because_its_capacities_were_deadlines() {
+        let mut b = NetBuilder::new(17_500);
+        for i in 0..17_500u32 {
+            b.connect(i, i, 1e-3, 1).expect("in range");
+        }
+        let net = b.build();
+        let fit = fits(&net, &SPINNAKER);
+
+        for n in ["neurons per chip", "synapses per chip", "cores per chip"] {
+            assert!(fit.unchecked.contains(&n), "{n} must be unchecked for SpiNNaker: {fit}");
+            assert!(
+                !fit.headroom.iter().any(|h| h.constraint == n),
+                "{n} must not be reported with headroom: {fit}"
+            );
+        }
+        assert!(fit.cores.is_none(), "no core count off a throughput budget: {fit}");
+        assert!(fit.chips_lower_bound.is_none(), "{fit}");
+        assert!(SPINNAKER.neurons_per_chip().is_none(), "a budget must not become a chip capacity");
+        assert!(SPINNAKER.synapses_per_chip().is_none());
+        assert!(core_count(&net, &SPINNAKER).is_none());
+        assert!(!fit.to_string().contains("of 18000"), "{fit}");
+
+        // What IS still checked: the delay range, which is a real structure — and it still
+        // refuses a same-tick network.
+        assert_eq!(fit.headroom.len(), 1, "{fit}");
+        assert_eq!(fit.headroom[0].constraint, "longest synaptic delay");
+        assert_eq!(fit.verdict, Some(true), "the delay range is satisfied, and that is all it says");
+        assert_eq!(fit.unchecked.len(), 4, "{fit}");
+    }
+
+    // ---------------------------------------------------------------------------------------
+    // (g) Refusals rather than substituted values.
+    // ---------------------------------------------------------------------------------------
+
+    /// ⛔ A positive full scale does not make a positive step. `symmetric(31, 1e-320)` divides a
+    /// subnormal by 1,073,741,823 and the quotient underflows to exactly zero — the state
+    /// [`HardwareError::NoScale`]'s doc says is impossible.
+    ///
+    /// What the old code did with it, measured: `quantise_nearest(&[0.0, 1e-320, -1e-320])`
+    /// returned codes `[0, 1073741823, -1073741823]` and `values()` of `[0.0, 0.0, -0.0]` — every
+    /// weight destroyed — while reporting `max_abs_error = 1e-320` and `mean_error = 0`, which
+    /// reads as a near-perfect round trip. It is also the module's only NaN path: `0.0 / 0.0`.
+    #[test]
+    fn a_step_that_underflows_to_zero_is_refused_rather_than_destroying_every_weight() {
+        assert_eq!(Quantiser::symmetric(31, 1e-320), Err(HardwareError::NoScale));
+        assert_eq!(Quantiser::from_weights(31, &[0.0, 1e-320, -1e-320]), Err(HardwareError::NoScale));
+
+        // The boundary is real and is where the arithmetic puts it, not where a magic number puts
+        // it: for each width, the smallest scale that still yields a non-zero step is accepted and
+        // anything below it is refused.
+        for bits in 2..=31u32 {
+            let max_code = f64::from((1i32 << (bits - 1)) - 1);
+            // Smallest positive f64 is 5e-324; a scale of max_code times it still divides cleanly.
+            let just_enough = 5e-324 * max_code;
+            let q = Quantiser::symmetric(bits, just_enough)
+                .unwrap_or_else(|e| panic!("{bits} bits, scale {just_enough:e}: {e}"));
+            assert!(q.step > 0.0, "{bits} bits: step {:e}", q.step);
+            assert!(q.half_lsb() >= 0.0);
+            // And every accepted quantiser round-trips its own full scale to a finite number.
+            let out = q.quantise_nearest(&[just_enough]).expect("finite");
+            assert!(out.values()[0].is_finite());
+            assert_eq!(out.clipped, 0, "{bits} bits");
+        }
+        // One rung below the boundary at the widest width, the quotient is zero and is refused.
+        assert_eq!(Quantiser::symmetric(31, 5e-324), Err(HardwareError::NoScale));
+
+        // No path out of this constructor yields a step that is not a usable positive number.
+        for bits in [2u32, 8, 16, 31] {
+            for scale in [1e-300, 1e-200, 1e-8, 1.0, 1e8, 1e300] {
+                let q = Quantiser::symmetric(bits, scale).expect("a usable scale");
+                assert!(q.step > 0.0 && q.step.is_finite(), "{bits} bits at {scale:e}");
+            }
+        }
+    }
+
+    /// A stated capacity of **zero** is refused, not substituted. `synapses_per_core = Some(0)`
+    /// used to make `by_synapses` — and therefore `lower_bound`, and therefore
+    /// [`CoreCount::chips`] — `usize::MAX`, silently. No part in [`PARTS`] states one; `Part` is
+    /// `pub` with `pub` fields, so a caller can.
+    #[test]
+    fn a_zero_capacity_is_refused_rather_than_answered_with_usize_max() {
+        const WHY: &str = "A fixture figure: a core that holds nothing.";
+        let net = uniform_net(50, 3, 1);
+
+        let mut zero_syn = bare_part("Zero synapses");
+        zero_syn.neurons_per_core = Spec::known(16, WHY, Evidence::Measured);
+        zero_syn.cores_per_chip = Spec::known(4, WHY, Evidence::Measured);
+        zero_syn.synapses_per_core = Spec::known(0, WHY, Evidence::Measured);
+        assert_eq!(core_count(&net, &zero_syn), None, "a zero capacity admits no bound");
+        let fit = fits(&net, &zero_syn);
+        assert!(fit.cores.is_none(), "{fit}");
+        assert!(fit.chips_lower_bound.is_none(), "{fit}");
+        assert!(fit.unchecked.contains(&"cores per chip"), "{fit}");
+
+        let mut zero_neu = bare_part("Zero neurons");
+        zero_neu.neurons_per_core = Spec::known(0, WHY, Evidence::Measured);
+        zero_neu.cores_per_chip = Spec::known(4, WHY, Evidence::Measured);
+        assert_eq!(core_count(&net, &zero_neu), None);
+
+        // And the same part with a real capacity does produce a bound, so the refusal above is the
+        // zero and not the fixture.
+        zero_syn.synapses_per_core = Spec::known(64, WHY, Evidence::Measured);
+        let c = core_count(&net, &zero_syn).expect("a real capacity");
+        assert_eq!(c.by_neurons, 50usize.div_ceil(16));
+        assert_eq!(c.by_synapses, Some(150u64.div_ceil(64) as usize));
+        assert!(c.lower_bound < usize::MAX);
+    }
+
+    /// The guards on the two ratios: a cap of zero has no utilisation and no chips-per-core, and
+    /// both say so instead of dividing.
+    #[test]
+    fn a_zero_cap_has_no_ratio_and_the_report_says_so() {
+        let h = Headroom { constraint: "neurons per chip", used: 0, cap: 0 };
+        assert_eq!(h.utilisation(), None, "0/0 is not 'fully utilised' and not 0%");
+        assert_eq!(h.spare(), 0);
+        // A non-zero cap does divide, so the guard above is the zero and not a broken method.
+        let h2 = Headroom { constraint: "neurons per chip", used: 3, cap: 4 };
+        assert_eq!(h2.utilisation(), Some(0.75));
+        assert_eq!(h2.spare(), 1);
+        // Used past the cap cannot underflow `spare` either.
+        let h3 = Headroom { constraint: "neurons per chip", used: 9, cap: 4 };
+        assert_eq!(h3.spare(), 0);
+        assert_eq!(h3.utilisation(), Some(2.25));
+
+        // And the report prints the absence rather than a percentage. It used to print -1.0%.
+        let fit = Fit {
+            part: "fixture",
+            verdict: Some(true),
+            binds: Vec::new(),
+            headroom: vec![h],
+            unchecked: Vec::new(),
+            cores: None,
+            chips_lower_bound: None,
+        };
+        let s = fit.to_string();
+        assert!(s.contains("no utilisation"), "{s}");
+        assert!(!s.contains("-1.0%"), "{s}");
+
+        let c = CoreCount {
+            by_neurons: 3,
+            by_synapses: None,
+            lower_bound: 3,
+            greedy: None,
+            exact: false,
+        };
+        assert_eq!(c.chips(0), None, "a chip with no cores holds no network");
+        assert_eq!(c.chips(2), Some(2));
+    }
+
+    /// [`Part::neurons_per_chip`] prefers the published total **where the two disagree**, which is
+    /// the only case where the preference is observable. Every record in [`PARTS`] that has both
+    /// already agrees, so inverting the preference left all 38 tests green.
+    #[test]
+    fn a_published_chip_total_wins_over_the_product_when_they_disagree() {
+        const WHY: &str = "A fixture figure, chosen so the total and the product differ.";
+        let mut p = bare_part("Disagreeing");
+        p.neurons_per_core = Spec::known(50, WHY, Evidence::Measured);
+        p.cores_per_chip = Spec::known(4, WHY, Evidence::Measured);
+        p.neurons_per_chip_stated = Spec::known(1000, WHY, Evidence::Measured);
+        assert_eq!(
+            p.neurons_per_chip(),
+            Some(1000),
+            "the published total wins; the product of two ceilings is a figure no configuration \
+             reaches"
+        );
+        assert_ne!(p.neurons_per_chip(), Some(200), "the product must not win");
+
+        // Remove the total and the product is the fallback, so the preference is a preference and
+        // not a hard-coded field.
+        p.neurons_per_chip_stated = Spec::unlocated("This fixture did not locate a device total.");
+        assert_eq!(p.neurons_per_chip(), Some(200));
+
+        // And a capacity overflow is judged against the stated total, not the product.
+        let net = uniform_net(600, 2, 1);
+        let mut with_total = p;
+        with_total.neurons_per_chip_stated = Spec::known(1000, WHY, Evidence::Measured);
+        assert!(!fits(&net, &with_total).binds.iter().any(|b| matches!(b, Bind::Neurons { .. })));
+        assert!(fits(&net, &p).binds.iter().any(|b| matches!(b, Bind::Neurons { .. })));
     }
 
     #[test]

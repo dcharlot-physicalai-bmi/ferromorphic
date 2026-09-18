@@ -30,8 +30,10 @@
 //! decoder is therefore a **state machine that reconstructs an absolute time from a running base**,
 //! and it has the two failure modes state machines always have.
 //!
-//! *Rollover.* The low bits wrap. `EVT` 3.0 puts 12 bits of time on an event and 12 more in a
-//! `TIME_HIGH` word, so the wire carries 24 bits — 16.777216 seconds — and a recording longer than
+//! *Rollover.* The low bits wrap. `EVT` 3.0 puts 12 bits of time in an `EVT_TIME_LOW` word and 12
+//! more in an `EVT_TIME_HIGH` word — no event word carries time at all; an event takes whatever
+//! base the two time words last set, which is the whole point of the encoding — so the wire carries
+//! 24 bits — 16.777216 seconds — and a recording longer than
 //! that wraps repeatedly. A decoder that does not count the wraps produces a sawtooth timestamp
 //! that still looks monotonic within each 16-second window, so a plot of the first second looks
 //! perfect. [`Evt3`] counts them, and
@@ -52,6 +54,14 @@
 //!    throws 4,000 seeded random buffers at them. A decoder that panics on a short read is a
 //!    decoder that crashes a robot mid-flight, and the file being short is the *normal* case when
 //!    a recording is interrupted.
+//!
+//!    **On 32 bits too, which is where the claim was thin.** A `FlatBuffers` payload's offsets are
+//!    `u32`s the file chose, and `usize` on `wasm32` is 32 bits, so adding them wraps there and
+//!    the wrapped value passes the bounds check that follows. [`Aedat4`] therefore does that
+//!    arithmetic in `u64`, which makes the 32-bit and the 64-bit path the same path. The whole
+//!    battery, fuzz tests included, was run under `wasm32-wasip1` with overflow checks on: 60
+//!    tests, all green, and `aedat4_refuses_offsets_that_would_wrap_a_32_bit_usize` fails there if
+//!    the arithmetic is narrowed back to `usize`.
 //! 2. **Errors carry the byte offset.** [`DecodeError`] names where and what, because "invalid
 //!    file" is not an actionable message for a 4 GB recording.
 //! 3. **Timestamps come out monotonically non-decreasing, or the call fails.** Non-decreasing
@@ -193,15 +203,26 @@ pub struct Marker {
     /// Reconstructed timestamp in microseconds at the moment this word was seen.
     ///
     /// Uses whatever time base the decoder held at that point, so a marker before the first
-    /// `TIME_HIGH` word reads zero. That is the honest answer: the stream did not say.
+    /// `TIME_HIGH` word reads zero. That is the honest answer: the stream did not say. The same is
+    /// true of an [`AerEvent`]: an `EVT` 3.0 event word that arrives before any time word decodes
+    /// at `t = 0`, because an event word carries no time of its own and the base has not been set.
+    /// A stream resumed from an arbitrary offset is the usual way to see this, and the first row
+    /// or column word of one is more often [`DecodeError::ColumnBeforeRow`] — the time is the part
+    /// the format cannot detect the absence of. `evt3_dates_an_event_before_any_time_word_at_zero`
+    /// pins the behaviour so it cannot change silently.
     pub t: u64,
 }
 
 /// Which family of non-pixel word a [`Marker`] records.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum MarkerKind {
-    /// An external trigger pulse — `EXT_TRIGGER` in `Prophesee`'s formats, a special-address event
-    /// in `AEDAT` 2.0. This is the wire's synchronisation channel.
+    /// An external trigger pulse — `EXT_TRIGGER` in `Prophesee`'s formats. This is the wire's
+    /// synchronisation channel.
+    ///
+    /// [`Aedat2`] never produces this variant, and the omission is deliberate rather than missing:
+    /// an `AEDAT` 2.0 special word is flagged by a bit in the address and the address alone does
+    /// not say whether it is a trigger, an active-pixel-sensor sample or an inertial reading. Those
+    /// are all [`MarkerKind::Other`], which is what this implementation can honestly claim.
     ExternalTrigger,
     /// A vendor-defined `OTHERS` word: monitoring, padding, or a sensor-specific status code whose
     /// payload layout this implementation did not locate documentation for.
@@ -522,27 +543,67 @@ fn u32_be(b: &[u8], at: usize) -> Result<u32, DecodeError> {
         | u32::from(s[3]))
 }
 
-/// Read `#`- or `%`-prefixed ASCII header lines from the front of a buffer.
+/// A header line's bytes as text, or `None` when they are not text and so are not a header line.
+///
+/// Text means valid `UTF-8` with no control character other than a horizontal tab. That admits
+/// every real `jAER` or `Prophesee` comment line, including a non-`ASCII` one, and excludes the
+/// binary records that would otherwise be eaten as comments — see [`read_header_lines`].
+fn header_text(b: &[u8]) -> Option<String> {
+    let s = core::str::from_utf8(b).ok()?;
+    if s.chars().any(|c| c.is_control() && c != '\t') {
+        return None;
+    }
+    Some(s.to_string())
+}
+
+/// Read `#`- or `%`-prefixed text header lines from the front of a buffer.
 ///
 /// Returns the lines with the prefix and the line terminator removed, and the offset of the first
-/// byte after the header. A header line that runs to the end of the buffer with no newline is
+/// byte after the header.
+///
+/// # Where the header stops, and why that needs deciding at all
+///
+/// Neither `AEDAT` 2.0 nor `.dat` terminates its header: the binary record array begins at the
+/// first byte that is not a header line, so the decoder has to tell the two apart from the bytes.
+/// Taking "begins with the prefix byte" as sufficient **loses records**, because a record can begin
+/// with that byte: a `DAVIS346` row of 140 to 143 puts `0x23`, the character `#`, in the
+/// big-endian address MSB, and the record is then swallowed as a comment line, taking every byte
+/// up to the next `0x0A` with it. Four of that sensor's 260 rows do this.
+///
+/// So a candidate line is accepted as a header line only if it is **text** by [`header_text`]. A
+/// binary record essentially always carries a control byte — the zero high byte of a coordinate or
+/// of a young timestamp — before the next newline, and a candidate that is not text ends the
+/// header and becomes the first record instead. A *text* line with no newline at all is
 /// [`DecodeError::Truncated`] rather than a silently accepted final line, because the missing
 /// newline is exactly what a cut-short file looks like.
+///
+/// This is a heuristic over formats that offer the reader nothing better, and it is stated as one.
+/// What is proved rather than hoped: `aedat2_round_trips_every_first_event_row_of_both_presets`
+/// sweeps every row of both shipped presets and shows that no address either preset can write is
+/// mistaken for a comment.
 fn read_header_lines(b: &[u8], prefix: u8) -> Result<(Vec<String>, usize), DecodeError> {
     let mut lines = Vec::new();
     let mut at = 0usize;
     while b.get(at) == Some(&prefix) {
         let start = at + 1;
-        let nl = b[start..].iter().position(|&c| c == b'\n').ok_or(DecodeError::Truncated {
-            offset: at,
-            need: b.len() - at + 1,
-            have: b.len() - at,
-        })?;
-        let mut end = start + nl;
-        let text_end = if end > start && b[end - 1] == b'\r' { end - 1 } else { end };
-        lines.push(String::from_utf8_lossy(&b[start..text_end]).into_owned());
-        end += 1;
-        at = end;
+        let nl = b[start..].iter().position(|&c| c == b'\n');
+        let text_end = match nl {
+            Some(n) => {
+                let e = start + n;
+                if e > start && b[e - 1] == b'\r' { e - 1 } else { e }
+            }
+            None => b.len(),
+        };
+        let Some(text) = header_text(&b[start..text_end]) else { break };
+        let Some(n) = nl else {
+            return Err(DecodeError::Truncated {
+                offset: at,
+                need: b.len() - at + 1,
+                have: b.len() - at,
+            });
+        };
+        lines.push(text);
+        at = start + n + 1;
     }
     Ok((lines, at))
 }
@@ -575,6 +636,38 @@ fn check_sorted(events: &[AerEvent]) -> Result<(), EncodeError> {
                 previous: events[i - 1].t,
                 found: events[i].t,
             });
+        }
+    }
+    Ok(())
+}
+
+/// Refuse a stream whose timestamps a 32-bit wrapping clock could not be unwrapped back to.
+///
+/// Shared by [`Aedat2`] and [`Dat`], which write the same truncated `uint32` microsecond counter
+/// and recover it with the same "a backwards jump of more than half the range is a wrap" rule.
+/// Two things defeat that rule and both are refused here rather than written:
+///
+/// * a first timestamp at or past `max_time`, because the decoder's accumulator starts at zero and
+///   the dropped high bits are nowhere on the wire;
+/// * a gap past `max_gap` — half the counter's range — because a backwards jump of exactly half is
+///   ambiguous, and a jump of less than half reads as a file whose time runs backwards. A gap of a
+///   whole counter period reads as no gap at all: measured, two events 2^32 us apart came back
+///   0 us apart, in order, with no error.
+fn check_wrapping_clock(
+    events: &[AerEvent],
+    max_time: u64,
+    max_gap: u64,
+) -> Result<(), EncodeError> {
+    if let Some(first) = events.first() {
+        fit(0, "first timestamp", first.t, max_time)?;
+    }
+    for i in 1..events.len() {
+        // Saturating rather than plain: `check_sorted` runs first at both call sites, and a
+        // subtraction that depends on a caller elsewhere having done its job is a panic waiting
+        // for the edit that reorders them.
+        let gap = events[i].t.saturating_sub(events[i - 1].t);
+        if gap > max_gap {
+            return Err(EncodeError::GapTooLarge { index: i, gap, max: max_gap });
         }
     }
     Ok(())
@@ -650,6 +743,20 @@ impl Aedat2Layout {
     /// **Unverified against a physical device**: the polarity sense here is "bit 0 clear means
     /// `On`", and the opposite appears in circulating `Python` readers. See
     /// [`Aedat2Layout::p_on_is_one`].
+    ///
+    /// # Everything above bit 14 is a marker, not a pixel
+    ///
+    /// The address is 15 bits wide, so bits 15-31 are not part of it. This preset therefore sets
+    /// [`Aedat2Layout::special_mask`] to all of them: a record with any bit set above bit 14 is
+    /// reported as a [`Marker`] rather than decoded. A `special_mask` of zero — which this preset
+    /// carried until 0.5.0 — decodes such a record as an ordinary pixel, so an external-trigger
+    /// word became a fabricated event at column 127 and the synchronisation evidence the [`Marker`]
+    /// type exists to preserve was destroyed while the event count stayed plausible.
+    ///
+    /// What is claimed here is only what the 15-bit address width supports: those bits are **not a
+    /// pixel**. Which of them `jAER` uses for its sync word this implementation did not confirm
+    /// against a device, so the marker's kind is [`MarkerKind::Other`] rather than a guess at
+    /// [`MarkerKind::ExternalTrigger`].
     pub const DVS128: Self = Self {
         x_shift: 1,
         x_bits: 7,
@@ -659,7 +766,7 @@ impl Aedat2Layout {
         y_invert: false,
         p_shift: 0,
         p_on_is_one: false,
-        special_mask: 0,
+        special_mask: !0x7FFF,
         width: 128,
         height: 128,
         source: "DVS128 (Lichtsteiner et al. 2008), jAER Tmpdiff128 extractor",
@@ -672,6 +779,13 @@ impl Aedat2Layout {
     /// implementation reads them; **this implementation did not verify them against a `DAVIS`
     /// recording**, and in particular the interleaved active-pixel-sensor samples that share this
     /// address space are reported as [`MarkerKind::Other`] rather than decoded.
+    ///
+    /// Bits 0-10 belong to no field this layout names and are **ignored**, so a record that sets
+    /// one still decodes as an ordinary pixel event. Unlike the 15-bit [`Aedat2Layout::DVS128`]
+    /// address, where the width is documented and everything above it is therefore not a pixel,
+    /// this implementation did not locate a statement of what a `DAVIS` puts there, and a
+    /// `special_mask` covering those bits would be a guess that turned real events into markers.
+    /// The uncertainty is disclosed rather than resolved.
     pub const DAVIS346: Self = Self {
         x_shift: 12,
         x_bits: 10,
@@ -710,10 +824,34 @@ impl Aedat2Layout {
         m << shift
     }
 
+    /// The widest value the column and row fields can hold, as they are actually placed.
+    ///
+    /// `field_mask` clips a field at bit 31, so a 17-bit field at shift 20 really holds 12 bits;
+    /// this reports what the layout does, not what it declares. A coordinate is a `u16`, so a field
+    /// that can hold more than 65535 has no representable answer and is refused rather than
+    /// saturated.
+    fn coord_span(&self) -> (u32, u32) {
+        (
+            Self::field_mask(self.x_shift, self.x_bits) >> self.x_shift,
+            Self::field_mask(self.y_shift, self.y_bits) >> self.y_shift,
+        )
+    }
+
     fn check(&self) -> Result<(), DecodeError> {
         let mask = self.overlap();
         if mask != 0 {
             return Err(DecodeError::LayoutFieldsOverlap { mask });
+        }
+        let (x_span, y_span) = self.coord_span();
+        for (span, field) in [(x_span, "x_bits"), (y_span, "y_bits")] {
+            if u64::from(span) > u64::from(u16::MAX) {
+                return Err(DecodeError::FieldOutOfRange {
+                    offset: 0,
+                    field,
+                    value: u64::from(span),
+                    max: u64::from(u16::MAX),
+                });
+            }
         }
         Ok(())
     }
@@ -722,9 +860,11 @@ impl Aedat2Layout {
         let m = Self::field_mask(shift, bits) >> shift;
         let raw = (addr >> shift) & m;
         let v = if invert { m - raw } else { raw };
-        // `m` is at most 2^bits - 1 with bits <= 31 here for any layout that passed `check`; the
-        // truncation is therefore impossible for x_bits or y_bits of 16 or fewer, and for a wider
-        // field the saturation is preferable to a wrap.
+        // Unreachable by construction: `Aedat2Layout::check` refuses, before a byte is read, any
+        // layout whose column or row field can hold more than `u16::MAX`, and `v <= m` here. The
+        // saturation is what a `u16` conversion must do with no `Result` to return, and
+        // `a_coordinate_field_wider_than_a_u16_is_refused_before_any_byte_is_read` is the test
+        // that keeps it unreachable.
         u16::try_from(v).unwrap_or(u16::MAX)
     }
 
@@ -766,8 +906,30 @@ pub struct Aedat2 {
 }
 
 impl Aedat2 {
-    /// The magic the first header line must start with.
-    pub const MAGIC: &'static str = "!AER-DAT";
+    /// The magic the first header line must start with — **version digit included**.
+    ///
+    /// `AEDAT` 3.1 and 4.0 are the same vendor, the same `.aedat` extension and completely
+    /// different record layouts, so a prefix test of `"!AER-DAT"` alone admits both: a jAER
+    /// `AEDAT` 3.1 file read this way decodes as a few hundred well-formed, entirely wrong
+    /// `AEDAT` 2.0 events. The digit is the only thing on the wire that separates them, so it is
+    /// part of the magic. See `a_missing_magic_stops_one_format_being_read_as_another`.
+    pub const MAGIC: &'static str = "!AER-DAT2";
+    /// Largest **first** timestamp an encodable stream may have, microseconds: 2^32 - 1.
+    ///
+    /// The record holds 32 bits of microseconds and the decoder's unwrapping accumulator starts at
+    /// zero, so a first timestamp at or past 2^32 comes back reduced modulo 2^32 and nothing on the
+    /// wire says how many wraps were dropped. Subtract the recording's start time before encoding.
+    pub const MAX_TIME_US: u64 = (1u64 << 32) - 1;
+    /// Largest gap between consecutive events that is always encodable, microseconds: 2^31 - 1.
+    ///
+    /// [`Aedat2::decode`] counts a wrap when the raw counter jumps backwards by **more than half**
+    /// its range, which is the rule that stops one jittered record adding 71.6 minutes to the rest
+    /// of a recording. The price of that rule is this bound: a gap of 2^31 or more that happens to
+    /// straddle a wrap is indistinguishable from a backwards step, and a gap of 2^32 or more is
+    /// not on the wire at all. Both are [`EncodeError::GapTooLarge`] rather than a file that
+    /// decodes to a different recording — or, for a gap in `[2^31, 2^32)`, a file this crate's own
+    /// decoder would refuse as non-monotonic.
+    pub const MAX_GAP_US: u64 = (1u64 << 31) - 1;
 
     /// Decode a whole `AEDAT` 2.0 file.
     ///
@@ -865,16 +1027,22 @@ impl Aedat2 {
     /// if the first line does not already start with [`Aedat2::MAGIC`], `!AER-DAT2.0` is prepended
     /// so that the result is decodable by [`Aedat2::decode`] and by `jAER`.
     ///
-    /// Timestamps are written modulo 2^32 microseconds, which is what the format holds. A recording
-    /// longer than 71.6 minutes therefore relies on the decoder's unwrapping to come back intact,
-    /// and it does — that is what `aedat2_unwraps_a_timestamp_across_the_32_bit_wrap` checks.
+    /// Timestamps are written modulo 2^32 microseconds, which is what the format holds, so a
+    /// recording longer than 71.6 minutes relies on the decoder's unwrapping to come back intact.
+    /// That unwrapping recovers a wrap and **only** a wrap: it needs the first timestamp below
+    /// 2^32 ([`Aedat2::MAX_TIME_US`]) and every gap below 2^31 ([`Aedat2::MAX_GAP_US`]), and this
+    /// encoder refuses anything else rather than writing a file that decodes to a different
+    /// recording. `aedat2_unwraps_a_timestamp_across_the_32_bit_wrap` checks the wrap it does
+    /// recover and `aedat2_refuses_a_time_its_own_decoder_could_not_recover` checks the refusals.
     ///
     /// # Errors
     ///
     /// [`EncodeError::Unsorted`] if the events are not in timestamp order;
     /// [`EncodeError::FieldOutOfRange`] if a coordinate does not fit the layout's field width or
-    /// its sensor geometry; [`EncodeError::HeaderLineContainsNewline`] if a header line would not
-    /// survive the round trip.
+    /// its sensor geometry, or the first timestamp is past [`Aedat2::MAX_TIME_US`];
+    /// [`EncodeError::GapTooLarge`] if two consecutive events are more than [`Aedat2::MAX_GAP_US`]
+    /// apart; [`EncodeError::HeaderLineContainsNewline`] if a header line would not survive the
+    /// round trip.
     ///
     /// # Panics
     ///
@@ -893,7 +1061,19 @@ impl Aedat2 {
                 max: 0,
             });
         }
+        let (x_span, y_span) = layout.coord_span();
+        for (span, field) in [(x_span, "x_bits"), (y_span, "y_bits")] {
+            if u64::from(span) > u64::from(u16::MAX) {
+                return Err(EncodeError::FieldOutOfRange {
+                    index: 0,
+                    field,
+                    value: u64::from(span),
+                    max: u64::from(u16::MAX),
+                });
+            }
+        }
         check_sorted(events)?;
+        check_wrapping_clock(events, Self::MAX_TIME_US, Self::MAX_GAP_US)?;
         let mut out = Vec::with_capacity(64 + events.len() * 8);
         let mut lines: Vec<String> = Vec::new();
         if !header.first().is_some_and(|l| l.starts_with(Self::MAGIC)) {
@@ -942,8 +1122,12 @@ impl Aedat2 {
 /// and the opcode is `0x0` for a darker event and `0x1` for a brighter one, so the opcode *is* the
 /// polarity for pixel words. The 6-bit time field is the low bits of a microsecond counter whose
 /// upper 28 bits arrive in a separate `EVT_TIME_HIGH` word, giving 34 bits of time on the wire —
-/// 4 hours 46 minutes before it wraps, which is long enough that this decoder's wrap counter is
-/// mostly theoretical and is tested anyway.
+/// 4 hours 46 minutes before it wraps. [`Evt2::encode`] refuses a timestamp past
+/// [`Evt2::MAX_TIME_US`], so no stream this crate writes can reach that wrap; the decoder counts it
+/// anyway for a stream it did not write, and the hand-built streams in
+/// `evt2_counts_a_real_2_34_wrap_and_refuses_a_jittered_one` are the one that reaches the branch
+/// and the one that must not. A backwards step of half the field or less is corruption, not a
+/// wrap, and is [`DecodeError::NonMonotonicTimestamp`].
 ///
 /// Fixed width makes this the easy one: 8 bytes of information in 4, no state except the time base,
 /// and a decoder that cannot lose sync because every word boundary is at a multiple of four. The
@@ -985,7 +1169,8 @@ impl Evt2 {
     /// the ten opcodes `EVT` 2.0 leaves undefined, with the offset of the word;
     /// [`DecodeError::NonMonotonicTimestamp`] if the 6-bit low time decreases without an
     /// intervening `EVT_TIME_HIGH`, which means a time word was lost and this decoder will not
-    /// guess how much time went with it.
+    /// guess how much time went with it, or if an `EVT_TIME_HIGH` steps the 28-bit high field
+    /// backwards by half its range or less, which is corruption rather than the 2^34 wrap.
     pub fn decode(bytes: &[u8]) -> Result<Self, DecodeError> {
         let mut events = Vec::new();
         let mut markers = Vec::new();
@@ -1018,15 +1203,31 @@ impl Evt2 {
                 Self::TIME_HIGH => {
                     let h = w & 0x0FFF_FFFF;
                     if h < high {
-                        wraps += 1;
+                        // The field is 28 bits, so a wrap is a backwards jump of nearly 2^28 and
+                        // anything smaller is corruption. Demanding MORE THAN HALF the range is
+                        // the same rule AEDAT 2.0 and .dat use, and it is here for the same
+                        // reason: the alternative adds 2^34 us — 4 h 46 min — to the rest of the
+                        // recording on the strength of one jittered word. Measured before this
+                        // check existed: a TIME_HIGH stepping back by ONE, from 10 to 9, put the
+                        // next event 17,179,869,120 us after its predecessor, with no error.
+                        if high - h > 1u32 << 27 {
+                            wraps += 1;
+                        } else {
+                            return Err(DecodeError::NonMonotonicTimestamp {
+                                offset: at,
+                                previous: base,
+                                found: (wraps << 34) | (u64::from(h) << 6),
+                            });
+                        }
                     }
                     high = h;
                     base = (wraps << 34) | (u64::from(high) << 6);
-                    // Deliberately NOT compared against the last event's time. A sensor emits a
-                    // TIME_HIGH every 64 us whether or not the value changed, so a repeat carrying
-                    // the value already held is normal and must not be refused; the base it sets
-                    // is below the last event's time by up to 63 us by construction. Time going
-                    // backwards is caught where it matters, on the next event.
+                    // A repeat carrying the value already held is deliberately NOT compared
+                    // against the last event's time. A sensor emits a TIME_HIGH every 64 us
+                    // whether or not the value changed, so a repeat is normal and must not be
+                    // refused; the base it sets is below the last event's time by up to 63 us by
+                    // construction. Time going backwards is caught where it matters, on the next
+                    // event.
                 }
                 Self::EXT_TRIGGER | Self::OTHERS | Self::CONTINUED => {
                     let kind = match code {
@@ -1170,7 +1371,11 @@ impl Evt3 {
     pub const CONTINUED_12: u16 = 0xF;
     /// Wrap period of the on-wire counter, microseconds: 2^24.
     pub const WRAP_US: u64 = 1 << 24;
-    /// Largest first timestamp an encodable stream may have, microseconds.
+    /// Largest first timestamp an encodable stream may have, microseconds: 2^24 - 1, **inclusive**.
+    ///
+    /// The wire carries 24 bits of time and this is all of them set, so it is the last value that
+    /// encodes rather than the first that does not; [`Evt3::encode`] refuses `MAX_FIRST_TIME_US + 1`
+    /// and accepts this.
     pub const MAX_FIRST_TIME_US: u64 = (1 << 24) - 1;
     /// A gap between consecutive events that is always encodable, microseconds: `4095 * 4096`.
     ///
@@ -1327,8 +1532,10 @@ impl Evt3 {
     /// # Errors
     ///
     /// [`EncodeError::Unsorted`] if the events are not in timestamp order;
-    /// [`EncodeError::FieldOutOfRange`] if the first timestamp is at or past
-    /// [`Evt3::MAX_FIRST_TIME_US`] or a coordinate exceeds 2047; [`EncodeError::GapTooLarge`] if
+    /// [`EncodeError::FieldOutOfRange`] if the first timestamp is **past**
+    /// [`Evt3::MAX_FIRST_TIME_US`] — that value itself encodes, as
+    /// `evt3_encodes_its_largest_first_timestamp_and_refuses_the_next` shows — or a coordinate
+    /// exceeds 2047; [`EncodeError::GapTooLarge`] if
     /// two consecutive events are far enough apart that the number of counter wraps between them is
     /// not on the wire.
     pub fn encode(events: &[AerEvent], vectorise: bool) -> Result<Vec<u8>, EncodeError> {
@@ -1451,7 +1658,8 @@ impl Evt3 {
 ///
 /// The 32-bit microsecond timestamp wraps after 71.6 minutes; [`Dat::decode`] unwraps it the same
 /// way [`Aedat2`] does, and refuses a small decrease rather than adding 71.6 minutes on the
-/// strength of one record.
+/// strength of one record. [`Dat::encode`] refuses, symmetrically, the two things that unwrapping
+/// cannot recover: a first timestamp past [`Dat::MAX_TIME_US`] and a gap past [`Dat::MAX_GAP_US`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Dat {
     /// Header lines with their leading `%` and trailing newline removed.
@@ -1481,6 +1689,16 @@ impl Dat {
     pub const RECORD_SIZE: u8 = 8;
     /// Largest column or row the 14-bit fields hold.
     pub const MAX_COORD: u64 = 16_383;
+    /// Largest **first** timestamp an encodable stream may have, microseconds: 2^32 - 1.
+    ///
+    /// Same 32-bit wrapping clock as [`Aedat2::MAX_TIME_US`], and the same reason: the decoder's
+    /// accumulator starts at zero, so the dropped high bits are nowhere on the wire.
+    pub const MAX_TIME_US: u64 = (1u64 << 32) - 1;
+    /// Largest gap between consecutive events that is always encodable, microseconds: 2^31 - 1.
+    ///
+    /// Same rule and same bound as [`Aedat2::MAX_GAP_US`]; the two formats share the clock and
+    /// share the unwrapping.
+    pub const MAX_GAP_US: u64 = (1u64 << 31) - 1;
 
     fn header_number(header: &[String], key: &str) -> Option<u16> {
         for line in header {
@@ -1582,14 +1800,18 @@ impl Dat {
     ///
     /// [`EncodeError::Unsorted`] if the events are out of order;
     /// [`EncodeError::FieldOutOfRange`] if a coordinate exceeds [`Dat::MAX_COORD`] or a `Width` or
-    /// `Height` line in `header` that the caller supplied;
-    /// [`EncodeError::HeaderLineContainsNewline`] if a header line would not survive the round trip.
+    /// `Height` line in `header` that the caller supplied, or the first timestamp is past
+    /// [`Dat::MAX_TIME_US`]; [`EncodeError::GapTooLarge`] if two consecutive events are more than
+    /// [`Dat::MAX_GAP_US`] apart, which is the gap this format's 32-bit clock cannot be unwrapped
+    /// back to; [`EncodeError::HeaderLineContainsNewline`] if a header line would not survive the
+    /// round trip.
     pub fn encode(
         events: &[AerEvent],
         header: &[String],
         record_type: u8,
     ) -> Result<Vec<u8>, EncodeError> {
         check_sorted(events)?;
+        check_wrapping_clock(events, Self::MAX_TIME_US, Self::MAX_GAP_US)?;
         let mut out = Vec::with_capacity(64 + events.len() * 8);
         push_header_lines(&mut out, header, b'%', false)?;
         out.push(record_type);
@@ -1660,6 +1882,17 @@ impl Flat {
     /// Bytes of fixed header before the first record.
     pub const HEADER_SIZE: usize = 24;
 
+    /// Read one of the two declared dimensions, refusing a value no `u16` coordinate could reach.
+    fn dimension(bytes: &[u8], at: usize, field: &'static str) -> Result<u16, DecodeError> {
+        let v = u32_le(bytes, at)?;
+        u16::try_from(v).map_err(|_| DecodeError::FieldOutOfRange {
+            offset: at,
+            field,
+            value: u64::from(v),
+            max: u64::from(u16::MAX),
+        })
+    }
+
     /// Decode a flat file.
     ///
     /// # Errors
@@ -1668,9 +1901,10 @@ impl Flat {
     /// [`DecodeError::Truncated`] if the header is short; [`DecodeError::CountMismatch`] if the
     /// declared count and the bytes present disagree — in either direction, because trailing bytes
     /// after the last record mean the file is not what its header says it is;
-    /// [`DecodeError::FieldOutOfRange`] for a polarity byte that is neither 0 nor 1, or a
-    /// coordinate past a declared width or height; [`DecodeError::ReservedNotZero`] for a dirty
-    /// reserved byte; [`DecodeError::NonMonotonicTimestamp`] if the events are out of order.
+    /// [`DecodeError::FieldOutOfRange`] for a polarity byte that is neither 0 nor 1, a declared
+    /// width or height past 65535, or a coordinate past a declared width or height;
+    /// [`DecodeError::ReservedNotZero`] for a dirty reserved byte;
+    /// [`DecodeError::NonMonotonicTimestamp`] if the events are out of order.
     pub fn decode(bytes: &[u8]) -> Result<Self, DecodeError> {
         let head = slice_at(bytes, 0, Self::HEADER_SIZE)?;
         if head[..8] != Self::MAGIC {
@@ -1680,8 +1914,11 @@ impl Flat {
                 found: String::from_utf8_lossy(&head[..8]).into_owned(),
             });
         }
-        let width = u16::try_from(u32_le(bytes, 8)?).unwrap_or(u16::MAX);
-        let height = u16::try_from(u32_le(bytes, 12)?).unwrap_or(u16::MAX);
+        // Refused, not saturated. The declared geometry is what every column and row below is
+        // range-checked against, so a width of 100,000 folded to 65,535 would range-check every
+        // record against a number that is in the file nowhere and reject or accept on it.
+        let width = Self::dimension(bytes, 8, "width")?;
+        let height = Self::dimension(bytes, 12, "height")?;
         let declared = u64_le(bytes, 16)?;
         let body = bytes.len() - Self::HEADER_SIZE;
         let actual = (body / Self::RECORD_SIZE) as u64;
@@ -1823,6 +2060,18 @@ impl Aedat4Compression {
 }
 
 /// One `AEDAT` 4.0 packet: an 8-byte header and a payload.
+///
+/// # The payload is the packet; the events are a view of it
+///
+/// [`Aedat4::encode`] writes [`Aedat4Packet::payload`] **verbatim**, and never the bytes it would
+/// have produced from [`Aedat4Packet::events`]. That is what makes a re-save byte-exact for a file
+/// this crate only partly understands: a real `dv-processing` events table carries fields beyond
+/// the element vector and may lay the vector out at a different offset from the forward layout
+/// [`Aedat4`] writes, and regenerating the payload from the decoded events discards all of it.
+///
+/// The consequence for a caller who wants to *change* the events is that editing
+/// [`Aedat4Packet::events`] alone changes nothing on disk. Use [`Aedat4Packet::set_events`], which
+/// rewrites both, or [`Aedat4Packet::from_events`] to build a packet from scratch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Aedat4Packet {
     /// The stream this packet belongs to, matching an entry in the file's `IOHeader`. A recording
@@ -1830,12 +2079,68 @@ pub struct Aedat4Packet {
     pub stream_id: i32,
     /// Byte offset of this packet's 8-byte header in the whole file.
     pub offset: usize,
-    /// The payload bytes exactly as they appeared, kept so that a re-encode of a packet this crate
-    /// could not decode is byte-identical rather than lost.
+    /// The payload bytes exactly as they appeared, and exactly what a re-encode writes.
+    ///
+    /// Authoritative: see the note on [`Aedat4Packet`]. Not interpreted for a compressed file, and
+    /// not regenerated for a `RAW` one.
     pub payload: Vec<u8>,
     /// Events, when the payload was `RAW` and parsed; `None` when it was compressed or was not an
-    /// event packet this implementation could walk.
+    /// event packet this implementation could walk — a `DV` recording interleaves frames and
+    /// inertial samples with its events, and those are packets in exactly the same container.
     pub events: Option<Vec<AerEvent>>,
+    /// Why [`Aedat4Packet::events`] is `None` for a `RAW` packet: the error that walking the
+    /// payload produced.
+    ///
+    /// `None` when the events decoded, and `None` for a compressed file, where no attempt was
+    /// made and the reason is the file's `Format:` line instead. [`Aedat4::events`] returns this
+    /// error rather than inventing one, so a malformed event payload is still refused — it is the
+    /// *framing* that survives it, which is what lets a caller reach the packets of a file whose
+    /// other streams this crate cannot read.
+    pub payload_error: Option<DecodeError>,
+}
+
+impl Aedat4Packet {
+    /// Build a `RAW` event packet from events, payload and view consistent.
+    ///
+    /// # Errors
+    ///
+    /// [`EncodeError::Unsorted`] if the events are not in timestamp order, or
+    /// [`EncodeError::FieldOutOfRange`] if a coordinate exceeds 32767 or a timestamp exceeds
+    /// `i64::MAX`, the signed fields the `dv-processing` schema uses.
+    pub fn from_events(stream_id: i32, events: &[AerEvent]) -> Result<Self, EncodeError> {
+        let mut p = Self {
+            stream_id,
+            offset: 0,
+            payload: Vec::new(),
+            events: None,
+            payload_error: None,
+        };
+        p.set_events(events)?;
+        Ok(p)
+    }
+
+    /// Replace the events **and** the payload bytes that will be written for them.
+    ///
+    /// The only supported way to change what a packet contains: see the note on [`Aedat4Packet`]
+    /// for why assigning to [`Aedat4Packet::events`] alone does not.
+    ///
+    /// # Errors
+    ///
+    /// [`EncodeError::Unsorted`] if the events are not in timestamp order, or
+    /// [`EncodeError::FieldOutOfRange`] if a coordinate exceeds 32767 or a timestamp exceeds
+    /// `i64::MAX`.
+    pub fn set_events(&mut self, events: &[AerEvent]) -> Result<(), EncodeError> {
+        check_sorted(events)?;
+        for (i, e) in events.iter().enumerate() {
+            fit(i, "column", u64::from(e.x), 32767)?;
+            fit(i, "row", u64::from(e.y), 32767)?;
+            fit(i, "timestamp", e.t, u64::try_from(i64::MAX).unwrap_or(u64::MAX))?;
+        }
+        self.payload = Aedat4::write_event_packet(events);
+        self.events = Some(events.to_vec());
+        self.payload_error = None;
+        Ok(())
+    }
 }
 
 /// A decoded `AEDAT` 4.0 file — **framing complete, payload decoding partial, and this doc says
@@ -1854,6 +2159,13 @@ pub struct Aedat4Packet {
 /// [`Aedat4::events`] returns [`DecodeError::UnsupportedCompression`] naming the format and the
 /// offset. That is a capability boundary of a zero-dependency crate, stated rather than hidden;
 /// re-save the recording as `RAW` from `DV`, or decompress upstream.
+///
+/// **Streams that are not events.** A `DV` recording interleaves frames and inertial samples with
+/// its events, as packets in this same container. Those arrive with `events: None` and the reason
+/// in [`Aedat4Packet::payload_error`]; the framing — stream id, offset, payload — is complete for
+/// them, which is what lets a caller pick out the event stream by its id and hand the rest to a
+/// `FlatBuffers` reader. [`Aedat4::events`] is a whole-file call and refuses if any packet is not
+/// events, because a silently short event list is the worse answer.
 ///
 /// **Certainty about the `FlatBuffers` layout.** For a `RAW` payload this implementation walks the
 /// buffer by hand — root offset, vtable, then a vector of 16-byte inline structs laid out as
@@ -1892,10 +2204,13 @@ impl Aedat4 {
     ///
     /// [`DecodeError::BadMagic`] if the first line is not `#!AER-DAT4...`;
     /// [`DecodeError::Truncated`] if the header has no `#!END-HEADER`, or a size field or payload
-    /// runs off the end; [`DecodeError::FieldOutOfRange`] for a negative size field or a negative
-    /// coordinate or timestamp inside a payload; [`DecodeError::MalformedFlatBuffer`] if a `RAW`
-    /// payload's offsets are inconsistent; [`DecodeError::NonMonotonicTimestamp`] if a payload's
-    /// events go backwards.
+    /// runs off the end; [`DecodeError::FieldOutOfRange`] for a negative size field.
+    ///
+    /// A `RAW` payload this implementation cannot walk, **or walks and rejects** — a frame or an
+    /// inertial stream, a malformed buffer, a declared count the bytes cannot supply, a negative
+    /// or backwards timestamp — does not fail the decode: the framing is what this call promises
+    /// for every file, so the packet comes back with `events: None` and the reason in
+    /// [`Aedat4Packet::payload_error`], and [`Aedat4::events`] is where it is refused.
     pub fn decode(bytes: &[u8]) -> Result<Self, DecodeError> {
         // A dedicated header loop rather than `read_header_lines`: the byte after the header is
         // binary, and 0x23 is both the first byte of a small size field and the character '#'.
@@ -1965,12 +2280,21 @@ impl Aedat4 {
             let stream_id = u32_le(bytes, at)? as i32;
             let size = Self::signed_len(bytes, at + 4, "packet size")?;
             let payload = slice_at(bytes, at + 8, size)?.to_vec();
-            let events = if compression == Aedat4Compression::Raw {
-                Some(Self::read_event_packet(&payload, at + 8, &mut last_t)?)
+            // A RAW file interleaves streams: DV writes frames and inertial samples as packets in
+            // this same container, and they are not event tables. Applying the event reader to
+            // every packet AND propagating its error refused the whole file — so no real RAW DV
+            // recording opened at all, which is the opposite of what this type promises. The error
+            // is kept on the packet instead and returned by `events()`, so the refusal survives
+            // without taking the framing with it.
+            let (events, payload_error) = if compression == Aedat4Compression::Raw {
+                match Self::read_event_packet(&payload, at + 8, &mut last_t) {
+                    Ok(e) => (Some(e), None),
+                    Err(err) => (None, Some(err)),
+                }
             } else {
-                None
+                (None, None)
             };
-            packets.push(Aedat4Packet { stream_id, offset: head, payload, events });
+            packets.push(Aedat4Packet { stream_id, offset: head, payload, events, payload_error });
             at += 8 + size;
         }
         Ok(Self { header, compression, io_header, packets })
@@ -1987,79 +2311,95 @@ impl Aedat4 {
     }
 
     /// Walk a `RAW` `FlatBuffers` event packet. Every offset is bounds-checked before use.
+    ///
+    /// # Totality on a 32-bit target, which `wasm32` is
+    ///
+    /// Every offset inside the buffer is a `u32` the file chose, and this crate compiles to
+    /// `wasm32`, where `usize` is 32 bits. Adding those `u32`s into a `usize` overflows there —
+    /// a panic under debug overflow checks, a wrap in release — and a wrap is the dangerous half:
+    /// a root offset of `0xFFFF_FFFE` plus four becomes 2, which passes every bounds check that
+    /// follows. So the arithmetic is done in `u64` and narrowed to `usize` only once the value is
+    /// known to lie inside the payload, which makes the 32-bit and the 64-bit path the same path
+    /// and lets `aedat4_refuses_offsets_that_would_wrap_a_32_bit_usize` prove it on a 64-bit host.
+    ///
+    /// `last_t` is advanced only if the whole packet decodes, so a packet that is refused does not
+    /// leave the cross-packet monotonicity cursor somewhere in the middle of itself.
     fn read_event_packet(
         p: &[u8],
         base: usize,
         last_t: &mut u64,
     ) -> Result<Vec<AerEvent>, DecodeError> {
         let bad = |what: &'static str| DecodeError::MalformedFlatBuffer { offset: base, what };
+        let len = p.len() as u64;
+        // `at` and `at + n` in u64; returns `at` as a usize only when the window is wholly inside
+        // the payload, which also makes the narrowing exact.
+        let spot = |at: u64, n: u64, what: &'static str| -> Result<usize, DecodeError> {
+            let end = at.checked_add(n).filter(|&e| e <= len).ok_or(bad(what))?;
+            debug_assert!(end <= len);
+            usize::try_from(at).map_err(|_| bad(what))
+        };
         if p.len() < 8 {
             return Err(bad("root offset"));
         }
-        let root = u32_le(p, 0).map_err(|_| bad("root offset"))? as usize;
-        if root + 4 > p.len() {
-            return Err(bad("root offset"));
-        }
-        let soffset = u32_le(p, root).map_err(|_| bad("vtable"))? as i32;
+        let root = u64::from(u32_le(p, 0).map_err(|_| bad("root offset"))?);
+        let root_at = spot(root, 4, "root offset")?;
+        let soffset = u32_le(p, root_at).map_err(|_| bad("vtable"))? as i32;
         let vtable = i64::try_from(root).map_err(|_| bad("vtable"))? - i64::from(soffset);
-        let vtable = usize::try_from(vtable).map_err(|_| bad("vtable"))?;
-        if vtable + 4 > p.len() {
-            return Err(bad("vtable"));
-        }
-        let vt_len = u16_le(p, vtable).map_err(|_| bad("vtable"))? as usize;
-        if vt_len < 6 || vtable + vt_len > p.len() {
+        let vtable = u64::try_from(vtable).map_err(|_| bad("vtable"))?;
+        let vt_at = spot(vtable, 4, "vtable")?;
+        let vt_len = u64::from(u16_le(p, vt_at).map_err(|_| bad("vtable"))?);
+        spot(vtable, vt_len, "vtable")?;
+        if vt_len < 6 {
             // A vtable shorter than 6 has no fields at all, so there is no element vector to find.
-            return if vt_len < 6 && vtable + vt_len <= p.len() {
-                Ok(Vec::new())
-            } else {
-                Err(bad("vtable"))
-            };
+            return Ok(Vec::new());
         }
-        let field = u16_le(p, vtable + 4).map_err(|_| bad("vtable"))? as usize;
+        let field = u64::from(u16_le(p, vt_at + 4).map_err(|_| bad("vtable"))?);
         if field == 0 {
             return Ok(Vec::new());
         }
-        let slot = root + field;
-        if slot + 4 > p.len() {
-            return Err(bad("vector"));
-        }
-        let vec_at = slot + u32_le(p, slot).map_err(|_| bad("vector"))? as usize;
-        if vec_at + 4 > p.len() {
-            return Err(bad("vector"));
-        }
-        let count = u32_le(p, vec_at).map_err(|_| bad("vector"))? as usize;
-        let bytes_needed = count.checked_mul(Self::FB_EVENT_SIZE).ok_or_else(|| bad("vector"))?;
-        if vec_at + 4 + bytes_needed > p.len() {
+        let slot = root.checked_add(field).ok_or_else(|| bad("vector"))?;
+        let slot_at = spot(slot, 4, "vector")?;
+        let vec_at = slot
+            .checked_add(u64::from(u32_le(p, slot_at).map_err(|_| bad("vector"))?))
+            .ok_or_else(|| bad("vector"))?;
+        let vec_head = spot(vec_at, 4, "vector")?;
+        let count = u64::from(u32_le(p, vec_head).map_err(|_| bad("vector"))?);
+        let size = Self::FB_EVENT_SIZE as u64;
+        let first = vec_at + 4;
+        let bytes_needed = count.checked_mul(size).ok_or_else(|| bad("vector"))?;
+        if first.checked_add(bytes_needed).is_none_or(|end| end > len) {
             return Err(DecodeError::CountMismatch {
-                offset: base + vec_at,
-                declared: count as u64,
-                actual: ((p.len() - vec_at - 4) / Self::FB_EVENT_SIZE) as u64,
+                offset: base.saturating_add(vec_head),
+                declared: count,
+                actual: (len - first) / size,
             });
         }
-        let mut events = Vec::with_capacity(count);
+        let mut events = Vec::with_capacity(usize::try_from(count).unwrap_or(0));
+        // Committed to `*last_t` only on success; see the note above.
+        let mut cursor = *last_t;
         for k in 0..count {
-            let at = vec_at + 4 + k * Self::FB_EVENT_SIZE;
+            let at = spot(first + k * size, size, "vector")?;
             let raw_t = u64_le(p, at).map_err(|_| bad("vector"))? as i64;
             let t = u64::try_from(raw_t).map_err(|_| DecodeError::FieldOutOfRange {
-                offset: base + at,
+                offset: base.saturating_add(at),
                 field: "timestamp",
                 value: raw_t.unsigned_abs(),
                 max: u64::try_from(i64::MAX).unwrap_or(u64::MAX),
             })?;
-            if t < *last_t {
+            if t < cursor {
                 return Err(DecodeError::NonMonotonicTimestamp {
-                    offset: base + at,
-                    previous: *last_t,
+                    offset: base.saturating_add(at),
+                    previous: cursor,
                     found: t,
                 });
             }
-            *last_t = t;
+            cursor = t;
             let sx = u16_le(p, at + 8).map_err(|_| bad("vector"))? as i16;
             let sy = u16_le(p, at + 10).map_err(|_| bad("vector"))? as i16;
             for (v, field) in [(sx, "column"), (sy, "row")] {
                 if v < 0 {
                     return Err(DecodeError::FieldOutOfRange {
-                        offset: base + at + 8,
+                        offset: base.saturating_add(at + 8),
                         field,
                         value: u64::from(v.unsigned_abs()),
                         max: u64::from(i16::MAX.unsigned_abs()),
@@ -2072,7 +2412,7 @@ impl Aedat4 {
                 1 => Polarity::On,
                 other => {
                     return Err(DecodeError::FieldOutOfRange {
-                        offset: base + at + 12,
+                        offset: base.saturating_add(at + 12),
                         field: "polarity",
                         value: u64::from(other),
                         max: 1,
@@ -2081,6 +2421,7 @@ impl Aedat4 {
             };
             events.push(AerEvent { t, x: sx.unsigned_abs(), y: sy.unsigned_abs(), polarity });
         }
+        *last_t = cursor;
         Ok(events)
     }
 
@@ -2089,15 +2430,21 @@ impl Aedat4 {
     /// # Errors
     ///
     /// [`DecodeError::UnsupportedCompression`] naming the packet's byte offset and the file's
-    /// declared format, if any packet's payload was not decoded. This is where the crate's
-    /// zero-dependency boundary becomes visible to a caller, and it refuses with the reason rather
-    /// than returning a partial list that looks like a short recording.
+    /// declared format, if a packet's payload was compressed and so never read. This is where the
+    /// crate's zero-dependency boundary becomes visible to a caller, and it refuses with the reason
+    /// rather than returning a partial list that looks like a short recording.
+    ///
+    /// Otherwise, whatever [`Aedat4Packet::payload_error`] holds: a `RAW` packet that is not an
+    /// event table — a frame or an inertial sample in an interleaved `DV` recording, or a
+    /// malformed buffer — is refused here with the error that walking it produced, verbatim, so
+    /// that "this stream is not events" and "this crate has no decompressor" cannot be confused.
     pub fn events(&self) -> Result<Vec<AerEvent>, DecodeError> {
         let mut all = Vec::new();
         for p in &self.packets {
-            match &p.events {
-                Some(e) => all.extend_from_slice(e),
-                None => {
+            match (&p.events, &p.payload_error) {
+                (Some(e), _) => all.extend_from_slice(e),
+                (None, Some(err)) => return Err(err.clone()),
+                (None, None) => {
                     return Err(DecodeError::UnsupportedCompression {
                         offset: p.offset,
                         name: self.compression.name().to_string(),
@@ -2129,18 +2476,18 @@ impl Aedat4 {
         let chunk = events_per_packet.max(1);
         let mut packets = Vec::new();
         for (c, part) in events.chunks(chunk).enumerate() {
-            for (k, e) in part.iter().enumerate() {
-                let i = c * chunk + k;
-                fit(i, "column", u64::from(e.x), 32767)?;
-                fit(i, "row", u64::from(e.y), 32767)?;
-                fit(i, "timestamp", e.t, u64::try_from(i64::MAX).unwrap_or(u64::MAX))?;
-            }
-            packets.push(Aedat4Packet {
-                stream_id,
-                offset: 0,
-                payload: Self::write_event_packet(part),
-                events: Some(part.to_vec()),
-            });
+            packets.push(Aedat4Packet::from_events(stream_id, part).map_err(|e| match e {
+                // The index `set_events` reports is into the chunk; the caller indexed the whole
+                // slice, and an error naming event 3 of 8,000 when it meant 2,051 is worse than
+                // no index at all.
+                EncodeError::FieldOutOfRange { index, field, value, max } => {
+                    EncodeError::FieldOutOfRange { index: c * chunk + index, field, value, max }
+                }
+                EncodeError::Unsorted { index, previous, found } => {
+                    EncodeError::Unsorted { index: c * chunk + index, previous, found }
+                }
+                other => other,
+            })?);
         }
         Ok(Self {
             header: vec![
@@ -2192,31 +2539,51 @@ impl Aedat4 {
 
     /// Serialise back to bytes.
     ///
-    /// A packet that was decoded is re-serialised from its events; a packet that was not — because
-    /// it was compressed — is written from its preserved payload, byte for byte. So a compressed
-    /// file survives a decode-encode cycle unchanged even though this crate cannot read inside it.
+    /// Every packet is written from [`Aedat4Packet::payload`], byte for byte, whatever the
+    /// compression and whether or not its events were decoded. So **any** file survives a
+    /// decode-encode cycle unchanged — a compressed one this crate cannot read inside, and equally
+    /// a `RAW` one whose `FlatBuffers` table is laid out differently from the forward layout
+    /// [`Aedat4::write_event_packet`] produces, or carries fields beyond the element vector.
+    /// Regenerating the payload from the decoded events drops all of that silently; measured, a
+    /// valid 98-byte packet with a 4-byte alignment gap came back out as 94.
+    ///
+    /// Changing what a packet holds therefore goes through [`Aedat4Packet::set_events`] rather than
+    /// through the `events` field — see the note on [`Aedat4Packet`].
     ///
     /// # Errors
     ///
     /// [`EncodeError::HeaderLineContainsNewline`] if a header line would not survive the round
-    /// trip. Field ranges were already enforced when the packets were built.
+    /// trip; [`EncodeError::FieldOutOfRange`] if the `IOHeader` or a payload is longer than the
+    /// `int32` size field can express, which is a file that cannot be written rather than one
+    /// written with a wrong length in it. Coordinate ranges were enforced when the packets were
+    /// built.
     pub fn encode(&self) -> Result<Vec<u8>, EncodeError> {
         let mut out = Vec::new();
         push_header_lines(&mut out, &self.header, b'#', true)?;
-        let io_len = i32::try_from(self.io_header.len()).unwrap_or(i32::MAX);
-        out.extend_from_slice(&io_len.to_le_bytes());
+        out.extend_from_slice(&Self::size_field(0, "IOHeader size", self.io_header.len())?.to_le_bytes());
         out.extend_from_slice(&self.io_header);
-        for p in &self.packets {
-            let payload = match (&p.events, &self.compression) {
-                (Some(e), Aedat4Compression::Raw) => Self::write_event_packet(e),
-                _ => p.payload.clone(),
-            };
-            let size = i32::try_from(payload.len()).unwrap_or(i32::MAX);
+        for (i, p) in self.packets.iter().enumerate() {
+            let size = Self::size_field(i, "packet size", p.payload.len())?;
             out.extend_from_slice(&p.stream_id.to_le_bytes());
             out.extend_from_slice(&size.to_le_bytes());
-            out.extend_from_slice(&payload);
+            out.extend_from_slice(&p.payload);
         }
         Ok(out)
+    }
+
+    /// A length as the container's signed 32-bit size field, or a refusal.
+    ///
+    /// Saturating it at `i32::MAX` would write a **wrong number** into the file — a length field
+    /// that disagrees with the bytes that follow it, which is the one thing a container's framing
+    /// must never do. `a_payload_too_long_for_the_size_field_is_refused_not_truncated` calls this
+    /// with a length no test can allocate.
+    fn size_field(index: usize, field: &'static str, len: usize) -> Result<i32, EncodeError> {
+        i32::try_from(len).map_err(|_| EncodeError::FieldOutOfRange {
+            index,
+            field,
+            value: len as u64,
+            max: i32::MAX.unsigned_abs().into(),
+        })
     }
 }
 
@@ -2290,8 +2657,8 @@ impl TrainMap {
 #[cfg(test)]
 mod tests {
     use super::{
-        Aedat2, Aedat2Layout, Aedat4, Aedat4Compression, AerEvent, Dat, DecodeError, EncodeError,
-        Evt2, Evt3, Flat, MarkerKind, TrainMap,
+        Aedat2, Aedat2Layout, Aedat4, Aedat4Compression, Aedat4Packet, AerEvent, Dat, DecodeError,
+        EncodeError, Evt2, Evt3, Flat, Marker, MarkerKind, TrainMap,
     };
     use crate::rng::Rng;
     use crate::spike::Polarity;
@@ -2341,6 +2708,150 @@ mod tests {
             let header_bytes: usize = header.iter().map(|l| l.len() + 3).sum();
             assert_eq!(bytes.len(), header_bytes + 8 * events.len());
         }
+    }
+
+    /// The header/record seam, swept over **every row of both presets**.
+    ///
+    /// `AEDAT` 2.0 has no header terminator: the records start at the first byte that is not a
+    /// header line, so a record whose first byte is `#` can be eaten as a comment. It is not
+    /// hypothetical — the `DAVIS346` row field sits at bit 22, so rows 140 to 143 put `0x23` in
+    /// the big-endian address MSB. Measured before the fix: 4 of that sensor's 260 rows destroyed
+    /// their own round trip, and a three-event stream beginning on row 140 came back `Ok` with two
+    /// events and two header lines. One seed and one first event is exactly what the bit-exactness
+    /// test above samples, which is why this sweeps the coordinate that decides it.
+    #[test]
+    fn aedat2_round_trips_every_first_event_row_of_both_presets() {
+        let header = vec![
+            "!AER-DAT2.0".to_string(),
+            " a comment line, as jAER writes several".to_string(),
+            " with a non-ASCII byte: \u{b5}s".to_string(),
+        ];
+        for layout in [Aedat2Layout::DVS128, Aedat2Layout::DAVIS346] {
+            let mut destroyed = Vec::new();
+            for row in 0..layout.height {
+                for x in [0u16, 1, layout.width - 1] {
+                    let events = vec![
+                        AerEvent { t: 10, x, y: row, polarity: Polarity::On },
+                        AerEvent { t: 20, x: 0, y: 0, polarity: Polarity::Off },
+                        AerEvent { t: 0x0A0A_0A0A, x: 1, y: 1, polarity: Polarity::On },
+                    ];
+                    let bytes = Aedat2::encode(&events, layout, &header).expect("encodable");
+                    match Aedat2::decode(&bytes, layout) {
+                        Ok(back) if back.events == events && back.header == header => {}
+                        other => destroyed.push((row, x, format!("{other:?}"))),
+                    }
+                }
+            }
+            assert!(
+                destroyed.is_empty(),
+                "{}: {} of {} first-event rows lost their round trip, first {:?}",
+                layout.source,
+                destroyed.len(),
+                layout.height,
+                destroyed.first()
+            );
+        }
+    }
+
+    /// The seam from the other side: a record that *is* a `#` must not be read as a comment, and a
+    /// comment that is text must still be read as one.
+    #[test]
+    fn a_binary_record_beginning_with_the_prefix_byte_is_not_a_header_line() {
+        // Row 140 of a DAVIS346 is address 140 << 22 = 0x23000000: the character '#'.
+        let hazard = AerEvent { t: 10, x: 5, y: 140, polarity: Polarity::On };
+        let bytes = Aedat2::encode(&[hazard], Aedat2Layout::DAVIS346, &[]).expect("encodable");
+        assert_eq!(bytes[14], b'#', "the fixture must actually contain the hazard");
+        let back = Aedat2::decode(&bytes, Aedat2Layout::DAVIS346).expect("decodable");
+        assert_eq!(back.events, vec![hazard]);
+        assert_eq!(back.header, vec!["!AER-DAT2.0".to_string()], "one line, not two");
+
+        // And the rule that separates them is "is it text", so a text comment still parses --
+        // including one that is not ASCII, and one that is empty.
+        let lines = vec![
+            "!AER-DAT2.0".to_string(),
+            String::new(),
+            "\ttabbed".to_string(),
+            " 8 \u{b5}s per tick".to_string(),
+        ];
+        let b = Aedat2::encode(&[hazard], Aedat2Layout::DAVIS346, &lines).expect("encodable");
+        let d = Aedat2::decode(&b, Aedat2Layout::DAVIS346).expect("decodable");
+        assert_eq!(d.header, lines);
+        assert_eq!(d.events, vec![hazard]);
+    }
+
+    /// The two things a 32-bit wrapping clock cannot be unwrapped back to, refused by both
+    /// formats that carry one.
+    ///
+    /// Measured before this was fixed: two events exactly 2^32 us apart came back **0 us** apart,
+    /// in order, with no error, and a single event at 2^32 + 12,345 came back at 12,345 — from
+    /// both `AEDAT` 2.0 and `.dat`, while `Flat`, with 64 bits of time, returned it intact.
+    #[test]
+    fn aedat2_refuses_a_time_its_own_decoder_could_not_recover() {
+        let at = |t: u64| AerEvent { t, x: 1, y: 2, polarity: Polarity::On };
+        for (name, enc) in [
+            ("aedat2", &(|e: &[AerEvent]| Aedat2::encode(e, Aedat2Layout::DVS128, &[]))
+                as &dyn Fn(&[AerEvent]) -> Result<Vec<u8>, EncodeError>),
+            ("dat", &(|e: &[AerEvent]| Dat::encode(e, &[], 0x00))),
+        ] {
+            // A first timestamp past the counter: the accumulator starts at zero and the high bits
+            // are nowhere on the wire.
+            assert!(
+                matches!(
+                    enc(&[at(1u64 << 32)]),
+                    Err(EncodeError::FieldOutOfRange {
+                        index: 0,
+                        field: "first timestamp",
+                        value: 4_294_967_296,
+                        max: 4_294_967_295
+                    })
+                ),
+                "{name} wrote a first timestamp it could not read back"
+            );
+            // Exactly one counter period apart reads as no gap at all.
+            for gap in [1u64 << 32, (1u64 << 32) + 10, 1u64 << 31] {
+                assert!(
+                    matches!(
+                        enc(&[at(0), at(gap)]),
+                        Err(EncodeError::GapTooLarge { index: 1, max: 2_147_483_647, .. })
+                    ),
+                    "{name} wrote a gap of {gap} us"
+                );
+            }
+            // The largest first timestamp, and the largest gap, at a phase that straddles the
+            // wrap: both encode AND come back exactly.
+            let last = (1u64 << 32) - 1;
+            let ok = [at(last - 99), at(last - 99 + Aedat2::MAX_GAP_US)];
+            let bytes = enc(&ok).expect("the stated bounds encode");
+            let back = if name == "aedat2" {
+                Aedat2::decode(&bytes, Aedat2Layout::DVS128).expect("decodable").events
+            } else {
+                Dat::decode(&bytes).expect("decodable").events
+            };
+            assert_eq!(back, ok, "{name} at the bound, across the wrap");
+            assert_eq!(back[1].t - back[0].t, Aedat2::MAX_GAP_US);
+        }
+        assert_eq!(Aedat2::MAX_GAP_US, Dat::MAX_GAP_US);
+        assert_eq!(Aedat2::MAX_TIME_US, Dat::MAX_TIME_US);
+    }
+
+    /// And the gap just past the bound is one the decoder genuinely refuses — so the encoder can
+    /// no longer write a file its own decoder rejects.
+    #[test]
+    fn a_gap_of_half_the_counter_is_refused_by_the_decoder_too() {
+        let p = 0xFFFF_FF9Cu32;
+        let q = p.wrapping_add(1 << 31);
+        let bytes = aedat2_bytes(&[(0, p), (0, q)]);
+        assert!(
+            matches!(
+                Aedat2::decode(&bytes, Aedat2Layout::DVS128),
+                Err(DecodeError::NonMonotonicTimestamp { .. })
+            ),
+            "a backwards jump of exactly half the range is ambiguous and must not be a wrap"
+        );
+        // One microsecond less, and it is a wrap the decoder does recover.
+        let bytes = aedat2_bytes(&[(0, p), (0, q.wrapping_sub(1))]);
+        let back = Aedat2::decode(&bytes, Aedat2Layout::DVS128).expect("decodable");
+        assert_eq!(back.events[1].t - back.events[0].t, Aedat2::MAX_GAP_US);
     }
 
     #[test]
@@ -2407,25 +2918,40 @@ mod tests {
     /// codecs share one semantics rather than six nearly-identical ones.
     #[test]
     fn all_six_formats_agree_on_the_same_events() {
-        let events = synth(2_000, 0x17, 640, 480, 250);
-        let header = vec![" Width 640".to_string(), " Height 480".to_string()];
-        let via_flat = Flat::decode(&Flat::encode(&events, 640, 480).unwrap()).unwrap().events;
+        // Generated at the DAVIS346 geometry so that all six formats can genuinely hold it. At
+        // 640x480 the AEDAT 2.0 arm could only ever assert its own refusal, which made the
+        // "all six" claim a five-format check.
+        let (w, h) = (Aedat2Layout::DAVIS346.width, Aedat2Layout::DAVIS346.height);
+        let events = synth(2_000, 0x17, w, h, 250);
+        let header = vec![" Width 346".to_string(), " Height 260".to_string()];
+        let via_flat = Flat::decode(&Flat::encode(&events, w, h).unwrap()).unwrap().events;
         let via_evt2 = Evt2::decode(&Evt2::encode(&events).unwrap()).unwrap().events;
         let via_evt3 = Evt3::decode(&Evt3::encode(&events, true).unwrap()).unwrap().events;
         let via_dat = Dat::decode(&Dat::encode(&events, &header, 0x00).unwrap()).unwrap().events;
         let via_a2 = Aedat2::decode(
-            &Aedat2::encode(&events, Aedat2Layout::DAVIS346, &[]).unwrap_or_default(),
+            &Aedat2::encode(&events, Aedat2Layout::DAVIS346, &[]).unwrap(),
             Aedat2Layout::DAVIS346,
-        );
+        )
+        .unwrap()
+        .events;
         let via_a4 = Aedat4::raw_from_events(&events, 1024, 0).unwrap().events().unwrap();
-        assert_eq!(via_flat, events);
-        assert_eq!(via_evt2, events);
-        assert_eq!(via_evt3, events);
-        assert_eq!(via_dat, events);
-        assert_eq!(via_a4, events);
-        // AEDAT 2.0 with the DAVIS346 layout cannot hold a 640x480 array, and says so rather than
-        // folding the columns. That refusal is the point of asserting it here.
-        assert!(via_a2.is_err() || Aedat2::encode(&events, Aedat2Layout::DAVIS346, &[]).is_err());
+        for (name, got) in [
+            ("flat", &via_flat),
+            ("evt2", &via_evt2),
+            ("evt3", &via_evt3),
+            ("dat", &via_dat),
+            ("aedat2", &via_a2),
+            ("aedat4", &via_a4),
+        ] {
+            assert_eq!(got, &events, "{name} disagrees");
+        }
+        // And the refusal that the old version of this test asserted instead is still asserted,
+        // where it belongs: a 640x480 stream does not fit the DAVIS346 layout, and says so.
+        let big = synth(4, 0x17, 640, 480, 10);
+        assert!(matches!(
+            Aedat2::encode(&big, Aedat2Layout::DAVIS346, &[]),
+            Err(EncodeError::FieldOutOfRange { .. })
+        ));
     }
 
     // -----------------------------------------------------------------------------------------
@@ -2500,6 +3026,9 @@ mod tests {
     ///
     /// Every expected timestamp below is arithmetic done by hand from the field table, not a
     /// previous run of this decoder: 0xFFF << 12 = 16,773,120; one wrap adds 2^24 = 16,777,216.
+    /// The fixture used to cross twice while the doc above it said three, which is the sort of
+    /// number a reader checks the code against; it now crosses three times and the last event is
+    /// 3 x 2^24 + 1.
     #[test]
     fn evt3_reconstructs_timestamps_across_repeated_rollovers() {
         let s = evt3_words(&[
@@ -2508,13 +3037,98 @@ mod tests {
             0x8000, 0x6002, 0x2000 | 12,         // wrap 1: t = 16,777,216 + 2
             0x8FFF, 0x6FF0, 0x2000 | 13,         // t = 16,777,216 + 16,773,120 + 4,080
             0x8000, 0x6000, 0x2000 | 14,         // wrap 2: t = 33,554,432
+            0x8FFF, 0x6FF0, 0x2000 | 15,         // t = 33,554,432 + 16,773,120 + 4,080
+            0x8000, 0x6001, 0x2000 | 16,         // wrap 3: t = 50,331,648 + 1
         ]);
         let got = Evt3::decode(&s).expect("decodable");
         let times: Vec<u64> = got.events.iter().map(|e| e.t).collect();
-        assert_eq!(times, vec![1, 16_777_215, 16_777_218, 33_554_416, 33_554_432]);
+        assert_eq!(
+            times,
+            vec![1, 16_777_215, 16_777_218, 33_554_416, 33_554_432, 50_331_632, 50_331_649]
+        );
+        assert_eq!(times[6], 3 * Evt3::WRAP_US + 1, "three wraps, counted");
         assert!(monotonic(&got.events), "a missed wrap shows up here as a sawtooth");
         // And the columns rode along correctly, so this is not a test of time alone.
-        assert_eq!(got.events.iter().map(|e| e.x).collect::<Vec<_>>(), vec![10, 11, 12, 13, 14]);
+        assert_eq!(
+            got.events.iter().map(|e| e.x).collect::<Vec<_>>(),
+            vec![10, 11, 12, 13, 14, 15, 16]
+        );
+    }
+
+    /// [`Evt3::MAX_FIRST_TIME_US`] is an inclusive bound: that value encodes, the next does not.
+    ///
+    /// The doc said "at or past" while `fit` refuses only `>`, so the constant named one thing and
+    /// the code did another by one microsecond. The code is right — 2^24 - 1 is all 24 bits of
+    /// time set and encodes exactly — so this pins it from both sides.
+    #[test]
+    fn evt3_encodes_its_largest_first_timestamp_and_refuses_the_next() {
+        let at = |t: u64| [AerEvent { t, x: 3, y: 4, polarity: Polarity::Off }];
+        let last = at(Evt3::MAX_FIRST_TIME_US);
+        let bytes = Evt3::encode(&last, false).expect("2^24 - 1 is encodable");
+        assert_eq!(Evt3::decode(&bytes).unwrap().events, last);
+        assert!(matches!(
+            Evt3::encode(&at(Evt3::MAX_FIRST_TIME_US + 1), false),
+            Err(EncodeError::FieldOutOfRange {
+                index: 0,
+                field: "first timestamp",
+                value: 16_777_216,
+                max: 16_777_215
+            })
+        ));
+        assert_eq!(Evt3::MAX_FIRST_TIME_US + 1, Evt3::WRAP_US);
+    }
+
+    /// An `EVT` 3.0 event word carries no time of its own, so an event before any time word is
+    /// dated zero — the stream did not say, and this decoder does not guess.
+    ///
+    /// Documented on [`Marker::t`] and pinned here, because "t = 0" reads exactly like the start
+    /// of a recording and a caller who resumed from an arbitrary offset needs to know it is not.
+    #[test]
+    fn evt3_dates_an_event_before_any_time_word_at_zero() {
+        let s = evt3_words(&[0x0005, 0x2000 | 9, 0x8001, 0x6002, 0x2000 | 11]);
+        let got = Evt3::decode(&s).expect("decodable");
+        assert_eq!(
+            got.events,
+            vec![
+                AerEvent { t: 0, x: 9, y: 5, polarity: Polarity::Off },
+                AerEvent { t: 4_098, x: 11, y: 5, polarity: Polarity::Off },
+            ]
+        );
+        assert!(got.markers.is_empty(), "and nothing is reported that was not on the wire");
+    }
+
+    /// `CONTINUED` words are reported as continuations rather than dropped or mistaken for events.
+    ///
+    /// Both `EVT` 3.0 continuation opcodes and the `EVT` 2.0 one, which are the tail of a
+    /// multi-word payload this implementation does not interpret. [`MarkerKind::Continued`] has no
+    /// other test.
+    #[test]
+    fn continued_words_are_reported_as_continuations() {
+        let s = evt3_words(&[
+            (Evt3::TIME_HIGH << 12),
+            (Evt3::TIME_LOW << 12) | 1,
+            (Evt3::CONTINUED_4 << 12) | 0xA,
+            (Evt3::CONTINUED_12 << 12) | 0xBCD,
+        ]);
+        let f = Evt3::decode(&s).expect("decodable");
+        assert!(f.events.is_empty());
+        assert_eq!(
+            f.markers,
+            vec![
+                Marker { offset: 4, kind: MarkerKind::Continued, raw: 0x700A, t: 1 },
+                Marker { offset: 6, kind: MarkerKind::Continued, raw: 0xFBCD, t: 1 },
+            ]
+        );
+        let mut e2 = Evt2::encode(&[AerEvent { t: 100, x: 1, y: 1, polarity: Polarity::On }])
+            .unwrap();
+        e2.extend_from_slice(&((u32::from(Evt2::CONTINUED) << 28) | 0x1234).to_le_bytes());
+        e2.extend_from_slice(&((u32::from(Evt2::OTHERS) << 28) | 0x5678).to_le_bytes());
+        let f2 = Evt2::decode(&e2).expect("decodable");
+        assert_eq!(
+            f2.markers.iter().map(|m| m.kind).collect::<Vec<_>>(),
+            vec![MarkerKind::Continued, MarkerKind::Other]
+        );
+        assert_eq!(f2.markers[0].raw, (u64::from(Evt2::CONTINUED) << 28) | 0x1234);
     }
 
     /// A low word smaller than its predecessor with no `TIME_HIGH` between them means the high word
@@ -2617,16 +3231,70 @@ mod tests {
         ]
     }
 
-    /// What a sweep of malformed input actually exercised.
+    /// What a sweep of malformed input actually exercised, **per decoder**.
     ///
     /// Counted and asserted on, because a totality test is the easiest kind to make vacuous: a
     /// decoder that returned `Err` for everything would pass "it never panics" perfectly, and so
     /// would a test whose fixtures were all too short to reach the state machine.
-    #[derive(Default, Debug)]
+    ///
+    /// Per decoder rather than summed, because a single global total cannot see one decoder
+    /// regressing. Measured on the truncation sweep: of 1,341 successes, `Flat` contributed 3 and
+    /// `AEDAT` 4.0 contributed 17, so either could stop succeeding altogether and a floor of 500
+    /// on the sum would still pass with 976.
+    #[derive(Default, Debug, Clone, Copy)]
     struct Tally {
         ok: u64,
         err: u64,
         events: u64,
+    }
+
+    /// The decoder slots, in the order [`decode_every_way`] runs them.
+    const DECODERS: [&str; 7] = [
+        "aedat2-dvs128",
+        "aedat2-davis346",
+        "evt2",
+        "evt3",
+        "dat",
+        "flat",
+        "aedat4",
+    ];
+
+    /// Which slot of [`DECODERS`] is the decoder a corpus fixture was written by.
+    fn own_decoder(fixture: &str) -> usize {
+        match fixture {
+            "aedat2" => 0,
+            "evt2" => 2,
+            "evt3-plain" | "evt3-vect" => 3,
+            "dat" => 4,
+            "flat" => 5,
+            "aedat4" => 6,
+            other => panic!("fixture {other} has no decoder slot"),
+        }
+    }
+
+    #[derive(Default, Debug)]
+    struct Sweep {
+        per: [Tally; DECODERS.len()],
+    }
+
+    impl Sweep {
+        fn total(&self) -> Tally {
+            let mut t = Tally::default();
+            for d in &self.per {
+                t.ok += d.ok;
+                t.err += d.err;
+                t.events += d.events;
+            }
+            t
+        }
+
+        fn add(&mut self, other: &Self) {
+            for (a, b) in self.per.iter_mut().zip(other.per.iter()) {
+                a.ok += b.ok;
+                a.err += b.err;
+                a.events += b.events;
+            }
+        }
     }
 
     /// Decode with every decoder and assert the two properties that must hold for ANY input: the
@@ -2634,23 +3302,29 @@ mod tests {
     ///
     /// Deliberately runs every decoder over every buffer, not just the matching one: reading a
     /// file with the wrong decoder is a routine accident and must fail rather than crash.
-    fn decode_every_way(bytes: &[u8], tally: &mut Tally) {
-        let note = |r: Result<Vec<AerEvent>, DecodeError>, tally: &mut Tally| match r {
-            Ok(e) => {
-                assert!(monotonic(&e));
-                tally.ok += 1;
-                tally.events += e.len() as u64;
+    fn decode_every_way(bytes: &[u8], sweep: &mut Sweep) {
+        let mut slot = 0usize;
+        let mut note = |r: Result<Vec<AerEvent>, DecodeError>, sweep: &mut Sweep| {
+            let t = &mut sweep.per[slot];
+            match r {
+                Ok(e) => {
+                    assert!(monotonic(&e), "{} returned a non-monotonic list", DECODERS[slot]);
+                    t.ok += 1;
+                    t.events += e.len() as u64;
+                }
+                Err(_) => t.err += 1,
             }
-            Err(_) => tally.err += 1,
+            slot += 1;
         };
         for layout in [Aedat2Layout::DVS128, Aedat2Layout::DAVIS346] {
-            note(Aedat2::decode(bytes, layout).map(|f| f.events), tally);
+            note(Aedat2::decode(bytes, layout).map(|f| f.events), sweep);
         }
-        note(Evt2::decode(bytes).map(|f| f.events), tally);
-        note(Evt3::decode(bytes).map(|f| f.events), tally);
-        note(Dat::decode(bytes).map(|f| f.events), tally);
-        note(Flat::decode(bytes).map(|f| f.events), tally);
-        note(Aedat4::decode(bytes).and_then(|f| f.events()), tally);
+        note(Evt2::decode(bytes).map(|f| f.events), sweep);
+        note(Evt3::decode(bytes).map(|f| f.events), sweep);
+        note(Dat::decode(bytes).map(|f| f.events), sweep);
+        note(Flat::decode(bytes).map(|f| f.events), sweep);
+        note(Aedat4::decode(bytes).and_then(|f| f.events()), sweep);
+        assert_eq!(slot, DECODERS.len(), "every decoder slot is named in DECODERS");
     }
 
     /// The test that makes this module safe to point at a file.
@@ -2660,40 +3334,118 @@ mod tests {
     /// loss or a cancelled copy — takes down whatever is reading it.
     #[test]
     fn every_truncation_of_every_format_errors_instead_of_panicking() {
-        let mut tally = Tally::default();
+        let mut all = Sweep::default();
         for (name, bytes) in corpus() {
             assert!(bytes.len() > 100, "{name} is too short to be a useful fixture");
+            let mut sweep = Sweep::default();
             for cut in 0..=bytes.len() {
-                decode_every_way(&bytes[..cut], &mut tally);
+                decode_every_way(&bytes[..cut], &mut sweep);
             }
+            // PER FIXTURE AND PER DECODER, not on the sum. The decoder that wrote the fixture must
+            // both accept it — at minimum the untruncated file — and refuse some prefix of it, or
+            // it has stopped reading its own format and no global floor would say so.
+            let own = sweep.per[own_decoder(name)];
+            assert!(own.ok >= 1, "{name}: its own decoder accepted nothing: {own:?}");
+            assert!(own.err >= 1, "{name}: its own decoder refused nothing: {own:?}");
+            assert!(own.events >= 1, "{name}: its own decoder produced no events: {own:?}");
+            if let Some(i) = PRINT_SWEEP.then_some(name) {
+                println!("{i}: {:?}", sweep.per);
+            }
+            all.add(&sweep);
         }
-        // The sweep has to have gone both ways, or "it never panicked" says nothing.
-        // Measured on this fixed seed: 1,341 successes, 57,025 refusals, 78,640 events decoded.
-        // The bounds are set well below those so that an ordinary change does not trip them and a
-        // decoder that stopped refusing, or stopped succeeding, does.
-        assert!(tally.err > 5_000, "only {} refusals; is anything being refused?", tally.err);
-        assert!(tally.ok > 500, "only {} successes; are the fixtures reaching the decoders?", tally.ok);
-        assert!(tally.events > 10_000, "only {} events decoded in the whole sweep", tally.events);
+        // And every decoder, over the whole sweep, has gone both ways. Measured on this fixed
+        // corpus, ok / err / events per slot:
+        //   aedat2-dvs128    121 / 8,217 / 7,260     aedat2-davis346  121 / 8,217 / 7,260
+        //   evt2             227 / 8,111 / 13,108    evt3             735 / 7,603 / 43,314
+        //   dat              121 / 8,217 / 7,260     flat               1 / 8,337 /    120
+        //   aedat4             5 / 8,333 /   312
+        // Flat's single success is not a weakness: its header declares the record count, so the
+        // only prefix of a Flat file that decodes is the whole file. That is exactly why the floor
+        // below is 1 and why the per-fixture check above — own decoder, own fixture — is the one
+        // carrying the weight.
+        for (i, name) in DECODERS.iter().enumerate() {
+            let t = all.per[i];
+            assert!(t.ok >= 1, "{name} accepted nothing in the whole sweep: {t:?}");
+            assert!(t.err > 1_000, "{name} refused only {} of the sweep: {t:?}", t.err);
+            assert!(t.events >= 100, "{name} produced only {} events: {t:?}", t.events);
+        }
+        let total = all.total();
+        // Totals, measured on this fixed corpus: 1,331 successes, 57,035 refusals, 78,634 events.
+        assert!(total.err > 5_000, "only {} refusals; is anything being refused?", total.err);
+        assert!(total.ok > 500, "only {} successes; are the fixtures reaching the decoders?", total.ok);
+        assert!(total.events > 10_000, "only {} events decoded in the whole sweep", total.events);
     }
 
+    /// Flip to print the per-decoder matrices the two sweeps' comments quote, then flip back.
+    const PRINT_SWEEP: bool = false;
+
     /// Random bytes of random lengths, seeded so the failure is reproducible.
+    ///
+    /// The point of the counts here is the second half of the claim: noise is *almost* always
+    /// refused, and the "almost" is measured rather than asserted away.
     #[test]
     fn random_bytes_never_panic() {
         let mut r = Rng::new(0x9E37_79B9);
-        let mut tally = Tally::default();
+        let mut sweep = Sweep::default();
+        let mut empty_sweep = Sweep::default();
+        let mut empties = 0u64;
         for _ in 0..4_000 {
             let n = r.below(600) as usize;
             let mut buf = Vec::with_capacity(n);
             for _ in 0..n {
                 buf.push((r.next_u32() & 0xFF) as u8);
             }
-            decode_every_way(&buf, &mut tally);
+            if buf.is_empty() {
+                empties += 1;
+                decode_every_way(&buf, &mut empty_sweep);
+            } else {
+                decode_every_way(&buf, &mut sweep);
+            }
         }
-        // Noise is almost always refused, and that is the point; the count is asserted so that a
-        // future decoder which accepted noise would show up here rather than pass quietly.
-        // Measured on this seed: 27,968 refusals against 32 successes, and those 32 are the
-        // zero-length buffers, which every decoder is right to accept as an empty stream.
-        assert!(tally.err > 10_000, "{tally:?}");
+        // The zero-length draws are separated because they are not noise: an empty buffer is an
+        // empty stream, and which decoders accept one is a property of the formats rather than of
+        // this seed. Exactly two do — EVT 2.0 and EVT 3.0, whose streams are a bare word array
+        // with no header to be missing. The other five require a magic, a descriptor or a fixed
+        // header and are right to refuse. Measured on this seed: 11 zero-length draws.
+        assert_eq!(empties, 11, "the seed draws 11 empty buffers");
+        for (i, name) in DECODERS.iter().enumerate() {
+            let t = empty_sweep.per[i];
+            let accepts_empty = *name == "evt2" || *name == "evt3";
+            assert_eq!(
+                t.ok,
+                if accepts_empty { empties } else { 0 },
+                "{name} on an empty buffer: {t:?}"
+            );
+            assert_eq!(t.events, 0, "{name} invented events from an empty buffer");
+        }
+        // And the real claim, on the 3,989 non-empty noise buffers. Noise IS occasionally accepted,
+        // and the previous version of this comment said the opposite — that the only successes
+        // were the empty buffers, "which every decoder is right to accept". Both halves were
+        // wrong. Measured on this seed, across 27,923 decodes of non-empty noise:
+        //
+        //   EVT 2.0 accepted 4 and produced 2 events, both from one 28-byte buffer;
+        //   EVT 3.0 accepted 6 and produced none — they are buffers of time and marker words;
+        //   the other five decoders accepted nothing at all, 3,989 refusals each.
+        //
+        // Ten successes per 4,000 draws is this module's weakest refusal, and it is what the two
+        // formats with no magic, no header and no length can do. Pinned exactly, so that a decoder
+        // which started accepting noise in bulk fails here rather than passing a `> 10_000`.
+        let noise = sweep.total();
+        if PRINT_SWEEP {
+            println!("NOISE per decoder: {:?}", sweep.per);
+        }
+        assert_eq!(noise.ok, 10, "noise accepted {} times: {sweep:?}", noise.ok);
+        assert_eq!(noise.events, 2, "noise decoded to {} events: {sweep:?}", noise.events);
+        assert_eq!(sweep.per[2].ok, 4, "EVT 2.0 on noise: {:?}", sweep.per[2]);
+        assert_eq!(sweep.per[3].ok, 6, "EVT 3.0 on noise: {:?}", sweep.per[3]);
+        assert!(noise.err > 10_000, "{sweep:?}");
+        for (i, name) in DECODERS.iter().enumerate() {
+            let t = sweep.per[i];
+            assert!(t.err > 3_000, "{name} refused only {} noise buffers: {t:?}", t.err);
+            if *name != "evt2" && *name != "evt3" {
+                assert_eq!(t.ok, 0, "{name} accepted a random buffer: {t:?}");
+            }
+        }
     }
 
     /// Valid streams with bytes flipped. This reaches deeper into each decoder than random noise
@@ -2701,7 +3453,7 @@ mod tests {
     #[test]
     fn mutated_streams_never_panic() {
         let mut r = Rng::new(0xC0FF_EE01);
-        let mut tally = Tally::default();
+        let mut sweep = Sweep::default();
         for (_, bytes) in corpus() {
             for _ in 0..500 {
                 let mut m = bytes.clone();
@@ -2709,15 +3461,20 @@ mod tests {
                     let at = r.below(m.len() as u32) as usize;
                     m[at] ^= (r.next_u32() & 0xFF) as u8;
                 }
-                decode_every_way(&m, &mut tally);
+                decode_every_way(&m, &mut sweep);
             }
         }
         // Both outcomes, in bulk: damaged files that still decode (the mutation landed in a
         // coordinate) and damaged files that are refused (it landed in an opcode or a length).
-        // Measured on this seed: 1,021 successes, 23,479 refusals, 122,353 events decoded.
-        assert!(tally.ok > 200, "{tally:?}");
-        assert!(tally.err > 1_000, "{tally:?}");
-        assert!(tally.events > 50_000, "{tally:?}");
+        // Measured on this seed: 1,124 successes, 23,376 refusals, 129,633 events decoded.
+        let tally = sweep.total();
+        assert!(tally.ok > 200, "{sweep:?}");
+        assert!(tally.err > 1_000, "{sweep:?}");
+        assert!(tally.events > 50_000, "{sweep:?}");
+        // Per decoder, so that one of the seven going dark cannot hide behind the other six.
+        for (i, name) in DECODERS.iter().enumerate() {
+            assert!(sweep.per[i].err > 100, "{name} refused almost nothing: {:?}", sweep.per[i]);
+        }
     }
 
     // -----------------------------------------------------------------------------------------
@@ -2797,8 +3554,46 @@ mod tests {
     }
 
     /// Feeding a file to the wrong decoder must fail on the magic, not produce plausible events.
+    ///
+    /// The `EVT` 3.0 stream below fails at byte 0 because it does not begin with `#` at all, which
+    /// is the easy case and the only one this test used to cover. The cases that matter are the
+    /// two files that **do**: `AEDAT` 3.1 and `AEDAT` 4.0 are the same vendor, the same `.aedat`
+    /// extension and completely different record layouts, and a magic of `"!AER-DAT"` with no
+    /// version digit admits both. Measured before the digit was added: a jAER `AEDAT` 3.1 file
+    /// decoded as 200 well-formed `AEDAT` 2.0 events and an `AEDAT` 4.0 file as 100, both `Ok`.
+    /// `DVS128` makes this the only defence it has — every 32-bit pattern is a valid address for a
+    /// 15-bit layout, so no record of one can be refused.
     #[test]
     fn a_missing_magic_stops_one_format_being_read_as_another() {
+        for magic in ["#!AER-DAT3.1\r\n", "#!AER-DAT4.0\r\n", "#!AER-DAT1.0\r\n"] {
+            let mut f = magic.as_bytes().to_vec();
+            for i in 0..200u32 {
+                f.extend_from_slice(&(i * 7).to_be_bytes());
+                f.extend_from_slice(&(i * 100).to_be_bytes());
+            }
+            for layout in [Aedat2Layout::DVS128, Aedat2Layout::DAVIS346] {
+                match Aedat2::decode(&f, layout) {
+                    Err(DecodeError::BadMagic { offset: 0, expected, .. }) => {
+                        assert_eq!(expected, "#!AER-DAT2.0");
+                    }
+                    other => panic!(
+                        "{magic:?} was read as AEDAT 2.0 by {}: {:?}",
+                        layout.source,
+                        other.map(|d| d.events.len())
+                    ),
+                }
+            }
+        }
+        // And the version this decoder does read is still read, whatever follows the digit.
+        for magic in ["!AER-DAT2.0", "!AER-DAT2"] {
+            let e = [AerEvent { t: 1, x: 2, y: 3, polarity: Polarity::On }];
+            let bytes =
+                Aedat2::encode(&e, Aedat2Layout::DVS128, &[magic.to_string()]).expect("encodable");
+            let back = Aedat2::decode(&bytes, Aedat2Layout::DVS128).expect("decodable");
+            assert_eq!(back.header[0], magic);
+            assert_eq!(back.events, e);
+        }
+
         let e = synth(50, 1, 128, 128, 100);
         let evt3 = Evt3::encode(&e, true).unwrap();
         assert!(matches!(
@@ -2956,6 +3751,72 @@ mod tests {
         assert_eq!((f.markers[0].offset, f.markers[0].t), (14, 500));
     }
 
+    /// A `DVS128` address with a bit set above its 15-bit field is a marker, not a pixel.
+    ///
+    /// This preset used to carry `special_mask: 0`, which disables the check entirely. Measured
+    /// then: addresses `1 << 15`, `1 << 31` and `0xFFFFFFFF` decoded as three ordinary pixel
+    /// events at columns 127, 127 and 0, with zero markers — the exact outcome the [`Marker`] doc
+    /// calls destroying the synchronisation evidence while leaving the event count unchanged.
+    #[test]
+    fn aedat2_dvs128_reports_an_address_outside_its_15_bits_as_a_marker() {
+        let bytes = aedat2_bytes(&[
+            (1 << 15, 100),
+            (1 << 31, 200),
+            (0xFFFF_FFFF, 300),
+            ((20 << 8) | ((127 - 10) << 1) | 1, 400),
+        ]);
+        let f = Aedat2::decode(&bytes, Aedat2Layout::DVS128).expect("decodable");
+        assert_eq!(f.markers.len(), 3, "{:?}", f.events);
+        assert_eq!(
+            f.markers,
+            vec![
+                Marker { offset: 14, kind: MarkerKind::Other, raw: 1 << 15, t: 100 },
+                Marker { offset: 22, kind: MarkerKind::Other, raw: 1 << 31, t: 200 },
+                Marker { offset: 30, kind: MarkerKind::Other, raw: 0xFFFF_FFFF, t: 300 },
+            ]
+        );
+        // The ordinary record beside them still decodes, so this is not a blanket refusal: column
+        // 10 counted from the right edge, row 20, polarity bit set.
+        assert_eq!(
+            f.events,
+            vec![AerEvent { t: 400, x: 10, y: 20, polarity: Polarity::Off }]
+        );
+        assert_eq!(Aedat2Layout::DVS128.special_mask, 0xFFFF_8000);
+        assert_eq!(Aedat2Layout::DVS128.overlap(), 0, "and the mask does not collide with a field");
+    }
+
+    /// A coordinate field wider than a `u16` has no representable answer, so the layout is refused
+    /// before a byte is read rather than saturating every decoded coordinate at 65535.
+    #[test]
+    fn a_coordinate_field_wider_than_a_u16_is_refused_before_any_byte_is_read() {
+        let wide = Aedat2Layout {
+            x_shift: 0,
+            x_bits: 17,
+            x_invert: false,
+            y_shift: 17,
+            y_bits: 8,
+            y_invert: false,
+            p_shift: 25,
+            p_on_is_one: true,
+            special_mask: 0,
+            width: 0,
+            height: 0,
+            source: "a 17-bit column, which no sensor has and a caller can write",
+        };
+        assert_eq!(wide.overlap(), 0, "the fields do not overlap; the width is the problem");
+        assert!(matches!(
+            Aedat2::decode(&aedat2_bytes(&[(0x1_FFFF, 1)]), wide),
+            Err(DecodeError::FieldOutOfRange { field: "x_bits", value: 131_071, max: 65_535, .. })
+        ));
+        assert!(matches!(
+            Aedat2::encode(&[], wide, &[]),
+            Err(EncodeError::FieldOutOfRange { field: "x_bits", value: 131_071, max: 65_535, .. })
+        ));
+        // A 16-bit field is the widest that is representable, and it is accepted.
+        let ok = Aedat2Layout { x_bits: 16, y_shift: 16, ..wide };
+        assert!(Aedat2::decode(&aedat2_bytes(&[]), ok).is_ok());
+    }
+
     /// Trigger words survive decoding with their offset and their reconstructed time.
     #[test]
     fn trigger_words_are_reported_not_swallowed() {
@@ -2998,6 +3859,30 @@ mod tests {
             Flat::decode(&pol),
             Err(DecodeError::FieldOutOfRange { field: "polarity", value: 2, max: 1, .. })
         ));
+    }
+
+    /// A declared width or height no `u16` coordinate could reach is refused, not folded to 65535.
+    ///
+    /// The declared geometry is what every column and row below it is range-checked against, so
+    /// saturating a declared width of 100,000 to 65,535 — measured, that is what it used to do —
+    /// range-checks the whole file against a number that appears in it nowhere.
+    #[test]
+    fn flat_refuses_a_declared_geometry_no_coordinate_could_reach() {
+        let e = synth(4, 3, 64, 64, 10);
+        for (at, field) in [(8usize, "width"), (12, "height")] {
+            let mut b = Flat::encode(&e, 64, 64).unwrap();
+            b[at..at + 4].copy_from_slice(&100_000u32.to_le_bytes());
+            match Flat::decode(&b) {
+                Err(DecodeError::FieldOutOfRange { offset, field: f, value, max }) => {
+                    assert_eq!((offset, f, value, max), (at, field, 100_000, 65_535));
+                }
+                other => panic!("a declared {field} of 100,000 was accepted: {other:?}"),
+            }
+        }
+        // 65535 itself is representable, so it is accepted and range-checks as itself.
+        let mut b = Flat::encode(&e, 64, 64).unwrap();
+        b[8..12].copy_from_slice(&u32::from(u16::MAX).to_le_bytes());
+        assert_eq!(Flat::decode(&b).expect("decodable").width, u16::MAX);
     }
 
     /// A `.dat` descriptor this decoder does not handle is named, with its two bytes.
@@ -3062,11 +3947,240 @@ mod tests {
         let mut bad = good.clone();
         bad[root_at] = 0xFF;
         bad[root_at + 1] = 0xFF;
-        match Aedat4::decode(&bad) {
+        // The FRAMING still decodes — that is what `Aedat4::decode` promises for every file — and
+        // the refusal lands on the packet and on `events()`, which is the call that claims to hand
+        // back events. Both halves are asserted: a decode that returned Ok with `events: None` and
+        // an `events()` that returned an empty list would be the silent failure this replaced.
+        let d = Aedat4::decode(&bad).expect("the framing survives a broken payload");
+        assert_eq!(d.packets.len(), decoded.packets.len(), "the packet boundaries are still read");
+        let mut damaged = decoded.packets[0].payload.clone();
+        damaged[0] = 0xFF;
+        damaged[1] = 0xFF;
+        assert_eq!(d.packets[0].payload, damaged, "the payload is preserved verbatim, damage too");
+        assert!(d.packets[0].events.is_none());
+        assert!(
+            matches!(
+                d.packets[0].payload_error,
+                Some(DecodeError::MalformedFlatBuffer { .. } | DecodeError::CountMismatch { .. })
+            ),
+            "{:?}",
+            d.packets[0].payload_error
+        );
+        match d.events() {
             Err(DecodeError::MalformedFlatBuffer { .. } | DecodeError::CountMismatch { .. }) => {}
             Err(other) => panic!("wrong refusal: {other:?}"),
             Ok(_) => panic!("a FlatBuffer pointing outside itself was followed"),
         }
+        // And the error `events()` gives is the packet's own, not a manufactured stand-in.
+        assert_eq!(d.events().unwrap_err(), d.packets[0].payload_error.clone().unwrap());
+    }
+
+    /// A `RAW` `AEDAT` 4.0 file whose packet is not an event table keeps its framing.
+    ///
+    /// `DV` interleaves frames and inertial samples with events, as packets in this same
+    /// container, so refusing the whole file when one packet is not events means no real `RAW` `DV`
+    /// recording opens at all — which is the opposite of what [`Aedat4`] claims. Measured before
+    /// this was fixed: a well-formed file with one 64-byte non-event payload failed the decode
+    /// outright with `MalformedFlatBuffer`.
+    #[test]
+    fn aedat4_keeps_the_framing_of_a_raw_file_whose_packet_is_not_events() {
+        let events = synth(24, 0x2B, 64, 64, 30);
+        let mut f = b"#!AER-DAT4.0\r\n#Format: RAW\r\n#!END-HEADER\r\n".to_vec();
+        f.extend_from_slice(&0i32.to_le_bytes());
+        // Stream 5: something this crate cannot walk. Stream 1: events it can.
+        let other = vec![0x55u8; 64];
+        f.extend_from_slice(&5i32.to_le_bytes());
+        f.extend_from_slice(&i32::try_from(other.len()).unwrap().to_le_bytes());
+        f.extend_from_slice(&other);
+        let evt = Aedat4::write_event_packet(&events);
+        f.extend_from_slice(&1i32.to_le_bytes());
+        f.extend_from_slice(&i32::try_from(evt.len()).unwrap().to_le_bytes());
+        f.extend_from_slice(&evt);
+
+        let d = Aedat4::decode(&f).expect("the framing decodes even though one stream is not events");
+        assert_eq!(d.compression, Aedat4Compression::Raw);
+        assert_eq!(d.packets.len(), 2);
+        assert_eq!((d.packets[0].stream_id, d.packets[1].stream_id), (5, 1));
+        assert_eq!(d.packets[0].payload, other, "the unreadable payload is kept byte for byte");
+        assert!(d.packets[0].events.is_none());
+        assert!(d.packets[0].payload_error.is_some(), "and it says why");
+        // The event stream is fully decoded beside it.
+        assert_eq!(d.packets[1].events.as_deref(), Some(&events[..]));
+        assert!(d.packets[1].payload_error.is_none());
+        // `events()` is a whole-file call, so it still refuses — with the packet's own reason,
+        // not with UnsupportedCompression, because the file is not compressed.
+        assert_eq!(d.events().unwrap_err(), d.packets[0].payload_error.clone().unwrap());
+        // And the whole file re-saves byte for byte.
+        assert_eq!(d.encode().unwrap(), f);
+    }
+
+    /// A `RAW` packet laid out differently from this module's own writer re-saves byte for byte.
+    ///
+    /// `FlatBuffers` is not a canonical encoding: a conforming writer may leave alignment padding
+    /// between the vector slot and the vector, and a real `dv-processing` events table carries
+    /// fields this reader does not look at. Regenerating the payload from the decoded events
+    /// discards all of it — measured, this 98-byte packet came back out as 94 — so
+    /// [`Aedat4::encode`] writes [`Aedat4Packet::payload`] instead.
+    #[test]
+    fn aedat4_re_saves_a_raw_packet_it_did_not_lay_out_itself_byte_for_byte() {
+        let mut payload: Vec<u8> = Vec::new();
+        payload.extend_from_slice(&12u32.to_le_bytes()); //  0.. 4  root
+        payload.extend_from_slice(&6u16.to_le_bytes()); //  4.. 6  vtable length
+        payload.extend_from_slice(&8u16.to_le_bytes()); //  6.. 8  table length
+        payload.extend_from_slice(&4u16.to_le_bytes()); //  8..10  field 0 at +4
+        payload.extend_from_slice(&0u16.to_le_bytes()); // 10..12  padding
+        payload.extend_from_slice(&8i32.to_le_bytes()); // 12..16  soffset to the vtable
+        payload.extend_from_slice(&8u32.to_le_bytes()); // 16..20  slot -> the vector at 24
+        payload.extend_from_slice(&[0xEEu8; 4]); //        20..24  four bytes this reader ignores
+        payload.extend_from_slice(&1u32.to_le_bytes()); // 24..28  element count
+        payload.extend_from_slice(&77i64.to_le_bytes());
+        payload.extend_from_slice(&3i16.to_le_bytes());
+        payload.extend_from_slice(&4i16.to_le_bytes());
+        payload.push(1);
+        payload.extend_from_slice(&[0u8; 3]);
+        assert_eq!(payload.len(), 44, "44 bytes in; this module's own writer would lay out 40");
+
+        let mut f = b"#!AER-DAT4.0\r\n#Format: RAW\r\n#!END-HEADER\r\n".to_vec();
+        f.extend_from_slice(&0i32.to_le_bytes());
+        f.extend_from_slice(&0i32.to_le_bytes());
+        f.extend_from_slice(&i32::try_from(payload.len()).unwrap().to_le_bytes());
+        f.extend_from_slice(&payload);
+
+        let d = Aedat4::decode(&f).expect("a conforming layout decodes");
+        assert_eq!(
+            d.packets[0].events.as_deref(),
+            Some(&[AerEvent { t: 77, x: 3, y: 4, polarity: Polarity::On }][..]),
+            "the events are read through the indirection, gap and all"
+        );
+        assert_eq!(
+            Aedat4::write_event_packet(&d.packets[0].events.clone().unwrap()).len(),
+            40,
+            "regenerating the payload would lose the four bytes at 20..24"
+        );
+        let re = d.encode().expect("serialisable");
+        assert_eq!(re, f, "re-saved {} bytes against the {} that came in", re.len(), f.len());
+    }
+
+    /// Changing a packet's events goes through [`Aedat4Packet::set_events`], which rewrites the
+    /// payload the encoder will write. The two must not be able to drift apart.
+    #[test]
+    fn aedat4_set_events_rewrites_the_payload_that_gets_written() {
+        let first = synth(6, 0x41, 32, 32, 10);
+        let second = synth(9, 0x42, 32, 32, 10);
+        let mut p = Aedat4Packet::from_events(3, &first).expect("encodable");
+        assert_eq!(p.events.as_deref(), Some(&first[..]));
+        p.set_events(&second).expect("encodable");
+        let file = Aedat4 {
+            header: vec![
+                "!AER-DAT4.0".to_string(),
+                "Format: RAW".to_string(),
+                Aedat4::END_HEADER.to_string(),
+            ],
+            compression: Aedat4Compression::Raw,
+            io_header: Vec::new(),
+            packets: vec![p],
+        };
+        let back = Aedat4::decode(&file.encode().expect("serialisable")).expect("decodable");
+        assert_eq!(back.events().expect("RAW"), second, "the file holds the events set last");
+        assert_eq!(back.packets[0].stream_id, 3);
+        // And the range refusals ride along rather than being bypassed by the back door.
+        let wide = [AerEvent { t: 0, x: 32_768, y: 0, polarity: Polarity::On }];
+        assert!(matches!(
+            Aedat4Packet::from_events(0, &wide),
+            Err(EncodeError::FieldOutOfRange { field: "column", .. })
+        ));
+    }
+
+    /// Offsets that would wrap a 32-bit `usize` are refused rather than followed.
+    ///
+    /// This crate compiles to `wasm32`, where `usize` is 32 bits, and every offset in a
+    /// `FlatBuffers` payload is a `u32` the file chose. `16 + 0xFFFF_FFFF` is 15 on that target:
+    /// in bounds, and pointing at a length this reader never wrote. The walker does its
+    /// arithmetic in `u64` for exactly that reason, which makes the 32-bit and 64-bit paths the
+    /// same path and lets this test stand for both.
+    #[test]
+    fn aedat4_refuses_offsets_that_would_wrap_a_32_bit_usize() {
+        let wrap = |patch: &dyn Fn(&mut Vec<u8>)| {
+            let mut payload = vec![0u8; 64];
+            payload[0..4].copy_from_slice(&12u32.to_le_bytes());
+            payload[4..6].copy_from_slice(&6u16.to_le_bytes());
+            payload[6..8].copy_from_slice(&8u16.to_le_bytes());
+            payload[8..10].copy_from_slice(&4u16.to_le_bytes());
+            payload[12..16].copy_from_slice(&8i32.to_le_bytes());
+            payload[16..20].copy_from_slice(&8u32.to_le_bytes());
+            payload[24..28].copy_from_slice(&0u32.to_le_bytes());
+            patch(&mut payload);
+            let mut f = b"#!AER-DAT4.0\r\n#Format: RAW\r\n#!END-HEADER\r\n".to_vec();
+            f.extend_from_slice(&0i32.to_le_bytes());
+            f.extend_from_slice(&0i32.to_le_bytes());
+            f.extend_from_slice(&i32::try_from(payload.len()).unwrap().to_le_bytes());
+            f.extend_from_slice(&payload);
+            Aedat4::decode(&f).expect("framing").packets[0].payload_error.clone()
+        };
+        // Unpatched, the buffer is a valid empty event packet.
+        assert_eq!(wrap(&|_| {}), None, "the fixture itself must decode, or this proves nothing");
+        // root + 4 wraps to 2.
+        let e = wrap(&|p| p[0..4].copy_from_slice(&0xFFFF_FFFEu32.to_le_bytes()));
+        assert!(matches!(e, Some(DecodeError::MalformedFlatBuffer { .. })), "{e:?}");
+        // slot + the vector offset wraps back inside the payload.
+        let e = wrap(&|p| p[16..20].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes()));
+        assert!(matches!(e, Some(DecodeError::MalformedFlatBuffer { what: "vector", .. })), "{e:?}");
+        // root + field wraps: a vtable field offset of 0xFFFF against a root near the top.
+        let e = wrap(&|p| {
+            p[10..12].copy_from_slice(&0xFFFFu16.to_le_bytes());
+            p[8..10].copy_from_slice(&0xFFFFu16.to_le_bytes());
+        });
+        assert!(matches!(e, Some(DecodeError::MalformedFlatBuffer { what: "vector", .. })), "{e:?}");
+        // count * 16 overflows a 32-bit size calculation.
+        let e = wrap(&|p| p[24..28].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes()));
+        assert!(matches!(e, Some(DecodeError::CountMismatch { declared: 4_294_967_295, .. })), "{e:?}");
+    }
+
+    /// A length the container's `int32` size field cannot express is refused, not truncated.
+    ///
+    /// Saturating it at `i32::MAX` writes a **wrong number** into the file: a length field that
+    /// disagrees with the bytes after it, which is the one thing a container's framing must never
+    /// do. Called directly because no test can allocate the payload that reaches it.
+    #[test]
+    fn a_payload_too_long_for_the_size_field_is_refused_not_truncated() {
+        assert_eq!(Aedat4::size_field(0, "packet size", 5), Ok(5));
+        assert_eq!(
+            Aedat4::size_field(0, "packet size", usize::try_from(i32::MAX).unwrap()),
+            Ok(i32::MAX)
+        );
+        let over = usize::try_from(i32::MAX).unwrap() + 1;
+        assert!(matches!(
+            Aedat4::size_field(7, "packet size", over),
+            Err(EncodeError::FieldOutOfRange { index: 7, field: "packet size", max: 2_147_483_647, .. })
+        ));
+    }
+
+    /// Every `Format:` value the container can carry survives a decode, and names itself back.
+    #[test]
+    fn the_aedat4_compression_names_round_trip() {
+        let cases = [
+            ("RAW", Aedat4Compression::Raw),
+            ("COMPRESSED_LZ4", Aedat4Compression::Lz4),
+            ("COMPRESSED_LZ4_HIGH", Aedat4Compression::Lz4High),
+            ("COMPRESSED_ZSTD", Aedat4Compression::Zstd),
+            ("COMPRESSED_ZSTD_HIGH", Aedat4Compression::ZstdHigh),
+            ("SOMETHING_NEW", Aedat4Compression::Other("SOMETHING_NEW".to_string())),
+        ];
+        for (name, want) in cases {
+            let mut f = b"#!AER-DAT4.0\r\n#Format: ".to_vec();
+            f.extend_from_slice(name.as_bytes());
+            f.extend_from_slice(b"\r\n#!END-HEADER\r\n");
+            f.extend_from_slice(&0i32.to_le_bytes());
+            let d = Aedat4::decode(&f).expect("an empty body is a file with no packets");
+            assert_eq!(d.compression, want, "{name}");
+            assert_eq!(d.compression.name(), name, "the name comes back as it went in");
+            assert!(d.packets.is_empty());
+            assert_eq!(d.events().expect("no packets, no refusal"), Vec::new());
+        }
+        // And a file with no Format: line at all is RAW, which is what the container defaults to.
+        let mut f = b"#!AER-DAT4.0\r\n#!END-HEADER\r\n".to_vec();
+        f.extend_from_slice(&0i32.to_le_bytes());
+        assert_eq!(Aedat4::decode(&f).unwrap().compression, Aedat4Compression::Raw);
     }
 
     // -----------------------------------------------------------------------------------------
@@ -3116,6 +4230,69 @@ mod tests {
         assert!(AerEvent { t: 0, x: 0, y: 0, polarity: Polarity::On }.to_event(0).is_none());
     }
 
+    /// Every named constant is the value its format's field table prints, checked where the value
+    /// itself is load-bearing rather than only where it is used.
+    ///
+    /// Six of these had no test naming them at all: an opcode constant that is only ever spelled
+    /// as a literal inside a fixture is a constant the fixture cannot disagree with.
+    #[test]
+    fn the_named_constants_are_the_values_the_field_tables_print() {
+        // Opcodes, EVT 3.0's 16-bit table and EVT 2.0's 4-bit one.
+        assert_eq!(
+            [Evt3::ADDR_Y, Evt3::ADDR_X, Evt3::VECT_BASE_X, Evt3::VECT_12, Evt3::VECT_8],
+            [0x0, 0x2, 0x3, 0x4, 0x5]
+        );
+        assert_eq!(
+            [Evt3::TIME_LOW, Evt3::CONTINUED_4, Evt3::TIME_HIGH, Evt3::EXT_TRIGGER],
+            [0x6, 0x7, 0x8, 0xA]
+        );
+        assert_eq!([Evt3::OTHERS, Evt3::CONTINUED_12], [0xE, 0xF]);
+        assert_eq!(
+            [Evt2::CD_OFF, Evt2::CD_ON, Evt2::TIME_HIGH, Evt2::EXT_TRIGGER],
+            [0x0, 0x1, 0x8, 0xA]
+        );
+        assert_eq!([Evt2::OTHERS, Evt2::CONTINUED], [0xE, 0xF]);
+        // An EXT_TRIGGER word built from the constants is read back as a trigger by both formats.
+        let s = evt3_words(&[(Evt3::EXT_TRIGGER << 12) | 1]);
+        assert_eq!(Evt3::decode(&s).unwrap().markers[0].kind, MarkerKind::ExternalTrigger);
+        let w = (u32::from(Evt2::EXT_TRIGGER) << 28) | 1;
+        assert_eq!(
+            Evt2::decode(&w.to_le_bytes()).unwrap().markers[0].kind,
+            MarkerKind::ExternalTrigger
+        );
+
+        // Magics, each against the bytes its own encoder writes.
+        assert_eq!(Aedat2::MAGIC, "!AER-DAT2");
+        let a2 = Aedat2::encode(&[], Aedat2Layout::DVS128, &[]).unwrap();
+        assert_eq!(a2, b"#!AER-DAT2.0\r\n");
+        assert_eq!(Flat::MAGIC, *b"FMAER-01");
+        assert_eq!(&Flat::encode(&[], 0, 0).unwrap()[..8], &Flat::MAGIC);
+        assert_eq!((Aedat4::MAGIC, Aedat4::END_HEADER), ("!AER-DAT4", "!END-HEADER"));
+        let a4 = Aedat4::raw_from_events(&[], 8, 0).unwrap().encode().unwrap();
+        assert!(a4.starts_with(b"#!AER-DAT4.0\r\n"), "{:?}", &a4[..14]);
+        assert!(a4.windows(14).any(|w| w == b"#!END-HEADER\r\n"));
+
+        // Record sizes: 16 bytes per FlatBuffers event on top of the 24-byte table this module
+        // lays out, and 16 bytes per Flat record on top of its 24-byte header.
+        assert_eq!(Aedat4::FB_EVENT_SIZE, 16);
+        let e = synth(5, 9, 16, 16, 4);
+        assert_eq!(Aedat4::write_event_packet(&e).len(), 24 + 5 * Aedat4::FB_EVENT_SIZE);
+        assert_eq!(Flat::RECORD_SIZE, 16);
+        assert_eq!(Flat::HEADER_SIZE, 24);
+
+        // .dat's 14-bit coordinate fields: the largest value encodes, the next is refused.
+        assert_eq!(Dat::MAX_COORD, (1 << 14) - 1);
+        let wide = [AerEvent { t: 0, x: 16_383, y: 16_383, polarity: Polarity::On }];
+        let bytes = Dat::encode(&wide, &[], Dat::CD_TYPE_CODES[0]).expect("14 bits hold 16383");
+        assert_eq!(Dat::decode(&bytes).unwrap().events, wide);
+        let past = [AerEvent { t: 0, x: 16_384, y: 0, polarity: Polarity::On }];
+        assert!(matches!(
+            Dat::encode(&past, &[], 0x00),
+            Err(EncodeError::FieldOutOfRange { field: "column", value: 16_384, max: 16_383, .. })
+        ));
+        assert_eq!(Dat::RECORD_SIZE, 8);
+    }
+
     /// The errors are printable, carry their offsets in the text, and cross a `Box<dyn Error>`
     /// boundary — which is what stops a caller reaching for `.unwrap()`.
     #[test]
@@ -3148,6 +4325,54 @@ mod tests {
         let got = Evt2::decode(&s).expect("a repeated TIME_HIGH is not an error");
         assert_eq!(got.events.iter().map(|e| e.t).collect::<Vec<_>>(), vec![703, 703, 705]);
         assert_eq!(got.events[2].polarity, Polarity::Off);
+    }
+
+    /// `EVT` 2.0's 28-bit `TIME_HIGH`: a real 2^34 wrap is counted, a jittered word is refused.
+    ///
+    /// The field is 28 bits, so a wrap is a backwards jump of nearly 2^28 and anything smaller is
+    /// corruption. Measured before the half-range rule was added: a `TIME_HIGH` stepping back by
+    /// **one**, from 10 to 9, decoded without error and put the next event 17,179,869,120 us — 4 h
+    /// 46 min — after its predecessor. `Evt2::encode` refuses a timestamp past
+    /// [`Evt2::MAX_TIME_US`], so no stream this crate writes can reach the wrap branch at all;
+    /// this is the hand-built stream that does.
+    #[test]
+    fn evt2_counts_a_real_2_34_wrap_and_refuses_a_jittered_one() {
+        let words = |ws: &[u32]| -> Vec<u8> {
+            let mut v = Vec::new();
+            for w in ws {
+                v.extend_from_slice(&w.to_le_bytes());
+            }
+            v
+        };
+        let th = |h: u32| (u32::from(Evt2::TIME_HIGH) << 28) | h;
+        let cd = |low: u32| (u32::from(Evt2::CD_ON) << 28) | (low << 22) | (5 << 11) | 6;
+
+        // One step back is corruption, and it is named at the offset of the word that did it.
+        match Evt2::decode(&words(&[th(10), cd(1), th(9), cd(1)])) {
+            Err(DecodeError::NonMonotonicTimestamp { offset, previous, found }) => {
+                assert_eq!((offset, previous, found), (8, 10 << 6, 9 << 6));
+            }
+            other => panic!("a one-step TIME_HIGH decrease was accepted: {other:?}"),
+        }
+        // Exactly half the range is still ambiguous, so it is still refused.
+        assert!(matches!(
+            Evt2::decode(&words(&[th(1 << 27), cd(0), th(0)])),
+            Err(DecodeError::NonMonotonicTimestamp { .. })
+        ));
+        // One more than half is a wrap, and the branch the module doc claims is tested.
+        let got = Evt2::decode(&words(&[th((1 << 27) + 1), cd(0), th(0), cd(1)]))
+            .expect("more than half the range backwards is the wrap");
+        assert_eq!(
+            got.events.iter().map(|e| e.t).collect::<Vec<_>>(),
+            vec![((1u64 << 27) + 1) << 6, (1u64 << 34) + 1]
+        );
+        // And the real thing: the counter at its top, then zero.
+        let got = Evt2::decode(&words(&[th(0x0FFF_FFFF), cd(5), th(0), cd(1)])).expect("a wrap");
+        assert_eq!(
+            got.events.iter().map(|e| e.t).collect::<Vec<_>>(),
+            vec![Evt2::MAX_TIME_US - 58, (1u64 << 34) + 1]
+        );
+        assert!(monotonic(&got.events));
     }
 
     /// A run with holes in it wider than one mask: the encoder must plant a new `VECT_BASE_X`

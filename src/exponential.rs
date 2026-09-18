@@ -53,9 +53,13 @@
 //! interval cannot produce one. For a leaky model that ground is solid — the potential decays
 //! monotonically to a rest below threshold. A quadratic model is **bistable**: a synapse that
 //! leaves the membrane above `v_c` makes it fire with no further input at all, about 14 ms later.
-//! Measured on a two-cell chain at 0.1 ms per tick, a clocked run gives 46 spikes and an
-//! event-driven one 23 — the postsynaptic cell fires six times in the first and never in the
-//! second, and the run reports success either way.
+//! Measured on the two-cell chain of `the_simulator_enforces_the_gap_property_this_module_declares`
+//! (0.1 ms per tick, 20,000 ticks, 800 pA into the first cell only), a clocked run gives 46 spikes
+//! and an event-driven one 23: 23 presynaptic spikes either way, and 23 postsynaptic spikes in the
+//! first run against **none** in the second. The run reports success either way. The clocked half
+//! of those counts is asserted by that test; the event-driven half can only be produced by flipping
+//! the constant below in a throwaway copy, which is where it comes from and why it is quoted here
+//! rather than tested.
 //!
 //! So `EXACT_OVER_GAPS` is necessary and **not sufficient**. The sufficient condition is that plus
 //! "no spike during a quiet interval", and this review did not locate the second half stated
@@ -111,6 +115,11 @@ use crate::neuron::{Lif, Neuron};
 /// no reported interval by more than one part in `1e17`. It exists because an `inf` inside a
 /// Runge-Kutta stage becomes a `NaN` one line later, and a `NaN` membrane potential does not fail
 /// loudly — it reports zero spikes.
+///
+/// **It does a second job**, and a reader changing it should know both: [`Eif::isi`] truncates its
+/// quadrature at `V_T + 50·Δ_T` for the same reason, because the integrand `C/F(V)` is below
+/// `1e-20` s per volt there. Lowering this constant therefore shortens an interval as well as
+/// capping an exponential, and raising it past 709 replaces a clamped drift with an infinite one.
 pub const EXP_ARG_LIMIT: f64 = 50.0;
 
 /// `π`, spelled out rather than imported so the constant a reader compares against is visible.
@@ -262,12 +271,23 @@ enum Flow {
 /// - `η > 0`: `y = b·tan(b·s + φ₀)`, `b = √η`, `φ₀ = atan(y₀/b)`. Divergence when the phase
 ///   reaches `π/2`, which gives the spike time in closed form.
 /// - `η = 0`: `y = y₀/(1 - y₀·s)`, diverging at `s = 1/y₀` when `y₀ > 0`.
-/// - `η < 0`: `y = a(y₀ - a·T)/(a - y₀·T)` with `a = √(-η)`, `T = tanh(a·s)`. Fixed points at
-///   `y = ∓a` (stable, unstable). Divergence only from `y₀ > a`, at `s = atanh(a/y₀)/a`.
+/// - `η < 0`: fixed points at `y = ∓a` (stable, unstable), `a = √(-η)`. Divergence only from
+///   `y₀ > a`, at `s = atanh(a/y₀)/a`.
 ///
-/// Written in the `tanh`/phase forms rather than as `w₀·exp(2ah)` because the exponential form
-/// overflows to `inf` near the stable fixed point and then produces `inf/inf = NaN` at the very
-/// place where the answer is simply `-a`.
+/// **The `η < 0` branch is written twice, and which one runs is decided by which fixed point `y₀`
+/// is nearer.** The two forms are the same solution and neither is an approximation; they fail in
+/// opposite places, and each branch is used where the other one does.
+///
+/// - `y₀ <= 0`, near the **stable** point: `y = a(y₀ - a·T)/(a - y₀·T)`, `T = tanh(a·s)`. At
+///   `y₀ = -a` the numerator and denominator both carry the factor `1 + T` and the answer is
+///   `-a` whatever `T` rounds to.
+/// - `y₀ > 0`, near the **unstable** point: `u = (y₀ - a)/(y₀ + a)` obeys `du/ds = 2a·u` exactly,
+///   so `u(s) = u₀·e^{2as}` and `y = a(1 + u)/(1 - u)`. This form keeps the difference `y₀ - a`,
+///   which is exact for a `y₀` within a factor of two of `a`; the `tanh` form instead evaluates
+///   `a - y₀·T` with `T` rounded to exactly 1.0 for `a·s ≳ 19`, which is `0/0` **on** the unstable
+///   fixed point and the wrong sign one ulp above it. The overflow that argues for `tanh` — `u`
+///   running to `-inf` deep inside the stable point — is handled by returning `-a`, which is that
+///   limit.
 fn canonical_flow(y0: f64, eta: f64, h: f64) -> Flow {
     if eta > 0.0 {
         let b = eta.sqrt();
@@ -285,10 +305,33 @@ fn canonical_flow(y0: f64, eta: f64, h: f64) -> Flow {
     } else {
         let a = (-eta).sqrt();
         if y0 > a {
-            let h_star = (a / y0).atanh() / a;
+            // `atanh(a/y₀)` written as `½·ln1p(2a/(y₀ - a))`. The two are the same number, but
+            // `a/y₀` rounds to within an ulp of 1 next to the unstable fixed point and `atanh`
+            // multiplies that rounding by `1/(1 - x²)`, while `y₀ - a` is exact there and
+            // `ln_1p` is accurate at both ends of its range.
+            let h_star = (2.0 * a / (y0 - a)).ln_1p() / (2.0 * a);
             if h >= h_star {
                 return Flow::Diverged { at: h_star };
             }
+        }
+        if y0 > 0.0 {
+            let u0 = (y0 - a) / (y0 + a);
+            if u0 == 0.0 {
+                // `y₀` IS the unstable fixed point, so the flow is the point — and `u₀ · e^{2ah}`
+                // would be `0 · inf = NaN` for a long enough step.
+                return Flow::Finite(a);
+            }
+            let u = u0 * (2.0 * a * h).exp();
+            if !u.is_finite() {
+                // `u₀ < 0` and `e^{2ah}` overflowed: the trajectory is deep inside the stable
+                // fixed point, and `a(1 + u)/(1 - u) -> -a` as `u -> -∞`.
+                return Flow::Finite(-a);
+            }
+            if u >= 1.0 {
+                // Rounded onto the divergence from below, so `h` is within an ulp of `h_star`.
+                return Flow::Diverged { at: h };
+            }
+            return Flow::Finite(a * (1.0 + u) / (1.0 - u));
         }
         if y0 == -a {
             return Flow::Finite(-a);
@@ -542,6 +585,12 @@ impl Qif {
     /// `v_peak` and `v_reset` have no counterpart on the circle, where the spike *is* the passage
     /// through `θ = π` and the reset is automatic. Compare the two between spikes, or push
     /// `v_peak` and `v_reset` far out.
+    ///
+    /// **`t_ref` is dropped too**, and that one is not a limit you can take: [`Theta`] has no
+    /// refractory period at all, so this `Qif`'s dead time after a spike is simply not carried
+    /// over. With the cutoff and reset pushed out, [`Qif::isi`] therefore exceeds [`Theta::isi`]
+    /// by exactly `t_ref` — 0.9% of the interval at 500 pA and 3.2% at 2 nA for the default 2 ms —
+    /// which is asserted in `the_matching_theta_drops_the_refractory_period_and_nothing_else`.
     #[must_use]
     pub fn matching_theta(&self) -> Theta {
         Theta {
@@ -598,6 +647,12 @@ impl Neuron for Qif {
                 }
             }
             Flow::Diverged { .. } => {
+                // The time left in the tick after the divergence is DISCARDED, and a tick coarse
+                // enough to contain two divergences reports one spike. Same compromise as
+                // `Theta::step`, stated here too because the exact flow could price the remainder
+                // and deliberately does not: the refractory period starts at the end of the tick
+                // either way, and a model whose spike times depended on where in the tick the
+                // divergence fell would not be reproducible across a change of `dt`.
                 self.v = self.v_reset;
                 self.refractory = self.t_ref;
                 true
@@ -754,8 +809,11 @@ impl Theta {
     /// For `η > 0` the flow is a rigid rotation of the phase variable `φ = atan(tan(θ/2)/√η)`:
     /// `φ(s) = φ₀ + √η·s`, and `θ = 2·atan2(√η·sin φ, cos φ)` recovers the angle with the right
     /// quadrant, so a trajectory that has passed `θ = π` comes back on the other side by itself.
-    /// For `η <= 0` the Riccati flow is used in its `tanh` form. The number of spikes passed over
-    /// is discarded here; [`Theta::spikes_by`] counts them.
+    /// For `η <= 0` the Riccati flow is used, in whichever of its two forms is accurate at the
+    /// starting phase — see [`canonical_flow`], which makes the same choice for the same reason.
+    /// Above the midpoint that is `u = u₀·e^{2as}`, which continues **through** the spike by
+    /// itself: `u` passes 1, `y = a(1 + u)/(1 - u)` changes sign, and the phase comes back from
+    /// `-π`. The number of spikes passed over is discarded here; [`Theta::spikes_by`] counts them.
     ///
     /// # Errors
     ///
@@ -779,6 +837,19 @@ impl Theta {
             return Ok(wrap_pi(2.0 * (y0 / den).atan()));
         }
         let a = (-eta).sqrt();
+        if y0 > 0.0 {
+            let u0 = (y0 - a) / (y0 + a);
+            if u0 == 0.0 {
+                // On the unstable fixed point, where the phase stays put and `0 · e^{2as}` would
+                // be `NaN` for a long enough interval.
+                return Ok(wrap_pi(2.0 * a.atan()));
+            }
+            let u = u0 * (2.0 * a * s).exp();
+            // `u` infinite is `-a` from either side: `u -> -∞` is deep inside the stable point,
+            // `u -> +∞` is long past the spike and on its way back down to the same place.
+            let y = if u.is_finite() { a * (1.0 + u) / (1.0 - u) } else { -a };
+            return Ok(wrap_pi(2.0 * y.atan()));
+        }
         let tt = (a * s).tanh();
         let den = a - y0 * tt;
         Ok(wrap_pi(2.0 * (a * (y0 - a * tt) / den).atan()))
@@ -790,6 +861,11 @@ impl Theta {
     /// crossing of `φ = π/2 + kπ`, so the count is `floor((φ₀ + √η·s + π/2)/π)`. That is an exact
     /// whole number and not an estimate. At or below rheobase the cell can spike at most once, on
     /// its way down from a starting phase above the unstable fixed point.
+    ///
+    /// **Range.** The count is a `f64` floor cast to `u64`, so a window long enough to hold more
+    /// than `u64::MAX` spikes **saturates** there rather than wrapping, and the count is exact
+    /// only while it stays below `2^53`. Both bounds are astronomical — `2^53` spikes at 1 kHz is
+    /// 285,000 years — and neither is reachable from a simulation that also stepped them.
     ///
     /// # Errors
     ///
@@ -865,14 +941,24 @@ impl Neuron for Theta {
             let k3 = self.drift(t0 + 0.5 * h * k2, eta);
             let k4 = self.drift(t0 + h * k3, eta);
             self.theta = t0 + h * (k1 + 2.0 * k2 + 2.0 * k3 + k4) / 6.0;
-            // The flow at `θ = ±π` is `+2`, strictly positive for every `η`, so the phase can only
-            // ever leave the interval upward. `while` rather than `if` because an absurdly coarse
-            // step can carry it round more than once; the extra spikes are counted as one, which
-            // is the same compromise every clocked simulator makes.
-            while self.theta > PI {
-                self.theta -= 2.0 * PI;
+            // The EXACT flow at `θ = ±π` is `+2`, strictly positive for every `η`, so the exact
+            // trajectory can only ever leave the interval upward. Runge-Kutta is not the exact
+            // flow: once `h·|η|` reaches about 2 its inner stages sample `cos θ` half a step away,
+            // the combination can be large and negative, and the phase leaves DOWNWARD. Measured
+            // on the default cell at the drives of `a_violent_drive_leaves_no_model_non_finite`
+            // (1 ms ticks, ±1 mA): `θ = -28,486` after two steps. Nothing reports it — the state
+            // stays finite and `potential()` keeps returning plausible volts — but the cell has to
+            // climb 9,000 radians before it can spike again, so every later spike is lost.
+            //
+            // So the fold is `wrap_pi`, which folds BOTH ways and restores the invariant this type
+            // documents, and the spike is the upward crossing only. A step coarse enough to carry
+            // the phase round more than once still counts one spike, which is the same compromise
+            // every clocked simulator makes; a step that threw it downward counts none, because
+            // under the equation being integrated no downward crossing exists.
+            if self.theta > PI {
                 fired = true;
             }
+            self.theta = wrap_pi(self.theta);
         }
         fired
     }
@@ -1098,22 +1184,21 @@ impl Eif {
     /// exactly `i <= rheobase` — the two statements agree, which is one of the things the test
     /// checks.
     ///
-    /// `None` above rheobase, where the membrane escapes from anywhere.
+    /// The Lambert form is the derivation, not the evaluation: `e^{-k}` underflows to zero for
+    /// `k > 745`, and the upper root is the difference of two numbers of size `k`. Both are
+    /// reachable here — `k` is `(V_T - E_L - I/g_L)/Δ_T`, so a sharp onset or a hyperpolarising
+    /// current sends it up without limit — so [`exp_offset_roots`] solves `e^x = x + k` for `x`
+    /// directly instead. See its note.
+    ///
+    /// `None` above rheobase, where the membrane escapes from anywhere, and for a non-finite `i`.
     #[must_use]
     pub fn fixed_points(&self, i: f64) -> Option<(f64, f64)> {
         if !i.is_finite() {
             return None;
         }
         let k = (self.v_t - self.e_l - i / self.g_l) / self.delta_t;
-        if !(k >= 1.0) {
-            return None;
-        }
-        let y = -(-k).exp();
-        let w0 = lambert_w(y, false)?;
-        let wm1 = lambert_w(y, true)?;
-        let stable = self.v_t + self.delta_t * (-w0 - k);
-        let unstable = self.v_t + self.delta_t * (-wm1 - k);
-        Some((stable, unstable))
+        let (lower, upper) = exp_offset_roots(k)?;
+        Some((self.v_t + self.delta_t * lower, self.v_t + self.delta_t * upper))
     }
 
     /// Inter-spike interval under constant current `i`, seconds — **by quadrature, not in closed
@@ -1125,25 +1210,53 @@ impl Eif {
     /// the integrand is below `1e-20` s per volt. There is no elementary antiderivative and this
     /// implementation did not locate one.
     ///
+    /// **Below rheobase this model is bistable too**, exactly as [`Qif`] is: the two fixed points
+    /// still exist, and a `v_reset` **above** the unstable one leaves the membrane in the escaping
+    /// region, so it fires forever at a current that cannot make it fire from rest.
+    /// [`FiringPattern::RegularBursting`] ships such a membrane — reset −46 mV against a `V_T` of
+    /// −50 mV — and at half its rheobase it fires 45 times in 200 ms. The interval is returned in
+    /// that regime rather than refused, and only a reset at or below the unstable fixed point is
+    /// [`ModelError::NoFiring`]. As the reset approaches that point from above the integral
+    /// diverges logarithmically, which is the true answer growing without bound and not a defect;
+    /// the quadrature degrades there for the same reason it does near rheobase.
+    ///
     /// **Where it degrades.** Within about one part in `1e6` of rheobase the integrand is a spike
     /// narrower than [`QUADRATURE_BUDGET`] panels can resolve, and the value returned is then an
-    /// under-resolved estimate rather than the exact integral. [`Eif::saddle_node_rate`] is the
-    /// right tool in that regime and is exact in the limit the quadrature is failing in, which is
-    /// a convenient division of labour rather than a coincidence: both are consequences of the
-    /// bottleneck dominating.
+    /// under-resolved estimate rather than the exact integral. Measured against an independent
+    /// reference in `the_interval_quadrature_holds_to_the_band_its_doc_claims`: the relative error
+    /// against the reference integral is 3e-11 at one part in `1.8e5` of rheobase, 3e-5 at one
+    /// part in `1.8e6`, and 7e-4 at one part in `1.8e7` — so the band is where the doc has always
+    /// put it, and outside it this is the exact integral rather than an estimate.
+    ///
+    /// [`Eif::saddle_node_rate`] is the right tool inside the band and is exact in the limit the
+    /// quadrature is failing in, which is a convenient division of labour rather than a
+    /// coincidence: both are consequences of the bottleneck dominating.
     ///
     /// # Errors
     ///
     /// [`ModelError::NotFinite`] for a non-finite `i`, or [`ModelError::NoFiring`] at or below
-    /// rheobase, where the membrane settles on the stable fixed point instead.
+    /// rheobase **with** a reset at or below the unstable fixed point, where the membrane settles
+    /// on the stable fixed point instead.
     pub fn isi(&self, i: f64) -> Result<f64, ModelError> {
         finite("i", i)?;
         let rheobase = self.rheobase();
         if i <= rheobase {
-            return Err(ModelError::NoFiring { i, rheobase });
+            let escapes = match self.fixed_points(i) {
+                Some((_, unstable)) => self.v_reset > unstable,
+                None => false,
+            };
+            if !escapes {
+                return Err(ModelError::NoFiring { i, rheobase });
+            }
         }
         let f = |v: f64| self.c / self.current(v, i);
-        let top = self.v_peak.min(self.v_t + EXP_ARG_LIMIT * self.delta_t);
+        // `.max(self.v_reset)`: a reset above the truncation point leaves an EMPTY interval, not
+        // an inverted one. `f64::clamp` PANICS when its bounds cross, and `Eif::new` accepts a
+        // `v_reset` above `v_t + 50·Δ_T` — a 0.1 mV onset with a reset 6 mV above `V_T` is enough,
+        // and the taxonomy already ships resets above `V_T`. The interval above the truncation is
+        // worth less than `1e-20` s per volt (see [`EXP_ARG_LIMIT`]), so the honest answer for
+        // such a membrane is `t_ref` and a remainder no `f64` interval can carry.
+        let top = self.v_peak.min(self.v_t + EXP_ARG_LIMIT * self.delta_t).max(self.v_reset);
         let split = self.v_t.clamp(self.v_reset, top);
         let t = integrate(&f, self.v_reset, split, 1e-12) + integrate(&f, split, top, 1e-12);
         Ok(t + self.t_ref)
@@ -1490,12 +1603,20 @@ pub enum FiringPattern {
     /// adaptation (`a` large and positive) wins the race against the drive. The cell is not
     /// exhausted — it has acquired a stable fixed point, at `E_L + I/(g_L + a)`, and settled on it.
     ///
-    /// **This variant's `τ_w` and `b` were changed from what was transcribed.** The transcribed
-    /// pair (90 ms, 100 pA) fires **once** at every current in the transient window and then stops,
-    /// which is a degenerate corner of the pattern rather than the published figure's short train;
-    /// the window itself closes at 280 pA, above which the cell fires forever. 400 ms and 30 pA at
-    /// 220 pA give five spikes and then silence. The transcription is the suspect party here, not
-    /// the model — a reader with the paper should replace these three numbers and this note.
+    /// **This variant's `b` was changed from what was transcribed, and `b` alone.** With the
+    /// transcribed pair (`τ_w` 90 ms, `b` 100 pA) the cell fires once at 180 and 200 pA and twice
+    /// at 220, 250 and 270 pA before falling silent, and at 280 pA the window closes — it then
+    /// fires for the whole second. One or two spikes is a degenerate corner of the pattern rather
+    /// than the published figure's short train, and no current produces a train: the window is
+    /// shut before the count reaches three. Dropping `b` to 30 pA, with `τ_w` left at the
+    /// transcribed 90 ms, gives 3, 4, 5 and 6 spikes at 200, 220, 250 and 270 pA, each train over
+    /// within 31 ms, and the window still closes at 280 pA. Both halves are measured in
+    /// `the_transient_pattern_is_transient_across_its_window_and_not_above_it`, which fails if
+    /// either stops being true.
+    ///
+    /// The transcription is the suspect party here, not the model — a reader with the paper should
+    /// check `b` and this note. What is claimed is that ONE number had to move, and that the test
+    /// is what says so.
     Transient,
     /// Sustained irregular firing from **negative** `a`, which makes the adaptation a positive
     /// feedback. The published pattern is chaotic; this implementation asserts sustained interval
@@ -1553,7 +1674,7 @@ impl FiringPattern {
             Self::Adapting => (200e-12, 12e-9, -70e-3, 2e-9, 300e-3, 60e-12, -58e-3),
             Self::InitialBurst => (130e-12, 18e-9, -58e-3, 4e-9, 150e-3, 120e-12, -50e-3),
             Self::RegularBursting => (200e-12, 10e-9, -58e-3, 2e-9, 120e-3, 100e-12, -46e-3),
-            Self::Transient => (100e-12, 10e-9, -65e-3, 10e-9, 400e-3, 30e-12, -47e-3),
+            Self::Transient => (100e-12, 10e-9, -65e-3, 10e-9, 90e-3, 30e-12, -47e-3),
             Self::Irregular => (100e-12, 12e-9, -60e-3, -11e-9, 130e-3, 30e-12, -48e-3),
         };
         let eif = Eif {
@@ -1577,45 +1698,70 @@ impl FiringPattern {
 // Numerics used by the closed forms above
 // ---------------------------------------------------------------------------------------------
 
-/// Lambert `W` on its two real branches, restricted to `y ∈ [-1/e, 0)`, which is the only range
-/// [`Eif::fixed_points`] needs.
+/// The two real roots of `e^x = x + k`, as `(lower, upper)` with `lower <= 0 <= upper`. `None`
+/// unless `k >= 1`, where the pair is not real.
 ///
-/// Halley iteration from the branch-point series `W ≈ -1 ± p - p²/3 ± 11p³/72` with
-/// `p = √(2(e·y + 1))`. Near the branch point the series is already accurate to `O(p⁴)`, so for
-/// `p < 1e-4` it is returned unrefined — which also sidesteps Halley's `2(w+1)` denominator
-/// vanishing at `w = -1`. `None` outside the range, where the branches are not both real.
-fn lambert_w(y: f64, lower_branch: bool) -> Option<f64> {
-    let e_inv = -(-1.0f64).exp();
-    if !y.is_finite() || y < e_inv || y >= 0.0 {
+/// This is [`Eif`]'s equilibrium condition in units of `Δ_T` about `V_T`: `x = (V - V_T)/Δ_T` and
+/// `k = (V_T - E_L - I/g_L)/Δ_T`. Its Lambert `W` form is `x = -W(-e^{-k}) - k`, principal branch
+/// for the lower root and `W₋₁` for the upper one — the derivation [`Eif::fixed_points`] quotes.
+///
+/// **Why not evaluate it that way.** `k` is unbounded above: 10 at the default parameters and zero
+/// current, 260 at −5 nA, 2,000 at a `Δ_T` of 0.01 mV. Two things break along that range. `e^{-k}`
+/// underflows to `-0.0` for `k > 745`, which reads as "outside the branch pair" — the answer for
+/// currents ABOVE rheobase — at a current far below it. And the upper root is `-W₋₁ - k ≈ ln k`,
+/// the difference of two numbers of size `k`, so it loses a decimal digit every time `k` gains
+/// one. Solving for `x` keeps every quantity at the size of the answer: the roots are `≈ -k` and
+/// `≈ ln k`, and neither is a difference of anything larger.
+///
+/// **Method.** `g(x) = expm1(x) - x - (k - 1)` — `expm1` and `k - 1` rather than `exp` and `k`
+/// because at the annihilation the equation is `1 - k` against `x²/2`, two quantities of size 1
+/// whose difference is of size `k - 1`. `g` is convex, so a Newton step from outside the root pair
+/// can never cross a root (the tangent of a convex function lies under it), and the iteration is
+/// monotone from either side. The start is the exact branch-point expansion of the pair as they
+/// annihilate, `x ≈ ±q(1 ∓ q/6 + q²/36)` with `q = √(2(k - 1))`, returned unrefined for
+/// `q < 1e-4`, where `g` cannot be evaluated to better than the answer being asked for. For
+/// `q >= 1` the start is instead a few steps of the two contraction maps `x = e^x - k` and
+/// `x = ln(x + k)`, which converge quickly when `k` is large and, unlike the series, cannot hand
+/// Newton an `x` whose exponential overflows.
+fn exp_offset_roots(k: f64) -> Option<(f64, f64)> {
+    if !(k >= 1.0) || !k.is_finite() {
         return None;
     }
-    let p = (2.0 * (std::f64::consts::E * y + 1.0)).max(0.0).sqrt();
-    let series = if lower_branch {
-        -1.0 - p - p * p / 3.0 - 11.0 * p * p * p / 72.0
-    } else {
-        -1.0 + p - p * p / 3.0 + 11.0 * p * p * p / 72.0
+    let m = k - 1.0;
+    let q = (2.0 * m).sqrt();
+    let series = |sign: f64| sign * q * (1.0 - sign * q / 6.0 + q * q / 36.0);
+    if q < 1e-4 {
+        return Some((series(-1.0), series(1.0)));
+    }
+    let refine = |start: f64| {
+        let mut x = start;
+        for _ in 0..100 {
+            let d = x.exp_m1();
+            if d == 0.0 || !d.is_finite() {
+                break;
+            }
+            let step = (x.exp_m1() - x - m) / d;
+            if !step.is_finite() {
+                break;
+            }
+            let next = x - step;
+            if next == x {
+                break;
+            }
+            x = next;
+        }
+        x
     };
-    if p < 1e-4 {
-        return Some(series);
-    }
-    let mut w = series;
-    for _ in 0..80 {
-        let ew = w.exp();
-        let f = w * ew - y;
-        if f == 0.0 {
-            break;
-        }
-        let d = ew * (w + 1.0) - (w + 2.0) * f / (2.0 * w + 2.0);
-        if d == 0.0 || !d.is_finite() {
-            break;
-        }
-        let step = f / d;
-        w -= step;
-        if step.abs() <= 1e-16 * w.abs() {
-            break;
+    let (mut lo, mut hi) = (series(-1.0), series(1.0));
+    if q >= 1.0 {
+        lo = -k;
+        hi = k.ln();
+        for _ in 0..4 {
+            lo = lo.exp() - k;
+            hi = (hi + k).ln();
         }
     }
-    Some(w)
+    Some((refine(lo), refine(hi)))
 }
 
 /// One Simpson panel over `[a, b]`.
@@ -1675,7 +1821,8 @@ fn integrate<F: Fn(f64) -> f64>(f: &F, a: f64, b: f64, rel: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::{
-        AdEx, Eif, FiringPattern, Flow, ModelError, Qif, Theta, canonical_flow, lambert_w, try_step,
+        AdEx, EXP_ARG_LIMIT, Eif, FiringPattern, Flow, ModelError, Qif, Theta, canonical_flow,
+        exp_offset_roots, try_step, wrap_pi,
     };
     use crate::neuron::Neuron;
 
@@ -1715,21 +1862,41 @@ mod tests {
 
     // ----- Lambert W and the EIF's closed-form fixed points -----
 
-    /// `W(-ln2/2)` has two exact values: `-ln 2` on the principal branch and `-2 ln 2` on the
-    /// lower one, because both satisfy `w·e^w = -ln2/2`. Two exact targets from one input, which
-    /// is what makes this a real check on the branch selection rather than on the arithmetic.
+    /// Both roots of `e^x = x + k`, against two EXACT targets from one `k` — which is what makes
+    /// this a check on the branch and not on the arithmetic.
+    ///
+    /// `W(-ln2/2)` is `-ln 2` on the principal branch and `-2 ln 2` on the lower one, because both
+    /// satisfy `w·e^w = -ln2/2`. Through `x = -W(-e^{-k}) - k` that is `k = ln(2/ln 2)` with roots
+    /// `ln2 - k` and `2·ln2 - k`, and the identity is checked here in the coordinate the code
+    /// actually solves in.
+    ///
+    /// Then the identity itself over a range of `k` the branch-point series knows nothing about.
+    /// `k` is `(V_T - E_L - I/g_L)/Δ_T`, so it is unbounded above and a published crate will be
+    /// handed the far end of it: `k = 1e300` is a `Δ_T` of 0.01 mV at a few nanoamps of
+    /// hyperpolarisation. The old Lambert-W evaluation returned a non-root from about `k = 155`
+    /// and `None` — which its doc reads as "above rheobase" — from about `k = 745`.
     #[test]
-    fn lambert_w_hits_both_of_its_exact_branches() {
+    fn the_exponential_fixed_point_equation_is_solved_on_both_branches() {
         let ln2 = 2.0f64.ln();
-        let y = -ln2 / 2.0;
-        let w0 = lambert_w(y, false).expect("in range");
-        let wm1 = lambert_w(y, true).expect("in range");
-        assert!((w0 + ln2).abs() < 1e-14, "principal branch {w0} vs {}", -ln2);
-        assert!((wm1 + 2.0 * ln2).abs() < 1e-13, "lower branch {wm1} vs {}", -2.0 * ln2);
-        // At the branch point both branches are -1 exactly.
-        let bp = -(-1.0f64).exp();
-        assert!((lambert_w(bp, false).expect("in range") + 1.0).abs() < 1e-7);
-        assert!(lambert_w(0.0, false).is_none(), "0 is outside the branch-pair range");
+        let k = (2.0 / ln2).ln();
+        let (lo, hi) = exp_offset_roots(k).expect("k >= 1");
+        assert!((lo - (ln2 - k)).abs() < 1e-15, "lower {lo} vs {}", ln2 - k);
+        assert!((hi - (2.0 * ln2 - k)).abs() < 1e-15, "upper {hi} vs {}", 2.0 * ln2 - k);
+        for &k in &[1.0, 1.000_000_001, 1.01, 1.5, 2.0, 10.0, 155.0, 1e3, 1e6, 1e12, 1e100, 1e300] {
+            let (lo, hi) = exp_offset_roots(k).expect("k >= 1");
+            assert!(lo <= 0.0 && hi >= 0.0, "k {k}: {lo} and {hi} are on the wrong sides of 0");
+            for x in [lo, hi] {
+                // Relative to the size of the terms being compared, which is `x + k` — and never
+                // smaller than 1, because at the lower root `x + k` is itself the answer.
+                let res = (x.exp() - (x + k)).abs();
+                let scale = (x + k).abs().max(1.0);
+                assert!(res <= 1e-13 * scale, "k {k}: e^{x} misses {x} + {k} by {res}");
+            }
+        }
+        assert_eq!(exp_offset_roots(1.0), Some((0.0, 0.0)), "at k = 1 the pair annihilates at 0");
+        assert!(exp_offset_roots(0.999_999).is_none(), "no real pair above rheobase");
+        assert!(exp_offset_roots(f64::NAN).is_none());
+        assert!(exp_offset_roots(f64::INFINITY).is_none());
     }
 
     /// The fixed points are roots of the drift, so the drift evaluated at them is zero. This is the
@@ -1751,6 +1918,36 @@ mod tests {
         // And they vanish exactly where the rheobase says they do.
         assert!(e.fixed_points(e.rheobase() * 1.000_001).is_none());
         assert!(e.fixed_points(e.rheobase() * 0.999_999).is_some());
+        // The sweep above is `k = (V_T - E_L - I/g_L)/Δ_T` from 1 to 10, the corner of a domain
+        // that is unbounded in `k`. TWO lines leave it, in the two directions a user reaches it
+        // from: a hyperpolarising current, and a sharp onset. Both were wrong — a non-root at
+        // −5 nA, whose drift was 17% of the drift's own scale, and `None` at Δ_T = 0.01 mV.
+        for &na in &[-1.0, -5.0, -20.0, -200.0] {
+            let i = na * 1e-9;
+            let (stable, unstable) = e.fixed_points(i).expect("below rheobase");
+            assert!(stable < unstable, "{na} nA: {stable} and {unstable}");
+            for v in [stable, unstable] {
+                assert!(e.drift(v, i).abs() < 1e-9, "{na} nA: drift at {v} V is {}", e.drift(v, i));
+            }
+            // The stable point is the leak's own equilibrium to within the exponential term, which
+            // is `Δ_T·e^{-k}` — utterly negligible this far down. That is an independent value
+            // for it, not a re-derivation of the same root.
+            let leak = e.e_l + i / e.g_l;
+            assert!((stable - leak).abs() < 1e-12, "{na} nA: stable {stable} V vs leak {leak} V");
+        }
+        for &mv in &[0.11, 0.1, 0.05, 0.01, 0.001] {
+            let sharp = Eif { delta_t: mv * 1e-3, ..Eif::default() };
+            let (stable, unstable) = sharp.fixed_points(0.0).expect("below rheobase");
+            assert!(stable < unstable, "Δ_T {mv} mV: {stable} and {unstable}");
+            for v in [stable, unstable] {
+                let d = sharp.drift(v, 0.0);
+                assert!(d.abs() < 1e-9, "Δ_T {mv} mV: drift at {v} V is {d}");
+            }
+            // A sharper onset puts the unstable point CLOSER to V_T, at V_T + Δ_T·ln k: the soft
+            // threshold hardens onto V_T, which is the limit `Eif::lif_limit` names.
+            assert!(unstable > sharp.v_t, "Δ_T {mv} mV: unstable {unstable} V is below V_T");
+            assert!(unstable < sharp.v_t + 40.0 * sharp.delta_t, "Δ_T {mv} mV: {unstable} V");
+        }
     }
 
     /// Rheobase is a claim about the simulator, not only about the algebra: below it the cell must
@@ -1784,6 +1981,151 @@ mod tests {
             let rel = (got - want).abs() / want;
             assert!(rel < 2e-3, "{pa} pA: stepped {got} s vs quadrature {want} s");
         }
+    }
+
+    /// A reset ABOVE the point where the exponential term is truncated used to reach
+    /// `f64::clamp` with its bounds crossed, which panics. `Eif::new` accepts that membrane — a
+    /// 0.1 mV onset with a reset 6 mV above `V_T` — so the panic was reachable from the public
+    /// API on parameters the constructor had just approved, and `Eif::rate` inherited it.
+    #[test]
+    fn the_eif_interval_survives_a_reset_above_the_truncated_upstroke() {
+        let e = Eif::new(200e-12, 10e-9, -58e-3, -50e-3, 1e-4, 0.0, -44e-3, 0.0).expect("accepted");
+        assert!(
+            e.v_reset > e.v_t + EXP_ARG_LIMIT * e.delta_t,
+            "this test is vacuous unless the reset is above the truncation: {} vs {}",
+            e.v_reset,
+            e.v_t + EXP_ARG_LIMIT * e.delta_t
+        );
+        let i = 500e-12;
+        assert!(i > e.rheobase(), "and it needs a current above rheobase {}", e.rheobase());
+        let t = e.isi(i).expect("above rheobase");
+        assert!(t.is_finite() && t >= 0.0, "isi returned {t}");
+        // Everything above the truncation is worth under 1e-20 s per volt, so the whole excursion
+        // from this reset to the cutoff is less than a femtosecond: the answer is t_ref and a
+        // remainder no interval can carry.
+        assert!(t < 1e-15, "the remainder above the truncation priced at {t} s");
+        let with_ref = Eif { t_ref: 2e-3, ..e };
+        let held = with_ref.isi(i).expect("above rheobase");
+        assert!((held - 2e-3).abs() < 1e-15, "t_ref is not carried: {held}");
+        assert!((with_ref.rate(i).expect("above rheobase") - 1.0 / held).abs() < 1e-9);
+        // And the stepper agrees that a cell reset that far up fires again immediately.
+        let mut n = e;
+        n.v = e.v_reset;
+        assert!(n.step(1e-5, i), "a cell reset above the upstroke did not fire within a tick");
+    }
+
+    /// The exponential model is bistable below rheobase for the same reason the quadratic one is,
+    /// and the taxonomy SHIPS such a membrane: `FiringPattern::RegularBursting` resets to −46 mV
+    /// against a `V_T` of −50 mV. `Eif::isi` used to answer `NoFiring` — "there is no interval,
+    /// not a long one" — for a cell its own stepper fires 45 times in 200 ms.
+    #[test]
+    fn an_eif_reset_above_the_unstable_point_fires_below_rheobase() {
+        let e = FiringPattern::RegularBursting.model().eif;
+        let rheo = e.rheobase();
+        for &frac in &[0.1, 0.5, 0.95] {
+            let i = frac * rheo;
+            let (_, unstable) = e.fixed_points(i).expect("below rheobase");
+            assert!(e.v_reset > unstable, "{frac}x: reset {} vs unstable {unstable}", e.v_reset);
+            let want = e.isi(i).expect("a reset above the unstable point escapes");
+            let mut n = e;
+            n.v = e.v_reset;
+            let t = spike_times(&mut n, 1e-6, 200_000, i);
+            assert!(t.len() > 3, "{frac}x rheobase gave {} spikes in 200 ms", t.len());
+            let iv = intervals(&t);
+            let got = iv[iv.len() - 1];
+            assert!(
+                (got - want).abs() / want < 2e-3,
+                "{frac}x rheobase: stepped {got} s vs quadrature {want} s"
+            );
+        }
+        // The same membrane with a reset BELOW the unstable point is silent at the same current,
+        // so what fires the cell is the reset and not the current.
+        let cold = Eif { v_reset: -58e-3, ..e };
+        let i = 0.5 * rheo;
+        assert!(cold.fixed_points(i).expect("below rheobase").1 > cold.v_reset);
+        assert!(matches!(cold.isi(i), Err(ModelError::NoFiring { .. })), "the cold cell answered");
+        let mut n = cold;
+        assert!(spike_times(&mut n, 1e-5, 100_000, i).is_empty(), "the cold cell fired");
+    }
+
+    /// The band `Eif::isi`'s doc calls degraded, measured rather than asserted.
+    ///
+    /// The reference is composite Simpson on panels that grow geometrically away from `V_T`. That
+    /// is a different algorithm from the adaptive bisection in `integrate` — fixed panels placed
+    /// by the integrand's own closed-form width `√(2Δ_T(I - I_rheo)/g_L)`, against bisection
+    /// driven by a tolerance — and it is run at two resolutions, with the assertion that they
+    /// agree with each other far more tightly than the claim under test. That is what makes it a
+    /// reference rather than a second opinion.
+    ///
+    /// Both sides of the doc's claim are asserted, which is the point: outside the band the
+    /// quadrature is the exact integral to 1e-9, and inside it the answer really is degraded. A
+    /// quadrature good enough to fail the second assertion is a better crate — and a doc that
+    /// needs rewriting, which is why the assertion is here.
+    #[test]
+    fn the_interval_quadrature_holds_to_the_band_its_doc_claims() {
+        fn reference(e: &Eif, i: f64, per_panel: usize) -> f64 {
+            let f = |v: f64| e.c / e.current(v, i);
+            let lo = e.v_reset;
+            let hi = e.v_peak.min(e.v_t + EXP_ARG_LIMIT * e.delta_t);
+            let width = (2.0 * e.delta_t * (i - e.rheobase()) / e.g_l).sqrt();
+            let scale = width.max((hi - lo) * 1e-13);
+            let mut bounds = vec![lo, hi, e.v_t];
+            let mut w = scale;
+            let mut x = e.v_t - w;
+            while x > lo {
+                bounds.push(x);
+                w *= 2.0;
+                x -= w;
+            }
+            let mut w = scale;
+            let mut x = e.v_t + w;
+            while x < hi {
+                bounds.push(x);
+                w *= 2.0;
+                x += w;
+            }
+            bounds.sort_by(|a, b| a.partial_cmp(b).expect("finite bounds"));
+            let mut total = 0.0;
+            for pair in bounds.windows(2) {
+                let (a, b) = (pair[0], pair[1]);
+                if !(b > a) {
+                    continue;
+                }
+                let h = (b - a) / per_panel as f64;
+                let mut sum = f(a) + f(b);
+                for j in 1..per_panel {
+                    let weight = if j % 2 == 1 { 4.0 } else { 2.0 };
+                    sum += weight * f(a + h * j as f64);
+                }
+                total += sum * h / 3.0;
+            }
+            total + e.t_ref
+        }
+        let e = Eif { v_reset: -70e-3, v_peak: 20e-3, ..Eif::default() };
+        let rheo = e.rheobase();
+        // Outside the band: 1e-15 A above an 180 pA rheobase is one part in 1.8e5, two decades
+        // coarser than the doc's 1e6, and the sweep in `the_eif_rate_converges_onto_the_square_
+        // root_law` runs to exactly there.
+        for &excess in &[1e-9, 1e-12, 1e-14, 1e-15] {
+            let i = rheo + excess;
+            let coarse = reference(&e, i, 2_000);
+            let fine = reference(&e, i, 8_000);
+            let settled = (coarse - fine).abs() / fine;
+            assert!(
+                settled < 1e-11,
+                "excess {excess} A: the reference disagrees with itself by {settled}"
+            );
+            let got = e.isi(i).expect("above rheobase");
+            let rel = (got - fine).abs() / fine;
+            assert!(rel < 1e-9, "excess {excess} A: isi {got} s vs reference {fine} s, {rel}");
+        }
+        // Inside it: one part in 1.8e7 of rheobase, where the doc says the value is an estimate.
+        let i = rheo + 1e-17;
+        let fine = reference(&e, i, 8_000);
+        let got = e.isi(i).expect("above rheobase");
+        let rel = (got - fine).abs() / fine;
+        assert!(rel > 1e-6, "one part in 1.8e7 now resolves to {rel}; the doc needs rewriting");
+        assert!(rel < 1e-2, "the degraded estimate is off by {rel}, which is not an estimate");
     }
 
     /// Check (b) of the module's brief: the exponential model becomes a `Lif` as `Δ_T -> 0`, and
@@ -1904,6 +2246,28 @@ mod tests {
         }
     }
 
+    /// `Qif::matching_theta` drops `t_ref`, because the circle has no refractory period and no
+    /// place to put one. The exception is exact and it is documented; here it is also measured.
+    /// `the_qif_collapses_to_the_type_one_rate_with_distant_bounds` sets `t_ref: 0.0` to get past
+    /// it, which is how an undocumented exception hides from a test suite.
+    #[test]
+    fn the_matching_theta_drops_the_refractory_period_and_nothing_else() {
+        let q = Qif { v_peak: 1e9, v_reset: -1e9, t_ref: 3e-3, ..Qif::default() };
+        let th = q.matching_theta();
+        for &pa in &[400.0, 600.0, 1500.0, 9000.0] {
+            let i = pa * 1e-12;
+            let quadratic = q.isi(i).expect("above rheobase");
+            let circle = th.isi(i).expect("above rheobase");
+            assert!(
+                (quadratic - circle - q.t_ref).abs() / quadratic < 1e-9,
+                "{pa} pA: qif {quadratic} s, theta {circle} s, t_ref {} s",
+                q.t_ref
+            );
+            // And the gap is not decorative: at 400 pA it is a fifth of the interval.
+            assert!(q.t_ref > 1e-3 * circle, "t_ref {} is too small to see", q.t_ref);
+        }
+    }
+
     /// The exact flow, against fourth-order Runge-Kutta on the raw voltage equation. Different
     /// code, different variables: this is what says the Riccati algebra in `canonical_flow` is the
     /// solution of `Qif::drift` and not of something else.
@@ -1974,6 +2338,100 @@ mod tests {
         assert!(q.fixed_points(q.rheobase() * 1.01).is_none());
     }
 
+    /// A trajectory started exactly ON the unstable fixed point stays there — and that point is
+    /// what `Qif::fixed_points` hands you, so this is one public call feeding another.
+    ///
+    /// The `tanh` form of the flow is `0/0` there (`y₀ = a` makes `a - y₀·tanh(a·h)` and
+    /// `a·(y₀ - a·tanh(a·h))` vanish together once `tanh` saturates), and the result was a `NaN`
+    /// membrane potential — which, as `EXP_ARG_LIMIT`'s own doc warns, does not fail loudly: the
+    /// cell reported zero spikes at more than twice rheobase for as long as it was run, and
+    /// `Neuron::step` kept returning false.
+    #[test]
+    fn a_qif_started_on_its_unstable_fixed_point_stays_finite() {
+        let mut q = Qif::default();
+        let (_, unstable) = q.fixed_points(0.0).expect("below rheobase");
+        q.v = unstable;
+        // The premise, with its number: the round trip through volts lands on y = a EXACTLY, which
+        // is what makes the 0/0 reachable rather than merely near.
+        let a = (-q.eta(0.0)).sqrt();
+        assert_eq!(q.canonical_y(), a, "the public fixed point does not round-trip to y = a");
+        assert!(!q.step(1.0, 0.0), "a fixed point is not a spike");
+        assert!(q.v.is_finite(), "a step from the unstable fixed point left {} V", q.v);
+        assert!((q.v - unstable).abs() < 1e-15, "it left its own fixed point, at {} V", q.v);
+        // And the cell is still a cell: at more than twice rheobase it fires.
+        let t = spike_times(&mut q, 1e-4, 10_000, 800e-12);
+        assert!(t.len() > 4, "after sitting on the fixed point it gave {} spikes in 1 s", t.len());
+        // A hair above the fixed point it must ESCAPE instead, with no input at all, and the
+        // closed form must say when — `Qif::isi`'s atanh branch, evaluated a part in 1e9 above the
+        // unstable point rather than at the comfortable 2 mV of
+        // `a_qif_reset_above_the_unstable_point_fires_below_rheobase`.
+        let base = Qif::default();
+        let hair_up = base.v_mid() + base.delta() * a * (1.0 + 1e-9);
+        let hot = Qif { v_reset: hair_up, t_ref: 0.0, ..base };
+        assert!(hot.v_reset > unstable, "the nudge must land above the fixed point");
+        let want = hot.isi(0.0).expect("a reset above the unstable point escapes");
+        let mut n = hot;
+        n.v = hot.v_reset;
+        let escape = spike_times(&mut n, 1e-4, 20_000, 0.0);
+        assert!(escape.len() >= 3, "a hair above the unstable point gave {} spikes", escape.len());
+        let iv = intervals(&escape);
+        let got = iv[iv.len() - 1];
+        assert!((got - want).abs() < 1e-3 * want, "stepped {got} s vs closed form {want} s");
+        // Closer in, only the COUNT is asserted, and the reason is the model rather than the flow:
+        // this type stores volts, so a `y` a part in 1e12 above `a` is eight ulps of `v`, the
+        // stepper re-quantises the distance from the fixed point on every tick, and the escape
+        // time inherits that — 0.563 s stepped against 0.566 s in closed form. The escape survives
+        // it; the timing does not, and saying so is cheaper than a tolerance that hides it.
+        let mut hair = Qif::default();
+        hair.set_canonical_y(a * (1.0 + 1e-12));
+        assert!(hair.v > unstable, "eight ulps must still land above the fixed point");
+        let out = spike_times(&mut hair, 1e-4, 20_000, 0.0);
+        assert_eq!(out.len(), 1, "eight ulps above the unstable point did not escape: {out:?}");
+    }
+
+    /// The divergence time from just above the unstable fixed point, where `atanh(a/y₀)` loses the
+    /// answer: `a/y₀` rounds to within an ulp of 1 and `atanh` amplifies that by `1/(1 - x²)`.
+    ///
+    /// The reference is independent of the formula being checked. Advance to a hair before the
+    /// divergence, where `y` is enormous; from there `dy/ds = y² + η` is `y²` to a part in
+    /// `(a/y)²`, so the time left is `1/y`. That is the spike time measured from the far end.
+    ///
+    /// **`η = -1/4` alone would prove nothing**, and that is the point of the sweep: `a = 1/2` is
+    /// a power of two, `a/y₀` is then exactly representable for a `y₀` a few ulps up, and the old
+    /// `atanh` form is exact there by luck — 2e-16 relative. One `η` away from that symmetry the
+    /// same form is wrong by 4e-4, and at `a = 1.35` with `y₀` three ulps up, by 1.1e-2.
+    #[test]
+    fn the_divergence_time_is_accurate_next_to_the_unstable_fixed_point() {
+        for &eta in &[-0.25f64, -0.37, -0.61, -1.85, -3.3] {
+            let a = (-eta).sqrt();
+            for &shift in &[1e-6, 1e-10, 1e-13, 1e-15, 4e-16] {
+                let y0 = a * (1.0 + shift);
+                assert!(y0 > a, "η {eta}, shift {shift}: the nudge was lost to rounding");
+                let Flow::Diverged { at } = canonical_flow(y0, eta, 1e6) else {
+                    panic!("a start above the unstable point must diverge, η {eta}, shift {shift}")
+                };
+                let h = at * (1.0 - 1e-6);
+                let Flow::Finite(y1) = canonical_flow(y0, eta, h) else {
+                    panic!("η {eta}, shift {shift}: it diverged before its own divergence time")
+                };
+                assert!(y1 > 1e3 * a, "η {eta}, shift {shift}: {y1} is not deep in the escape");
+                let left = at - h;
+                let asymptotic = 1.0 / y1;
+                assert!(
+                    (left - asymptotic).abs() <= 1e-4 * left,
+                    "η {eta}, shift {shift}: {left} left by the closed form, {asymptotic} by 1/y"
+                );
+            }
+        }
+        // Exactly on the point, the flow is the point.
+        for &e in &[-0.37f64, -1.0, -4.0] {
+            let a = (-e).sqrt();
+            assert_eq!(canonical_flow(a, e, 1.0), Flow::Finite(a), "η {e} moved off its own root");
+            assert_eq!(canonical_flow(a, e, 1e6), Flow::Finite(a), "η {e}, long step");
+            assert_eq!(canonical_flow(-a, e, 1e6), Flow::Finite(-a), "η {e}, stable point");
+        }
+    }
+
     /// Bistability is a feature of the model and `isi` must not flatten it: a reset above the
     /// unstable fixed point fires forever at a current well below rheobase.
     #[test]
@@ -2024,10 +2482,17 @@ mod tests {
         }
     }
 
-    /// Check (a), second leg, at the tolerance the brief asks for. `Theta::exact_theta_after` is
-    /// written in the circle's own coordinates — a phase rotation and an `atan2` — while
-    /// `canonical_flow` is written as a Riccati solution in `y`. Agreement here is floating-point,
-    /// not discretisation.
+    /// Check (a), second leg, at the tolerance the brief asks for. Above rheobase
+    /// `Theta::exact_theta_after` is written in the circle's own coordinates — a phase rotation
+    /// and an `atan2` — while `canonical_flow` is written as a Riccati solution in `y`. Agreement
+    /// there is floating-point, not discretisation, and 500 and 3000 pA are the legs that say so.
+    ///
+    /// **At and below rheobase this test compares a copy against its copy**, and it is kept for
+    /// what it does cover rather than for what it is named: the two functions evaluate the SAME
+    /// expression for `η <= 0` (`a(1 + u)/(1 - u)` in both, `y₀/(1 - y₀s)` in both), so 0, 100 and
+    /// 375 pA would pass a shared transcription error. The independent check for those is
+    /// `the_theta_closed_form_solves_the_circle_equation_it_is_written_for`, which integrates the
+    /// circle equation itself and shares nothing with either.
     #[test]
     fn the_theta_closed_form_and_the_qif_flow_agree_to_floating_point() {
         let q = Qif::default();
@@ -2056,6 +2521,67 @@ mod tests {
         }
     }
 
+    /// `Theta::exact_theta_after` against Runge-Kutta on the circle equation itself, which is the
+    /// only reference here that shares no algebra with either closed form.
+    ///
+    /// It integrates `dθ/ds = (1 - cos θ) + (1 + cos θ)η` in radians at 20,000 steps per window,
+    /// where fourth-order truncation is far below the tolerance asserted, and compares AROUND the
+    /// circle so that a pair straddling the cut is not counted as `2π` apart. Below rheobase this
+    /// is the only thing standing between a transcribed Riccati solution and a plausible wrong
+    /// trajectory.
+    #[test]
+    fn the_theta_closed_form_solves_the_circle_equation_it_is_written_for() {
+        let q = Qif::default();
+        for &pa in &[0.0, 100.0, 375.0, 500.0, 3000.0] {
+            let i = pa * 1e-12;
+            for &y0 in &[-2.0f64, -0.6, 0.0, 0.4, 3.0] {
+                let mut th = q.matching_theta();
+                th.theta = 2.0 * y0.atan();
+                let eta = th.eta(i);
+                for &ms in &[0.5, 2.0] {
+                    let t = ms * 1e-3;
+                    let n = 20_000u32;
+                    let h = (t / th.tau) / f64::from(n);
+                    let mut x = th.theta;
+                    for _ in 0..n {
+                        let k1 = th.drift(x, eta);
+                        let k2 = th.drift(x + 0.5 * h * k1, eta);
+                        let k3 = th.drift(x + 0.5 * h * k2, eta);
+                        let k4 = th.drift(x + h * k3, eta);
+                        x += h * (k1 + 2.0 * k2 + 2.0 * k3 + k4) / 6.0;
+                    }
+                    let got = th.exact_theta_after(i, t).expect("finite");
+                    let gap = wrap_pi(got - x);
+                    assert!(
+                        gap.abs() < 1e-11,
+                        "η {eta}, y0 {y0}, {ms} ms: closed form {got} vs Runge-Kutta {}",
+                        wrap_pi(x)
+                    );
+                }
+            }
+        }
+        // And on the unstable fixed point itself, where `u₀ · e^{2as}` is `0 · inf`: the phase
+        // stays put, for any interval. Landing on it takes an ulp of care — `tan(atan(a)/1)` comes
+        // back one ulp ABOVE `a`, not on it — and that near miss is the other half of this test.
+        let a = 0.5f64;
+        let mut th = Qif::default().matching_theta();
+        th.theta = (2.0 * a.atan()).next_down();
+        assert_eq!(th.canonical_y(), a, "the premise is a phase whose tan(θ/2) is a exactly");
+        for &t in &[1e-3, 1.0, 1e6] {
+            let got = th.exact_theta_after(0.0, t).expect("finite");
+            assert!((got - th.theta).abs() < 1e-12, "{t} s moved the fixed phase to {got}");
+        }
+        // One ulp above it the cell must SPIKE and then settle onto the stable point at `y = -a`,
+        // and `spikes_by` must say one. The answer -a is right; arriving there without the spike,
+        // which is what `a - y₀·tanh(a·s)` cancelling to a rounding produces, is not.
+        let mut hot = Qif::default().matching_theta();
+        hot.theta = 2.0 * a.atan();
+        assert!(hot.canonical_y() > a, "the premise is a phase one ulp above the fixed point");
+        assert_eq!(hot.spikes_by(0.0, 100.0).expect("finite"), 1, "the escape produced no spike");
+        let settled = hot.exact_theta_after(0.0, 100.0).expect("finite");
+        assert!((settled - 2.0 * (-a).atan()).abs() < 1e-9, "it settled at θ = {settled}");
+    }
+
     /// Check (e): the circle is invariant. Drive it with everything, including currents that make
     /// `η` hugely negative, and `θ` must stay in `(-π, π]` — and stay finite, which `tan(θ/2)` on
     /// the other side of the transform does not.
@@ -2068,10 +2594,46 @@ mod tests {
             assert!(th.theta.is_finite(), "θ went non-finite at step {k}");
             assert!(th.theta > -PI - 1e-12 && th.theta <= PI + 1e-12, "θ = {} at {k}", th.theta);
         }
-        // A bump of any size is a rotation, never an escape.
+        // The drives above are three to four orders of magnitude too small to break anything, so
+        // they are not the test. The invariant fails when `h·|η|` reaches about 2, which at a 1 ms
+        // tick is i ≈ -300 nA and at the 0.1 ms tick the simulator test uses is i ≈ -3 µA. Below
+        // is the ±1 mA the module's own `a_violent_drive_leaves_no_model_non_finite` uses, at the
+        // dt it uses — the drive that sent θ to -28,486 while every assertion in that test passed,
+        // because it asserts finiteness and this is a property finiteness does not imply.
+        let mut wild = Theta::default();
+        for k in 0..20_000 {
+            let i = if k % 2 == 0 { 1e-3 } else { -1e-3 };
+            wild.step(1e-3, i);
+            assert!(wild.theta.is_finite(), "θ went non-finite at step {k}");
+            assert!(
+                wild.theta > -PI - 1e-12 && wild.theta <= PI + 1e-12,
+                "θ = {} at step {k} of the violent drive",
+                wild.theta
+            );
+        }
+        // And what the escape actually costs is the spike train, so that is asserted too: a phase
+        // parked at -42,790 has to climb 13,600 radians before `θ > π` can fire again, and every
+        // spike until then is silently lost.
+        let i = 8.0 * wild.rheobase();
+        let want = wild.isi(i).expect("above rheobase");
+        let after = spike_times(&mut wild, 1e-5, 20_000, i);
+        let n = after.len();
+        assert!(n >= 3, "after the violent drive it gave {n} spikes in 200 ms");
+        assert!(after[0] < 2.0 * want, "first spike at {} s; one interval is {want} s", after[0]);
+        // A bump of any size is a rotation, never an escape — and the property that says the
+        // rotation is the RIGHT one is that it moves the corresponding Qif's potential by exactly
+        // the volts it was handed. `θ.abs() <= PI` holds for `2·atan` of anything, so on its own
+        // it asserts the definition of `atan` rather than anything about this model.
         for dv in [1.0, -1.0, 1e6, -1e6] {
+            let before = th.potential();
             th.bump(dv);
-            assert!(th.theta.abs() <= PI, "a {dv} V bump left the circle at θ = {}", th.theta);
+            let moved = th.potential() - before;
+            assert!(
+                (moved - dv).abs() <= 1e-6 * dv.abs(),
+                "a {dv} V bump moved the membrane {moved} V"
+            );
+            let on = th.theta > -PI && th.theta <= PI;
+            assert!(on, "a {dv} V bump left the circle at θ = {}", th.theta);
         }
     }
 
@@ -2091,6 +2653,20 @@ mod tests {
                 "{pa} pA: stepped {got} spikes vs exact {want}"
             );
             assert!(want > 2, "{pa} pA predicted only {want} spikes, which tests nothing");
+        }
+        // The count is a FLOOR of a linear function, and the ±1 slack above — which the stepper's
+        // tick quantisation honestly earns — cannot see that. So the floor is pinned separately,
+        // against windows whose answer is arithmetic rather than measured: from `θ = 0` the first
+        // crossing is HALF an interval in, so a window of exactly one interval holds exactly one
+        // spike, 1.501 intervals hold two, and a hair under half an interval holds none. Rounding
+        // instead of flooring answers 2 to the third of those, which nothing else here would
+        // notice. FOUND BY MUTATION.
+        let clock = Theta { theta: 0.0, ..Theta::default() };
+        let i = 2000e-12;
+        let isi = clock.isi(i).expect("above rheobase");
+        for &(window, want) in &[(0.499, 0u64), (0.501, 1), (1.0, 1), (1.501, 2), (10.4, 10)] {
+            let got = clock.spikes_by(i, window * isi).expect("finite");
+            assert_eq!(got, want, "{window} intervals from θ = 0 gave {got} spikes, not {want}");
         }
     }
 
@@ -2231,6 +2807,37 @@ mod tests {
         assert!(last < 0.2, "still firing at {last} s into a 1 s run: {t:?}");
     }
 
+    /// The transient WINDOW, and the one constant in the taxonomy that deviates from the table.
+    ///
+    /// `the_transient_pattern_falls_silent_under_a_current_that_stays_on` asserts the pattern at
+    /// one current, which a single lucky drive can satisfy. This asserts it across the window, and
+    /// asserts the two things that make "transient" mean something: above the window the same cell
+    /// fires for the whole second, so the silence is not weak drive; and with the table's
+    /// `b = 100 pA` the cell manages at most two spikes anywhere in the window, which is the
+    /// measurement the variant's doc rests on and the reason `b` was moved.
+    #[test]
+    fn the_transient_pattern_is_transient_across_its_window_and_not_above_it() {
+        let p = FiringPattern::Transient;
+        for &pa in &[200.0, 220.0, 250.0, 270.0] {
+            let mut n = p.model();
+            let t = spike_times(&mut n, 1e-5, 100_000, pa * 1e-12);
+            assert!(t.len() >= 3, "{pa} pA gave {} spikes, which is not a train", t.len());
+            assert!(t[t.len() - 1] < 0.2, "{pa} pA was still firing at {} s", t[t.len() - 1]);
+        }
+        let mut open = p.model();
+        let t = spike_times(&mut open, 1e-5, 100_000, 300e-12);
+        assert!(t[t.len() - 1] > 0.8, "above the window it stopped at {} s", t[t.len() - 1]);
+        for &pa in &[180.0, 200.0, 220.0, 250.0, 270.0] {
+            let mut table = AdEx { b: 100e-12, ..p.model() };
+            let t = spike_times(&mut table, 1e-5, 100_000, pa * 1e-12);
+            let n = t.len();
+            assert!(n <= 2, "b = 100 pA at {pa} pA gave {n} spikes; the variant's note is stale");
+        }
+        // And τ_w is the table's own 90 ms, which is what the doc claims and what a reader with
+        // the paper will compare against.
+        assert!((p.model().tau_w - 90e-3).abs() < 1e-15, "τ_w is {} s", p.model().tau_w);
+    }
+
     /// Irregular: the interval sequence must keep varying LATE in the run, which rules out a
     /// transient and a period-1 train. It does not establish chaos, and this implementation did not
     /// compute a Lyapunov exponent.
@@ -2354,6 +2961,14 @@ mod tests {
         let train = sim.run(20_000, &[800e-12, 0.0]);
         assert!(train.len() > 10, "only {} spikes in a 2 s clocked run", train.len());
         assert!(!train.of(1).is_empty(), "the postsynaptic cell never fired");
+        // The module doc quotes this run's counts as the price of the gap property, so they are
+        // pinned here rather than only asserted in prose: 23 presynaptic spikes at 800 pA, and 23
+        // postsynaptic ones driven by them across the 2-tick delay. An event-driven run of the
+        // same network keeps the first 23 and loses all of the second, which is what the constant
+        // above refuses to let happen and therefore the one number this test cannot produce.
+        assert_eq!(train.of(0).len(), 23, "the presynaptic count moved");
+        assert_eq!(train.of(1).len(), 23, "the postsynaptic count moved");
+        assert_eq!(train.len(), 46, "the total moved");
     }
 
     /// **This is why [`Qif`] declares `EXACT_OVER_GAPS` false.** A quiet interval CAN produce a
@@ -2380,6 +2995,16 @@ mod tests {
         q.bump(10e-3);
         assert!(q.v < q.v_c);
         assert!(spike_times(&mut q, 1e-5, 5_000, 0.0).is_empty(), "a sub-critical bump fired");
+        // And the jump has to land on `v_reset` and start the refractory period, like any other
+        // spike. FOUND BY MUTATION: the default has `v_reset == v_rest`, so resetting to the wrong
+        // one of the two is invisible on it and every test in this module used the default. A cell
+        // whose reset differs from its rest is the only thing that can see the difference.
+        let mut k = Qif { v_reset: -55e-3, ..Qif::default() };
+        assert!(k.v_reset != k.v_rest, "this check is vacuous unless the two differ");
+        k.bump(30e-3);
+        assert!(k.step(50e-3, 0.0), "the jump did not report the spike it contains");
+        assert!((k.v - k.v_reset).abs() < 1e-15, "the jump left {} V, want v_reset", k.v);
+        assert!(k.refractory_left() > 0.0, "the jump did not start the refractory period");
     }
 
     /// [`Qif::matching_theta`] has to carry the VOLTAGE mapping too, not only the dynamics.
@@ -2417,6 +3042,99 @@ mod tests {
         }
     }
 
+    /// The corners of the public surface nothing else reaches: the error text a user is handed,
+    /// the labels, `rate` against `isi`, the derived membrane constants, the argument checks on
+    /// `spikes_by`, the one `Degenerate` branch in the closed-form subthreshold solution, and
+    /// `reset`.
+    ///
+    /// The `Display` strings are part of the contract here and not decoration — the whole reason
+    /// this module returns `Result` where `Lif` returns `Option` is that the error carries the
+    /// rheobase, and it carries it to a person reading a line of output.
+    #[test]
+    fn the_public_surface_answers_at_its_edges() {
+        let e = Eif::default();
+        let text = format!("{}", e.isi(100e-12).expect_err("below rheobase"));
+        assert!(text.contains("rheobase is"), "NoFiring reads {text}");
+        assert!(text.contains(&format!("{}", e.rheobase())), "NoFiring drops the number: {text}");
+        let not_finite = ModelError::NotFinite { what: "delta_t", value: f64::NAN };
+        assert!(format!("{not_finite}").contains("delta_t is not finite"), "{not_finite}");
+        let not_positive = ModelError::NotPositive { what: "tau_m", value: -1.0 };
+        assert!(format!("{not_positive}").contains("must be strictly positive"), "{not_positive}");
+        let what = "v_peak <= v_reset";
+        let disordered = ModelError::Disordered { what, lower: 1.0, upper: 0.0 };
+        assert!(format!("{disordered}").contains("v_peak <= v_reset"), "{disordered}");
+        let degenerate = ModelError::Degenerate { what: "g_l + a" };
+        assert!(format!("{degenerate}").contains("g_l + a is zero"), "{degenerate}");
+
+        // Labels: six variants, six distinct names, each the one the doc uses.
+        let labels: Vec<&str> = FiringPattern::ALL.iter().map(|p| p.label()).collect();
+        let want = ["tonic", "adapting", "initial burst", "regular bursting", "transient"];
+        assert_eq!(labels[..5], want, "the labels moved");
+        assert_eq!(labels[5], "irregular");
+        for p in FiringPattern::ALL {
+            assert!(p.drive() > 0.0, "{} has a non-positive drive", p.label());
+        }
+
+        // `rate` is `1/isi` for all three closed forms, and it fails where `isi` fails.
+        let q = Qif::default();
+        let th = Theta::default();
+        let i = 800e-12;
+        assert!((q.rate(i).expect("above rheobase") - 1.0 / q.isi(i).expect("above")).abs() < 1e-9);
+        assert!((th.rate(i).expect("above") - 1.0 / th.isi(i).expect("above")).abs() < 1e-9);
+        let j = 400e-12;
+        assert!((e.rate(j).expect("above") - 1.0 / e.isi(j).expect("above")).abs() < 1e-9);
+        assert!(matches!(q.rate(f64::NAN), Err(ModelError::NotFinite { what: "i", .. })));
+        assert!(matches!(th.rate(f64::NAN), Err(ModelError::NotFinite { what: "i", .. })));
+        assert!(matches!(e.rate(f64::NAN), Err(ModelError::NotFinite { what: "i", .. })));
+
+        // The derived membrane constants, against their definitions.
+        assert!((e.tau_m() - e.c / e.g_l).abs() < 1e-18 && (e.tau_m() - 20e-3).abs() < 1e-15);
+        assert!((e.r_m() - 1.0 / e.g_l).abs() < 1e-9 && (e.r_m() - 100e6).abs() < 1e-3);
+        let lif = e.lif_limit();
+        assert!((lif.tau_m - e.tau_m()).abs() < 1e-18 && lif.v_th == e.v_t && lif.v_rest == e.e_l);
+
+        // `spikes_by` checks its arguments, and its count is a floor and not a rounding.
+        assert!(matches!(th.spikes_by(1e-9, -1.0), Err(ModelError::NotPositive { what: "t", .. })));
+        let nan = f64::NAN;
+        assert!(matches!(th.spikes_by(nan, 1.0), Err(ModelError::NotFinite { what: "i", .. })));
+        assert!(matches!(th.spikes_by(1e-9, nan), Err(ModelError::NotFinite { what: "t", .. })));
+        assert_eq!(th.spikes_by(1e-9, 0.0).expect("finite"), 0, "no time is no spikes");
+        let quiet = th.spikes_by(0.5 * th.rheobase(), 10.0).expect("finite");
+        assert_eq!(quiet, 0, "a cell at half rheobase reported {quiet} spikes in 10 s");
+
+        // The one denominator that can vanish in the closed-form subthreshold solution.
+        let flat = AdEx::new(Eif::default(), -Eif::default().g_l, 30e-3, 0.0).expect("finite a");
+        let degenerate = flat.linear_subthreshold(10e-12, 1e-3);
+        assert!(matches!(degenerate, Err(ModelError::Degenerate { what: "g_l + a" })));
+        let unusable = AdEx::default().linear_subthreshold(f64::NAN, 1e-3);
+        assert!(matches!(unusable, Err(ModelError::NotFinite { what: "i", .. })));
+        assert!((flat.w_drift(flat.eif.e_l, 0.0)).abs() < 1e-30, "w_drift at rest with w = 0 is 0");
+
+        // `reset` puts every model back where its constructor starts it, refractory included.
+        let mut q2 = Qif { v_reset: -55e-3, ..Qif::default() };
+        q2.bump(30e-3);
+        assert!(q2.step(50e-3, 0.0) && q2.refractory_left() > 0.0);
+        q2.reset();
+        assert!(q2.v == q2.v_rest && q2.refractory_left() == 0.0, "Qif::reset left {q2:?}");
+        let mut a2 = AdEx::default();
+        for _ in 0..2000 {
+            a2.step(1e-5, 500e-12);
+        }
+        assert!(a2.w != 0.0, "this check needs an adaptation to clear");
+        a2.reset();
+        assert!(a2.w == 0.0 && a2.eif.v == a2.eif.e_l, "AdEx::reset left {a2:?}");
+        let mut t2 = Theta::default();
+        t2.step(1e-3, 2e-9);
+        assert!(t2.theta != 0.0);
+        t2.reset();
+        assert!(t2.theta == 0.0, "Theta::reset left θ = {}", t2.theta);
+        // And `Theta::new` folds the phase it is handed, which is the invariant the type carries.
+        let phase = 7.0 * PI + 0.25;
+        let wrapped = Theta::new(20e-3, 1.5e-9, -0.25, -57.5e-3, 15e-3, phase).expect("valid");
+        assert!(wrapped.theta > -PI && wrapped.theta <= PI, "θ = {}", wrapped.theta);
+        assert!((wrapped.theta - (0.25 - PI)).abs() < 1e-12, "θ = {}", wrapped.theta);
+    }
+
     /// The gap property is declared per model and the simulator enforces it. Pinned here so that a
     /// later edit that makes one of these exact, or one of them approximate, has to come past a
     /// test rather than past a reviewer.
@@ -2426,5 +3144,37 @@ mod tests {
         const { assert!(!Theta::EXACT_OVER_GAPS, "Runge-Kutta on the circle does not compose") }
         const { assert!(!Eif::EXACT_OVER_GAPS, "the exponential term has no exact discrete flow") }
         const { assert!(!AdEx::EXACT_OVER_GAPS, "nor does the pair") }
+        // The four consts above are a pin, not evidence. Here is the evidence for the three that
+        // are false BECAUSE of the integrator: the property the constant names is that one step of
+        // `k·dt` with zero input lands where `k` steps of `dt` land, and each of these MISSES it
+        // by a margin no tolerance would call equal. `Qif` is the one that passes this — see
+        // `the_qif_flow_composes_across_a_gap`, which is why its constant needed the other
+        // argument entirely.
+        let dt = 2e-3;
+        let mut fine = Eif { v: -55e-3, ..Eif::default() };
+        let mut coarse = fine;
+        for _ in 0..10 {
+            fine.step(dt, 0.0);
+        }
+        coarse.step(10.0 * dt, 0.0);
+        let gap = (fine.v - coarse.v).abs();
+        assert!(gap > 1e-9, "the Eif composed to {gap} V; EXACT_OVER_GAPS may be understated");
+        let mut fine = AdEx { w: 20e-12, ..AdEx::default() };
+        fine.eif.v = -55e-3;
+        let mut coarse = fine;
+        for _ in 0..10 {
+            fine.step(dt, 0.0);
+        }
+        coarse.step(10.0 * dt, 0.0);
+        let gap = (fine.eif.v - coarse.eif.v).abs() + (fine.w - coarse.w).abs();
+        assert!(gap > 1e-12, "the AdEx composed to {gap}; EXACT_OVER_GAPS may be understated");
+        let mut fine = Theta { theta: 1.0, ..Theta::default() };
+        let mut coarse = fine;
+        for _ in 0..10 {
+            fine.step(dt, 0.0);
+        }
+        coarse.step(10.0 * dt, 0.0);
+        let gap = (fine.theta - coarse.theta).abs();
+        assert!(gap > 1e-9, "the Theta composed to {gap} rad; EXACT_OVER_GAPS may be understated");
     }
 }
