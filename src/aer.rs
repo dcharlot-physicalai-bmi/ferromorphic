@@ -2712,10 +2712,8 @@ impl NMnist {
             let y = u16::from(r[1]);
             let polarity = if r[2] & 0x80 != 0 { Polarity::On } else { Polarity::Off };
             let t = (u64::from(r[2] & 0x7F) << 16) | (u64::from(r[3]) << 8) | u64::from(r[4]);
-            if let Some(p) = previous {
-                if t < p {
-                    return Err(DecodeError::NonMonotonicTimestamp { offset: at, previous: p, found: t });
-                }
+            if let Some(p) = previous.filter(|&p| t < p) {
+                return Err(DecodeError::NonMonotonicTimestamp { offset: at, previous: p, found: t });
             }
             previous = Some(t);
             events.push(AerEvent { t, x, y, polarity });
