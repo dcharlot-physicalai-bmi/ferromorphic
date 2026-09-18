@@ -810,7 +810,7 @@ impl Theta {
     /// `φ(s) = φ₀ + √η·s`, and `θ = 2·atan2(√η·sin φ, cos φ)` recovers the angle with the right
     /// quadrant, so a trajectory that has passed `θ = π` comes back on the other side by itself.
     /// For `η <= 0` the Riccati flow is used, in whichever of its two forms is accurate at the
-    /// starting phase — see [`canonical_flow`], which makes the same choice for the same reason.
+    /// starting phase — see `canonical_flow`, which makes the same choice for the same reason.
     /// Above the midpoint that is `u = u₀·e^{2as}`, which continues **through** the spike by
     /// itself: `u` passes 1, `y = a(1 + u)/(1 - u)` changes sign, and the phase comes back from
     /// `-π`. The number of spikes passed over is discarded here; [`Theta::spikes_by`] counts them.
@@ -1187,7 +1187,7 @@ impl Eif {
     /// The Lambert form is the derivation, not the evaluation: `e^{-k}` underflows to zero for
     /// `k > 745`, and the upper root is the difference of two numbers of size `k`. Both are
     /// reachable here — `k` is `(V_T - E_L - I/g_L)/Δ_T`, so a sharp onset or a hyperpolarising
-    /// current sends it up without limit — so [`exp_offset_roots`] solves `e^x = x + k` for `x`
+    /// current sends it up without limit — so `exp_offset_roots` solves `e^x = x + k` for `x`
     /// directly instead. See its note.
     ///
     /// `None` above rheobase, where the membrane escapes from anywhere, and for a non-finite `i`.

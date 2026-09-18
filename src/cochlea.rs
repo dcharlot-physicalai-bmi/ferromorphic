@@ -2058,7 +2058,7 @@ pub fn two_tone(
 /// # Errors
 ///
 /// As [`tone`] for either endpoint, plus [`CochleaError::NotPositive`] on a
-/// [`Sweep::Exponential`] whose endpoints are not both positive (which [`check_audio_frequency`]
+/// [`Sweep::Exponential`] whose endpoints are not both positive (which `check_audio_frequency`
 /// already guarantees, so the arm is defensive).
 pub fn chirp(
     fs: f64,

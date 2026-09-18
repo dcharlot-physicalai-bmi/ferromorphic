@@ -2062,7 +2062,7 @@ impl Cascade {
     /// The stationary distribution over the `2 * depth` states under stimuli of random sign.
     ///
     /// Solved **exactly**, by flux balance across the cuts between levels — see
-    /// [`Cascade::stationary_by_flux_balance`] — in `O(d)`, with no cancellation and therefore no
+    /// `Cascade::stationary_by_flux_balance` — in `O(d)`, with no cancellation and therefore no
     /// loss of precision at any representable depth. Verified against the transition matrix before
     /// it is returned.
     ///

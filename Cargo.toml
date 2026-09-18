@@ -1,6 +1,6 @@
 [package]
 name = "ferromorphic"
-version = "0.7.0"
+version = "0.8.0"
 edition = "2024"
 # A POLICY floor, deliberately above the technical one, stated that way so nobody later "corrects"
 # it downward on the grounds that an older toolchain happens to work.
@@ -13,7 +13,7 @@ edition = "2024"
 # What is NOT claimed: that 1.98 is the lowest version that works. Nobody has bisected it. The line
 # says "verified here", which is the direction that cannot break a user.
 rust-version = "1.98"
-description = "Neuromorphic computing in pure Rust, the open corpus in one library: spiking neurons from Hodgkin-Huxley to AdEx and resonate-and-fire, synapses and short-term plasticity, STDP to three-factor and dendritic learning, surrogate gradients, BPTT and e-prop, ANN-to-SNN conversion, spiking convolutions and attention, reservoirs, the Neural Engineering Framework, vector symbolic architectures, sparse coding, associative memories, QUBO by stochastic spiking, a silicon cochlea, an olfactory bulb, tactile afferents, event-based vision and fusion, hardware constraint models, NIR, AEDAT/EVT3/N-MNIST decoders, NeuroBench metrics, and a joules ledger that charges for synapse memory traffic. Zero dependencies, std-only, wasm-clean, deterministic by seed."
+description = "Neuromorphic computing in pure Rust, the open corpus in one library: spiking neurons from Hodgkin-Huxley to AdEx and resonate-and-fire, synapses and short-term plasticity, STDP to three-factor and dendritic learning, surrogate gradients, BPTT and e-prop, ANN-to-SNN conversion, spiking convolutions and attention, reservoirs, the Neural Engineering Framework, vector symbolic architectures, sparse coding, associative memories, QUBO by stochastic spiking, coupled oscillators and ring attractors, predictive coding, graph algorithms by spike wavefront, a silicon cochlea, an olfactory bulb, tactile afferents, event-based vision and fusion, hardware constraint models, NIR, AEDAT/EVT3/N-MNIST decoders, NeuroBench metrics, and a joules ledger that charges for synapse memory traffic. Zero dependencies, std-only, wasm-clean, deterministic by seed."
 license = "Apache-2.0"
 repository = "https://github.com/dcharlot-physicalai-bmi/ferromorphic"
 # Live since 2026-09-18, and checked before this line was restored: the page runs the library's

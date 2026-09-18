@@ -703,7 +703,7 @@ fn ou_step_sd(sigma: f64, dt: f64, tau_m: f64) -> f64 {
 ///   `sigma` at all.
 ///
 /// If you were handed a `sigma` and are not sure which convention it is in, run this, take the
-/// variance, and compare. It shares [`ou_step_sd`] with [`simulate_diffusion`], so a measurement
+/// variance, and compare. It shares `ou_step_sd` with [`simulate_diffusion`], so a measurement
 /// here is a measurement of the spiking simulator's noise as well.
 ///
 /// # Errors

@@ -455,7 +455,7 @@ pub enum HhError {
     /// The injected current was `NaN` or an infinity.
     NonFiniteCurrent,
     /// The state left its legal region during the step: a gate outside `[0,1]` by more than
-    /// [`GATE_SLACK`], or a non-finite potential.
+    /// `GATE_SLACK`, or a non-finite potential.
     ///
     /// [`Integrator::ExponentialEuler`] cannot **produce** this from a legal state at any step size,
     /// which is the point of that variant's guarantees, and the other two can at a large step. It is
@@ -617,7 +617,7 @@ pub struct HodgkinHuxley {
     ///
     /// It is a **crossing** and not a level: the potential must have been below this value before
     /// the substep and at or above it after. A cell handed over already above the level therefore
-    /// reports nothing until it has come back down through `detect_reset` — see [`detect_crossing`],
+    /// reports nothing until it has come back down through `detect_reset` — see `detect_crossing`,
     /// which is where a level test was found reporting a spike for a membrane on its way down.
     pub v_detect: f64,
     /// The level, mV, the potential must fall back below before another spike can be reported.
@@ -680,7 +680,7 @@ impl Default for HodgkinHuxley {
 /// provenance test checks exactly that.
 ///
 /// The two removable singularities — `alpha_m` at -40 mV and `alpha_n` at -55 mV — are handled by
-/// [`exprel_recip`]'s series branch, so this function is finite at every finite input.
+/// `exprel_recip`'s series branch, so this function is finite at every finite input.
 #[must_use]
 pub fn rates(v_mv: f64) -> Rates {
     Rates {
@@ -768,7 +768,7 @@ impl HodgkinHuxley {
     /// The resting potential: the voltage at which the three ionic currents cancel with the gates at
     /// their steady state, mV.
     ///
-    /// Bisected to machine precision on `[-90, -40]` mV by [`bisect_rest`]. Returns `None` if the
+    /// Bisected to machine precision on `[-90, -40]` mV by `bisect_rest`. Returns `None` if the
     /// total ionic current is non-finite at either end of that bracket or has the same sign at both,
     /// which happens for parameter sets whose fixed point lies outside it — a real answer that this
     /// method cannot see is reported as `None` rather than as a bracket endpoint.
@@ -944,7 +944,7 @@ impl HodgkinHuxley {
     ///
     /// [`HhError::NonFiniteStep`] or [`HhError::NonPositiveStep`] for a `dt_ms` that is not a
     /// positive finite number; [`HhError::NonFiniteCurrent`] for a non-finite current;
-    /// [`HhError::Diverged`] if the step left a gate outside `[0,1]` by more than [`GATE_SLACK`] or
+    /// [`HhError::Diverged`] if the step left a gate outside `[0,1]` by more than `GATE_SLACK` or
     /// the potential non-finite. [`Integrator::ExponentialEuler`] cannot produce either from a legal
     /// state at any step size and the other two can — but see [`HhError::Diverged`] for the two ways
     /// the default integrator reaches it anyway, both of them through public fields.
@@ -1329,7 +1329,7 @@ impl Neuron for HodgkinHuxley {
     /// Unlike [`HodgkinHuxley::advance`] this cannot report a problem, so it defends the state and
     /// documents the rest. A non-finite or non-positive `dt`, or a non-finite `i`, leaves the state
     /// **untouched** and returns `false`. So does a step whose *result* would be illegal — a gate
-    /// outside `[0,1]` by more than [`GATE_SLACK`], or a non-finite potential: the step is rolled
+    /// outside `[0,1]` by more than `GATE_SLACK`, or a non-finite potential: the step is rolled
     /// back rather than written, because a `NaN` membrane potential silently poisons every spike
     /// time downstream of it and a frozen cell does not.
     ///
@@ -1569,7 +1569,7 @@ impl ReducedHh {
     /// The reduced model's resting potential, mV, or `None` if no root lies in `[-90, -40]` mV.
     ///
     /// Literally the same bisection as [`HodgkinHuxley::rest_potential_mv`] — both call
-    /// [`bisect_rest`] — differing only in the current-balance equation handed to it, where `h`
+    /// `bisect_rest` — differing only in the current-balance equation handed to it, where `h`
     /// comes from the affine relation rather than from `h_inf`. It was a second copy of the loop
     /// until an audit found the copy missing the finiteness guard, so that `ReducedHh { e_leak: NaN,
     /// .. }` answered `Some(-40.0)`, the bracket endpoint, and [`ReducedHh::settled`] sat the cell
@@ -1622,13 +1622,13 @@ impl ReducedHh {
     ///
     /// [`HhError::NonFiniteStep`], [`HhError::NonPositiveStep`] or [`HhError::NonFiniteCurrent`] for
     /// inputs that are not a positive finite step and a finite current. [`HhError::Diverged`] if the
-    /// step left `n` outside `[0,1]` by more than [`GATE_SLACK`] or the potential non-finite.
+    /// step left `n` outside `[0,1]` by more than `GATE_SLACK` or the potential non-finite.
     ///
     /// The integrator cannot *produce* either, and an earlier version of this doc concluded from
     /// that that `Diverged` was unreachable. It is not: `n` is a public field, so
     /// `ReducedHh { n: 1.5, ..Default::default() }.advance(0.01, 0.0)` is `Err(Diverged)` — the
     /// guard is there for the state a caller hands over, exactly as in the full model. The tolerance
-    /// is [`GATE_SLACK`] for the same reason it is there: this check used to be an exact
+    /// is `GATE_SLACK` for the same reason it is there: this check used to be an exact
     /// `(0.0..=1.0)`, eight orders of magnitude stricter than the full model's, which is a
     /// difference no doc mentioned and no test would have caught.
     pub fn advance(&mut self, dt_ms: f64, i_ua_cm2: f64) -> Result<bool, HhError> {

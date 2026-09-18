@@ -98,6 +98,7 @@
 
 pub mod aer;
 pub mod attention;
+pub mod attractor;
 pub mod bayes;
 pub mod cochlea;
 pub mod coding;
@@ -112,6 +113,7 @@ pub mod encode;
 pub mod eprop;
 pub mod exponential;
 pub mod fusion;
+pub mod graph;
 pub mod hardware;
 pub mod hh;
 pub mod hopfield;
@@ -125,8 +127,10 @@ pub mod neuron;
 pub mod nir;
 pub mod olfaction;
 pub mod optimise;
+pub mod oscillator;
 pub mod phasor;
 pub mod plasticity;
+pub mod predictive;
 pub mod reinforce;
 pub mod reservoir;
 pub mod resonate;

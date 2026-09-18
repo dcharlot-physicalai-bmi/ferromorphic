@@ -2191,7 +2191,7 @@ impl Graph {
     /// are **not** reproduced by the writer, so the identity this format guarantees is over the
     /// graph and over the writer's own canonical text, not over an arbitrary hand-edited file.
     ///
-    /// Floats are written by [`fmt_f64`], which verifies per value that the decimal it emits parses
+    /// Floats are written by `fmt_f64`, which verifies per value that the decimal it emits parses
     /// back to the same bits. `graph -> text -> graph` is therefore the identity on every float,
     /// including negative zero and subnormals.
     ///

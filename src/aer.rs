@@ -2543,7 +2543,7 @@ impl Aedat4 {
     /// compression and whether or not its events were decoded. So **any** file survives a
     /// decode-encode cycle unchanged — a compressed one this crate cannot read inside, and equally
     /// a `RAW` one whose `FlatBuffers` table is laid out differently from the forward layout
-    /// [`Aedat4::write_event_packet`] produces, or carries fields beyond the element vector.
+    /// `Aedat4::write_event_packet` produces, or carries fields beyond the element vector.
     /// Regenerating the payload from the decoded events drops all of that silently; measured, a
     /// valid 98-byte packet with a 4-byte alignment gap came back out as 94.
     ///

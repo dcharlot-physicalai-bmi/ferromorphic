@@ -9,7 +9,7 @@ hardware constraint models, analog device non-idealities, NIR, event-camera deco
 metrics, teaching tasks — and a joules ledger that charges for the memory traffic a synaptic
 operation needs.
 
-**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 46 modules, 1,577 tests.**
+**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 50 modules, 1,622 tests.**
 
 Run it in a browser without installing anything:
 **[energy.physicalai-bmi.org/neuromorphic](https://energy.physicalai-bmi.org/neuromorphic)** — the
@@ -70,6 +70,10 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 | `optimise` | QUBO by stochastic spiking: max-cut and graph colouring as energies, a Glauber sampler checked against the exact Boltzmann distribution, an annealer checked against brute force |
 | `phasor` | the phasor (complex) vector symbolic architecture: binding as phase addition, symbols as spike times on a rhythm, and the threshold phasor associative memory |
 | `reinforce` | three-factor learning: synaptic eligibility traces, a broadcast prediction error, TD(λ) and a softmax actor checked against the Bellman solution of a chain |
+| `oscillator` | coupled phase oscillators: Kuramoto synchronisation against Adler's lock range and the Ott–Antonsen solution, a travelling-wave pattern generator for a segmented body, and an oscillator Ising machine checked against brute force |
+| `predictive` | predictive coding: inference as the relaxation of error units onto the Bayesian posterior, local learning as the gradient of the free energy, and the limit — a weakly clamped output, not a small error — in which it becomes backpropagation |
+| `graph` | graph algorithms done by spikes: a shortest path as the arrival time of a wavefront, exact against Bellman–Ford with the spikes counted, and boundary-value problems by random walkers against gambler's ruin |
+| `attractor` | the ring attractor: a bump of activity that holds a heading after the cue is gone, with its width and height in closed form |
 | `sim`, `net`, `spike`, `rng` | the event-driven simulator, sparse connectivity, spike trains, seeded PCG32 |
 
 ## Use it
@@ -235,7 +239,7 @@ Every neuron model here has a test that runs it against an analytic solution.
 - **A sub-threshold current returns `None`, not a large number.** "Fires rarely" and "does not fire"
   are different statements and a rate-coded readout cannot recover the difference later.
 
-1,577 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
+1,622 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
 `#![forbid(unsafe_code)]`, and `cargo build --target wasm32-unknown-unknown` compiles the library
 unchanged. Three of the `examples/` are verification gates that exit non-zero when a closed form
 disagrees with the simulator.
@@ -281,10 +285,11 @@ be reproduced cannot be checked against anything, including itself.
 
 ## Status
 
-**0.7.0.** Thirty-six modules audited by mutation and repaired; ten more in the third wave
-(`nef`, `vsa`, `sparse`, `resonate`, `hopfield`, `dendrite`, `touch`, `optimise`, `phasor`,
-`reinforce`) written against closed forms and not yet audited by mutation — that audit is the next
-release's job; the crate family is not built yet. Planned
+**0.8.0.** Fifty modules, every one audited by mutation: thirty-six by an adversarial auditor in
+0.5.0 and 0.6.0, the ten of the third wave by hand in this release (156 mutations, 36 survivors,
+every one now caught — see below), and the four new in this release (`oscillator`, `predictive`,
+`graph`, `attractor`) mutated as they were written, 83 mutations and 2 survivors closed before they
+shipped. The crate family is not built yet. Planned
 siblings, each following the same rule that a dependency lives outside the core:
 
 | crate | what it would add | why separate |
@@ -355,6 +360,48 @@ What the mutations found, the ones that changed a number rather than a comment:
 - **`continual`'s stationary distribution degraded past depth 48** in every linear-algebra route
   tried; it is now solved by flux balance, exact to 1e-14 at every depth the `f64` transition
   matrix can represent, and refuses by name the depth it cannot.
+
+### The third wave, 0.8.0
+
+0.7.0 shipped ten modules — `nef`, `vsa`, `sparse`, `resonate`, `hopfield`, `dendrite`, `touch`,
+`optimise`, `phasor`, `reinforce` — written against closed forms and said, in this file, that none
+had been mutated. 0.8.0 is that audit, done by hand: one edit at a time, the module's tests re-run,
+the edit reversed. **156 mutations, 36 survivors.** Thirty-five were tests that could not fail,
+each now joined by one that can and that was re-run against its mutation before it was kept; one is
+a quantity that is zero by construction, and the doc now says so instead of implying a check. The
+sweep also turned up one defect in the code itself.
+
+- **The defect: `optimise`'s 64-variable wall multiplied two `usize` unchecked.** A
+  `vertices × colours` that wrapped came back small and was accepted. Found by reading the guard a
+  surviving mutation pointed at.
+- **A default that makes two parameters equal hides which is which.** `dendrite`'s round defaults
+  have `g_D = g_L`, and with them four mutations survived: the two conductances swapped in the
+  somatic prediction, their ratio inverted in the dendritic target, the sign of the prediction
+  error, and a learning step that ignored `dt`. The same mechanism, elsewhere: `nef`'s radius of
+  1, a `K` of 1 in the Ott–Antonsen test, an excitatory reversal of 0 V, a softmax policy at
+  exactly ½ where `p` and `1 − p` are the same number.
+- **A monitor with nothing to report on correct input had never been seen to fire.** `hopfield`
+  reports the worst single-update energy rise; on a symmetric network that is always zero, so
+  blinding it changed nothing. It is now fired on an asymmetric network. For the dense memory the
+  same field is zero *by construction* — a flip is taken only when it lowers the energy — and the
+  doc says that; what is checked there instead is the running energy against a direct evaluation.
+- **Counters nobody read**: `sparse`'s idle/driven split and its spikes-per-burst, `touch`'s spike
+  and tick counters, `optimise`'s flips and its restart totals.
+- **Boundaries one past the edge**: a maximum rate *at* the refractory bound, a transition *to*
+  state `n`, 65 variables, a membrane that lands *exactly* on threshold, an energy tie, and
+  `phasor`'s `wrap`, which without its guard returns a full turn for an angle of `−1e-20`.
+- **Two repairs were themselves blind** and were caught only because every repair is re-run
+  against its mutation: a decode test that refused a two-colour vertex for the wrong reason, and a
+  threshold-case test written at `K = 1`.
+
+The four new modules were mutated as they were written, and the writing found things the mutations
+did not: `predictive`'s first draft claimed the local updates approach backpropagation as the
+output error shrinks — measured, the mismatch fell 1.01-fold for a tenfold smaller error, because
+the hidden layer absorbs a fixed *fraction* of any error; the limit that works is a weakly clamped
+output, and the module now says which. `attractor`'s first bump reported every neuron active:
+Euler decay stalls on a denormal (`4 × 5e-324 × 0.9` rounds back to itself), so a silent neuron is
+never silent until sub-normal rates are flushed. `graph`'s path reconstruction walked a corrupted
+parent record for ever and was killed for the memory; it now refuses.
 
 ## Not here, and said so
 
