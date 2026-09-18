@@ -97,27 +97,41 @@
 #![forbid(unsafe_code)]
 
 pub mod aer;
+pub mod attention;
+pub mod bayes;
+pub mod cochlea;
 pub mod coding;
+pub mod compress;
+pub mod continual;
+pub mod control;
 pub mod convert;
 pub mod crossover;
+pub mod device;
 pub mod encode;
+pub mod eprop;
 pub mod exponential;
+pub mod fusion;
 pub mod hardware;
 pub mod hh;
 pub mod ledger;
+pub mod mapping;
+pub mod meanfield;
 pub mod metrics;
 pub mod net;
 pub mod neuron;
 pub mod nir;
+pub mod olfaction;
 pub mod plasticity;
 pub mod reservoir;
 pub mod rng;
 pub mod sim;
 pub mod spike;
+pub mod spikeconv;
 pub mod surrogate;
 pub mod synapse;
 pub mod tasks;
 pub mod topology;
+pub mod vision;
 
 pub use crossover::{Crossover, Verdict};
 pub use ledger::{Bill, Evidence, Ledger, Prices};
