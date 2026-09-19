@@ -5,11 +5,6 @@
   "new": "                self.gain * c.depth * (1.0 + self.adapted)"
  },
  {
-  "label": "ra drive sign-blind no more",
-  "old": "            Class::Ra => self.gain * c.velocity.abs(),",
-  "new": "            Class::Ra => self.gain * c.velocity.max(0.0),"
- },
- {
   "label": "bandpass hp coefficient",
   "old": "        let a_hp = 1.0 / (1.0 + core::f64::consts::TAU * self.f_lo * dt);",
   "new": "        let a_hp = 1.0 / (1.0 + 2.0 * core::f64::consts::TAU * self.f_lo * dt);"

@@ -37,7 +37,7 @@
  {
   "label": "random_unit not normalised",
   "old": "                atoms[r * n + j] = c / norm;",
-  "new": "                atoms[r * n + j] = c;"
+  "new": "                atoms[r * n + j] = *c;"
  },
  {
   "label": "zero accepted where positive is required",
