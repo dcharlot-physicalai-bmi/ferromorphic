@@ -178,6 +178,62 @@ impl Lif {
     pub fn rate(&self, i: f64) -> Option<f64> {
         self.isi(i).map(|t| 1.0 / t)
     }
+
+    /// Advance by `dt` under constant current `i` with EXACT spike timing, returning the number of
+    /// spikes emitted during the tick.
+    ///
+    /// [`Neuron::step`] decides once per tick whether the potential has reached threshold, so a
+    /// spike is always recorded at the END of the tick in which the crossing happened, and the
+    /// integration restarts from the next tick boundary. The time between the crossing and that
+    /// boundary is lost — every interval is rounded UP to a whole number of ticks. A cell whose
+    /// true interval is 3.3 ticks fires every 4: its rate is 17% low, and the error is systematic,
+    /// so a population's decoded value is biased however many neurons it has. (`nef`'s spiking
+    /// LMU measured the consequence: a state error of 47% at a 1 ms tick against 4.6% at 0.1 ms.)
+    ///
+    /// This method solves for the crossing time inside the tick,
+    /// `t* = τ ln((V_∞ − V)/(V_∞ − V_th))`, resets there, serves the refractory period, and goes on
+    /// integrating with what is left of the tick — so the spike COUNT over any run of constant
+    /// current does not depend on the tick at all, and the rate is `1/isi` exactly. More than one
+    /// spike can fall in a tick; hence the count.
+    ///
+    /// `None` for a `dt` that is not positive and finite, a non-finite current, or a cell that
+    /// would fire infinitely often (`v_reset ≥ v_th` with no refractory period).
+    #[must_use]
+    pub fn step_exact(&mut self, dt: f64, i: f64) -> Option<u32> {
+        if !(dt > 0.0) || !dt.is_finite() || !i.is_finite() || (self.v_reset >= self.v_th && !(self.t_ref > 0.0)) {
+            return None;
+        }
+        let v_inf = self.v_inf(i);
+        let mut left = dt;
+        let mut spikes = 0u32;
+        while left > 0.0 {
+            if self.refractory > 0.0 {
+                let served = self.refractory.min(left);
+                self.refractory -= served;
+                left -= served;
+                self.v = self.v_reset;
+                continue;
+            }
+            // Time to threshold from here; zero if a bump has already put the cell over it.
+            let crossing = if self.v >= self.v_th {
+                0.0
+            } else if v_inf > self.v_th {
+                self.tau_m * ((v_inf - self.v) / (v_inf - self.v_th)).ln()
+            } else {
+                f64::INFINITY
+            };
+            if crossing <= left {
+                spikes = spikes.saturating_add(1);
+                left -= crossing;
+                self.v = self.v_reset;
+                self.refractory = self.t_ref;
+            } else {
+                self.v = v_inf + (self.v - v_inf) * (-left / self.tau_m).exp();
+                left = 0.0;
+            }
+        }
+        Some(spikes)
+    }
 }
 
 impl Neuron for Lif {
@@ -506,6 +562,80 @@ impl Neuron for Izhikevich {
 #[cfg(test)]
 mod tests {
     use super::{AdaptiveLif, IntegrateAndFire, Izhikevich, Lif, Neuron};
+
+    /// With exact spike timing the spike count over a run of constant current does not depend on
+    /// the tick, and is the closed form's: the first spike at `isi − t_ref`, then one every `isi`.
+    /// The tick-based step, on the same run, loses spikes as the tick grows.
+    #[test]
+    fn exact_spike_timing_makes_the_count_independent_of_the_tick() {
+        let cell = Lif::default();
+        let i = 4e-9; // V_∞ = −25 mV: well over threshold
+        let isi = cell.isi(i).unwrap();
+        assert!((isi - (20e-3 * (40.0f64 / 25.0).ln() + 2e-3)).abs() < 1e-15);
+        let run = 2.0;
+        let want = ((run - (isi - cell.t_ref)) / isi).floor() as u32 + 1;
+        assert_eq!(want, 175, "11.4 ms intervals for 2 s");
+        let mut ticked_counts = Vec::new();
+        let charge = isi - cell.t_ref;
+        for dt in [1e-4, 3.7e-4, 1e-3, 2.5e-3, 8e-3, 0.5] {
+            let steps = (run / dt).round() as usize;
+            let (mut exact, mut ticked) = (cell, cell);
+            let (mut n_exact, mut n_ticked) = (0u32, 0u32);
+            for _ in 0..steps {
+                n_exact += exact.step_exact(dt, i).unwrap();
+                n_ticked += u32::from(ticked.step(dt, i));
+            }
+            // `steps · dt` is `run` only to rounding, and no spike falls within a microsecond of it.
+            assert_eq!(n_exact, want, "dt = {dt}");
+            // The tick-based step rounds BOTH phases of the interval up to whole ticks: charging
+            // takes ⌈9.40007 ms / dt⌉ of them and the refractory period ⌈2 ms / dt⌉.
+            let first = (charge / dt).ceil() as usize;
+            let per = first + (cell.t_ref / dt - 1e-9).ceil() as usize;
+            assert_eq!(n_ticked as usize, (steps - first) / per + 1, "dt = {dt}");
+            ticked_counts.push(n_ticked);
+        }
+        // Which is 175 spikes at no tick at all — 9.40007 ms is 95 ticks of 0.1 ms, not 94 — and
+        // half of them at 8 ms. (The first draft of this test TYPED these six numbers from a rough
+        // idea of the rounding and got four of them wrong.)
+        assert_eq!(ticked_counts, vec![174, 169, 166, 160, 83, 2]);
+        // The two agree on the potential between spikes: one exact step of a sub-threshold current
+        // is the same exponential.
+        let (mut a, mut b) = (cell, cell);
+        assert_eq!(a.step_exact(3e-3, 1e-9), Some(0));
+        b.step(3e-3, 1e-9);
+        assert_eq!(a.v, b.v);
+        // A cell RELAXING toward a sub-threshold level from above it must not fire: from −52 mV
+        // toward −60 mV the crossing-time formula's logarithm is of a number below one, a negative
+        // "time", and only the check that V_∞ is over threshold keeps it from being taken as a
+        // spike. (With the cell starting BELOW V_∞ the same formula gives NaN, which compares false
+        // and hides the missing check — that mutation survived.)
+        let mut relaxing = Lif { v: -52e-3, ..cell };
+        assert_eq!(relaxing.step_exact(5e-3, 0.5e-9), Some(0));
+        assert!((relaxing.v - (-60e-3 + 8e-3 * (-0.25f64).exp())).abs() < 1e-17);
+        // A tick long enough to hold several spikes reports them all, and leaves the cell where the
+        // closed form says: 50 ms holds spikes at 9.4, 20.8, 32.2 and 43.6 ms, then 2 ms of
+        // refractoriness and 4.4 ms of charging.
+        let mut burst = cell;
+        assert_eq!(burst.step_exact(50e-3, i), Some(4));
+        let since = 50e-3 - (4.0 * isi - cell.t_ref) - cell.t_ref;
+        let v_inf = cell.v_inf(i);
+        assert!((burst.v - (v_inf + (cell.v_reset - v_inf) * (-since / cell.tau_m).exp())).abs() < 1e-15);
+        assert_eq!(burst.refractory, 0.0);
+        // A bump over threshold fires at once, and the refusals.
+        let mut bumped = cell;
+        bumped.bump(20e-3);
+        assert_eq!(bumped.step_exact(1e-4, 0.0), Some(1));
+        assert_eq!(bumped.refractory, cell.t_ref - 1e-4);
+        assert_eq!(Lif::default().step_exact(0.0, i), None);
+        assert_eq!(Lif::default().step_exact(f64::NAN, i), None);
+        assert_eq!(Lif::default().step_exact(1e-3, f64::INFINITY), None);
+        let mut runaway = Lif { v_reset: -50e-3, t_ref: 0.0, ..Lif::default() };
+        assert_eq!(runaway.step_exact(1e-3, i), None, "reset at threshold with no refractory period fires for ever");
+        // The same cell WITH a refractory period is legal: from rest it first fires at 9.4 ms, and
+        // then, reset onto its threshold, every 2 ms — 9.4, 11.4, … 19.4 ms in a 20 ms tick.
+        let mut held = Lif { v_reset: -50e-3, ..Lif::default() };
+        assert_eq!(held.step_exact(20e-3, i), Some(6));
+    }
 
     /// The free membrane has an exact solution. This is the tightest check in the module, and it
     /// passes at floating-point noise rather than at a discretisation tolerance BECAUSE the

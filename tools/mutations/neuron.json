@@ -1,0 +1,47 @@
+[
+ {
+  "label": "exact crossing time measured from reset",
+  "old": "self.tau_m * ((v_inf - self.v) / (v_inf - self.v_th)).ln()",
+  "new": "self.tau_m * ((v_inf - self.v_reset) / (v_inf - self.v_th)).ln()"
+ },
+ {
+  "label": "exact step does not spend the time to the spike",
+  "old": "                left -= crossing;\n",
+  "new": "                left -= 0.5 * crossing;\n"
+ },
+ {
+  "label": "exact step forgets the refractory period",
+  "old": "                self.refractory = self.t_ref;\n            } else {",
+  "new": "                self.refractory = 0.0;\n            } else {"
+ },
+ {
+  "label": "exact step serves the whole refractory period at once",
+  "old": "                self.refractory -= served;\n",
+  "new": "                self.refractory = 0.0;\n"
+ },
+ {
+  "label": "exact step ignores a cell already over threshold",
+  "old": "let crossing = if self.v >= self.v_th {\n                0.0",
+  "new": "let crossing = if false {\n                0.0"
+ },
+ {
+  "label": "exact step decays for the whole tick after a spike",
+  "old": "self.v = v_inf + (self.v - v_inf) * (-left / self.tau_m).exp();",
+  "new": "self.v = v_inf + (self.v - v_inf) * (-dt / self.tau_m).exp();"
+ },
+ {
+  "label": "exact step reports at most one spike",
+  "old": "                spikes = spikes.saturating_add(1);\n",
+  "new": "                spikes = 1;\n"
+ },
+ {
+  "label": "exact step fires a sub-threshold cell",
+  "old": "            } else if v_inf > self.v_th {\n                self.tau_m *",
+  "new": "            } else if v_inf > self.v_rest {\n                self.tau_m *"
+ },
+ {
+  "label": "exact step accepts a non-positive dt",
+  "old": "if !(dt > 0.0) || !dt.is_finite() || !i.is_finite() ||",
+  "new": "if !dt.is_finite() || !i.is_finite() ||"
+ }
+]

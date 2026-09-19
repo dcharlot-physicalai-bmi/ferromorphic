@@ -63,9 +63,11 @@
 //!   tracks the ideal unit's state and reproduces its delayed output, and tracks it BETTER with
 //!   more neurons — the spiking LMU, which is how the LMU was first built (Voelker and Eliasmith,
 //!   *Improving spiking dynamical networks: accurate delays, higher-order synapses, and time
-//!   cells*, Neural Computation 30(3):569–609, 2018). The errors are measured, not derived — and
-//!   the largest of them is the TICK: at 1 ms a 300 Hz cell's interval is 3.3 ticks, rounded up to
-//!   4, every rate is biased low, and the network's state error is ten times what it is at 0.1 ms.
+//!   cells*, Neural Computation 30(3):569–609, 2018). The errors are measured, not derived: with
+//!   1500 neurons the spiking network's state error equals the rate-mode network's, 1.7%. That
+//!   needs EXACT spike timing ([`crate::neuron::Lif::step_exact`], the loop's default). Stepped
+//!   tick by tick at 1 ms, a 300 Hz cell's interval of 3.3 ticks is rounded up to 4, every rate is
+//!   biased low, and the same network's error is 47% however many neurons it has.
 //! - **PES** ([`Pes`]): on a fixed input every update multiplies the decoding error by exactly
 //!   `1 − κ|a|²/n`; the rule is stable iff `κ < 2n/|a|²`, at which the error neither shrinks nor
 //!   grows but alternates; and what it learns over a sample set can approach, and never beat, the
@@ -78,9 +80,9 @@
 //! - Nengo's exact random-number stream: encoders, intercepts and maximum rates are drawn from
 //!   this crate's generator, so a population built here with the same seed as a Nengo model is
 //!   *statistically* the same population and not the same neurons.
-//! - Sub-tick spike timing. Nengo carries a spike's overshoot into the next tick, which removes the
-//!   rate bias measured above; [`SpikingEnsemble`] steps this crate's tick-based [`Lif`] and does
-//!   not, so a spiking loop here needs a tick well below its shortest interspike interval.
+//! - Exact timing for cells other than [`Lif`], or for the feedforward [`SpikingEnsemble::step`],
+//!   which keeps the tick-based step it has always had; [`SpikingEnsemble::step_exact`] is the
+//!   exact one.
 //! - Higher-order synapse corrections (the subject of the Voelker–Eliasmith paper): the loop here
 //!   uses the first-order mapping `A′ = τA + I`, whose error grows as the dynamics get fast
 //!   compared with `τ`.
@@ -904,6 +906,10 @@ pub struct SpikingLoop {
     pub x_hat: Vec<f64>,
     /// Spikes emitted since construction: what the computation cost.
     pub spikes: u64,
+    /// Whether the cells are stepped with exact spike timing ([`Lif::step_exact`]). On by
+    /// default; turned off, every interspike interval is rounded up to whole ticks and the loop
+    /// needs a tick far below its shortest interval to work at all.
+    pub exact_timing: bool,
 }
 
 impl SpikingLoop {
@@ -919,7 +925,7 @@ impl SpikingLoop {
         let (a_prime, b_prime) = dynamics_transform(a, b, dim, tau)?;
         let input_dim = b.len() / dim;
         let bank = || (0..dim).map(|_| Lowpass::new(tau)).collect::<Result<Vec<_>, _>>();
-        Ok(Self { population, decoders, a_prime, b_prime, input_dim, synapses: bank()?, readout: bank()?, x_hat: vec![0.0; dim], spikes: 0 })
+        Ok(Self { population, decoders, a_prime, b_prime, input_dim, synapses: bank()?, readout: bank()?, x_hat: vec![0.0; dim], spikes: 0, exact_timing: true })
     }
 
     /// Advance one tick of `dt` under input `u`; returns the decoded state.
@@ -934,12 +940,16 @@ impl SpikingLoop {
         in_range("dt", dt, f64::MIN_POSITIVE, f64::MAX)?;
         let dim = self.population.ensemble.dim;
         let state: Vec<f64> = self.synapses.iter().map(|s| s.y).collect();
-        let fired = self.population.step(dt, &state)?;
+        let fired: Vec<u32> = if self.exact_timing {
+            self.population.step_exact(dt, &state)?
+        } else {
+            self.population.step(dt, &state)?.into_iter().map(u32::from).collect()
+        };
         let mut pulse = vec![0.0f64; dim];
-        for (i, _) in fired.iter().enumerate().filter(|(_, f)| **f) {
-            self.spikes += 1;
+        for (i, &count) in fired.iter().enumerate().filter(|(_, c)| **c > 0) {
+            self.spikes += u64::from(count);
             for (j, p) in pulse.iter_mut().enumerate() {
-                *p += self.decoders.d[i * dim + j] / dt;
+                *p += f64::from(count) * self.decoders.d[i * dim + j] / dt;
             }
         }
         for i in 0..dim {
@@ -1108,6 +1118,28 @@ impl SpikingEnsemble {
                 fired[i] = true;
                 self.counts[i] += 1;
             }
+        }
+        self.ticks += 1;
+        Ok(fired)
+    }
+
+    /// The same tick with EXACT spike timing ([`Lif::step_exact`]): the number of spikes each cell
+    /// emitted, which can exceed one. The count over a run no longer depends on the tick.
+    ///
+    /// # Errors
+    ///
+    /// As [`SpikingEnsemble::step`], plus [`NefError::OutOfRange`] for a `dt` that is not positive
+    /// and finite.
+    pub fn step_exact(&mut self, dt: f64, x: &[f64]) -> Result<Vec<u32>, NefError> {
+        len("x", x.len(), self.ensemble.dim)?;
+        finite("x", x)?;
+        in_range("dt", dt, f64::MIN_POSITIVE, f64::MAX)?;
+        let mut fired = vec![0u32; self.cells.len()];
+        for (i, cell) in self.cells.iter_mut().enumerate() {
+            let j = self.ensemble.current(i, x)?;
+            let spikes = cell.step_exact(dt, j * self.amps_per_unit).unwrap_or(0);
+            fired[i] = spikes;
+            self.counts[i] += u64::from(spikes);
         }
         self.ticks += 1;
         Ok(fired)
@@ -1427,22 +1459,37 @@ mod tests {
         sp.reset();
         assert_eq!(sp.measured_rates(dt), None);
         assert!(sp.counts.iter().all(|&c| c == 0));
+        // With EXACT spike timing the only error left is the count's own quantisation — one spike
+        // in the window, 0.5 Hz — at a tick a hundred times coarser, 10 ms, where several spikes
+        // fall in one tick and the tick-based step could not fire faster than 100 Hz at all.
+        let coarse = 10e-3;
+        for _ in 0..(seconds / coarse) as usize {
+            let fired = sp.step_exact(coarse, &x).unwrap();
+            assert_eq!(fired.len(), 200);
+        }
+        let exact = sp.measured_rates(coarse).unwrap();
+        assert!(predicted.iter().any(|p| *p > 150.0), "no cell is fast enough to need more than one spike a tick");
+        for (i, (m, p)) in exact.iter().zip(&predicted).enumerate() {
+            assert!((m - p).abs() <= 1.0 / seconds + 1e-9, "neuron {i}: {m} Hz against {p} Hz with exact timing");
+        }
+        assert!(matches!(sp.step_exact(0.0, &x), Err(NefError::OutOfRange { what: "dt", .. })));
+        assert!(matches!(sp.step_exact(coarse, &[0.1, 0.2]), Err(NefError::Dimension { what: "x", .. })));
         // A prototype whose constants do not match the tuning is refused.
         let other = Lif { tau_m: 10e-3, ..Lif::default() };
         assert!(matches!(SpikingEnsemble::new(ens, other), Err(NefError::OutOfRange { .. })));
     }
 
     /// The spiking LMU: a spiking population running the Legendre Memory Unit's `A` and `B` holds
-    /// the last `θ` seconds of its input — better with more neurons, and only at a tick fine enough
-    /// that a spike interval is many ticks long.
+    /// the last `θ` seconds of its input — better with more neurons, down to the rate-mode floor,
+    /// PROVIDED its spikes are timed exactly rather than rounded to the tick.
     #[test]
     fn a_spiking_population_runs_the_legendre_memory_unit() {
         use crate::resonate::Lmu;
         let (order, theta, tau) = (3usize, 0.5, 0.05);
         let ideal = Lmu::new(order, theta).unwrap();
         // Returns (relative error of the represented state, RMS error of the delayed readout Σ m_j
-        // for the network, the same for the ideal unit, spikes).
-        let run = |n: usize, dt: f64| {
+        // for the network, the same for the ideal unit, spikes, relative error of the readout).
+        let run = |n: usize, dt: f64, exact: bool| {
             let mut rng = Rng::new(27);
             let mut spec = EnsembleSpec::default_for(n, order, 91);
             spec.radius = 1.5;
@@ -1450,6 +1497,8 @@ mod tests {
             let dec = ens.identity_decoders(3000, 0.05, &mut rng).unwrap();
             let pop = SpikingEnsemble::new(ens, Lif::default()).unwrap();
             let mut net = SpikingLoop::new(pop, dec, &ideal.a, &ideal.b, tau).unwrap();
+            assert!(net.exact_timing, "exact spike timing is the default");
+            net.exact_timing = exact;
             let mut reference = Lmu::new(order, theta).unwrap();
             let (mut err, mut power, mut read, mut read_ideal, mut count) = (0.0, 0.0, 0.0, 0.0, 0.0);
             // The READOUT is the decoded spikes through one more synapse, so it trails the state by
@@ -1480,27 +1529,39 @@ mod tests {
             }
             ((err / power).sqrt(), (read / count).sqrt(), (read_ideal / count).sqrt(), net.spikes, (readout_err / power).sqrt())
         };
-        // All four numbers below are MEASURED; the bounds leave them a factor of about two.
-        let (few, _, _, _, _) = run(60, 1e-4);
-        let (many, read, read_ideal, spikes, readout) = run(300, 1e-4);
-        assert!(many < 0.5 * few, "five times the neurons: {few} → {many} (measured 0.249 → 0.046)");
-        assert!(many < 0.1, "relative state error {many}");
+        // Every number below is MEASURED at a 1 ms tick; the bounds leave each a factor of about 1.5.
+        let (few, _, _, _, _) = run(60, 1e-3, true);
+        let (some, read, read_ideal, spikes, readout) = run(300, 1e-3, true);
+        let (many, _, _, _, _) = run(1500, 1e-3, true);
+        // More neurons, less error — all the way down: 0.267 → 0.087 → 0.0172, and the last is the
+        // error of the same network in RATE mode (0.0173), which is the floor the mapping sets.
+        assert!(some < 0.5 * few && many < 0.5 * some, "{few} → {some} → {many}");
+        assert!(some < 0.13 && many < 0.026, "{some} {many}");
         // An order-3 unit is itself only an approximation of a delay: 0.045 RMS on an amplitude of
-        // 0.8. The spiking network reads the past back nearly as well (measured 0.068).
+        // 0.8. The spiking network reads the past back through that plus its own noise.
         assert!(read_ideal > 0.02 && read_ideal < 0.06, "{read_ideal}");
-        assert!(read < 0.12, "the delayed input is read back with RMS error {read}");
+        assert!(read < 0.15, "the delayed input is read back with RMS error {read}");
         assert!(spikes > 50_000, "the population barely fired: {spikes} spikes");
-        // The filtered readout follows the state (measured 0.08); unfiltered it is a train of
-        // impulses of height d/dt, and the second mutation sweep found nothing was looking at it.
-        assert!(readout < 0.2, "the readout is {readout} of the state's size away from it");
-        // ⛔ At a 1 ms tick the SAME network is ten times worse (measured 0.467), and more neurons
-        // do not help: a cell firing at 300 Hz has an interval of 3.3 ticks, which the tick rounds
-        // up to 4, so every rate is biased low and the bias is systematic. The first draft of this
-        // test ran at 1 ms and blamed the mapping; rate mode, which has no ticks to round, showed
-        // the mapping was fine.
-        let (coarse, _, _, coarse_spikes, _) = run(300, 1e-3);
-        assert!(coarse > 5.0 * many, "a 1 ms tick: {coarse} against {many}");
-        assert!((coarse_spikes as f64) < 0.95 * spikes as f64, "and it loses spikes: {coarse_spikes} against {spikes}");
+        assert!(readout < 0.25, "the readout is {readout} of the state's size away from it");
+        // ⛔ The same network WITHOUT exact spike timing, at the same tick: five times worse
+        // (measured 0.467), with 11% of its spikes missing. A cell firing at 300 Hz has an interval
+        // of 3.3 ticks, which a tick-based step rounds up to 4, so every rate is biased low — and
+        // the bias is systematic, so more neurons do not remove it. The first draft of this test
+        // blamed the mapping; rate mode, which has no ticks to round, showed the mapping was fine,
+        // and `Lif::step_exact` is the repair.
+        let (ticked, _, _, ticked_spikes, _) = run(300, 1e-3, false);
+        assert!(ticked > 4.0 * some, "tick-based at 1 ms: {ticked} against {some}");
+        assert!((ticked_spikes as f64) < 0.92 * spikes as f64, "{ticked_spikes} against {spikes}");
+        // With exact timing the tick hardly matters: a TENTH of the tick changes the spike count
+        // by a part in a thousand.
+        // And a FIVE-millisecond tick, in which the faster cells fire twice, still works (measured
+        // 0.123) and still counts every spike — a burst decoded or counted as one spike would not.
+        let (burst, _, _, burst_spikes, _) = run(300, 5e-3, true);
+        assert!(burst < 0.19, "at a 5 ms tick: {burst}");
+        assert!((burst_spikes as f64 / spikes as f64 - 1.0).abs() < 0.01, "{burst_spikes} against {spikes}");
+        let (fine, _, _, fine_spikes, _) = run(300, 1e-4, true);
+        assert!((fine_spikes as f64 / spikes as f64 - 1.0).abs() < 0.01, "{fine_spikes} against {spikes}");
+        assert!(fine < 0.13, "{fine}");
         // Silence in, (near) silence out, and the refusals.
         let mut rng = Rng::new(2);
         let ens = Ensemble::new(&EnsembleSpec::default_for(200, 1, 5)).unwrap();

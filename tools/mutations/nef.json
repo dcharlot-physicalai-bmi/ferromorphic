@@ -143,5 +143,30 @@
   "label": "spiking loop readout is the raw pulse",
   "old": "self.x_hat[i] = self.readout[i].step(dt, pulse[i]);",
   "new": "self.x_hat[i] = pulse[i];"
+ },
+ {
+  "label": "exact ensemble step counts one per firing cell",
+  "old": "self.counts[i] += u64::from(spikes);",
+  "new": "self.counts[i] += u64::from(spikes.min(1));"
+ },
+ {
+  "label": "spiking loop decodes a burst as one spike",
+  "old": "*p += f64::from(count) * self.decoders.d[i * dim + j] / dt;",
+  "new": "*p += self.decoders.d[i * dim + j] / dt;"
+ },
+ {
+  "label": "spiking loop counts a burst as one spike",
+  "old": "self.spikes += u64::from(count);",
+  "new": "self.spikes += 1;"
+ },
+ {
+  "label": "spiking loop defaults to tick timing",
+  "old": "spikes: 0, exact_timing: true })",
+  "new": "spikes: 0, exact_timing: false })"
+ },
+ {
+  "label": "spiking loop timing flag inverted",
+  "old": "let fired: Vec<u32> = if self.exact_timing {",
+  "new": "let fired: Vec<u32> = if !self.exact_timing {"
  }
 ]

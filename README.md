@@ -9,7 +9,7 @@ hardware constraint models, analog device non-idealities, NIR, event-camera deco
 metrics, teaching tasks — and a joules ledger that charges for the memory traffic a synaptic
 operation needs.
 
-**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 59 modules, 1,693 tests.**
+**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 59 modules, 1,694 tests.**
 
 Run it in a browser without installing anything:
 **[energy.physicalai-bmi.org/neuromorphic](https://energy.physicalai-bmi.org/neuromorphic)** — the
@@ -30,7 +30,7 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 
 | module | what it carries |
 |---|---|
-| `neuron` | LIF, integrate-and-fire, adaptive LIF, Izhikevich |
+| `neuron` | LIF, integrate-and-fire, adaptive LIF, Izhikevich; and exact spike timing for the LIF, so that a spike count does not depend on the tick |
 | `hh` | Hodgkin-Huxley, full four-variable squid axon, with the ionic currents exposed |
 | `exponential` | EIF, `AdEx` with the Naud firing-pattern taxonomy, QIF, theta |
 | `synapse` | delta / exponential / alpha / bi-exponential kernels, CUBA vs COBA, AMPA / GABA / NMDA with the magnesium block, Tsodyks-Markram short-term plasticity |
@@ -248,7 +248,7 @@ Every neuron model here has a test that runs it against an analytic solution.
 - **A sub-threshold current returns `None`, not a large number.** "Fires rarely" and "does not fire"
   are different statements and a rate-coded readout cannot recover the difference later.
 
-1,693 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
+1,694 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
 `#![forbid(unsafe_code)]`, and `cargo build --target wasm32-unknown-unknown` compiles the library
 unchanged. Three of the `examples/` are verification gates that exit non-zero when a closed form
 disagrees with the simulator.
@@ -294,11 +294,11 @@ be reproduced cannot be checked against anything, including itself.
 
 ## Status
 
-**0.12.0.** Fifty-nine modules, every one audited by mutation: thirty-six by an adversarial
+**0.13.0.** Fifty-nine modules, every one audited by mutation: thirty-six by an adversarial
 auditor in 0.5.0 and 0.6.0, the ten of the third wave by hand in 0.8.0 (156 mutations, 36
 survivors, every one now caught — see below), and everything since mutated as it was written. All
 290 mutations recorded before 0.10.0 were re-run against the finished code: 286 caught, 2
-equivalent by their stated arguments, none survived. The harness and every mutation list — 501 of
+equivalent by their stated arguments, none survived. The harness and every mutation list — 515 of
 them — are in `tools/`. The crate family is not built yet. Planned
 siblings, each following the same rule that a dependency lives outside the core:
 
@@ -457,8 +457,18 @@ The spiking LMU measured something worth a line of its own. At a 1 ms tick the n
 error was 0.47 of the state's size and more neurons did not help; at 0.1 ms it was 0.046. Rate
 mode, which has no ticks to round, showed the mapping was right: the error was the TICK. A cell
 firing at 300 Hz has an interval of 3.3 ticks, which the tick rounds up to 4, so every rate is
-biased low, systematically. A spiking loop in this crate needs a tick well below its shortest
-interspike interval, and `nef` now says so.
+biased low, systematically.
+
+**0.13.0 is the repair.** `Lif::step_exact` solves for the threshold crossing INSIDE the tick,
+resets there, serves the refractory period and goes on with what is left of the tick. The spike
+count over a run of constant current is then the closed form's at every tick tried, from 0.1 ms to
+half a second — 175 spikes each time, where the tick-based step gives 174, 169, 166, 160, 83
+and 2. A population's measured rates match the rate curve to one spike per window at a 10 ms
+tick. And the spiking LMU at 1 ms goes from 47% error to 8.7% with 300 neurons and 1.7% with
+1500 — which is the rate-mode network's error, the floor the mapping sets. More neurons now help
+all the way down, because what was left was never noise. The tick-based `Neuron::step` is
+unchanged, because 1,600 tests and every hardware model in this crate are defined by it; exact
+timing is a second method, and the spiking loop's default.
 
 ### Re-running the audit
 
