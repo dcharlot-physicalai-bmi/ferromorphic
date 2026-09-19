@@ -1,0 +1,123 @@
+[
+ {
+  "label": "non-leaky spike time forgets the threshold",
+  "old": "Some(last + tau * (weighted / (sum - theta)).ln())",
+  "new": "Some(last + tau * (weighted / sum).ln())"
+ },
+ {
+  "label": "lif takes the later root",
+  "old": "let x = (a2 + disc.sqrt()) / (2.0 * a1);",
+  "new": "let x = (a2 - disc.sqrt()) / (2.0 * a1);"
+ },
+ {
+  "label": "lif discriminant 2 a1 theta",
+  "old": "let disc = a2 * a2 - 4.0 * a1 * theta;",
+  "new": "let disc = a2 * a2 - 2.0 * a1 * theta;"
+ },
+ {
+  "label": "crossing accepted after the next input arrives",
+  "old": "candidate.filter(|t| *t >= last && *t <= next)",
+  "new": "candidate.filter(|t| *t >= last)"
+ },
+ {
+  "label": "downward crossing accepted",
+  "old": "                if slope > 0.0 {\n                    return Ok(Some(Spike",
+  "new": "                if slope != 0.0 {\n                    return Ok(Some(Spike",
+  "equivalent": "each model's own condition already selects the rising root (non-leaky: the weighted sum A > 0; leaky: a2 - 2 a1 x < 0), so the final slope check is a second statement of it"
+ },
+ {
+  "label": "inputs not taken in order of arrival",
+  "old": "        order.sort_by(|a, b| a.0.total_cmp(&b.0));\n",
+  "new": "        order.reverse();\n        order.reverse();\n"
+ },
+ {
+  "label": "lif kernel sign",
+  "old": "Self::Lif { tau_s } => (-s / (2.0 * tau_s)).exp() - (-s / tau_s).exp(),",
+  "new": "Self::Lif { tau_s } => (-s / tau_s).exp() - (-s / (2.0 * tau_s)).exp(),"
+ },
+ {
+  "label": "non-leaky kernel slope without 1/tau",
+  "old": "Self::NonLeaky { tau } => (-s / tau).exp() / tau,",
+  "new": "Self::NonLeaky { tau } => (-s / tau).exp(),"
+ },
+ {
+  "label": "lif kernel slope uses one time constant",
+  "old": "-(-s / (2.0 * tau_s)).exp() / (2.0 * tau_s) + (-s / tau_s).exp() / tau_s",
+  "new": "-(-s / (2.0 * tau_s)).exp() / tau_s + (-s / tau_s).exp() / tau_s"
+ },
+ {
+  "label": "weight gradient sign",
+  "old": "d_weight[p] = -kernel.psp(s) / spike.slope;",
+  "new": "d_weight[p] = kernel.psp(s) / spike.slope;"
+ },
+ {
+  "label": "time gradient forgets the weight",
+  "old": "d_time[p] = w * kernel.psp_slope(s) / spike.slope;",
+  "new": "d_time[p] = kernel.psp_slope(s) / spike.slope;"
+ },
+ {
+  "label": "loss gradient sign",
+  "old": "(f64::from(u8::from(j == target)) - expo[j] / total) / tau",
+  "new": "(expo[j] / total - f64::from(u8::from(j == target))) / tau"
+ },
+ {
+  "label": "loss gradient forgets tau",
+  "old": "(f64::from(u8::from(j == target)) - expo[j] / total) / tau).collect();",
+  "new": "(f64::from(u8::from(j == target)) - expo[j] / total)).collect();"
+ },
+ {
+  "label": "loss without the normaliser",
+  "old": "let loss = (hit.time - earliest) / tau + total.ln();",
+  "new": "let loss = (hit.time - earliest) / tau;"
+ },
+ {
+  "label": "backward overwrites instead of summing over neurons",
+  "old": "d_below[p] += d_time[j] * dt[p];",
+  "new": "d_below[p] = d_time[j] * dt[p];"
+ },
+ {
+  "label": "weight gradient not chained",
+  "old": "gradient[l][j * layer.n_in + p] = d_time[j] * dw[p];",
+  "new": "gradient[l][j * layer.n_in + p] = dw[p];"
+ },
+ {
+  "label": "training ascends",
+  "old": "                *w -= rate * shrink * gi;\n",
+  "new": "                *w += rate * shrink * gi;\n"
+ },
+ {
+  "label": "gradient never clipped",
+  "old": "let shrink = if largest > clip { clip / largest } else { 1.0 };",
+  "new": "let shrink = 1.0 + 0.0 * (largest + clip);"
+ },
+ {
+  "label": "silent neurons pushed down",
+  "old": "                *w += push;\n",
+  "new": "                *w -= push;\n"
+ },
+ {
+  "label": "boost not divided among the inputs",
+  "old": "let push = boost * self.theta / layer.n_in as f64;",
+  "new": "let push = boost * self.theta;"
+ },
+ {
+  "label": "the last to fire wins",
+  "old": "&& best.is_none_or(|b| s.time < b.1)",
+  "new": "&& best.is_none_or(|b| s.time > b.1)"
+ },
+ {
+  "label": "spike count counts neurons",
+  "old": "spike_count += out.iter().flatten().count();",
+  "new": "spike_count += out.len();"
+ },
+ {
+  "label": "initial weights ignore the kernel's peak",
+  "old": "let top = 4.0 * scale * theta / (p[0] as f64 * kernel.peak());",
+  "new": "let top = 4.0 * scale * theta / p[0] as f64;"
+ },
+ {
+  "label": "lif peak one half",
+  "old": "            Self::Lif { .. } => 0.25,\n",
+  "new": "            Self::Lif { .. } => 0.5,\n"
+ }
+]

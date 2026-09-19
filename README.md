@@ -9,7 +9,7 @@ hardware constraint models, analog device non-idealities, NIR, event-camera deco
 metrics, teaching tasks — and a joules ledger that charges for the memory traffic a synaptic
 operation needs.
 
-**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 59 modules, 1,698 tests.**
+**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 60 modules, 1,704 tests.**
 
 Run it in a browser without installing anything:
 **[energy.physicalai-bmi.org/neuromorphic](https://energy.physicalai-bmi.org/neuromorphic)** — the
@@ -83,6 +83,7 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 | `distance` | how different two spike trains are: the Victor–Purpura edit distance and the van Rossum distance (closed form against its own quadrature), vector strength against the jitter's characteristic function, the Fano factor of a clock, `f(1 − f)/(m + f)`, and the parameter-free ISI- and SPIKE-distances, integrated exactly and refereed by the quadrature of their definitions |
 | `field` | the Amari neural field of dynamic field theory: the kernel integral `W`, the narrow unstable bump below which activity dies and the wide stable one it settles at, both as roots of `W(a) + h = 0` and both found in the simulated field — on a line, and on a sheet, where the rim integral is `πσ²[1 − e^{−R²/σ²} I₀(R²/σ²)]` |
 | `resonance` | noise as a resource: the noise level at which a threshold unit best tells two sub-threshold values apart, `σ*² = (b² − a²)/(2 ln(b/a))`; the exact information in a noisy population's count, including suprathreshold resonance — 63 units carrying more than one bit only when noise is added; dither that makes a step linear |
+| `ttfs` | learning with spike TIMES: two neuron models whose first-spike time is a closed form (Mostafa's non-leaky integrator; the leaky cell with `τ_m = 2τ_s`), its exact gradient by the implicit function theorem, backpropagation through spike times checked against finite differences, and XOR learned with one spike per neuron |
 | `sim`, `net`, `spike`, `rng` | the event-driven simulator, sparse connectivity, spike trains, seeded PCG32 |
 
 ## Use it
@@ -248,7 +249,7 @@ Every neuron model here has a test that runs it against an analytic solution.
 - **A sub-threshold current returns `None`, not a large number.** "Fires rarely" and "does not fire"
   are different statements and a rate-coded readout cannot recover the difference later.
 
-1,698 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
+1,704 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
 `#![forbid(unsafe_code)]`, and `cargo build --target wasm32-unknown-unknown` compiles the library
 unchanged. Three of the `examples/` are verification gates that exit non-zero when a closed form
 disagrees with the simulator.
@@ -294,11 +295,11 @@ be reproduced cannot be checked against anything, including itself.
 
 ## Status
 
-**0.14.0.** Fifty-nine modules, every one audited by mutation: thirty-six by an adversarial
+**0.15.0.** Sixty modules, every one audited by mutation: thirty-six by an adversarial
 auditor in 0.5.0 and 0.6.0, the ten of the third wave by hand in 0.8.0 (156 mutations, 36
 survivors, every one now caught — see below), and everything since mutated as it was written. All
 290 mutations recorded before 0.10.0 were re-run against the finished code: 286 caught, 2
-equivalent by their stated arguments, none survived. The harness and every mutation list — 529 of
+equivalent by their stated arguments, none survived. The harness and every mutation list — 553 of
 them — are in `tools/`. The crate family is not built yet. Planned
 siblings, each following the same rule that a dependency lives outside the core:
 
@@ -480,6 +481,17 @@ root — including the case where a cell fires on the rebound of its falling thr
 and is below threshold again by the tick's end. What it settles into is the root of
 `V_∞ + (V_reset − V_∞)e^{−(T − t_ref)/τ_m} = θ₀ + β/(e^{T/τ_a} − 1)`, and the simulated late
 intervals equal that root to 1e-10 at every tick tried.
+
+0.15.0 adds `ttfs`, the other thing exact spike times make possible: if the quantity a network
+computes is WHEN each neuron first fires, that time is a smooth function of the weights, and its
+gradient is exact — no surrogate. For two neuron models the first-spike time has a closed form
+(linear in `e^{t/τ}` for Mostafa's non-leaky integrator; a quadratic in `e^{−t/τ_m}` for the leaky
+cell with `τ_m = 2τ_s`, the model trained for the BrainScaleS-2 chip), checked against a
+brute-force search of the explicit membrane for its first upward crossing; the gradient is the
+implicit function theorem at that crossing, checked against finite differences of the spike time
+and, through two layers, of the loss; and gradient descent on spike times solves XOR for both
+models with at most one spike per neuron. 24 mutations: 23 caught, 1 equivalent by a stated
+argument.
 
 ### Re-running the audit
 

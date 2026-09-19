@@ -153,6 +153,7 @@ pub mod synapse;
 pub mod tasks;
 pub mod topology;
 pub mod touch;
+pub mod ttfs;
 pub mod vision;
 pub mod vsa;
 
