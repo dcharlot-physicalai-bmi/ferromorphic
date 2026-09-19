@@ -1,0 +1,122 @@
+[
+ {
+  "label": "vp shift cost ignores q",
+  "old": "let shift = diagonal + q * (ta - tb).abs();",
+  "new": "let shift = diagonal + (ta - tb).abs();"
+ },
+ {
+  "label": "vp deletion costs two",
+  "old": "let best = shift.min(row[j] + 1.0).min(row[j + 1] + 1.0);",
+  "new": "let best = shift.min(row[j] + 2.0).min(row[j + 1] + 1.0);"
+ },
+ {
+  "label": "vp never shifts",
+  "old": "let best = shift.min(row[j] + 1.0).min(row[j + 1] + 1.0);",
+  "new": "let best = (row[j] + 1.0).min(row[j + 1] + 1.0);"
+ },
+ {
+  "label": "vp diagonal not carried",
+  "old": "            diagonal = row[j + 1];\n",
+  "new": "            diagonal = row[j];\n"
+ },
+ {
+  "label": "vp first column not advanced",
+  "old": "        row[0] = (i + 1) as f64;\n",
+  "new": "        row[0] = i as f64;\n"
+ },
+ {
+  "label": "vp negative q accepted",
+  "old": "    if !(q >= 0.0) || !q.is_finite() {",
+  "new": "    if !q.is_finite() {"
+ },
+ {
+  "label": "van rossum kernel not absolute",
+  "old": "(-(s - t).abs() / tau).exp()",
+  "new": "(-(s - t) / tau).exp().min(1.0)"
+ },
+ {
+  "label": "van rossum cross term single",
+  "old": "- 2.0 * kernel_sum(a, b, tau))",
+  "new": "- kernel_sum(a, b, tau))"
+ },
+ {
+  "label": "van rossum without the half",
+  "old": "Ok((0.5 * (kernel_sum(a, a, tau)",
+  "new": "Ok((1.0 * (kernel_sum(a, a, tau)"
+ },
+ {
+  "label": "van rossum distance not rooted",
+  "old": "Ok(van_rossum_squared(a, b, tau)?.sqrt())",
+  "new": "Ok(van_rossum_squared(a, b, tau)?)"
+ },
+ {
+  "label": "quadrature trace is acausal",
+  "old": "spikes.iter().take_while(|s| **s <= t).map(|s| (-(t - s) / tau).exp()).sum::<f64>()",
+  "new": "spikes.iter().map(|s| (-(t - s).abs() / tau).exp()).sum::<f64>()"
+ },
+ {
+  "label": "quadrature not normalised by tau",
+  "old": "    Ok(acc * dt / tau)\n",
+  "new": "    Ok(acc * dt)\n"
+ },
+ {
+  "label": "vector strength phase not reduced",
+  "old": "let phase = TAU * (t / period).rem_euclid(1.0);",
+  "new": "let phase = TAU * t / period;"
+ },
+ {
+  "label": "vector strength uses the sum not the mean",
+  "old": "Ok(((c / n).hypot(s / n), s.atan2(c)))",
+  "new": "Ok((c.hypot(s), s.atan2(c)))"
+ },
+ {
+  "label": "vector strength phase swapped",
+  "old": "Ok(((c / n).hypot(s / n), s.atan2(c)))",
+  "new": "Ok(((c / n).hypot(s / n), c.atan2(s)))"
+ },
+ {
+  "label": "jitter formula without the square",
+  "old": "Some((-2.0 * PI * PI * sigma * sigma / (period * period)).exp())",
+  "new": "Some((-2.0 * PI * PI * sigma / period).exp())"
+ },
+ {
+  "label": "jitter formula pi not pi squared",
+  "old": "Some((-2.0 * PI * PI * sigma * sigma / (period * period)).exp())",
+  "new": "Some((-2.0 * PI * sigma * sigma / (period * period)).exp())"
+ },
+ {
+  "label": "rayleigh z is n r",
+  "old": "let z = n as f64 * r * r;",
+  "new": "let z = n as f64 * r;"
+ },
+ {
+  "label": "fano uses sample variance over n-1",
+  "old": "sum::<f64>() / n;\n    Ok(var / mean)",
+  "new": "sum::<f64>() / (n - 1.0);\n    Ok(var / mean)"
+ },
+ {
+  "label": "fano counts spikes outside the interval",
+  "old": "if k >= 0.0 && k < windows {",
+  "new": "if k < windows {"
+ },
+ {
+  "label": "fano is variance not variance over mean",
+  "old": "    Ok(var / mean)\n",
+  "new": "    Ok(var)\n"
+ },
+ {
+  "label": "periodic fano divides by m",
+  "old": "Some(f * (1.0 - f) / ratio)",
+  "new": "Some(f * (1.0 - f) / ratio.floor().max(1.0))"
+ },
+ {
+  "label": "unsorted train accepted",
+  "old": "if let Some(i) = t.windows(2).position(|p| p[1] < p[0]) {",
+  "new": "if let Some(i) = t.windows(2).position(|p| p[1] < p[0] - 1e9) {"
+ },
+ {
+  "label": "pair bound unchecked",
+  "old": "if n > MAX_PAIRS { Err(DistanceError::TooLarge { pairs: n }) } else { Ok(()) }",
+  "new": "if false { Err(DistanceError::TooLarge { pairs: n }) } else { Ok(()) }"
+ }
+]

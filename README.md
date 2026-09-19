@@ -9,7 +9,7 @@ hardware constraint models, analog device non-idealities, NIR, event-camera deco
 metrics, teaching tasks — and a joules ledger that charges for the memory traffic a synaptic
 operation needs.
 
-**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 56 modules, 1,661 tests.**
+**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 59 modules, 1,678 tests.**
 
 Run it in a browser without installing anything:
 **[energy.physicalai-bmi.org/neuromorphic](https://energy.physicalai-bmi.org/neuromorphic)** — the
@@ -80,6 +80,9 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 | `grid` | grid cells: the hexagonal firing map, path integration that is exact in phase space, and the modular code — 9009 positions from 40 cells — decoded by the Chinese remainder theorem |
 | `proprio` | proprioception: the power-law muscle spindle, the tendon organ, a rate-to-spike encoder that emits exactly the integral of its rate, and a delayed reflex loop against the gain `π/2τ` at which it rings |
 | `delays` | delays as a resource: the spatiotemporal pattern a set of synaptic delays is matched to, a delay-learning rule that contracts every arrival's deviation by exactly `1 − η`, the `(D+1)ⁿ − Dⁿ` patterns a neuron can stand for, and the buffer bits that costs |
+| `distance` | how different two spike trains are: the Victor–Purpura edit distance and the van Rossum distance (closed form against its own quadrature), vector strength against the jitter's characteristic function, and the Fano factor of a clock, `f(1 − f)/(m + f)` |
+| `field` | the Amari neural field of dynamic field theory: the kernel integral `W`, the narrow unstable bump below which activity dies and the wide stable one it settles at, both as roots of `W(a) + h = 0` and both found in the simulated field |
+| `resonance` | noise as a resource: the noise level at which a threshold unit best tells two sub-threshold values apart, `σ*² = (b² − a²)/(2 ln(b/a))`; the exact information in a noisy population's count; dither that makes a step linear |
 | `sim`, `net`, `spike`, `rng` | the event-driven simulator, sparse connectivity, spike trains, seeded PCG32 |
 
 ## Use it
@@ -245,7 +248,7 @@ Every neuron model here has a test that runs it against an analytic solution.
 - **A sub-threshold current returns `None`, not a large number.** "Fires rarely" and "does not fire"
   are different statements and a rate-coded readout cannot recover the difference later.
 
-1,661 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
+1,678 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
 `#![forbid(unsafe_code)]`, and `cargo build --target wasm32-unknown-unknown` compiles the library
 unchanged. Three of the `examples/` are verification gates that exit non-zero when a closed form
 disagrees with the simulator.
@@ -291,12 +294,12 @@ be reproduced cannot be checked against anything, including itself.
 
 ## Status
 
-**0.10.0.** Fifty-six modules, every one audited by mutation: thirty-six by an adversarial auditor
-in 0.5.0 and 0.6.0, the ten of the third wave by hand in 0.8.0 (156 mutations, 36 survivors, every
-one now caught — see below), and everything since mutated as it was written: `oscillator`,
-`predictive`, `graph`, `attractor`, `equilibrium`, `localise`, `nef`'s PES rule, and in this
-release `cerebellum`, `grid`, `proprio` and `delays`. The harness and every mutation list are in
-`tools/`. The crate family is not built yet. Planned
+**0.11.0.** Fifty-nine modules, every one audited by mutation: thirty-six by an adversarial
+auditor in 0.5.0 and 0.6.0, the ten of the third wave by hand in 0.8.0 (156 mutations, 36
+survivors, every one now caught — see below), and everything since mutated as it was written. All
+290 mutations recorded before 0.10.0 were re-run against the finished code: 286 caught, 2
+equivalent by their stated arguments, none survived. The harness and every mutation list — 439 of
+them — are in `tools/`. The crate family is not built yet. Planned
 siblings, each following the same rule that a dependency lives outside the core:
 
 | crate | what it would add | why separate |
@@ -428,6 +431,16 @@ binary, so a test of a *closed* 3 ms window never stood on its edge until it was
 binary fractions. `proprio` ships the FORM of the cat hamstring spindle model with its exponent
 and baseline, and leaves the two gains as parameters: this review confirmed the first two from
 open sources and did not locate the others in one it could read.
+
+0.11.0 added `distance`, `field` and `resonance`: 65 mutations, 2 survivors closed. A spike a
+million cycles late lost 7e-10 of a radian when its phase was not reduced before multiplying by
+`2π`, under a tolerance of 1e-9 — it is tested at 10¹² cycles now, where the loss is a
+milliradian. And every bump in `field` sat mid-domain, where a kernel that forgot to wrap its
+distances on the ring is indistinguishable; one now straddles the seam. Two first drafts fell to
+their own tests again: `field` bounded the activation next to a bump's edge by the wrong
+derivative (the slope there is `w(0) − w(a)`), and `resonance`'s doc claimed Stocks's
+suprathreshold effect for a two-valued signal, which cannot show it — a straddling binary signal
+is already one clean bit at zero noise. The doc now says what is shown and what is not.
 
 ### Re-running the audit
 

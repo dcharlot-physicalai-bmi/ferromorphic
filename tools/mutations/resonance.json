@@ -1,0 +1,92 @@
+[
+ {
+  "label": "fire probability not scaled by sigma",
+  "old": "    Ok(normal_cdf(margin / sigma))\n",
+  "new": "    Ok(normal_cdf(margin))\n"
+ },
+ {
+  "label": "noiseless unit silent at threshold",
+  "old": "return Ok(if margin >= 0.0 { 1.0 } else { 0.0 });",
+  "new": "return Ok(if margin > 0.0 { 1.0 } else { 0.0 });"
+ },
+ {
+  "label": "discriminability reversed",
+  "old": "Ok(fire_probability(high, threshold, sigma)? - fire_probability(low, threshold, sigma)?)",
+  "new": "Ok(fire_probability(low, threshold, sigma)? - fire_probability(high, threshold, sigma)?)"
+ },
+ {
+  "label": "optimal noise without the two",
+  "old": "Some(((b * b - a * a) / (2.0 * (b / a).ln())).sqrt())",
+  "new": "Some(((b * b - a * a) / (b / a).ln()).sqrt())"
+ },
+ {
+  "label": "optimal noise is a variance",
+  "old": "Some(((b * b - a * a) / (2.0 * (b / a).ln())).sqrt())",
+  "new": "Some((b * b - a * a) / (2.0 * (b / a).ln()))"
+ },
+ {
+  "label": "optimal noise uses b minus a",
+  "old": "Some(((b * b - a * a) / (2.0 * (b / a).ln())).sqrt())",
+  "new": "Some((((b - a) * (b - a)) / (2.0 * (b / a).ln())).sqrt())"
+ },
+ {
+  "label": "optimum offered for a supra-threshold value",
+  "old": "if !(low < high && high < threshold) ||",
+  "new": "if !(low < high) ||"
+ },
+ {
+  "label": "dither without the half",
+  "old": "Ok((margin / width + 0.5).clamp(0.0, 1.0))",
+  "new": "Ok((margin / width).clamp(0.0, 1.0))"
+ },
+ {
+  "label": "dither not clamped",
+  "old": "Ok((margin / width + 0.5).clamp(0.0, 1.0))",
+  "new": "Ok(margin / width + 0.5)"
+ },
+ {
+  "label": "binary entropy in nats",
+  "old": "let term = |x: f64| if x > 0.0 { -x * x.log2() } else { 0.0 };",
+  "new": "let term = |x: f64| if x > 0.0 { -x * x.ln() } else { 0.0 };"
+ },
+ {
+  "label": "channel information without the conditional half",
+  "old": "- 0.5 * (h2(p_low) + h2(p_high))).max(0.0))",
+  "new": "- (h2(p_low) + h2(p_high))).max(0.0))"
+ },
+ {
+  "label": "binomial ratio inverted",
+  "old": "        log += ((n - k) as f64 / (k + 1) as f64).ln() + ratio;",
+  "new": "        log += ((k + 1) as f64 / (n - k) as f64).ln() + ratio;"
+ },
+ {
+  "label": "binomial starts at p to the n",
+  "old": "let mut log = n as f64 * (1.0 - p).ln();",
+  "new": "let mut log = n as f64 * p.ln();"
+ },
+ {
+  "label": "degenerate binomial at the wrong end",
+  "old": "pmf[if p <= 0.0 { 0 } else { n }] = 1.0;",
+  "new": "pmf[if p <= 0.0 { n } else { 0 }] = 1.0;"
+ },
+ {
+  "label": "population information unweighted",
+  "old": "bits += 0.5 * cond * (cond / mix).log2();",
+  "new": "bits += cond * (cond / mix).log2();"
+ },
+ {
+  "label": "population information against one conditional",
+  "old": "let mix = 0.5 * (a + b);",
+  "new": "let mix = a.max(f64::MIN_POSITIVE);"
+ },
+ {
+  "label": "population bound unchecked",
+  "old": "if n == 0 || n > MAX_UNITS {",
+  "new": "if n == 0 {"
+ },
+ {
+  "label": "negative sigma accepted",
+  "old": "    if v.is_finite() && v >= 0.0 {",
+  "new": "    if v.is_finite() {"
+ }
+]

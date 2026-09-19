@@ -6,7 +6,8 @@
     python3 tools/mutate.py --root /copy nef   # against a copy of the repo (git archive HEAD)
 
 A mutation is one exact-text edit to `src/<module>.rs`. For each one the harness applies the edit,
-runs that module's tests (`cargo test --release --lib -- <module>::`), restores the file, and prints
+runs that module's tests (selected by exact name, so `field` does not drag in `meanfield`),
+restores the file, and prints
 a verdict:
 
     caught         a test failed, or the test process was killed — the edit is visible
@@ -31,9 +32,16 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_ROOT = os.path.dirname(HERE)
 
 
-def run_tests(root, module, timeout):
+def test_names(root, module):
+    """The module's own tests, by exact name: the filter `field::` would also run `meanfield::`."""
+    p = subprocess.run(["cargo", "test", "--release", "--lib", "--", "--list"], cwd=root, capture_output=True, text=True)
+    return [l.split(": ")[0] for l in p.stdout.splitlines() if l.startswith(f"{module}::") and l.endswith(": test")]
+
+
+def run_tests(root, module, timeout, names=None):
+    selector = ["--exact", *names] if names else [f"{module}::"]
     try:
-        p = subprocess.run(["cargo", "test", "--release", "--lib", "--", f"{module}::"], cwd=root,
+        p = subprocess.run(["cargo", "test", "--release", "--lib", "--", *selector], cwd=root,
                            capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         return "TIMEOUT", None
@@ -70,8 +78,9 @@ def main():
         if args.only:
             muts = [m for m in muts if args.only in m["label"]]
         path = os.path.join(args.root, "src", f"{module}.rs")
-        verdict, count = run_tests(args.root, module, args.timeout)
-        if verdict != "SURVIVED":
+        names = test_names(args.root, module)
+        verdict, count = run_tests(args.root, module, args.timeout, names)
+        if verdict != "SURVIVED" or count != len(names):
             print(f"{module:12} BASELINE-{verdict}: the unmutated module does not pass; nothing below would mean anything", flush=True)
             tally["BASELINE-FAILED"] = tally.get("BASELINE-FAILED", 0) + 1
             continue
@@ -87,7 +96,7 @@ def main():
                 t0 = time.time()
                 try:
                     io.open(path, "w", encoding="utf-8").write(src.replace(m["old"], m["new"], 1))
-                    verdict, _ = run_tests(args.root, module, args.timeout)
+                    verdict, _ = run_tests(args.root, module, args.timeout, names)
                 finally:
                     io.open(path, "w", encoding="utf-8").write(src)
                     os.remove(mark)

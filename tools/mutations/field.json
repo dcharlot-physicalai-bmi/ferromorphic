@@ -1,0 +1,117 @@
+[
+ {
+  "label": "kernel inhibition added not subtracted",
+  "old": "(2.0 * self.s_e * self.s_e)).exp() - self.a_i *",
+  "new": "(2.0 * self.s_e * self.s_e)).exp() + self.a_i *"
+ },
+ {
+  "label": "kernel gaussian without the two",
+  "old": "self.a_e * (-x * x / (2.0 * self.s_e * self.s_e)).exp()",
+  "new": "self.a_e * (-x * x / (self.s_e * self.s_e)).exp()"
+ },
+ {
+  "label": "integral forgets sigma",
+  "old": "self.a_e * self.s_e * erf(a / (self.s_e * SQRT_2))",
+  "new": "self.a_e * erf(a / (self.s_e * SQRT_2))"
+ },
+ {
+  "label": "integral erf argument without root two",
+  "old": "erf(a / (self.s_i * SQRT_2)))",
+  "new": "erf(a / self.s_i))"
+ },
+ {
+  "label": "zero crossing without the two",
+  "old": "(2.0 * (self.a_e / self.a_i).ln() /",
+  "new": "((self.a_e / self.a_i).ln() /"
+ },
+ {
+  "label": "w infinity sums the lobes",
+  "old": "FRAC_PI_2.sqrt() * (self.a_e * self.s_e - self.a_i * self.s_i)",
+  "new": "FRAC_PI_2.sqrt() * (self.a_e * self.s_e + self.a_i * self.s_i)"
+ },
+ {
+  "label": "regime no-bump test at zero",
+  "old": "if kernel.integral(x0) + h < 0.0 {",
+  "new": "if kernel.integral(x0) < 0.0 {"
+ },
+ {
+  "label": "regime never unbounded",
+  "old": "if kernel.integral_at_infinity() + h >= 0.0 {",
+  "new": "if false {"
+ },
+ {
+  "label": "regime reports the roots swapped",
+  "old": "Ok(Regime::Bistable { ignition, settled })",
+  "new": "Ok(Regime::Bistable { ignition: settled, settled: ignition })"
+ },
+ {
+  "label": "bisection keeps the wrong half",
+  "old": "if (f(mid) > 0.0) == rising {\n            hi = mid;",
+  "new": "if (f(mid) > 0.0) != rising {\n            hi = mid;"
+ },
+ {
+  "label": "positive h accepted by regime",
+  "old": "pub fn regime(kernel: &MexicanHat, h: f64) -> Result<Regime, FieldError> {\n    if !(h < 0.0) || !h.is_finite() {",
+  "new": "pub fn regime(kernel: &MexicanHat, h: f64) -> Result<Regime, FieldError> {\n    if !h.is_finite() {"
+ },
+ {
+  "label": "lateral sum not scaled by dx",
+  "old": "self.u[i] + a * (-self.u[i] + lateral * dx + self.h + input[i])",
+  "new": "self.u[i] + a * (-self.u[i] + lateral + self.h + input[i])"
+ },
+ {
+  "label": "step forgets the resting level",
+  "old": "self.u[i] + a * (-self.u[i] + lateral * dx + self.h + input[i])",
+  "new": "self.u[i] + a * (-self.u[i] + lateral * dx + input[i])"
+ },
+ {
+  "label": "step ignores the input",
+  "old": "self.u[i] + a * (-self.u[i] + lateral * dx + self.h + input[i])",
+  "new": "self.u[i] + a * (-self.u[i] + lateral * dx + self.h)"
+ },
+ {
+  "label": "step has no leak",
+  "old": "self.u[i] + a * (-self.u[i] + lateral * dx + self.h + input[i])",
+  "new": "self.u[i] + a * (lateral * dx + self.h + input[i])"
+ },
+ {
+  "label": "ring distance not wrapped",
+  "old": "by_hops[hops.min(n - hops)]",
+  "new": "by_hops[hops.min(n / 2)]"
+ },
+ {
+  "label": "output is active at rest",
+  "old": "let active: Vec<usize> = (0..n).filter(|&j| self.u[j] > 0.0).collect();",
+  "new": "let active: Vec<usize> = (0..n).filter(|&j| self.u[j] >= self.h).collect();"
+ },
+ {
+  "label": "step ignores tau",
+  "old": "        let a = dt / self.tau;\n        // The kernel",
+  "new": "        let a = dt;\n        // The kernel"
+ },
+ {
+  "label": "dt past tau accepted",
+  "old": "if !(dt > 0.0) || !(dt <= self.tau) {",
+  "new": "if !(dt > 0.0) {"
+ },
+ {
+  "label": "seed does not wrap",
+  "old": "let d = d.min(length - d);",
+  "new": "let d = d.min(length + d);"
+ },
+ {
+  "label": "seed width is a radius",
+  "old": "*u = if d < 0.5 * width { -h / 100.0 } else { h };",
+  "new": "*u = if d < width { -h / 100.0 } else { h };"
+ },
+ {
+  "label": "active width counts every point",
+  "old": "self.dx() * self.u.iter().filter(|u| **u > 0.0).count() as f64",
+  "new": "self.dx() * self.u.iter().filter(|u| **u > f64::NEG_INFINITY).count() as f64"
+ },
+ {
+  "label": "short domain accepted",
+  "old": "if !(length >= 20.0 * kernel.s_i) || !length.is_finite() {",
+  "new": "if !length.is_finite() {"
+ }
+]
