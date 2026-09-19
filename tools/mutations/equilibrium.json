@@ -1,0 +1,98 @@
+[
+ {
+  "label": "leak energy s^2 not s^2/2",
+  "old": "e += 0.5 * s[i] * s[i] - rho[i] * drive[i];",
+  "new": "e += s[i] * s[i] - rho[i] * drive[i];"
+ },
+ {
+  "label": "coupling energy halved",
+  "old": "e -= self.w[i * self.n + j] * rho[i] * rho[j];",
+  "new": "e -= 0.5 * self.w[i * self.n + j] * rho[i] * rho[j];"
+ },
+ {
+  "label": "velocity drops rho'",
+  "old": "let mut v = -s[i] + (1.0 - rho[i] * rho[i]) * field;",
+  "new": "let mut v = -s[i] + field;"
+ },
+ {
+  "label": "spring pushes away",
+  "old": "v += beta * (y[i - first] - s[i]);",
+  "new": "v -= beta * (y[i - first] - s[i]);"
+ },
+ {
+  "label": "cost without the half",
+  "old": "Ok(0.5 * y.iter().enumerate()",
+  "new": "Ok(y.iter().enumerate()"
+ },
+ {
+  "label": "coupling gradient uses raw state",
+  "old": "w[i * self.n + j] = -rho[i] * rho[j];",
+  "new": "w[i * self.n + j] = -s[i] * s[j];"
+ },
+ {
+  "label": "input gradient uses raw state",
+  "old": "-rho[q / self.m] * x[q % self.m]",
+  "new": "-s[q / self.m] * x[q % self.m]"
+ },
+ {
+  "label": "bias gradient sign",
+  "old": "b: rho.iter().map(|r| -r).collect()",
+  "new": "b: rho.iter().map(|r| *r).collect()"
+ },
+ {
+  "label": "symmetric span is beta",
+  "old": "self.relax(&free, x, y, -beta, dt, tol, max_steps)?, x)?, 2.0 * beta)",
+  "new": "self.relax(&free, x, y, -beta, dt, tol, max_steps)?, x)?, beta)"
+ },
+ {
+  "label": "negative phase nudged the same way",
+  "old": "self.relax(&free, x, y, -beta, dt, tol, max_steps)",
+  "new": "self.relax(&free, x, y, beta, dt, tol, max_steps)"
+ },
+ {
+  "label": "one-sided span doubled",
+  "old": "(self.energy_gradient(&free, x)?, beta)",
+  "new": "(self.energy_gradient(&free, x)?, 2.0 * beta)"
+ },
+ {
+  "label": "descend ascends",
+  "old": "*p -= rate * d;",
+  "new": "*p += rate * d;"
+ },
+ {
+  "label": "relaxation stops a million times early",
+  "old": "if moved <= tol {",
+  "new": "if moved <= tol * 1e6 {"
+ },
+ {
+  "label": "random couplings antisymmetric",
+  "old": "w[j * n + i] = v;",
+  "new": "w[j * n + i] = -v;"
+ },
+ {
+  "label": "unsettled state returned as settled",
+  "old": "Err(EquilibriumError::NotSettled { moved, steps: max_steps })",
+  "new": "Ok(s)"
+ },
+ {
+  "label": "scale past 1 accepted",
+  "old": "if !(scale > 0.0) || !(scale <= 1.0) {",
+  "new": "if !(scale > 0.0) {"
+ },
+ {
+  "label": "dt past 1 accepted",
+  "old": "if !(dt > 0.0) || !(dt <= 1.0) {",
+  "new": "if !(dt > 0.0) {"
+ },
+ {
+  "label": "bias dropped from the drive",
+  "old": "(0..self.n).map(|i| self.b[i] + (0..self.m)",
+  "new": "(0..self.n).map(|i| (0..self.m)"
+ },
+ {
+  "label": "nudged phase restarts from zero",
+  "old": "let plus = self.energy_gradient(&self.relax(&free, x, y, beta,",
+  "new": "let plus = self.energy_gradient(&self.relax(&vec![0.0; self.n], x, y, beta,",
+  "equivalent": "the fixed point is unique at these couplings, and a test asserts it does not depend on the start"
+ }
+]

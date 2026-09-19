@@ -1,0 +1,82 @@
+[
+ {
+  "label": "soft threshold does not shrink",
+  "old": "                if u > lambda {\n                    u - lambda",
+  "new": "                if u > lambda {\n                    u"
+ },
+ {
+  "label": "Lca keeps self-inhibition",
+  "old": "        for i in 0..n {\n            lateral[i * n + i] = 0.0;\n        }\n        Ok(Self { dict, lambda, tau, threshold, u: vec![0.0; n], lateral })",
+  "new": "        let _ = n;\n        Ok(Self { dict, lambda, tau, threshold, u: vec![0.0; n], lateral })"
+ },
+ {
+  "label": "Lca: inhibition sign",
+  "old": "            let target = b[i] - inhibition;\n            self.u[i] = target + (self.u[i] - target) * decay;\n        }\n        Ok(())",
+  "new": "            let target = b[i] + inhibition;\n            self.u[i] = target + (self.u[i] - target) * decay;\n        }\n        Ok(())"
+ },
+ {
+  "label": "residual ignores lambda on support",
+  "old": "Threshold::Soft => (c[i] - self.lambda * ai.signum()).abs(),",
+  "new": "Threshold::Soft => c[i].abs(),"
+ },
+ {
+  "label": "spiking trace loses sign",
+  "old": "self.traces[i] += a.signum() * k / (self.tau_syn * self.rate_scale);",
+  "new": "self.traces[i] += k / (self.tau_syn * self.rate_scale);"
+ },
+ {
+  "label": "spiking syn_ops halved",
+  "old": "                self.ledger.syn_ops += delivered;\n",
+  "new": "                self.ledger.syn_ops += delivered / 2;\n"
+ },
+ {
+  "label": "counted_magnitudes not divided by scale",
+  "old": "Some(self.spikes.iter().map(|&s| s as f64 / window / self.rate_scale).collect())",
+  "new": "Some(self.spikes.iter().map(|&s| s as f64 / window).collect())"
+ },
+ {
+  "label": "random_unit not normalised",
+  "old": "                atoms[r * n + j] = c / norm;",
+  "new": "                atoms[r * n + j] = c;"
+ },
+ {
+  "label": "zero accepted where positive is required",
+  "old": "if value.is_finite() && value > 0.0 {",
+  "new": "if value.is_finite() && value >= 0.0 {"
+ },
+ {
+  "label": "coherence of one atom",
+  "old": "if self.n < 2 {",
+  "new": "if self.n < 1 {"
+ },
+ {
+  "label": "hard threshold shrinks",
+  "old": "if u.abs() > lambda { u } else { 0.0 }",
+  "new": "if u.abs() > lambda { u - lambda * u.signum() } else { 0.0 }"
+ },
+ {
+  "label": "hard cost lambda^2",
+  "old": "if a == 0.0 { 0.0 } else { 0.5 * lambda * lambda }",
+  "new": "if a == 0.0 { 0.0 } else { lambda * lambda }"
+ },
+ {
+  "label": "idle ignores the membrane",
+  "old": "if target == 0.0 && self.u[i] == 0.0 {",
+  "new": "if target == 0.0 {"
+ },
+ {
+  "label": "fetches never charged",
+  "old": "self.ledger.syn_fetches += delivered;",
+  "new": "self.ledger.syn_fetches += 0;"
+ },
+ {
+  "label": "a burst counts as one spike",
+  "old": "self.ledger.spikes_out += k_u;",
+  "new": "self.ledger.spikes_out += 1;"
+ },
+ {
+  "label": "accumulator residue dropped",
+  "old": "self.acc[i] -= k;",
+  "new": "self.acc[i] = 0.0;"
+ }
+]

@@ -1,0 +1,137 @@
+[
+ {
+  "label": "mean field sign",
+  "old": "out[i] = self.omega[i] + self.k * (s * theta[i].cos() - c * theta[i].sin());",
+  "new": "out[i] = self.omega[i] + self.k * (c * theta[i].sin() - s * theta[i].cos());"
+ },
+ {
+  "label": "locked phase asin(dw/2K)",
+  "old": "Some((delta_omega / k).asin())",
+  "new": "Some((delta_omega / (2.0 * k)).asin())"
+ },
+ {
+  "label": "lock range open at the edge",
+  "old": "|| delta_omega.abs() > k {",
+  "new": "|| delta_omega.abs() >= k {"
+ },
+ {
+  "label": "beat adds K^2",
+  "old": "let d = delta_omega * delta_omega - k * k;",
+  "new": "let d = delta_omega * delta_omega + k * k;"
+ },
+ {
+  "label": "OA rate K - gamma",
+  "old": "let rate = k - 2.0 * gamma;",
+  "new": "let rate = k - gamma;"
+ },
+ {
+  "label": "OA threshold branch drops K",
+  "old": "u0 / (1.0 + k * u0 * t)",
+  "new": "u0 / (1.0 + u0 * t)"
+ },
+ {
+  "label": "quantiles not centred",
+  "old": "(PI * (i as f64 + 0.5) / n as f64 - 0.5 * PI).tan()",
+  "new": "(PI * (i as f64 + 0.25) / n as f64 - 0.5 * PI).tan()"
+ },
+ {
+  "label": "critical coupling gamma",
+  "old": "    2.0 * gamma\n}",
+  "new": "    gamma\n}"
+ },
+ {
+  "label": "amplitude rate a not a/2",
+  "old": "let h = 0.5 * self.a;",
+  "new": "let h = self.a;"
+ },
+ {
+  "label": "amplitude velocity not carried",
+  "old": "self.r_dot = (slope - h * (e0 + slope * dt)) * decay;",
+  "new": "self.r_dot = 0.0 * decay;"
+ },
+ {
+  "label": "chain ascending lag sign",
+  "old": "v += self.w * (theta[i + 1] - theta[i] + self.lag).sin();",
+  "new": "v += self.w * (theta[i + 1] - theta[i] - self.lag).sin();"
+ },
+ {
+  "label": "slowest rate uses n+1",
+  "old": "(PI / self.theta.len() as f64).cos()",
+  "new": "(PI / (self.theta.len() as f64 + 1.0)).cos()"
+ },
+ {
+  "label": "lag errors sign",
+  "old": "wrap_pi(p[0] - p[1] - self.lag)",
+  "new": "wrap_pi(p[0] - p[1] + self.lag)"
+ },
+ {
+  "label": "oim energy injection K_s not K_s/2",
+  "old": "e -= 0.5 * self.k_s * (2.0 * self.theta[i]).cos();",
+  "new": "e -= self.k_s * (2.0 * self.theta[i]).cos();"
+ },
+ {
+  "label": "oim coupling attracts",
+  "old": "v += self.k * wij * (self.theta[i] - self.theta[j]).sin();",
+  "new": "v -= self.k * wij * (self.theta[i] - self.theta[j]).sin();"
+ },
+ {
+  "label": "stable dt 2/L",
+  "old": "1.0 / (2.0 * self.k * worst + 2.0 * self.k_s)",
+  "new": "1.0 / (self.k * worst + self.k_s)"
+ },
+ {
+  "label": "relax monitor blind",
+  "old": "worst = worst.max(e - last);",
+  "new": "worst = worst.max(0.0 * (e - last));"
+ },
+ {
+  "label": "spins read the sine",
+  "old": "self.theta.iter().map(|t| if t.cos() >= 0.0 { 1 } else { -1 }).collect()",
+  "new": "self.theta.iter().map(|t| if t.sin() >= 0.0 { 1 } else { -1 }).collect()"
+ },
+ {
+  "label": "cut counts uncut edges",
+  "old": "if s[i] != s[j] {",
+  "new": "if s[i] == s[j] {"
+ },
+ {
+  "label": "best_cut keeps the worst",
+  "old": "if cut > best.0 {",
+  "new": "if cut < best.0 || best.1.is_empty() {"
+ },
+ {
+  "label": "snap to the wrong pole",
+  "old": "*t = if t.cos() >= 0.0 { 0.0 } else { PI };",
+  "new": "*t = if t.cos() >= 0.0 { PI } else { 0.0 };"
+ },
+ {
+  "label": "rk4 becomes euler",
+  "old": "theta[i] += dt / 6.0 * (k1[i] + 2.0 * k2[i] + 2.0 * k3[i] + k4[i]);",
+  "new": "theta[i] += dt * k1[i];"
+ },
+ {
+  "label": "wrap_pi half-open the other way",
+  "old": "if r > PI { r - TAU } else { r }",
+  "new": "if r >= PI { r - TAU } else { r }"
+ },
+ {
+  "label": "order parameter phase",
+  "old": "(c.hypot(s), s.atan2(c))",
+  "new": "(c.hypot(s), c.atan2(s))"
+ },
+ {
+  "label": "pairwise sum sign",
+  "old": "(self.theta[j] - self.theta[i]).sin()",
+  "new": "(self.theta[i] - self.theta[j]).sin()"
+ },
+ {
+  "label": "repeated edge overwrites",
+  "old": "w[u * n + v] += weight;",
+  "new": "w[u * n + v] = weight;"
+ },
+ {
+  "label": "max steps unguarded",
+  "old": "if steps > MAX_STEPS {",
+  "new": "if false {"
+ }
+]

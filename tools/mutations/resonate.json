@@ -1,0 +1,72 @@
+[
+ {
+  "label": "rf step: drive components swapped",
+  "old": "            x += i * qr;\n            y += i * qi;",
+  "new": "            x += i * qi;\n            y += i * qr;"
+ },
+ {
+  "label": "pair_response drops the sine term",
+  "old": "((1.0 + g * c).powi(2) + (g * s).powi(2)).sqrt()",
+  "new": "((1.0 + g * c).powi(2)).sqrt()"
+ },
+ {
+  "label": "kick accepted during refractory",
+  "old": "    pub fn kick(&mut self, dx: f64, dy: f64) {\n        if self.refractory > 0.0 {\n            return;\n        }",
+  "new": "    pub fn kick(&mut self, dx: f64, dy: f64) {"
+ },
+ {
+  "label": "rf: decay applied without rotation",
+  "old": "        let (er, ei) = (g * c, g * s);",
+  "new": "        let (er, ei) = (g, 0.0 * s);"
+ },
+ {
+  "label": "lmu A sign parity",
+  "old": "                } else if (i - j + 1).is_multiple_of(2) {",
+  "new": "                } else if (i - j).is_multiple_of(2) {"
+ },
+ {
+  "label": "lmu B all positive",
+  "old": "            b[i] = if i.is_multiple_of(2) { scale } else { -scale };",
+  "new": "            b[i] = scale;"
+ },
+ {
+  "label": "legendre recurrence 2k",
+  "old": "let p2 = ((2.0 * kf + 1.0) * x * p1 - kf * p0) / (kf + 1.0);",
+  "new": "let p2 = ((2.0 * kf) * x * p1 - kf * p0) / (kf + 1.0);"
+ },
+ {
+  "label": "lmu delayed() drops last coefficient",
+  "old": "    pub fn delayed(&self) -> f64 {\n        self.m.iter().sum()",
+  "new": "    pub fn delayed(&self) -> f64 {\n        self.m.iter().take(self.order - 1).sum()"
+ },
+ {
+  "label": "positive damping accepted",
+  "old": "if b > 0.0 {",
+  "new": "if false {"
+ },
+ {
+  "label": "negative refractory accepted",
+  "old": "if t_ref < 0.0 {",
+  "new": "if false {"
+ },
+ {
+  "label": "reconstruct outside the window",
+  "old": "if !(0.0..=1.0).contains(&r) {",
+  "new": "if false {"
+ },
+ {
+  "label": "lmu integrates by euler",
+  "old": "self.m[i] += dt / 6.0 * (k1[i] + 2.0 * k2[i] + 2.0 * k3[i] + k4[i]);",
+  "new": "self.m[i] += dt * k1[i];"
+ },
+ {
+  "label": "non-positive dt accepted",
+  "old": "if !(dt > 0.0) || !dt.is_finite() {",
+  "new": "if false {"
+ },
+ {
+  "label": "threshold strict",
+  "old": "if self.y >= self.threshold {",
+  "new": "if self.y > self.threshold {"
+ }
+]

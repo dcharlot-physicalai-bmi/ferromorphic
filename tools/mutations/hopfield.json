@@ -1,0 +1,93 @@
+[
+ {
+  "label": "store keeps self-weights",
+  "old": "                if i != j {\n                    self.w[i * n + j] += pattern[i] * pattern[j] * scale;\n                }",
+  "new": "                self.w[i * n + j] += pattern[i] * pattern[j] * scale;"
+ },
+ {
+  "label": "recall tie flips to +1",
+  "old": "let next = if h > 0.0 { 1.0 } else if h < 0.0 { -1.0 } else { x[i] };",
+  "new": "let next = if h > 0.0 { 1.0 } else if h < 0.0 { -1.0 } else { 1.0 };"
+ },
+ {
+  "label": "dense energy unrectified",
+  "old": "        if z > 0.0 { z.powi(self.degree as i32) } else { 0.0 }",
+  "new": "        z.powi(self.degree as i32)"
+ },
+ {
+  "label": "modern energy drops M^2/2",
+  "old": "Ok(-lse / self.beta + half_sq + (self.patterns.len() as f64).ln() / self.beta + 0.5 * m * m)",
+  "new": "Ok(-lse / self.beta + half_sq + (self.patterns.len() as f64).ln() / self.beta + 0.0 * m)"
+ },
+ {
+  "label": "separation returns the other overlap",
+  "old": "        Some(own - other)",
+  "new": "        Some(other)"
+ },
+ {
+  "label": "corrupt floors instead of rounds",
+  "old": "let k = (p * n as f64).round() as usize;",
+  "new": "let k = (p * n as f64).floor() as usize;"
+ },
+ {
+  "label": "attention without beta",
+  "old": "self.patterns.iter().map(|p| self.beta * p.iter().zip(xi).map(|(a, b)| a * b).sum::<f64>()).collect();\n        let top = logits.iter().cloned().fold(f64::NEG_INFINITY, f64::max);\n        let exps",
+  "new": "self.patterns.iter().map(|p| p.iter().zip(xi).map(|(a, b)| a * b).sum::<f64>()).collect();\n        let top = logits.iter().cloned().fold(f64::NEG_INFINITY, f64::max);\n        let exps"
+ },
+ {
+  "label": "bipolar guard off",
+  "old": "if x != 1.0 && x != -1.0 {",
+  "new": "if false {"
+ },
+ {
+  "label": "corrupt accepts p outside [0,1]",
+  "old": "if !(0.0..=1.0).contains(&p) {",
+  "new": "if false {"
+ },
+ {
+  "label": "stored counts double",
+  "old": "self.stored += 1;",
+  "new": "self.stored += 2;"
+ },
+ {
+  "label": "degree 1 accepted",
+  "old": "if degree < 2 {",
+  "new": "if degree < 1 {"
+ },
+ {
+  "label": "dense flips on a tie",
+  "old": "if e_flip < e_now {",
+  "new": "if e_flip <= e_now {"
+ },
+ {
+  "label": "non-positive beta accepted",
+  "old": "if !(beta > 0.0) || !beta.is_finite() {",
+  "new": "if !beta.is_finite() {"
+ },
+ {
+  "label": "separation with one pattern",
+  "old": "if mu >= self.patterns.len() || self.patterns.len() < 2 {",
+  "new": "if mu >= self.patterns.len() {"
+ },
+ {
+  "label": "overlap of empty",
+  "old": "if a.len() != b.len() || a.is_empty() {",
+  "new": "if a.len() != b.len() {"
+ },
+ {
+  "label": "classical energy-increase monitor blind",
+  "old": "worst_increase = worst_increase.max(e - last);",
+  "new": "worst_increase = worst_increase.max(0.0 * (e - last));"
+ },
+ {
+  "label": "dense energy-increase monitor blind",
+  "old": "worst_increase = worst_increase.max(e_flip - last);",
+  "new": "worst_increase = worst_increase.max(0.0 * (e_flip - last));",
+  "equivalent": "zero by construction: a flip is taken only when it lowers the energy (see Recall::worst_increase)"
+ },
+ {
+  "label": "dense incremental overlaps wrong sign",
+  "old": "*d -= 2.0 * p[i] * x[i];",
+  "new": "*d += 2.0 * p[i] * x[i];"
+ }
+]

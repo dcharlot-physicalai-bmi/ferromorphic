@@ -1,0 +1,112 @@
+[
+ {
+  "label": "wave number 2pi over lambda",
+  "old": "let k = 4.0 * PI / (3.0f64.sqrt() * self.spacing);",
+  "new": "let k = 2.0 * PI / self.spacing;"
+ },
+ {
+  "label": "wave vectors along the lattice",
+  "old": "let base = self.orientation + PI / 6.0;",
+  "new": "let base = self.orientation;"
+ },
+ {
+  "label": "wave vectors 90 degrees apart",
+  "old": "[at(base), at(base + PI / 3.0), at(base + 2.0 * PI / 3.0)]",
+  "new": "[at(base), at(base + PI / 2.0), at(base + PI)]"
+ },
+ {
+  "label": "second lattice vector at 90 degrees",
+  "old": "[at(self.orientation), at(self.orientation + PI / 3.0)]",
+  "new": "[at(self.orientation), at(self.orientation + PI / 2.0)]"
+ },
+ {
+  "label": "rate not normalised to the peak",
+  "old": "Ok(self.rate_max * (2.0 / 3.0) * (sum / 3.0 + 0.5))",
+  "new": "Ok(self.rate_max * (sum / 3.0 + 0.5))"
+ },
+ {
+  "label": "rate offset dropped",
+  "old": "Ok(self.rate_max * (2.0 / 3.0) * (sum / 3.0 + 0.5))",
+  "new": "Ok(self.rate_max * (2.0 / 3.0) * (sum / 3.0))"
+ },
+ {
+  "label": "rate ignores the module offset",
+  "old": "let d = [x[0] - self.offset[0], x[1] - self.offset[1]];\n        let sum",
+  "new": "let d = [x[0], x[1]];\n        let sum"
+ },
+ {
+  "label": "phase step ignores dt",
+  "old": "self.phases[i] = wrap_tau(self.phases[i] + (k[i][0] * v[0] + k[i][1] * v[1]) * dt);",
+  "new": "self.phases[i] = wrap_tau(self.phases[i] + (k[i][0] * v[0] + k[i][1] * v[1]));"
+ },
+ {
+  "label": "phase step uses one velocity component",
+  "old": "(k[i][0] * v[0] + k[i][1] * v[1]) * dt",
+  "new": "(k[i][0] * v[0]) * dt"
+ },
+ {
+  "label": "phases never wrap",
+  "old": "fn wrap_tau(p: f64) -> f64 {\n    let r = p.rem_euclid(TAU);",
+  "new": "fn wrap_tau(p: f64) -> f64 {\n    let r = p;"
+ },
+ {
+  "label": "wrap may return a full turn",
+  "old": "    if r >= TAU { 0.0 } else { r }\n",
+  "new": "    r\n"
+ },
+ {
+  "label": "decoded position transposed",
+  "old": "self.module.offset[1] + (q * k[0][0] - p * k[1][0]) / det,",
+  "new": "self.module.offset[1] + (q * k[1][0] - p * k[0][0]) / det,"
+ },
+ {
+  "label": "decoded position forgets the offset",
+  "old": "self.module.offset[0] + (p * k[1][1] - q * k[0][1]) / det,",
+  "new": "(p * k[1][1] - q * k[0][1]) / det,"
+ },
+ {
+  "label": "lattice coefficients swapped",
+  "old": "[(d[0] * a[1][1] - d[1] * a[1][0]) / det, (d[1] * a[0][0] - d[0] * a[0][1]) / det]",
+  "new": "[(d[1] * a[0][0] - d[0] * a[0][1]) / det, (d[0] * a[1][1] - d[1] * a[1][0]) / det]"
+ },
+ {
+  "label": "range is the product",
+  "old": "l = l / gcd(l, p) * p;",
+  "new": "l *= p;"
+ },
+ {
+  "label": "cells is the product",
+  "old": "self.periods.iter().fold(0u64, |a, p| a.saturating_add(*p))",
+  "new": "self.periods.iter().fold(1u64, |a, p| a.saturating_mul(*p))"
+ },
+ {
+  "label": "step forgets negative wrap",
+  "old": "*phase = moved.rem_euclid(i128::from(*p)) as u64;",
+  "new": "*phase = (moved % i128::from(*p)).unsigned_abs() as u64;"
+ },
+ {
+  "label": "inconsistent phases decoded anyway",
+  "old": "if x % g != a % g {",
+  "new": "if false {"
+ },
+ {
+  "label": "phase at its period accepted",
+  "old": "if phase >= p {",
+  "new": "if phase > p {"
+ },
+ {
+  "label": "period of one accepted",
+  "old": "periods.iter().find(|p| **p < 2)",
+  "new": "periods.iter().find(|p| **p < 1)"
+ },
+ {
+  "label": "crt inverse of the wrong residue",
+  "old": "mod_inverse(m / g % reduced, reduced)",
+  "new": "mod_inverse(m % reduced, reduced)"
+ },
+ {
+  "label": "range overflow unchecked at construction",
+  "old": "        code.range()?;\n        Ok(code)",
+  "new": "        Ok(code)"
+ }
+]

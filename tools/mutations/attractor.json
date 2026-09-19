@@ -1,0 +1,97 @@
+[
+ {
+  "label": "f1 drops the half",
+  "old": "(theta_c - 0.5 * (2.0 * theta_c).sin()) / TAU",
+  "new": "(theta_c - (2.0 * theta_c).sin()) / TAU"
+ },
+ {
+  "label": "f0 sign",
+  "old": "(theta_c.sin() - theta_c * theta_c.cos()) / PI",
+  "new": "(theta_c.sin() + theta_c * theta_c.cos()) / PI"
+ },
+ {
+  "label": "bump threshold J1 > 1",
+  "old": "if !(j1 > 2.0) || !j1.is_finite() {",
+  "new": "if !(j1 > 1.0) || !j1.is_finite() {"
+ },
+ {
+  "label": "amplitude uses f1",
+  "old": "let a = -i0 / (theta_c.cos() + j0 * f0(theta_c));",
+  "new": "let a = -i0 / (theta_c.cos() + j0 * f1(theta_c));"
+ },
+ {
+  "label": "runaway amplitude returned",
+  "old": "if a > 0.0 && a.is_finite() { Some(a) } else { None }",
+  "new": "if a.is_finite() { Some(a) } else { None }"
+ },
+ {
+  "label": "uniform rate 1 + J0",
+  "old": "Some(i0 / (1.0 - j0))",
+  "new": "Some(i0 / (1.0 + j0))"
+ },
+ {
+  "label": "moments swap sine and cosine",
+  "old": "c1 += mi * c;\n            s1 += mi * s;",
+  "new": "c1 += mi * s;\n            s1 += mi * c;"
+ },
+ {
+  "label": "tuned coupling doubled",
+  "old": "self.j0 * r0 + self.j1 * (c1 * c + s1 * s)",
+  "new": "self.j0 * r0 + 2.0 * self.j1 * (c1 * c + s1 * s)"
+ },
+ {
+  "label": "pairwise kernel uses sine",
+  "old": "(self.j0 + self.j1 * (self.angle(i) - self.angle(j)).cos()) * self.m[j]",
+  "new": "(self.j0 + self.j1 * (self.angle(i) - self.angle(j)).sin()) * self.m[j]"
+ },
+ {
+  "label": "population vector atan2 swapped",
+  "old": "(Some(s1.atan2(c1)), r1)",
+  "new": "(Some(c1.atan2(s1)), r1)"
+ },
+ {
+  "label": "a uniform ring points somewhere",
+  "old": "if r1 <= self.m.len() as f64 * f64::EPSILON * scale {",
+  "new": "if false {"
+ },
+ {
+  "label": "active half width doubled",
+  "old": "PI * active as f64 / self.m.len() as f64",
+  "new": "TAU * active as f64 / self.m.len() as f64"
+ },
+ {
+  "label": "no rectification",
+  "old": "let drive = (input[i] + rec[i]).max(0.0);",
+  "new": "let drive = input[i] + rec[i];"
+ },
+ {
+  "label": "no denormal flush",
+  "old": "self.m[i] = if next < f64::MIN_POSITIVE { 0.0 } else { next };",
+  "new": "self.m[i] = next;"
+ },
+ {
+  "label": "dt past tau accepted",
+  "old": "if !(dt > 0.0) || !(dt <= self.tau) {",
+  "new": "if !(dt > 0.0) {"
+ },
+ {
+  "label": "cue uses sine",
+  "old": "i0 * (1.0 + depth * (self.angle(i) - at).cos())",
+  "new": "i0 * (1.0 + depth * (self.angle(i) - at).sin())"
+ },
+ {
+  "label": "angles span half a turn",
+  "old": "TAU * i as f64 / self.m.len() as f64",
+  "new": "PI * i as f64 / self.m.len() as f64"
+ },
+ {
+  "label": "step ignores tau",
+  "old": "let a = dt / self.tau;",
+  "new": "let a = dt;"
+ },
+ {
+  "label": "bisection keeps the wrong half",
+  "old": "if j1 * f1(mid) < 1.0 {\n            lo = mid;",
+  "new": "if j1 * f1(mid) > 1.0 {\n            lo = mid;"
+ }
+]

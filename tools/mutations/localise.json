@@ -1,0 +1,117 @@
+[
+ {
+  "label": "speed of sound constant",
+  "old": "Some(331.3 * (1.0 + celsius / 273.15).sqrt())",
+  "new": "Some(331.3 * (1.0 + celsius / 273.15))"
+ },
+ {
+  "label": "far-field uses cosine",
+  "old": "Ok(d / c * azimuth_in_range(azimuth)?.sin())",
+  "new": "Ok(d / c * azimuth_in_range(azimuth)?.cos())"
+ },
+ {
+  "label": "inverse far-field forgets c",
+  "old": "let s = c * itd / d;",
+  "new": "let s = itd / d;"
+ },
+ {
+  "label": "woodworth drops the arc",
+  "old": "Ok(r / c * (a + a.sin()))",
+  "new": "Ok(r / c * (2.0 * a.sin()))"
+ },
+ {
+  "label": "woodworth inverse loses the sign",
+  "old": "Some((0.5 * (lo + hi)).copysign(itd))",
+  "new": "Some(0.5 * (lo + hi))"
+ },
+ {
+  "label": "woodworth limit without the 1",
+  "old": "if target > FRAC_PI_2 + 1.0 {",
+  "new": "if target > FRAC_PI_2 {"
+ },
+ {
+  "label": "aliasing limit 1/ITD",
+  "old": "Some(0.5 / max_itd)",
+  "new": "Some(1.0 / max_itd)"
+ },
+ {
+  "label": "resolution ignores the cosine",
+  "old": "Some(c * delta / (d * azimuth.cos()))",
+  "new": "Some(c * delta / d)"
+ },
+ {
+  "label": "resolution defined at the side",
+  "old": "|| azimuth.abs() >= FRAC_PI_2 {",
+  "new": "|| azimuth.abs() > FRAC_PI_2 {"
+ },
+ {
+  "label": "jitter variance not doubled",
+  "old": "let s = sigma * core::f64::consts::SQRT_2;",
+  "new": "let s = sigma;"
+ },
+ {
+  "label": "coincidence probability one-sided",
+  "old": "Some(normal_cdf((window - mismatch) / s) - normal_cdf((-window - mismatch) / s))",
+  "new": "Some(normal_cdf((window - mismatch) / s) - 0.5)"
+ },
+ {
+  "label": "train not sorted",
+  "old": "    t.sort_by(f64::total_cmp);\n",
+  "new": ""
+ },
+ {
+  "label": "uniform array excludes its end",
+  "old": "let step = 2.0 * max_itd / (detectors - 1) as f64;",
+  "new": "let step = 2.0 * max_itd / detectors as f64;"
+ },
+ {
+  "label": "delay applied to the left",
+  "old": "while lo < right.len() && right[lo] + delta < tl - self.window {",
+  "new": "while lo < right.len() && right[lo] - delta < tl - self.window {"
+ },
+ {
+  "label": "window open at the late edge",
+  "old": "while hi < right.len() && right[hi] + delta <= tl + self.window {",
+  "new": "while hi < right.len() && right[hi] + delta < tl + self.window {"
+ },
+ {
+  "label": "window closed... open at the early edge",
+  "old": "right[lo] + delta < tl - self.window {",
+  "new": "right[lo] + delta <= tl - self.window {"
+ },
+ {
+  "label": "one pair per left spike",
+  "old": "count += (hi - lo) as u64;",
+  "new": "count += u64::from(hi > lo);"
+ },
+ {
+  "label": "zero coincidences read as zero ITD",
+  "old": "if best == 0 {",
+  "new": "if false {"
+ },
+ {
+  "label": "estimate reads the first tied detector",
+  "old": "let itd = self.delays[first..first + run].iter().sum::<f64>() / run as f64;",
+  "new": "let itd = self.delays[first];"
+ },
+ {
+  "label": "peaks counts detectors not runs",
+  "old": "(0..tall.len()).filter(|&k| tall[k] && (k == 0 || !tall[k - 1])).count()",
+  "new": "(0..tall.len()).filter(|&k| tall[k]).count()"
+ },
+ {
+  "label": "peaks threshold at the maximum",
+  "old": "counts.iter().map(|&c| 2 * c >= best).collect()",
+  "new": "counts.iter().map(|&c| c >= best).collect()"
+ },
+ {
+  "label": "syn events count one train",
+  "old": "saturating_mul((left.len() + right.len()) as u64)",
+  "new": "saturating_mul(left.len() as u64)"
+ },
+ {
+  "label": "unsorted train accepted",
+  "old": "if let Some(i) = t.windows(2).position(|p| p[1] < p[0]) {",
+  "new": "if let Some(i) = t.windows(2).position(|p| p[1] < p[0] - 1e9) {"
+ }
+]

@@ -1,0 +1,82 @@
+[
+ {
+  "label": "sa1 adaptation adds instead of removes",
+  "old": "                self.gain * c.depth * (1.0 - self.adapted)",
+  "new": "                self.gain * c.depth * (1.0 + self.adapted)"
+ },
+ {
+  "label": "ra drive sign-blind no more",
+  "old": "            Class::Ra => self.gain * c.velocity.abs(),",
+  "new": "            Class::Ra => self.gain * c.velocity.max(0.0),"
+ },
+ {
+  "label": "bandpass hp coefficient",
+  "old": "        let a_hp = 1.0 / (1.0 + core::f64::consts::TAU * self.f_lo * dt);",
+  "new": "        let a_hp = 1.0 / (1.0 + 2.0 * core::f64::consts::TAU * self.f_lo * dt);"
+ },
+ {
+  "label": "velocity by one-sided difference",
+  "old": "            (depth[i + 1] - depth[i - 1]) / (2.0 * dt)",
+  "new": "            (depth[i + 1] - depth[i]) / dt"
+ },
+ {
+  "label": "receptive field without the 2",
+  "old": "            let w = (-d * d / (2.0 * self.sigma * self.sigma)).exp();",
+  "new": "            let w = (-d * d / (self.sigma * self.sigma)).exp();"
+ },
+ {
+  "label": "centroid unweighted",
+  "old": "Some(self.positions.iter().zip(&self.afferents).map(|(x, a)| x * a.spikes as f64).sum::<f64>() / total as f64)",
+  "new": "Some(self.positions.iter().sum::<f64>() / self.positions.len() as f64 + 0.0 * total as f64)"
+ },
+ {
+  "label": "pc ignores the band-pass",
+  "old": "                let filtered = self.band.as_mut().map_or(0.0, |b| b.step(fs, c.acceleration));",
+  "new": "                let filtered = self.band.as_mut().map_or(0.0, |b| { let _ = b.step(fs, c.acceleration); c.acceleration });"
+ },
+ {
+  "label": "two samples accepted",
+  "old": "if depth.len() < 3 {",
+  "new": "if depth.len() < 2 {"
+ },
+ {
+  "label": "negative depth accepted",
+  "old": "if let Some(i) = depth.iter().position(|d| *d < 0.0) {",
+  "new": "if let Some(i) = depth.iter().position(|d| *d < -1.0) {"
+ },
+ {
+  "label": "inverted band accepted",
+  "old": "if f_lo >= f_hi {",
+  "new": "if false {"
+ },
+ {
+  "label": "adaptation of 1 accepted",
+  "old": "if !(0.0..1.0).contains(&adaptation) {",
+  "new": "if !(0.0..=1.0).contains(&adaptation) {"
+ },
+ {
+  "label": "adaptation never recovers off contact",
+  "old": "let target = if c.depth > 0.0 { self.adaptation } else { 0.0 };",
+  "new": "let target = self.adaptation;"
+ },
+ {
+  "label": "spike count doubles",
+  "old": "self.spikes += 1;",
+  "new": "self.spikes += 2;"
+ },
+ {
+  "label": "single afferent sits at the edge",
+  "old": "if n == 1 { 0.5 * length }",
+  "new": "if n == 1 { 0.0 }"
+ },
+ {
+  "label": "array ticks double",
+  "old": "self.ticks += 1;",
+  "new": "self.ticks += 2;"
+ },
+ {
+  "label": "ra drive rectified",
+  "old": "            Class::Ra => self.gain * c.velocity.abs(),\n            Class::Pc => {",
+  "new": "            Class::Ra => self.gain * c.velocity.max(0.0),\n            Class::Pc => {"
+ }
+]

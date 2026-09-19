@@ -1,0 +1,92 @@
+[
+ {
+  "label": "delta ignores the bit's state",
+  "old": "        Some(if x >> k & 1 == 1 { -field } else { field })",
+  "new": "        Some(field)"
+ },
+ {
+  "label": "boltzmann sign",
+  "old": "        let bias: Vec<f64> = (0..n).map(|k| -beta * self.q[k * n + k]).collect();",
+  "new": "        let bias: Vec<f64> = (0..n).map(|k| beta * self.q[k * n + k]).collect();"
+ },
+ {
+  "label": "max_cut pair coefficient +1",
+  "old": "            q.add(u, v, 2.0)?;",
+  "new": "            q.add(u, v, 1.0)?;"
+ },
+ {
+  "label": "sweep flips uphill",
+  "old": "            let p_on = logistic(-beta * delta_on);",
+  "new": "            let p_on = logistic(beta * delta_on);"
+ },
+ {
+  "label": "anneal at constant temperature",
+  "old": "        let ratio = if sweeps > 1 { (beta_end / beta_start).powf(1.0 / (sweeps as f64 - 1.0)) } else { 1.0 };",
+  "new": "        let ratio = 1.0 + 0.0 * beta_end;"
+ },
+ {
+  "label": "colouring one-hot sign",
+  "old": "                q.add(self.var(v, c), self.var(v, c), -self.a)?;",
+  "new": "                q.add(self.var(v, c), self.var(v, c), self.a)?;"
+ },
+ {
+  "label": "decode ignores edge conflicts",
+  "old": "        for &(u, v) in &self.edges {\n            if u != v && colouring[u] == colouring[v] {\n                return None;\n            }\n        }\n        Some(colouring)",
+  "new": "        Some(colouring)"
+ },
+ {
+  "label": "brute force keeps the first state on ties reversed",
+  "old": "            if e < best.1 {\n                best = (x, e);\n            }",
+  "new": "            if e <= best.1 {\n                best = (x, e);\n            }"
+ },
+ {
+  "label": "65 variables accepted",
+  "old": "if n > 64 {",
+  "new": "if n > 65 {"
+ },
+ {
+  "label": "lower-triangle writes lost",
+  "old": "let (a, b) = if i <= j { (i, j) } else { (j, i) };",
+  "new": "let (a, b) = (i, j);"
+ },
+ {
+  "label": "energy of an out-of-range state",
+  "old": "if self.n < 64 && x >> self.n != 0 {",
+  "new": "if false {"
+ },
+ {
+  "label": "colouring past 64 variables",
+  "old": "if vars > 64 {",
+  "new": "if vars > 65 {"
+ },
+ {
+  "label": "two colours on a vertex decode",
+  "old": "if chosen.is_some() {",
+  "new": "if false {"
+ },
+ {
+  "label": "flips counts every visit",
+  "old": "if next != self.state {",
+  "new": "if true {"
+ },
+ {
+  "label": "cooling schedule accepted",
+  "old": "if !(beta_end >= beta_start) || !beta_end.is_finite() {",
+  "new": "if !beta_end.is_finite() {"
+ },
+ {
+  "label": "restart evaluations not accumulated",
+  "old": "s.evaluations += b.evaluations;",
+  "new": "s.evaluations += 0;"
+ },
+ {
+  "label": "anneal evaluations overwritten",
+  "old": "evaluations += e;",
+  "new": "evaluations = e;"
+ },
+ {
+  "label": "colour wall product wraps",
+  "old": "vertices.saturating_mul(colours)",
+  "new": "vertices.wrapping_mul(colours)"
+ }
+]

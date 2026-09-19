@@ -1,0 +1,118 @@
+[
+ {
+  "label": "granule step is forward euler",
+  "old": "*s = u + (*s - u) * (-dt / tau).exp();",
+  "new": "*s += (u - *s) * (dt / tau);"
+ },
+ {
+  "label": "learning rule potentiates on error",
+  "old": "*w -= self.beta * error * x;",
+  "new": "*w += self.beta * error * x;"
+ },
+ {
+  "label": "error is target minus output",
+  "old": "let e = self.output(p)? - d;\n            for (ci, x) in c.iter_mut().zip(p) {",
+  "new": "let e = d - self.output(p)?;\n            for (ci, x) in c.iter_mut().zip(p) {"
+ },
+ {
+  "label": "error correlation not averaged",
+  "old": "Ok(c.into_iter().map(|v| v / n).collect())",
+  "new": "Ok(c.into_iter().collect())"
+ },
+ {
+  "label": "epoch ignores beta",
+  "old": "*w -= self.beta * ci;",
+  "new": "*w -= ci;"
+ },
+ {
+  "label": "epoch reports the sum not the mean",
+  "old": "Ok(mse / samples.len() as f64)",
+  "new": "Ok(mse)"
+ },
+ {
+  "label": "correlation not averaged",
+  "old": "Ok(r.into_iter().map(|v| v / count).collect())",
+  "new": "Ok(r.into_iter().collect())"
+ },
+ {
+  "label": "wiener right-hand side not averaged",
+  "old": "        *v /= count;\n",
+  "new": "        *v /= 1.0 + 0.0 * count;\n"
+ },
+ {
+  "label": "safe beta ignores off-diagonal",
+  "old": "r[a * n..(a + 1) * n].iter().map(|v| v.abs()).sum::<f64>()",
+  "new": "r[a * n + a].abs()"
+ },
+ {
+  "label": "safe beta is 2 over the row sum",
+  "old": "        Ok(1.0 / worst)\n",
+  "new": "        Ok(2.0 / worst)\n"
+ },
+ {
+  "label": "cmac step not shared among tilings",
+  "old": "let step = self.beta * error / self.c as f64;",
+  "new": "let step = self.beta * error;"
+ },
+ {
+  "label": "cmac ignores beta",
+  "old": "let step = self.beta * error / self.c as f64;",
+  "new": "let step = error / self.c as f64;"
+ },
+ {
+  "label": "cmac tilings not displaced",
+  "old": "index = index * self.tiles_along(j) + (u[j] + k) / self.c;",
+  "new": "index = index * self.tiles_along(j) + u[j] / self.c;"
+ },
+ {
+  "label": "cmac tilings share one table",
+  "old": "                k * per + index\n",
+  "new": "                index\n"
+ },
+ {
+  "label": "cmac one tile too few along each axis",
+  "old": "(self.cells[j] - 1).div_ceil(self.c) + 1",
+  "new": "(self.cells[j] - 1).div_ceil(self.c)"
+ },
+ {
+  "label": "cmac accepts the upper edge",
+  "old": "if !(cell >= 0.0) || cell >= self.cells[j] as f64 {",
+  "new": "if !(cell >= 0.0) || cell > self.cells[j] as f64 {"
+ },
+ {
+  "label": "cmac accepts below the box",
+  "old": "if !(cell >= 0.0) || cell >= self.cells[j] as f64 {",
+  "new": "if cell >= self.cells[j] as f64 {"
+ },
+ {
+  "label": "cmac beta of zero accepted",
+  "old": "if !(beta > 0.0) || !(beta <= 1.0) {",
+  "new": "if !(beta <= 1.0) {"
+ },
+ {
+  "label": "cmac beta past one accepted",
+  "old": "if !(beta > 0.0) || !(beta <= 1.0) {",
+  "new": "if !(beta > 0.0) {"
+ },
+ {
+  "label": "cmac table size unchecked",
+  "old": "        if total > MAX_WEIGHTS {\n",
+  "new": "        if false {\n"
+ },
+ {
+  "label": "cmac memory counts one tiling",
+  "old": "self.c.saturating_mul(self.tiles_per_tiling())",
+  "new": "self.tiles_per_tiling()"
+ },
+ {
+  "label": "train returns target minus output",
+  "old": "let error = cells.iter().map(|&i| self.w[i]).sum::<f64>() - target;\n        let step = self.beta * error / self.c as f64;\n        for &i in &cells {\n            self.w[i] -= step;\n        }\n        Ok(error)",
+  "new": "let error = cells.iter().map(|&i| self.w[i]).sum::<f64>() - target;\n        let step = self.beta * error / self.c as f64;\n        for &i in &cells {\n            self.w[i] -= step;\n        }\n        Ok(-error)"
+ },
+ {
+  "label": "shared counts any common index",
+  "old": "a.iter().zip(&b).filter(|(p, q)| p == q).count()",
+  "new": "a.iter().filter(|p| b.contains(p)).count() + 0 * b.len()",
+  "equivalent": "each tiling owns a disjoint range of indices, so two lookups have an index in common exactly when they agree at the same tiling"
+ }
+]

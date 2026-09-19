@@ -9,7 +9,7 @@ hardware constraint models, analog device non-idealities, NIR, event-camera deco
 metrics, teaching tasks — and a joules ledger that charges for the memory traffic a synaptic
 operation needs.
 
-**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 52 modules, 1,636 tests.**
+**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 56 modules, 1,661 tests.**
 
 Run it in a browser without installing anything:
 **[energy.physicalai-bmi.org/neuromorphic](https://energy.physicalai-bmi.org/neuromorphic)** — the
@@ -76,6 +76,10 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 | `attractor` | the ring attractor: a bump of activity that holds a heading after the cue is gone, with its width and height in closed form |
 | `equilibrium` | equilibrium propagation: the gradient of a loss from the difference between two relaxations of one energy-based network, checked against the gradient obtained without it — first order in the nudge, second order when nudged both ways |
 | `localise` | sound localisation by coincidence: the Jeffress delay-line array against the path-difference geometry, the half-spacing quantisation bound, the aliasing frequency and the coincidence probability under spike jitter |
+| `cerebellum` | the cerebellum as a machine: an adaptive filter that converges on the Wiener solution at `1 − βλ` an epoch and stops when its error is decorrelated from every input, and Albus's CMAC with its triangular generalisation |
+| `grid` | grid cells: the hexagonal firing map, path integration that is exact in phase space, and the modular code — 9009 positions from 40 cells — decoded by the Chinese remainder theorem |
+| `proprio` | proprioception: the power-law muscle spindle, the tendon organ, a rate-to-spike encoder that emits exactly the integral of its rate, and a delayed reflex loop against the gain `π/2τ` at which it rings |
+| `delays` | delays as a resource: the spatiotemporal pattern a set of synaptic delays is matched to, a delay-learning rule that contracts every arrival's deviation by exactly `1 − η`, the `(D+1)ⁿ − Dⁿ` patterns a neuron can stand for, and the buffer bits that costs |
 | `sim`, `net`, `spike`, `rng` | the event-driven simulator, sparse connectivity, spike trains, seeded PCG32 |
 
 ## Use it
@@ -241,7 +245,7 @@ Every neuron model here has a test that runs it against an analytic solution.
 - **A sub-threshold current returns `None`, not a large number.** "Fires rarely" and "does not fire"
   are different statements and a rate-coded readout cannot recover the difference later.
 
-1,636 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
+1,661 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
 `#![forbid(unsafe_code)]`, and `cargo build --target wasm32-unknown-unknown` compiles the library
 unchanged. Three of the `examples/` are verification gates that exit non-zero when a closed form
 disagrees with the simulator.
@@ -287,13 +291,12 @@ be reproduced cannot be checked against anything, including itself.
 
 ## Status
 
-**0.9.0.** Fifty-two modules, every one audited by mutation: thirty-six by an adversarial auditor
+**0.10.0.** Fifty-six modules, every one audited by mutation: thirty-six by an adversarial auditor
 in 0.5.0 and 0.6.0, the ten of the third wave by hand in 0.8.0 (156 mutations, 36 survivors, every
-one now caught — see below), and everything since mutated as it was written — `oscillator`,
-`predictive`, `graph`, `attractor` in 0.8.0 and `equilibrium`, `localise` and `nef`'s PES rule in
-this release: 131 mutations, 2 survivors closed before they shipped and 1 that is equivalent by a
-stated argument (where the nudged relaxation starts, when the fixed point is unique — which a test
-asserts). The crate family is not built yet. Planned
+one now caught — see below), and everything since mutated as it was written: `oscillator`,
+`predictive`, `graph`, `attractor`, `equilibrium`, `localise`, `nef`'s PES rule, and in this
+release `cerebellum`, `grid`, `proprio` and `delays`. The harness and every mutation list are in
+`tools/`. The crate family is not built yet. Planned
 siblings, each following the same rule that a dependency lives outside the core:
 
 | crate | what it would add | why separate |
@@ -416,6 +419,27 @@ between peaks, which cannot happen: on `N` cycles an alias peak is exactly one c
 the true one, so it now counts peaks at half maximum. And PES "within 3× of least squares after
 400 sweeps" was a number with nothing behind it — measured, 3.6× — replaced by what is exact (it
 never beats the least-squares floor) and what is measured and falsifiable (it keeps closing, slowly).
+
+0.10.0 added `cerebellum`, `grid`, `proprio` and `delays`: 85 mutations, 2 survivors closed and 1
+equivalent by a stated argument. Both survivors were the mechanism named above — a fixture at the
+value that hides the term: quadrature inputs have no off-diagonal correlation, so a stability
+bound that ignored the off-diagonals passed; and 15 ms − 12 ms is `2.9999999999999996` ms in
+binary, so a test of a *closed* 3 ms window never stood on its edge until it was rewritten in
+binary fractions. `proprio` ships the FORM of the cat hamstring spindle model with its exponent
+and baseline, and leaves the two gains as parameters: this review confirmed the first two from
+open sources and did not locate the others in one it could read.
+
+### Re-running the audit
+
+The harness and every mutation it has run are in the repository: `tools/mutate.py` and one list per
+module in `tools/mutations/`. `python3 tools/mutate.py nef` applies each recorded edit to
+`src/nef.rs` in turn, runs that module's tests, restores the file and prints `caught`, `SURVIVED`,
+or — for the two mutations no test could distinguish, each with its stated reason — `equivalent`.
+It prints the number of tests that ran unmutated first, because a test that has vanished looks
+exactly like a test that passes. The lists for the third wave were nearly lost: they lived in a
+scratch directory that was cleaned, and were recovered from the session transcript. They are in
+the repository now so that cannot happen twice, and so that anyone can check the claim above
+instead of reading it.
 
 ## Not here, and said so
 

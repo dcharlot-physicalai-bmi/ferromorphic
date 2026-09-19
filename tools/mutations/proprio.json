@@ -1,0 +1,112 @@
+[
+ {
+  "label": "spindle is linear in velocity",
+  "old": "velocity.signum() * velocity.abs().powf(self.exponent)",
+  "new": "velocity.signum() * velocity.abs()"
+ },
+ {
+  "label": "spindle dynamic response is even",
+  "old": "let dynamic = self.velocity_gain * velocity.signum() * velocity.abs().powf(self.exponent);",
+  "new": "let dynamic = self.velocity_gain * velocity.abs().powf(self.exponent);"
+ },
+ {
+  "label": "spindle never goes silent",
+  "old": "Ok((self.baseline + self.length_gain * stretch + dynamic).max(0.0))",
+  "new": "Ok(self.baseline + self.length_gain * stretch + dynamic)"
+ },
+ {
+  "label": "spindle ignores stretch",
+  "old": "Ok((self.baseline + self.length_gain * stretch + dynamic).max(0.0))",
+  "new": "Ok((self.baseline + dynamic).max(0.0))"
+ },
+ {
+  "label": "hamstring exponent 0.5",
+  "old": "pub const HAMSTRING_EXPONENT: f64 = 0.6;",
+  "new": "pub const HAMSTRING_EXPONENT: f64 = 0.5;"
+ },
+ {
+  "label": "hamstring form swaps its gains",
+  "old": "Self::new(HAMSTRING_BASELINE, length_gain, velocity_gain, HAMSTRING_EXPONENT)",
+  "new": "Self::new(HAMSTRING_BASELINE, velocity_gain, length_gain, HAMSTRING_EXPONENT)"
+ },
+ {
+  "label": "exponent above one accepted",
+  "old": "if !(exponent > 0.0) || !(exponent <= 1.0) {",
+  "new": "if !(exponent > 0.0) {"
+ },
+ {
+  "label": "tendon organ has no threshold",
+  "old": "Ok(self.gain * (finite(\"force\", force)? - self.threshold).max(0.0))",
+  "new": "Ok(self.gain * finite(\"force\", force)?.max(0.0))"
+ },
+ {
+  "label": "tendon organ fires for a pushing tendon",
+  "old": "- self.threshold).max(0.0))",
+  "new": "- self.threshold).abs())"
+ },
+ {
+  "label": "encoder drops the remainder",
+  "old": "self.phase = total - emitted;",
+  "new": "self.phase = 0.0;"
+ },
+ {
+  "label": "encoder emits at most one spike a step",
+  "old": "let emitted = total.floor();",
+  "new": "let emitted = total.floor().min(1.0);"
+ },
+ {
+  "label": "encoder does not count",
+  "old": "self.spikes = self.spikes.saturating_add(emitted);",
+  "new": "self.spikes = self.spikes.saturating_add(0 * emitted);"
+ },
+ {
+  "label": "loop reads the undelayed value",
+  "old": "let delayed = self.history.front().copied().unwrap_or(0.0);",
+  "new": "let delayed = self.history.back().copied().unwrap_or(0.0);"
+ },
+ {
+  "label": "loop is one step short of its delay",
+  "old": "history: core::iter::repeat_n(x0, delay_steps + 1).collect()",
+  "new": "history: core::iter::repeat_n(x0, delay_steps.max(1)).collect()"
+ },
+ {
+  "label": "loop feedback positive",
+  "old": "let next = self.x() - self.dt * self.gain * delayed;",
+  "new": "let next = self.x() + self.dt * self.gain * delayed;"
+ },
+ {
+  "label": "loop ignores dt",
+  "old": "let next = self.x() - self.dt * self.gain * delayed;",
+  "new": "let next = self.x() - self.gain * delayed;"
+ },
+ {
+  "label": "critical gain pi over tau",
+  "old": "Some(PI / (2.0 * delay_s))",
+  "new": "Some(PI / delay_s)"
+ },
+ {
+  "label": "ringing period 2 tau",
+  "old": "Some(4.0 * delay_s)",
+  "new": "Some(2.0 * delay_s)"
+ },
+ {
+  "label": "discrete edge uses 2m not 2m+1",
+  "old": "(PI / (2.0 * (2.0 * delay_steps as f64 + 1.0))).sin()",
+  "new": "(PI / (2.0 * (2.0 * delay_steps as f64))).sin()"
+ },
+ {
+  "label": "discrete edge without the sine",
+  "old": "Some(2.0 / dt * (PI / (2.0 * (2.0 * delay_steps as f64 + 1.0))).sin())",
+  "new": "Some(2.0 / dt * (PI / (2.0 * (2.0 * delay_steps as f64 + 1.0))))"
+ },
+ {
+  "label": "discrete period 4m",
+  "old": "Some((4.0 * delay_steps as f64 + 2.0) * dt)",
+  "new": "Some(4.0 * delay_steps as f64 * dt)"
+ },
+ {
+  "label": "delay bound unchecked",
+  "old": "if delay_steps > MAX_DELAY_STEPS {",
+  "new": "if false {"
+ }
+]

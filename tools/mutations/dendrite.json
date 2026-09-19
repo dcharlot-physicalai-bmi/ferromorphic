@@ -1,0 +1,72 @@
+[
+ {
+  "label": "steady state drops the excitatory term",
+  "old": "Ok((self.g_l * self.e_l + self.g_d * v_d + g_e * self.e_e + g_i * self.e_i) / total)",
+  "new": "Ok((self.g_l * self.e_l + self.g_d * v_d + g_i * self.e_i) / total)"
+ },
+ {
+  "label": "prediction divides by g_l only",
+  "old": "        (self.g_l * self.e_l + self.g_d * v_d) / (self.g_l + self.g_d)\n    }",
+  "new": "        (self.g_l * self.e_l + self.g_d * v_d) / self.g_l\n    }"
+ },
+ {
+  "label": "learning rule sign reversed",
+  "old": "        let err = self.phi.rate(v) - self.phi.rate(v_star);",
+  "new": "        let err = self.phi.rate(v_star) - self.phi.rate(v);"
+ },
+ {
+  "label": "slope drops /v_scale",
+  "old": "        r * (1.0 - r / self.rate_max) / self.v_scale",
+  "new": "        r * (1.0 - r / self.rate_max)"
+ },
+ {
+  "label": "branch sigmoid becomes exp",
+  "old": "                1.0 / (1.0 + (-z / self.scale).exp())",
+  "new": "                (z / self.scale).exp()"
+ },
+ {
+  "label": "point neuron claims xor",
+  "old": "    sum_lower < sum_upper\n}",
+  "new": "    sum_lower <= sum_upper || true\n}"
+ },
+ {
+  "label": "dendrite forgets rest potential",
+  "old": "Ok(self.soma.e_l + self.w.iter().zip(psp).map(|(w, p)| w * p).sum::<f64>())",
+  "new": "Ok(self.w.iter().zip(psp).map(|(w, p)| w * p).sum::<f64>())"
+ },
+ {
+  "label": "reversal order unguarded",
+  "old": "if self.e_i >= self.e_e {",
+  "new": "if false {"
+ },
+ {
+  "label": "time constant ignores the teacher",
+  "old": "self.c / (self.g_l + self.g_d + g_e + g_i)",
+  "new": "self.c / (self.g_l + self.g_d)"
+ },
+ {
+  "label": "forward euler soma",
+  "old": "self.v = v_inf + (self.v - v_inf) * (-dt / tau).exp();",
+  "new": "self.v = v_inf + (self.v - v_inf) * (1.0 - dt / tau);"
+ },
+ {
+  "label": "dendrite_for_target ratio inverted",
+  "old": "Some(v_t + (self.soma.g_l / self.soma.g_d) * (v_t - self.soma.e_l))",
+  "new": "Some(v_t + (self.soma.g_d / self.soma.g_l) * (v_t - self.soma.e_l))"
+ },
+ {
+  "label": "learning gain drops dt",
+  "old": "let gain = self.eta * dt * err * self.phi.slope(v_star);",
+  "new": "let gain = self.eta * err * self.phi.slope(v_star);"
+ },
+ {
+  "label": "prediction error sign",
+  "old": "Ok(self.phi.rate(self.soma.v) - self.phi.rate(self.soma.prediction(v_d)))",
+  "new": "Ok(self.phi.rate(self.soma.prediction(v_d)) - self.phi.rate(self.soma.v))"
+ },
+ {
+  "label": "prediction weights swapped",
+  "old": "(self.g_l * self.e_l + self.g_d * v_d) / (self.g_l + self.g_d)",
+  "new": "(self.g_d * self.e_l + self.g_l * v_d) / (self.g_l + self.g_d)"
+ }
+]

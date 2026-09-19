@@ -1,0 +1,92 @@
+[
+ {
+  "label": "bundle_similarity: 2^(n-1)",
+  "old": "Some(p / 2f64.powi(n as i32))",
+  "new": "Some(p / 2f64.powi(n as i32 - 1))"
+ },
+ {
+  "label": "bipolar bundle tie toward -1",
+  "old": "Ok(sum.iter().map(|&s| if s >= 0.0 { 1.0 } else { -1.0 }).collect())",
+  "new": "Ok(sum.iter().map(|&s| if s > 0.0 { 1.0 } else { -1.0 }).collect())"
+ },
+ {
+  "label": "rotate left instead of right",
+  "old": "    out.rotate_right(shift);",
+  "new": "    out.rotate_left(shift);"
+ },
+ {
+  "label": "binary similarity 1-h/D",
+  "old": "Ok(1.0 - 2.0 * h as f64 / self.dim as f64)",
+  "new": "Ok(1.0 - h as f64 / self.dim as f64)"
+ },
+ {
+  "label": "hrr bind: correlation index",
+  "old": "let j = if k >= i { k - i } else { k + d - i };",
+  "new": "let j = (k + i) % d;"
+ },
+ {
+  "label": "dimension_for: z_m = ln m",
+  "old": "let z_m = (2.0 * (m as f64).ln()).sqrt();",
+  "new": "let z_m = (m as f64).ln();"
+ },
+ {
+  "label": "nearest tie goes high",
+  "old": "            if dot > best.1 {\n                best = (i, dot);",
+  "new": "            if dot >= best.1 {\n                best = (i, dot);"
+ },
+ {
+  "label": "resonator never reports convergence",
+  "old": "            if !changed {\n                converged = true;\n                break;\n            }",
+  "new": "            if !changed {\n                break;\n            }"
+ },
+ {
+  "label": "meter: bind counts half",
+  "old": "tally(&mut meter.binds, self.dim);\n        Ok(a.iter().zip(b).map(|(x, y)| x * y).collect())",
+  "new": "tally(&mut meter.binds, self.dim / 2);\n        Ok(a.iter().zip(b).map(|(x, y)| x * y).collect())"
+ },
+ {
+  "label": "bipolar guard off",
+  "old": "if x != 1.0 && x != -1.0 {",
+  "new": "if false {"
+ },
+ {
+  "label": "binary guard off",
+  "old": "if x != 0.0 && x != 1.0 {",
+  "new": "if false {"
+ },
+ {
+  "label": "binary bundle tie goes to 0",
+  "old": "if 2 * c >= half",
+  "new": "if 2 * c > half"
+ },
+ {
+  "label": "bundle_similarity answers for even k",
+  "old": "if k == 0 || k.is_multiple_of(2) {",
+  "new": "if k == 0 {"
+ },
+ {
+  "label": "dimension_for accepts one symbol",
+  "old": "if m < 2 || !(z > 0.0) {",
+  "new": "if m < 1 || !(z > 0.0) {"
+ },
+ {
+  "label": "cosine of a zero vector unguarded",
+  "old": "if na == 0.0 || nb == 0.0 {",
+  "new": "if false {"
+ },
+ {
+  "label": "resonator accepts zero iterations",
+  "old": "max_iters: max_iters.max(1)",
+  "new": "max_iters"
+ },
+ {
+  "label": "hrr normalise flag inverted",
+  "old": "if normalise {",
+  "new": "if !normalise {"
+ },
+ {
+  "label": "noise sd 1/D",
+  "old": "if dim == 0 { f64::NAN } else { 1.0 / (dim as f64).sqrt() }",
+  "new": "if dim == 0 { f64::NAN } else { 1.0 / (dim as f64) }"
+ }
+]

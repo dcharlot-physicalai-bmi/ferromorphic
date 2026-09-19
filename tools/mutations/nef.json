@@ -1,0 +1,122 @@
+[
+ {
+  "label": "rate: drop tau_ref",
+  "old": "1.0 / (self.tau_ref + self.tau_rc * (1.0 + 1.0 / (j - 1.0)).ln())",
+  "new": "1.0 / (self.tau_rc * (1.0 + 1.0 / (j - 1.0)).ln())"
+ },
+ {
+  "label": "gain_bias: 1+intercept",
+  "old": "let gain = (x - 1.0) / (1.0 - intercept);",
+  "new": "let gain = (x - 1.0) / (1.0 + intercept);"
+ },
+ {
+  "label": "gain_bias: bias sign",
+  "old": "let bias = 1.0 - gain * intercept;",
+  "new": "let bias = 1.0 + gain * intercept;"
+ },
+ {
+  "label": "decoders: ridge not scaled by n",
+  "old": "let ridge = lambda * trace / n as f64;",
+  "new": "let ridge = lambda * trace;"
+ },
+ {
+  "label": "full_weights: drop /radius",
+  "old": "w[j * n_pre + i] = post.gains[j] * acc / post.radius;",
+  "new": "w[j * n_pre + i] = post.gains[j] * acc;"
+ },
+ {
+  "label": "dynamics: drop +I",
+  "old": "        a2[i * dim + i] += 1.0;\n",
+  "new": "        a2[i * dim + i] += 0.0;\n"
+ },
+ {
+  "label": "lowpass: no filtering",
+  "old": "        self.y = x + (self.y - x) * decay;",
+  "new": "        let _ = decay; self.y = x;"
+ },
+ {
+  "label": "traffic: factorised drops encoder pass",
+  "old": "let factorised = spikes_per_tick.saturating_mul(dim).saturating_add(dim.saturating_mul(n_post));",
+  "new": "let factorised = spikes_per_tick.saturating_mul(dim);"
+ },
+ {
+  "label": "spiking: amps per unit without r_m",
+  "old": "let amps_per_unit = (proto.v_th - proto.v_rest) / proto.r_m;",
+  "new": "let amps_per_unit = (proto.v_th - proto.v_rest);"
+ },
+ {
+  "label": "current: drop bias",
+  "old": "Ok(self.gains[i] * dot / self.radius + self.biases[i])",
+  "new": "Ok(self.gains[i] * dot / self.radius)"
+ },
+ {
+  "label": "reset != rest accepted",
+  "old": "if lif.v_reset != lif.v_rest {",
+  "new": "if false {"
+ },
+ {
+  "label": "inverse rate accepts 1/tau_ref",
+  "old": "if !(rate > 0.0) || rate >= 1.0 / self.tau_ref {",
+  "new": "if !(rate > 0.0) || rate > 1.0 / self.tau_ref {"
+ },
+ {
+  "label": "intercept of exactly 1 accepted",
+  "old": "intercept <= -1.0 || intercept >= 1.0 {",
+  "new": "intercept < -1.0 || intercept > 1.0 {"
+ },
+ {
+  "label": "max rate at the bound accepted",
+  "old": "!(rhi < spec.neuron.max_rate_bound())",
+  "new": "!(rhi <= spec.neuron.max_rate_bound())"
+ },
+ {
+  "label": "negative ridge accepted",
+  "old": "if !(lambda >= 0.0) || !lambda.is_finite() {",
+  "new": "if !lambda.is_finite() {"
+ },
+ {
+  "label": "ragged B accepted",
+  "old": "if b.is_empty() || !b.len().is_multiple_of(dim) {",
+  "new": "if b.is_empty() {"
+ },
+ {
+  "label": "spiking accepts a foreign curve",
+  "old": "if curve != ensemble.neuron {",
+  "new": "if false {"
+ },
+ {
+  "label": "rmse is mean absolute error",
+  "old": "acc += (a - b) * (a - b);",
+  "new": "acc += (a - b).abs();"
+ },
+ {
+  "label": "pes contraction forgets n",
+  "old": "1.0 - self.kappa * energy / rates.len().max(1) as f64",
+  "new": "1.0 - self.kappa * energy"
+ },
+ {
+  "label": "pes stability limit n/|a|^2",
+  "old": "Some(2.0 * rates.len() as f64 / energy)",
+  "new": "Some(rates.len() as f64 / energy)"
+ },
+ {
+  "label": "pes error sign",
+  "old": "            *e -= t;\n",
+  "new": "            *e += t;\n"
+ },
+ {
+  "label": "pes scale forgets n",
+  "old": "let scale = self.kappa / decoders.n as f64;",
+  "new": "let scale = self.kappa;"
+ },
+ {
+  "label": "pes ascends",
+  "old": "decoders.d[i * out + j] -= scale * a * e;",
+  "new": "decoders.d[i * out + j] += scale * a * e;"
+ },
+ {
+  "label": "pes touched counts neurons",
+  "old": "touched += out;",
+  "new": "touched += 1;"
+ }
+]

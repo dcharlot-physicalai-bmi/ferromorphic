@@ -1,0 +1,72 @@
+[
+ {
+  "label": "trace decays twice",
+  "old": "    pub fn step(&mut self) {\n        for x in &mut self.e {\n            *x *= self.decay;\n        }",
+  "new": "    pub fn step(&mut self) {\n        for x in &mut self.e {\n            *x *= self.decay * self.decay;\n        }"
+ },
+ {
+  "label": "td error undiscounted",
+  "old": "        let delta = r + self.gamma * v_next - self.v[s];",
+  "new": "        let delta = r + v_next - self.v[s];"
+ },
+ {
+  "label": "update touches every synapse",
+  "old": "            if e > self.floor {\n                *w += self.eta * delta * e;\n                touched += 1;\n            }",
+  "new": "            *w += self.eta * delta * e;\n            touched += 1;"
+ },
+ {
+  "label": "actor eligibility is pk not 1-pk",
+  "old": "            let g = if k == a { 1.0 - pk } else { -pk };",
+  "new": "            let g = if k == a { pk } else { -pk };"
+ },
+ {
+  "label": "chain reward one step early",
+  "old": "            if s + 1 == n - 1 {\n                reward[s * 2 + 1] = 1.0;\n            }",
+  "new": "            if s + 2 == n - 1 {\n                reward[s * 2 + 1] = 1.0;\n            }"
+ },
+ {
+  "label": "value iteration undiscounted",
+  "old": "                let target = self.reward[s * self.actions + a] + self.gamma * v[n];",
+  "new": "                let target = self.reward[s * self.actions + a] + v[n];"
+ },
+ {
+  "label": "terminal value not zeroed",
+  "old": "        let v_next = if next_terminal { 0.0 } else { self.v[s_next] };",
+  "new": "        let v_next = self.v[s_next] + 0.0 * f64::from(u8::from(next_terminal));"
+ },
+ {
+  "label": "gamma of 1 accepted where open",
+  "old": "if high_open { v < 1.0 } else { v <= 1.0 }",
+  "new": "if high_open { v <= 1.0 } else { v <= 1.0 }"
+ },
+ {
+  "label": "next == states accepted",
+  "old": "next.iter().find(|n| **n >= states)",
+  "new": "next.iter().find(|n| **n > states)"
+ },
+ {
+  "label": "chain of one accepted",
+  "old": "if n < 2 {",
+  "new": "if n < 1 {"
+ },
+ {
+  "label": "mean touched halved",
+  "old": "self.updates += 1;",
+  "new": "self.updates += 2;"
+ },
+ {
+  "label": "episode return undiscounted",
+  "old": "ret += disc * r;",
+  "new": "ret += r;"
+ },
+ {
+  "label": "replacing trace",
+  "old": "self.e[i] += 1.0;",
+  "new": "self.e[i] = 1.0;"
+ },
+ {
+  "label": "policy action bound",
+  "old": "policy.iter().find(|a| **a >= self.actions)",
+  "new": "policy.iter().find(|a| **a > self.actions)"
+ }
+]

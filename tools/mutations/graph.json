@@ -1,0 +1,82 @@
+[
+ {
+  "label": "every synapse has unit delay",
+  "old": "let arrive = t.checked_add(delay).ok_or(GraphError::Overflow)?;\n                if",
+  "new": "let arrive = t.checked_add(1).ok_or(GraphError::Overflow)?;\n                if"
+ },
+ {
+  "label": "parent not latched",
+  "old": "pending.push(Reverse((arrive, v as u32, w)));",
+  "new": "pending.push(Reverse((arrive, 0, w)));"
+ },
+ {
+  "label": "synaptic events double",
+  "old": "syn_events += 1;",
+  "new": "syn_events += 2;"
+ },
+ {
+  "label": "spikes double",
+  "old": "spikes += 1;\n            ticks = t;",
+  "new": "spikes += 2;\n            ticks = t;"
+ },
+ {
+  "label": "ticks off by one",
+  "old": "ticks = t;",
+  "new": "ticks = t + 1;"
+ },
+ {
+  "label": "bellman-ford keeps the longer",
+  "old": "is_none_or(|dv| through < dv)",
+  "new": "is_none_or(|dv| through > dv)"
+ },
+ {
+  "label": "path not reversed",
+  "old": "        path.reverse();\n",
+  "new": ""
+ },
+ {
+  "label": "walker spikes one per walker",
+  "old": "spikes += steps;",
+  "new": "spikes += 1;"
+ },
+ {
+  "label": "exit recorded at the start",
+  "old": "exits[at] += 1;",
+  "new": "exits[start] += 1;"
+ },
+ {
+  "label": "ruin probability mirrored",
+  "old": "Some(k as f64 / n as f64)",
+  "new": "Some((n - k) as f64 / n as f64)"
+ },
+ {
+  "label": "ruin mean k*n",
+  "old": "Some((k * (n - k)) as f64)",
+  "new": "Some((k * n) as f64)"
+ },
+ {
+  "label": "ruin variance drops the -2",
+  "old": "(a * a + b * b - 2.0) / 3.0",
+  "new": "(a * a + b * b) / 3.0"
+ },
+ {
+  "label": "harmonic value not normalised",
+  "old": ".sum::<f64>() / self.walkers as f64)",
+  "new": ".sum::<f64>())"
+ },
+ {
+  "label": "zero delay accepted",
+  "old": "if delay == 0 {",
+  "new": "if false {"
+ },
+ {
+  "label": "connect_both connects one way twice",
+  "old": "self.connect(b, a, delay)",
+  "new": "self.connect(a, b, delay)"
+ },
+ {
+  "label": "walker always takes the first way",
+  "old": "ways[rng.below(count) as usize]",
+  "new": "ways[0 * rng.below(count) as usize]"
+ }
+]

@@ -1,0 +1,92 @@
+[
+ {
+  "label": "arrival subtracts the delay",
+  "old": "Ok(spikes.iter().zip(&self.delays).map(|(t, d)| t + d).collect())",
+  "new": "Ok(spikes.iter().zip(&self.delays).map(|(t, d)| t - d).collect())"
+ },
+ {
+  "label": "matched pattern adds the delay",
+  "old": "self.delays.iter().map(|d| at - d).collect()",
+  "new": "self.delays.iter().map(|d| at + d).collect()"
+ },
+ {
+  "label": "spread is the latest arrival",
+  "old": "        Ok(hi - lo)\n",
+  "new": "        Ok(hi)\n"
+ },
+ {
+  "label": "coincidence window open",
+  "old": "while a[hi] - a[lo] > window {",
+  "new": "while a[hi] - a[lo] >= window {"
+ },
+ {
+  "label": "coincidence counts one short",
+  "old": "best = best.max(hi - lo + 1);",
+  "new": "best = best.max(hi - lo);"
+ },
+ {
+  "label": "arrivals not sorted before windowing",
+  "old": "        a.sort_by(f64::total_cmp);\n",
+  "new": "        a.reverse();\n        a.reverse();\n"
+ },
+ {
+  "label": "learning moves toward the deviation",
+  "old": "let moved = *d - eta * (ai - mean_arrival);",
+  "new": "let moved = *d + eta * (ai - mean_arrival);"
+ },
+ {
+  "label": "learning ignores eta",
+  "old": "let moved = *d - eta * (ai - mean_arrival);",
+  "new": "let moved = *d - (ai - mean_arrival);"
+ },
+ {
+  "label": "learning references the earliest arrival",
+  "old": "let moved = *d - eta * (ai - mean_arrival);",
+  "new": "let moved = *d - eta * (ai - lo);"
+ },
+ {
+  "label": "clipping not counted",
+  "old": "clipped += usize::from(held != moved);",
+  "new": "clipped += 0 * usize::from(held != moved);"
+ },
+ {
+  "label": "delays not clipped",
+  "old": "let held = moved.clamp(0.0, self.max_delay);",
+  "new": "let held = moved;"
+ },
+ {
+  "label": "reported spread is after the update",
+  "old": "Ok(Presentation { spread: hi - lo, mean_arrival, clipped })",
+  "new": "Ok(Presentation { spread: 0.0 * (hi - lo), mean_arrival, clipped })"
+ },
+ {
+  "label": "eta above one accepted",
+  "old": "if !(eta > 0.0) || !(eta <= 1.0) {",
+  "new": "if !(eta > 0.0) {"
+ },
+ {
+  "label": "capacity is all delay vectors",
+  "old": "    Some(all - shifted)\n",
+  "new": "    Some(all)\n"
+ },
+ {
+  "label": "capacity shifted term uses D-1",
+  "old": "let shifted = u128::from(d_max).checked_pow(n)?;",
+  "new": "let shifted = u128::from(d_max.saturating_sub(1)).checked_pow(n)?;"
+ },
+ {
+  "label": "shared line costs the sum",
+  "old": "(sum, delays_ticks.iter().copied().max().unwrap_or(0))",
+  "new": "(sum, sum)"
+ },
+ {
+  "label": "delay above the hardware range accepted",
+  "old": "delays.iter().find(|d| **d < 0.0 || **d > max_delay)",
+  "new": "delays.iter().find(|d| **d < 0.0)"
+ },
+ {
+  "label": "negative delay accepted",
+  "old": "delays.iter().find(|d| **d < 0.0 || **d > max_delay)",
+  "new": "delays.iter().find(|d| **d > max_delay)"
+ }
+]

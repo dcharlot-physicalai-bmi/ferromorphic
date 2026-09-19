@@ -1,0 +1,107 @@
+[
+ {
+  "label": "observation error not precision-weighted",
+  "old": "(y[i] - pred) / self.var_obs",
+  "new": "(y[i] - pred)"
+ },
+ {
+  "label": "prior error divided by the wrong variance",
+  "old": "(x[j] - self.prior[j]) / self.var_prior",
+  "new": "(x[j] - self.prior[j]) / self.var_obs"
+ },
+ {
+  "label": "free energy drops var_obs",
+  "old": "let obs: f64 = eps_y.iter().map(|e| e * e).sum::<f64>() * self.var_obs;",
+  "new": "let obs: f64 = eps_y.iter().map(|e| e * e).sum::<f64>();"
+ },
+ {
+  "label": "precision uses var_obs on the diagonal",
+  "old": "h[a * n + a] += 1.0 / self.var_prior;",
+  "new": "h[a * n + a] += 1.0 / self.var_obs;"
+ },
+ {
+  "label": "map forgets the prior mean",
+  "old": "back / self.var_obs + self.prior[j] / self.var_prior",
+  "new": "back / self.var_obs"
+ },
+ {
+  "label": "stable dt 2/L",
+  "old": "        1.0 / worst\n",
+  "new": "        2.0 / worst\n"
+ },
+ {
+  "label": "value unit adds the prior error",
+  "old": "x[j] += dt * (back - eps_x[j]);",
+  "new": "x[j] += dt * (back + eps_x[j]);"
+ },
+ {
+  "label": "relax monitor blind",
+  "old": "worst = worst.max(f - last);",
+  "new": "worst = worst.max(0.0 * (f - last));"
+ },
+ {
+  "label": "weight signal uses the prior not the value",
+  "old": "g[i * self.n_lat + j] = eps_y[i] * x[j];",
+  "new": "g[i * self.n_lat + j] = eps_y[i] * self.prior[j];"
+ },
+ {
+  "label": "tutorial g' = phi",
+  "old": "let d_phi = self.eps_u * 2.0 * self.phi - self.eps_p;",
+  "new": "let d_phi = self.eps_u * self.phi - self.eps_p;"
+ },
+ {
+  "label": "prior error unit leaks without its variance",
+  "old": "let d_p = self.phi - self.v_p - self.var_p * self.eps_p;",
+  "new": "let d_p = self.phi - self.v_p - self.eps_p;"
+ },
+ {
+  "label": "sensory error unit leaks without its variance",
+  "old": "let d_u = u - self.phi * self.phi - self.var_u * self.eps_u;",
+  "new": "let d_u = u - self.phi * self.phi - self.eps_u;"
+ },
+ {
+  "label": "posterior slope wrong variance",
+  "old": "2.0 * phi * (u - phi * phi) / self.var_u",
+  "new": "2.0 * phi * (u - phi * phi) / self.var_p"
+ },
+ {
+  "label": "output error not divided by var_out",
+  "old": "x[l + 1].iter().zip(&mu).map(|(v, m)| (v - m) / var).collect()",
+  "new": "x[l + 1].iter().zip(&mu).map(|(v, m)| (v - m)).collect()"
+ },
+ {
+  "label": "network free energy unweighted",
+  "old": "var * layer.iter().map(|e| e * e).sum::<f64>()",
+  "new": "layer.iter().map(|e| e * e).sum::<f64>()"
+ },
+ {
+  "label": "relaxation drops tanh'",
+  "old": "let dx = dt * (-eps[l - 1][j] + (1.0 - t * t) * back);",
+  "new": "let dx = dt * (-eps[l - 1][j] + back);"
+ },
+ {
+  "label": "local update uses raw value",
+  "old": "g[i * n_in + j] = e * x[l][j].tanh();",
+  "new": "g[i * n_in + j] = e * x[l][j];"
+ },
+ {
+  "label": "backprop drops tanh'",
+  "old": "                        (1.0 - t * t) * back\n",
+  "new": "                        back\n"
+ },
+ {
+  "label": "backprop uses raw value",
+  "old": "g[i * n_in + j] = d * x[l][j].tanh();",
+  "new": "g[i * n_in + j] = d * x[l][j];"
+ },
+ {
+  "label": "mismatch not rooted",
+  "old": "Some((diff / norm).sqrt())",
+  "new": "Some(diff / norm)"
+ },
+ {
+  "label": "weights not scaled by fan-in",
+  "old": "let bound = 1.0 / (p[0] as f64).sqrt();",
+  "new": "let bound = 1.0;"
+ }
+]
