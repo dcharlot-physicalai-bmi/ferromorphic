@@ -30,6 +30,14 @@
 //! - **The spindle's power law.** Doubling the lengthening velocity multiplies the dynamic
 //!   response by `2^p` — `1.516` at `p = 0.6`, not 2 — and the response is odd in velocity until
 //!   the rate reaches zero, where the afferent falls silent, as spindles do in rapid shortening.
+//! - **The tendon organ's dynamics.** Houk and Henneman (*Responses of Golgi tendon organs to active
+//!   contractions of the soleus muscle of the cat*, Journal of Neurophysiology 30(3):466–481,
+//!   1967) fitted a linear model whose response to a unit step of force is
+//!   `K [1 + B e^{−bt} + C e^{−ct}]` — an overshoot of `K(B + C)` that relaxes at two rates to the
+//!   static gain `K` — as summarised by Mileusnic and Loeb in *Proprioceptors and models of
+//!   transduction* (Scholarpedia 10(5):12390, 2015). [`TendonDynamics`] steps that model exactly
+//!   for a force held over the step: checked against the step response, against composition of
+//!   steps, and against superposition.
 //! - **The encoder is exact.** Over any run the spikes emitted number `⌊∫ rate dt⌋`, and at a
 //!   constant rate the intervals are `1/rate`.
 //! - **The delayed loop.** For `ẋ = −K x(t − τ)` the largest stable gain is `K_c = π/(2τ)`, and at
@@ -48,8 +56,10 @@
 //!   parameters of [`Spindle`], not constants of this crate. Supply them from the paper.
 //! - Fusimotor (gamma) drive, which retunes a spindle during movement; intrafusal mechanics; the
 //!   initial burst and history dependence of real afferents.
-//! - The tendon organ's dynamic response (Houk and Simon, 1967); [`TendonOrgan`] is its static
-//!   force–rate line only.
+//! - Fitted constants for the tendon organ's dynamics. [`TendonDynamics`] is the linear model's
+//!   FORM, with its five parameters supplied by the caller: the source read for it (Mileusnic
+//!   and Loeb's review, above) reports that they were fitted receptor by receptor and does not
+//!   tabulate them.
 //! - A reflex loop through the power-law term, a muscle, or a limb with inertia. The closed form
 //!   is for the linear first-order loop, and that is the loop simulated.
 
@@ -207,6 +217,61 @@ impl TendonOrgan {
     }
 }
 
+/// The Houk–Henneman linear model of a tendon organ: the rate is `K` times the force plus two
+/// high-passed copies of it, so that a step of force `F` gives `K F [1 + B e^{−bt} + C e^{−ct}]`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TendonDynamics {
+    /// Static gain `K`, impulses per second per newton.
+    pub k: f64,
+    /// Size of the fast overshoot, as a multiple of the static response.
+    pub b_gain: f64,
+    /// Its decay rate `b`, 1/s.
+    pub b_rate: f64,
+    /// Size of the slow overshoot.
+    pub c_gain: f64,
+    /// Its decay rate `c`, 1/s.
+    pub c_rate: f64,
+    /// The two low-pass states the high-passed copies are formed from, newtons.
+    pub state: [f64; 2],
+}
+
+impl TendonDynamics {
+    /// Build at rest (no force history).
+    ///
+    /// # Errors
+    ///
+    /// [`ProprioError::OutOfRange`] for a non-positive gain `K` or decay rate, or a negative
+    /// overshoot.
+    pub fn new(k: f64, b_gain: f64, b_rate: f64, c_gain: f64, c_rate: f64) -> Result<Self, ProprioError> {
+        Ok(Self {
+            k: positive("k", k)?,
+            b_gain: non_negative("b_gain", b_gain)?,
+            b_rate: positive("b_rate", b_rate)?,
+            c_gain: non_negative("c_gain", c_gain)?,
+            c_rate: positive("c_rate", c_rate)?,
+            state: [0.0; 2],
+        })
+    }
+
+    /// Advance by `dt` with the force held at `force` over the step, and return the rate at the
+    /// END of the step, impulses per second, floored at zero. Exact for a held force: each
+    /// overshoot term is the force minus its own exponential low-pass.
+    ///
+    /// # Errors
+    ///
+    /// [`ProprioError::OutOfRange`] for a non-positive `dt`, [`ProprioError::NonFinite`] for a
+    /// non-finite force.
+    pub fn step(&mut self, dt: f64, force: f64) -> Result<f64, ProprioError> {
+        let dt = positive("dt", dt)?;
+        let force = finite("force", force)?;
+        for (s, rate) in self.state.iter_mut().zip([self.b_rate, self.c_rate]) {
+            *s = force + (*s - force) * (-rate * dt).exp();
+        }
+        let overshoot = self.b_gain * (force - self.state[0]) + self.c_gain * (force - self.state[1]);
+        Ok((self.k * (force + overshoot)).max(0.0))
+    }
+}
+
 /// Turns a rate into spikes without changing it: a phase accumulator that emits one spike each
 /// time the integral of the rate passes a whole number.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
@@ -359,6 +424,45 @@ mod tests {
         assert_eq!(ib.rate(0.5).unwrap(), 0.0);
         assert_eq!(ib.rate(3.0).unwrap(), 10.0);
         assert_eq!(ib.rate(-2.0).unwrap(), 0.0, "a tendon cannot push");
+    }
+
+    #[test]
+    fn the_tendon_organ_overshoots_a_step_of_force_and_relaxes_at_two_rates() {
+        let (k, bg, br, cg, cr) = (3.0, 0.8, 40.0, 0.3, 2.5);
+        let closed = |force: f64, t: f64| k * force * (1.0 + bg * (-br * t).exp() + cg * (-cr * t).exp());
+        // One long step, and the same interval in a thousand short ones: the update is exact.
+        let mut one = TendonDynamics::new(k, bg, br, cg, cr).unwrap();
+        assert!((one.step(0.2, 5.0).unwrap() - closed(5.0, 0.2)).abs() < 1e-12);
+        let mut many = TendonDynamics::new(k, bg, br, cg, cr).unwrap();
+        let mut last = 0.0;
+        for _ in 0..1000 {
+            last = many.step(2e-4, 5.0).unwrap();
+        }
+        assert!((last - closed(5.0, 0.2)).abs() < 1e-10, "{last} vs {}", closed(5.0, 0.2));
+        // The first instant overshoots by K F (B + C); held long enough it settles on K F.
+        let mut fresh = TendonDynamics::new(k, bg, br, cg, cr).unwrap();
+        assert!((fresh.step(1e-9, 5.0).unwrap() - 15.0 * 2.1).abs() < 1e-5);
+        for _ in 0..200 {
+            fresh.step(0.1, 5.0).unwrap();
+        }
+        assert!((fresh.step(0.1, 5.0).unwrap() - 15.0).abs() < 1e-12);
+        // Linear: the response to a second step on top of the first is the sum of the two.
+        let mut both = TendonDynamics::new(k, bg, br, cg, cr).unwrap();
+        both.step(0.05, 2.0).unwrap();
+        let got = both.step(0.03, 5.0).unwrap();
+        assert!((got - (closed(2.0, 0.08) + closed(3.0, 0.03))).abs() < 1e-12, "{got}");
+        // Unloading undershoots, and a rate cannot go below zero: it is floored, not negative.
+        assert_eq!(both.step(1e-6, 0.0).unwrap(), 0.0);
+        // With no overshoot terms it is the static line.
+        let mut plain = TendonDynamics::new(4.0, 0.0, 1.0, 0.0, 1.0).unwrap();
+        assert_eq!(plain.step(0.01, 2.5).unwrap(), 10.0);
+        assert!(matches!(TendonDynamics::new(0.0, 0.1, 1.0, 0.1, 1.0), Err(ProprioError::OutOfRange { what: "k", .. })));
+        assert!(matches!(TendonDynamics::new(1.0, -0.1, 1.0, 0.1, 1.0), Err(ProprioError::OutOfRange { what: "b_gain", .. })));
+        assert!(matches!(TendonDynamics::new(1.0, 0.1, 0.0, 0.1, 1.0), Err(ProprioError::OutOfRange { what: "b_rate", .. })));
+        assert!(matches!(TendonDynamics::new(1.0, 0.1, 1.0, f64::NAN, 1.0), Err(ProprioError::OutOfRange { what: "c_gain", .. })));
+        assert!(matches!(TendonDynamics::new(1.0, 0.1, 1.0, 0.1, -1.0), Err(ProprioError::OutOfRange { what: "c_rate", .. })));
+        assert!(matches!(plain.step(0.0, 1.0), Err(ProprioError::OutOfRange { what: "dt", .. })));
+        assert!(matches!(plain.step(0.1, f64::NAN), Err(ProprioError::NonFinite { what: "force" })));
     }
 
     #[test]

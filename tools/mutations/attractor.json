@@ -93,5 +93,40 @@
   "label": "bisection keeps the wrong half",
   "old": "if j1 * f1(mid) < 1.0 {\n            lo = mid;",
   "new": "if j1 * f1(mid) > 1.0 {\n            lo = mid;"
+ },
+ {
+  "label": "linear amplitude 1/(1 - J1)",
+  "old": "(i0 / (1.0 - j0), i1 / (1.0 - 0.5 * j1))",
+  "new": "(i0 / (1.0 - j0), i1 / (1.0 - j1))"
+ },
+ {
+  "label": "tuned amplitude uses f0",
+  "old": "amplitude: i1 / (1.0 - j1 * f1(half_width)) })",
+  "new": "amplitude: i1 / (1.0 - j1 * f0(half_width)) })"
+ },
+ {
+  "label": "tuned width ignores the uniform coupling",
+  "old": "let g = |t: f64| -(t.cos() + j0 * f0(t)) / (1.0 - j1 * f1(t)) - i0 / i1;",
+  "new": "let g = |t: f64| -t.cos() / (1.0 - j1 * f1(t)) - i0 / i1;"
+ },
+ {
+  "label": "tuned width ignores the tuned coupling",
+  "old": "let g = |t: f64| -(t.cos() + j0 * f0(t)) / (1.0 - j1 * f1(t)) - i0 / i1;",
+  "new": "let g = |t: f64| -(t.cos() + j0 * f0(t)) - i0 / i1;"
+ },
+ {
+  "label": "touching zero is rectified",
+  "old": "if mean >= linear_amplitude {",
+  "new": "if mean > linear_amplitude {"
+ },
+ {
+  "label": "silent input answered",
+  "old": "|| !(j1 < 2.0) || i0 + i1 <= 0.0 {",
+  "new": "|| !(j1 < 2.0) {"
+ },
+ {
+  "label": "tuned solution offered past J1 = 2",
+  "old": "|| !(j0 < 1.0) || !(j1 < 2.0) ||",
+  "new": "|| !(j0 < 1.0) ||"
  }
 ]

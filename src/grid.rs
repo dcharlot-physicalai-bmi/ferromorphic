@@ -44,11 +44,21 @@
 //!   phases by any signed displacement equals re-encoding the moved position; phases that no
 //!   position produces are refused (the generalised Chinese remainder condition).
 //!
+//! - **Error correction.** Use only a fraction of the range and the code becomes redundant: a
+//!   position known to lie below the product of all but the two largest periods survives ANY
+//!   corruption of ANY one module's phase, and [`ModularCode::correct`] recovers it — checked
+//!   exhaustively, every position against every wrong phase of every module. With one spare
+//!   module instead of two a single error is always noticed and never silently mis-corrected.
+//!   This is the redundant-residue reading of Sreenivasan and Fiete (*Grid cells generate an
+//!   analog error-correcting code for singularly precise neural computation*, Nature Neuroscience
+//!   14(10):1330–1337, 2011), in the integer case where the guarantee is a theorem.
+//!
 //! # What this module has NOT reproduced
 //!
 //! - The attractor network that would HOLD these phases, or its noise. The phases here are
-//!   numbers; drift, and the error-correcting reading of the code (Sreenivasan and Fiete, 2011),
-//!   are not modelled.
+//!   numbers; drift, and the ANALOG error correction of Sreenivasan and Fiete — small phase noise
+//!   on every module at once, corrected by the geometry of the code — are not modelled. What is
+//!   here is the discrete case: one module arbitrarily wrong.
 //! - Decoding two-dimensional position from several modules with real-valued spacings, where the
 //!   range is set by noise rather than by a least common multiple.
 //! - Any account of how grids form, anchor to landmarks, or distort in real enclosures.
@@ -388,6 +398,82 @@ impl ModularCode {
     }
 }
 
+/// What [`ModularCode::correct`] concluded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Correction {
+    /// The position, below the legal range.
+    pub position: u64,
+    /// The module whose phase was wrong and has been disregarded; `None` if all agreed.
+    pub repaired: Option<usize>,
+}
+
+impl ModularCode {
+    /// The largest legal range over which ANY single-module error can be corrected: the product of
+    /// all periods but the two largest — two spare modules give the code a minimum distance of
+    /// three. `None` unless the periods are pairwise coprime and there are at least three.
+    #[must_use]
+    pub fn single_error_range(&self) -> Option<u64> {
+        let k = self.periods.len();
+        if k < 3 {
+            return None;
+        }
+        for i in 0..k {
+            for j in (i + 1)..k {
+                if gcd(u128::from(self.periods[i]), u128::from(self.periods[j])) != 1 {
+                    return None;
+                }
+            }
+        }
+        let mut sorted = self.periods.clone();
+        sorted.sort_unstable();
+        sorted[..k - 2].iter().try_fold(1u64, |acc, p| acc.checked_mul(*p))
+    }
+
+    fn without(&self, skip: usize) -> Self {
+        let keep = |v: &[u64]| v.iter().enumerate().filter(|(i, _)| *i != skip).map(|(_, x)| *x).collect();
+        Self { periods: keep(&self.periods), phases: keep(&self.phases) }
+    }
+
+    /// Decode a position known to lie below `legal_range`, tolerating one module whose phase is
+    /// arbitrarily wrong. If the phases as they stand decode to a legal position, that is the
+    /// answer; otherwise each module is set aside in turn, and the answer is the legal position
+    /// the others agree on — if exactly one exists.
+    ///
+    /// # Errors
+    ///
+    /// [`GridError::OutOfRange`] for a legal range of zero or past the code's range, or a phase not
+    /// below its period; [`GridError::Dimension`] for mismatched lengths;
+    /// [`GridError::Inconsistent`] (naming module `0`) when no single module can be blamed, or
+    /// more than one can — the corruption is then detected and NOT guessed at.
+    pub fn correct(&self, legal_range: u64) -> Result<Correction, GridError> {
+        let range = self.range()?;
+        if legal_range == 0 || legal_range > range {
+            return Err(GridError::OutOfRange { what: "legal_range", value: legal_range as f64, low: 1.0, high: range as f64 });
+        }
+        match self.decode() {
+            Ok(x) if x < legal_range => return Ok(Correction { position: x, repaired: None }),
+            Ok(_) | Err(GridError::Inconsistent { .. }) => {}
+            Err(e) => return Err(e),
+        }
+        let mut found: Option<Correction> = None;
+        for skip in 0..self.periods.len() {
+            if self.periods.len() < 2 {
+                break;
+            }
+            if let Ok(x) = self.without(skip).decode()
+                && x < legal_range
+            {
+                match found {
+                    Some(c) if c.position != x => return Err(GridError::Inconsistent { module: 0 }),
+                    Some(_) => {}
+                    None => found = Some(Correction { position: x, repaired: Some(skip) }),
+                }
+            }
+        }
+        found.ok_or(GridError::Inconsistent { module: 0 })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -537,6 +623,72 @@ mod tests {
         assert!(matches!(code.decode(), Err(GridError::OutOfRange { what: "phase", .. })));
         code.phases = vec![0];
         assert!(matches!(code.decode(), Err(GridError::Dimension { what: "phases", got: 1, want: 2 })));
+    }
+
+    #[test]
+    fn two_spare_modules_correct_any_single_wrong_phase() {
+        let mut code = ModularCode::new(vec![13, 7, 11, 9]).unwrap();
+        // All but the two largest: 7 · 9.
+        assert_eq!(code.single_error_range(), Some(63));
+        let mut cases = 0;
+        for x in 0..63u64 {
+            code.encode(x);
+            assert_eq!(code.correct(63).unwrap(), Correction { position: x, repaired: None });
+            let clean = code.phases.clone();
+            for module in 0..4 {
+                for wrong in 0..code.periods[module] {
+                    if wrong == clean[module] {
+                        continue;
+                    }
+                    code.phases[module] = wrong;
+                    assert_eq!(code.correct(63).unwrap(), Correction { position: x, repaired: Some(module) }, "x = {x}, module {module} set to {wrong}");
+                    cases += 1;
+                }
+                code.phases[module] = clean[module];
+            }
+        }
+        assert_eq!(cases, 63 * (12 + 6 + 10 + 8));
+        // The legal range is half-open: position 63 itself is OUTSIDE it, and an uncorrupted code
+        // word that says 63 is refused rather than returned.
+        code.encode(63);
+        assert_eq!(code.correct(63), Err(GridError::Inconsistent { module: 0 }));
+        assert_eq!(code.correct(64).unwrap(), Correction { position: 63, repaired: None });
+        // ONE spare module (legal range 7·9·11 = 693) always NOTICES a single error and never
+        // returns a wrong position for it — but can seldom say which position was meant: setting
+        // the period-13 module aside always leaves a legal-looking position, so almost every
+        // error has two suspects. (The first draft of this test expected corrections to be
+        // common, sampled 396 cases and found none.)
+        let (mut fixed, mut refused) = (0, 0);
+        for x in 0..693u64 {
+            code.encode(x);
+            let clean = code.phases.clone();
+            for module in 0..4 {
+                let wrong = (clean[module] + 1) % code.periods[module];
+                code.phases[module] = wrong;
+                match code.correct(693) {
+                    Ok(c) => {
+                        assert_eq!(c.position, x, "a single error was silently mis-corrected");
+                        assert_eq!(c.repaired, Some(module), "and the corruption was not noticed");
+                        fixed += 1;
+                    }
+                    Err(GridError::Inconsistent { .. }) => refused += 1,
+                    Err(e) => panic!("{e}"),
+                }
+                code.phases[module] = clean[module];
+            }
+        }
+        assert_eq!(fixed + refused, 693 * 4);
+        assert!(refused > 10 * fixed, "with one spare module {fixed} errors were fixed and {refused} only detected");
+        // No spare modules: every phase vector is a legal position, and nothing can be noticed.
+        code.encode(100);
+        code.phases[0] = (code.phases[0] + 1) % 13;
+        assert_eq!(code.correct(9009).unwrap().repaired, None);
+        assert_ne!(code.correct(9009).unwrap().position, 100);
+        assert!(matches!(code.correct(0), Err(GridError::OutOfRange { what: "legal_range", .. })));
+        assert!(matches!(code.correct(9010), Err(GridError::OutOfRange { what: "legal_range", .. })));
+        assert_eq!(ModularCode::new(vec![4, 6, 7]).unwrap().single_error_range(), None, "4 and 6 share a factor");
+        assert_eq!(ModularCode::new(vec![5, 7]).unwrap().single_error_range(), None);
+        assert_eq!(ModularCode::new(vec![5, 7, 9]).unwrap().single_error_range(), Some(5));
     }
 
     #[test]

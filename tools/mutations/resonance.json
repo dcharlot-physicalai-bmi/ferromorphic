@@ -88,5 +88,25 @@
   "label": "negative sigma accepted",
   "old": "    if v.is_finite() && v >= 0.0 {",
   "new": "    if v.is_finite() {"
+ },
+ {
+  "label": "levels not weighted equally",
+  "old": "let weight = 1.0 / levels.len() as f64;",
+  "new": "let weight = 1.0;"
+ },
+ {
+  "label": "levels information log ratio inverted",
+  "old": "bits += weight * c[k] * (c[k] / mix).log2();",
+  "new": "bits += weight * c[k] * (mix / c[k]).log2();"
+ },
+ {
+  "label": "single level accepted",
+  "old": "if levels.len() < 2 || levels.len() > MAX_UNITS {",
+  "new": "if levels.len() > MAX_UNITS {"
+ },
+ {
+  "label": "levels ceiling is log2 of the larger",
+  "old": "let ceiling = (levels.len().min(n + 1) as f64).log2();",
+  "new": "let ceiling = (levels.len().min(n + 1) as f64).log2() * 0.5;"
  }
 ]

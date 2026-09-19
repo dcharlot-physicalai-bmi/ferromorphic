@@ -9,7 +9,7 @@ hardware constraint models, analog device non-idealities, NIR, event-camera deco
 metrics, teaching tasks — and a joules ledger that charges for the memory traffic a synaptic
 operation needs.
 
-**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 59 modules, 1,678 tests.**
+**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 59 modules, 1,693 tests.**
 
 Run it in a browser without installing anything:
 **[energy.physicalai-bmi.org/neuromorphic](https://energy.physicalai-bmi.org/neuromorphic)** — the
@@ -42,7 +42,7 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 | `topology` | Erdős-Rényi, Watts-Strogatz, Barabási-Albert, distance-dependent, layered, winner-take-all, Dale's law |
 | `hardware` | constraint models for Loihi, Loihi 2, `TrueNorth`, `NorthPole`, Akida, `SpiNNaker`, Xylo, Speck, ODIN, DYNAP and more — every field graded and provenanced |
 | `nir` | the Neuromorphic Intermediate Representation graph, validation, and a bridge to this crate's networks |
-| `aer` | AEDAT, Prophesee EVT2/EVT3 and N-MNIST decoders, total and panic-free, with rollover-correct timestamps |
+| `aer` | AEDAT 2.0, 3.1 and 4.0, Prophesee EVT2/EVT3 and N-MNIST decoders, total and panic-free, with rollover-correct timestamps; the DVS128 Gesture label reader that cuts a recording into its gestures |
 | `metrics` | `NeuroBench` complexity metrics: activation sparsity, effective MACs and ACs, footprint |
 | `ledger`, `crossover` | joules with the fetch term, and the published SNN-vs-ANN thresholds as a runnable check |
 | `tasks` | deterministic teaching problems: temporal XOR, coincidence detection, delayed match-to-sample, synthetic event streams |
@@ -60,7 +60,7 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 | `device` | analog non-idealities: what a weight becomes when it is a physical conductance |
 | `compress` | pruning, quantisation, distillation and the rate-budget trade, to fit the part you can buy |
 | `mapping` | placing a network on cores: partitioning, multicast trees, fabric hops, and where the energy goes |
-| `nef` | the Neural Engineering Framework: tuning curves, least-squares decoders, factorised weights, PES decoder learning with its exact contraction factor, and dynamics through a synapse — Nengo's three principles, each against its closed form |
+| `nef` | the Neural Engineering Framework: tuning curves, least-squares decoders, factorised weights, PES decoder learning with its exact contraction factor, dynamics through a synapse, and a spiking recurrent loop run as a spiking Legendre Memory Unit — Nengo's three principles, each against its closed form |
 | `vsa` | vector symbolic architectures / hyperdimensional computing: bipolar, binary and holographic models, codebooks, sequences, and a resonator network, with the bundle capacity as a binomial |
 | `sparse` | sparse coding by local competition: the LCA and its spiking form, checked against the LASSO's own optimality conditions |
 | `resonate` | resonate-and-fire neurons stepped by the exact complex exponential, and the Legendre Memory Unit as a delay line in `d` numbers |
@@ -73,16 +73,16 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 | `oscillator` | coupled phase oscillators: Kuramoto synchronisation against Adler's lock range and the Ott–Antonsen solution, a travelling-wave pattern generator for a segmented body, and an oscillator Ising machine checked against brute force |
 | `predictive` | predictive coding: inference as the relaxation of error units onto the Bayesian posterior, local learning as the gradient of the free energy, and the limit — a weakly clamped output, not a small error — in which it becomes backpropagation |
 | `graph` | graph algorithms done by spikes: a shortest path as the arrival time of a wavefront, exact against Bellman–Ford with the spikes counted, and boundary-value problems by random walkers against gambler's ruin |
-| `attractor` | the ring attractor: a bump of activity that holds a heading after the cue is gone, with its width and height in closed form |
+| `attractor` | the ring attractor: a bump of activity that holds a heading after the cue is gone, with its width and height in closed form, and the amplified bump a weakly tuned input is sharpened into |
 | `equilibrium` | equilibrium propagation: the gradient of a loss from the difference between two relaxations of one energy-based network, checked against the gradient obtained without it — first order in the nudge, second order when nudged both ways |
 | `localise` | sound localisation by coincidence: the Jeffress delay-line array against the path-difference geometry, the half-spacing quantisation bound, the aliasing frequency and the coincidence probability under spike jitter |
 | `cerebellum` | the cerebellum as a machine: an adaptive filter that converges on the Wiener solution at `1 − βλ` an epoch and stops when its error is decorrelated from every input, and Albus's CMAC with its triangular generalisation |
-| `grid` | grid cells: the hexagonal firing map, path integration that is exact in phase space, and the modular code — 9009 positions from 40 cells — decoded by the Chinese remainder theorem |
-| `proprio` | proprioception: the power-law muscle spindle, the tendon organ, a rate-to-spike encoder that emits exactly the integral of its rate, and a delayed reflex loop against the gain `π/2τ` at which it rings |
+| `grid` | grid cells: the hexagonal firing map, path integration that is exact in phase space, the modular code — 9009 positions from 40 cells — decoded by the Chinese remainder theorem, and its error correction: two spare modules survive any corruption of any one, exhaustively |
+| `proprio` | proprioception: the power-law muscle spindle, the tendon organ and its two-rate overshoot, a rate-to-spike encoder that emits exactly the integral of its rate, and a delayed reflex loop against the gain `π/2τ` at which it rings |
 | `delays` | delays as a resource: the spatiotemporal pattern a set of synaptic delays is matched to, a delay-learning rule that contracts every arrival's deviation by exactly `1 − η`, the `(D+1)ⁿ − Dⁿ` patterns a neuron can stand for, and the buffer bits that costs |
-| `distance` | how different two spike trains are: the Victor–Purpura edit distance and the van Rossum distance (closed form against its own quadrature), vector strength against the jitter's characteristic function, and the Fano factor of a clock, `f(1 − f)/(m + f)` |
-| `field` | the Amari neural field of dynamic field theory: the kernel integral `W`, the narrow unstable bump below which activity dies and the wide stable one it settles at, both as roots of `W(a) + h = 0` and both found in the simulated field |
-| `resonance` | noise as a resource: the noise level at which a threshold unit best tells two sub-threshold values apart, `σ*² = (b² − a²)/(2 ln(b/a))`; the exact information in a noisy population's count; dither that makes a step linear |
+| `distance` | how different two spike trains are: the Victor–Purpura edit distance and the van Rossum distance (closed form against its own quadrature), vector strength against the jitter's characteristic function, the Fano factor of a clock, `f(1 − f)/(m + f)`, and the parameter-free ISI- and SPIKE-distances, integrated exactly and refereed by the quadrature of their definitions |
+| `field` | the Amari neural field of dynamic field theory: the kernel integral `W`, the narrow unstable bump below which activity dies and the wide stable one it settles at, both as roots of `W(a) + h = 0` and both found in the simulated field — on a line, and on a sheet, where the rim integral is `πσ²[1 − e^{−R²/σ²} I₀(R²/σ²)]` |
+| `resonance` | noise as a resource: the noise level at which a threshold unit best tells two sub-threshold values apart, `σ*² = (b² − a²)/(2 ln(b/a))`; the exact information in a noisy population's count, including suprathreshold resonance — 63 units carrying more than one bit only when noise is added; dither that makes a step linear |
 | `sim`, `net`, `spike`, `rng` | the event-driven simulator, sparse connectivity, spike trains, seeded PCG32 |
 
 ## Use it
@@ -248,7 +248,7 @@ Every neuron model here has a test that runs it against an analytic solution.
 - **A sub-threshold current returns `None`, not a large number.** "Fires rarely" and "does not fire"
   are different statements and a rate-coded readout cannot recover the difference later.
 
-1,678 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
+1,693 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
 `#![forbid(unsafe_code)]`, and `cargo build --target wasm32-unknown-unknown` compiles the library
 unchanged. Three of the `examples/` are verification gates that exit non-zero when a closed form
 disagrees with the simulator.
@@ -294,11 +294,11 @@ be reproduced cannot be checked against anything, including itself.
 
 ## Status
 
-**0.11.0.** Fifty-nine modules, every one audited by mutation: thirty-six by an adversarial
+**0.12.0.** Fifty-nine modules, every one audited by mutation: thirty-six by an adversarial
 auditor in 0.5.0 and 0.6.0, the ten of the third wave by hand in 0.8.0 (156 mutations, 36
 survivors, every one now caught — see below), and everything since mutated as it was written. All
 290 mutations recorded before 0.10.0 were re-run against the finished code: 286 caught, 2
-equivalent by their stated arguments, none survived. The harness and every mutation list — 439 of
+equivalent by their stated arguments, none survived. The harness and every mutation list — 501 of
 them — are in `tools/`. The crate family is not built yet. Planned
 siblings, each following the same rule that a dependency lives outside the core:
 
@@ -441,6 +441,24 @@ their own tests again: `field` bounded the activation next to a bump's edge by t
 derivative (the slope there is `w(0) − w(a)`), and `resonance`'s doc claimed Stocks's
 suprathreshold effect for a two-valued signal, which cannot show it — a straddling binary signal
 is already one clean bit at zero noise. The doc now says what is shown and what is not.
+
+0.12.0 added no modules; it finished eight. The Kreuz ISI- and SPIKE-distances, integrated exactly
+and refereed by the quadrature of their own definitions; suprathreshold stochastic resonance with
+a many-valued signal; the ring's answer to a tuned input; single-error correction on the grid
+code, exhaustively; the Amari field on a sheet, through a Bessel function; the tendon organ's
+two-rate overshoot; an `AEDAT` 3.1 decoder transcribed from the vendor's specification with the
+DVS128 Gesture label reader; and a spiking recurrent loop run as a spiking Legendre Memory Unit.
+62 mutations, 2 survivors closed. One was luck of exactly the kind this file keeps naming: the
+`AEDAT` 3.1 round trip crossed a timestamp-overflow boundary on event 192, which is `3 × 64`, the
+packet size — so the encoder's split at the boundary never ran. The test now asserts the crossing
+is NOT on a packet boundary.
+
+The spiking LMU measured something worth a line of its own. At a 1 ms tick the network's state
+error was 0.47 of the state's size and more neurons did not help; at 0.1 ms it was 0.046. Rate
+mode, which has no ticks to round, showed the mapping was right: the error was the TICK. A cell
+firing at 300 Hz has an interval of 3.3 ticks, which the tick rounds up to 4, so every rate is
+biased low, systematically. A spiking loop in this crate needs a tick well below its shortest
+interspike interval, and `nef` now says so.
 
 ### Re-running the audit
 

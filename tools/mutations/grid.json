@@ -108,5 +108,35 @@
   "label": "range overflow unchecked at construction",
   "old": "        code.range()?;\n        Ok(code)",
   "new": "        Ok(code)"
+ },
+ {
+  "label": "single-error range keeps one spare",
+  "old": "sorted[..k - 2].iter().try_fold",
+  "new": "sorted[..k - 1].iter().try_fold"
+ },
+ {
+  "label": "single-error range ignores shared factors",
+  "old": "                    return None;\n                }\n            }\n        }\n        let mut sorted",
+  "new": "                    continue;\n                }\n            }\n        }\n        let mut sorted"
+ },
+ {
+  "label": "legal range closed at the top",
+  "old": "Ok(x) if x < legal_range => return Ok(Correction { position: x, repaired: None }),",
+  "new": "Ok(x) if x <= legal_range => return Ok(Correction { position: x, repaired: None }),"
+ },
+ {
+  "label": "two suspects, first one blamed",
+  "old": "Some(c) if c.position != x => return Err(GridError::Inconsistent { module: 0 }),",
+  "new": "Some(c) if c.position != x => {}"
+ },
+ {
+  "label": "corrector drops the wrong module",
+  "old": "let keep = |v: &[u64]| v.iter().enumerate().filter(|(i, _)| *i != skip)",
+  "new": "let keep = |v: &[u64]| v.iter().enumerate().filter(|(i, _)| *i != (skip + 1) % v.len())"
+ },
+ {
+  "label": "legal range past the code's range accepted",
+  "old": "if legal_range == 0 || legal_range > range {",
+  "new": "if legal_range == 0 {"
  }
 ]

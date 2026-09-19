@@ -118,5 +118,30 @@
   "label": "pes touched counts neurons",
   "old": "touched += out;",
   "new": "touched += 1;"
+ },
+ {
+  "label": "spiking loop pulse not a rate",
+  "old": "*p += self.decoders.d[i * dim + j] / dt;",
+  "new": "*p += self.decoders.d[i * dim + j];"
+ },
+ {
+  "label": "spiking loop feeds back the readout",
+  "old": "acc += self.a_prime[i * dim + j] * pulse[j];",
+  "new": "acc += self.a_prime[i * dim + j] * self.x_hat[j];"
+ },
+ {
+  "label": "spiking loop ignores its input",
+  "old": "acc += self.b_prime[i * self.input_dim + j] * uj;\n            }\n            let _ = self.synapses[i].step(dt, acc);",
+  "new": "acc += 0.0 * self.b_prime[i * self.input_dim + j] * uj;\n            }\n            let _ = self.synapses[i].step(dt, acc);"
+ },
+ {
+  "label": "spiking loop does not count spikes",
+  "old": "            self.spikes += 1;\n",
+  "new": "            self.spikes += 0;\n"
+ },
+ {
+  "label": "spiking loop readout is the raw pulse",
+  "old": "self.x_hat[i] = self.readout[i].step(dt, pulse[i]);",
+  "new": "self.x_hat[i] = pulse[i];"
  }
 ]

@@ -44,15 +44,24 @@
 //! - **Memory.** After a cue is removed the bump persists at `a₂`; in the no-bump regime the same
 //!   cue leaves nothing.
 //!
+//! - **Two dimensions** ([`Field2`]). A circular bump of radius `R` is stationary iff the field at
+//!   its rim is zero, `W₂(R) + h = 0`, with `W₂(R)` the kernel integrated over the disc from a
+//!   point ON its rim. For a Gaussian that integral is `πσ² [1 − e^{−R²/σ²} I₀(R²/σ²)]` — half the
+//!   Gaussian's mass as `R → ∞`, where the rim is a straight edge — checked against a
+//!   two-dimensional quadrature, with the scaled Bessel function [`bessel_i0e`] checked against
+//!   its integral representation. The simulated sheet forgets a disc smaller than the unstable
+//!   radius and holds a larger one at the stable radius, to a grid step.
+//!
 //! # What this module has NOT reproduced
 //!
-//! - Sigmoidal outputs, for which the widths have no closed form; two-dimensional fields; coupled
-//!   fields; travelling bumps under asymmetric kernels.
+//! - Sigmoidal outputs, for which the widths have no closed form; coupled fields; travelling
+//!   bumps under asymmetric kernels; non-circular two-dimensional solutions (stripes, rings,
+//!   multi-bump states), which the same sheet can support.
 //! - The unbounded regime's spreading front. [`regime`] names it and [`Field`] will simulate it,
 //!   but nothing here checks the front's speed.
 //! - Any DFT architecture — this is one field, the element those are built from.
 
-use core::f64::consts::{FRAC_PI_2, SQRT_2};
+use core::f64::consts::{FRAC_PI_2, PI, SQRT_2, TAU};
 use core::fmt;
 
 use crate::surrogate::erf;
@@ -374,6 +383,197 @@ impl Field {
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// Two dimensions
+// ---------------------------------------------------------------------------------------------
+
+/// The exponentially scaled modified Bessel function `e^{−x} I₀(x)`, for `x ≥ 0` (the argument's
+/// sign is ignored; `I₀` is even). The power series below 20 and the asymptotic series above it.
+#[must_use]
+pub fn bessel_i0e(x: f64) -> f64 {
+    let x = x.abs();
+    if x <= 20.0 {
+        let q = 0.25 * x * x;
+        let (mut term, mut sum) = (1.0f64, 1.0f64);
+        for k in 1..400u32 {
+            term *= q / (f64::from(k) * f64::from(k));
+            sum += term;
+            if term < 1e-17 * sum {
+                break;
+            }
+        }
+        sum * (-x).exp()
+    } else {
+        let (mut term, mut sum) = (1.0f64, 1.0f64);
+        for k in 1..40u32 {
+            let odd = 2.0 * f64::from(k) - 1.0;
+            let next = term * odd * odd / (f64::from(k) * 8.0 * x);
+            // An asymptotic series: stop at its smallest term.
+            if next >= term {
+                break;
+            }
+            term = next;
+            sum += term;
+        }
+        sum / (TAU * x).sqrt()
+    }
+}
+
+impl MexicanHat {
+    /// The kernel integrated over a disc of radius `r`, seen from a point ON the disc's rim, with
+    /// the amplitudes read per unit AREA: `Σ ±A πσ² [1 − e^{−r²/σ²} I₀(r²/σ²)]`.
+    #[must_use]
+    pub fn rim_integral(&self, r: f64) -> f64 {
+        let part = |a: f64, s: f64| a * PI * s * s * (1.0 - bessel_i0e(r * r / (s * s)));
+        part(self.a_e, self.s_e) - part(self.a_i, self.s_i)
+    }
+
+    /// Its limit for a large disc, `π (A_e σ_e² − A_i σ_i²)`: half the kernel's total weight.
+    #[must_use]
+    pub fn rim_integral_at_infinity(&self) -> f64 {
+        PI * (self.a_e * self.s_e * self.s_e - self.a_i * self.s_i * self.s_i)
+    }
+}
+
+/// Amari's classification for a circular bump on a sheet: [`Regime`] with RADII in place of
+/// widths. The peak of `W₂` has no closed form and is found by a scan of 4000 points out to
+/// twenty inhibitory widths.
+///
+/// # Errors
+///
+/// [`FieldError::OutOfRange`] unless `h` is negative and finite.
+pub fn regime2(kernel: &MexicanHat, h: f64) -> Result<Regime, FieldError> {
+    if !(h < 0.0) || !h.is_finite() {
+        return Err(FieldError::OutOfRange { what: "h", value: h, low: f64::NEG_INFINITY, high: 0.0 });
+    }
+    let far = 20.0 * kernel.s_i;
+    let peak = (1..=4000).map(|k| far * f64::from(k) / 4000.0).fold((0.0, f64::NEG_INFINITY), |best, r| {
+        let w = kernel.rim_integral(r);
+        if w > best.1 { (r, w) } else { best }
+    });
+    if peak.1 + h < 0.0 {
+        return Ok(Regime::NoBump);
+    }
+    let ignition = bisect(|r| kernel.rim_integral(r) + h, 0.0, peak.0);
+    if kernel.rim_integral_at_infinity() + h >= 0.0 {
+        return Ok(Regime::Unbounded { ignition });
+    }
+    let settled = bisect(|r| kernel.rim_integral(r) + h, peak.0, 2.0 * far);
+    Ok(Regime::Bistable { ignition, settled })
+}
+
+/// A two-dimensional field on a periodic `n × n` grid, with a step output.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Field2 {
+    /// The kernel, its amplitudes read per unit area.
+    pub kernel: MexicanHat,
+    /// Resting level `h`, negative.
+    pub h: f64,
+    /// Time constant `τ`, seconds.
+    pub tau: f64,
+    /// Side of the (periodic) square domain.
+    pub length: f64,
+    /// Grid points per side.
+    pub n: usize,
+    /// Activation, row-major `n × n`.
+    pub u: Vec<f64>,
+}
+
+impl Field2 {
+    /// A sheet at rest.
+    ///
+    /// # Errors
+    ///
+    /// [`FieldError::TooFew`] for fewer than eight points a side, [`FieldError::OutOfRange`] for
+    /// more than 512, a non-negative `h`, a non-positive `tau`, or a side shorter than twelve
+    /// inhibitory widths.
+    pub fn new(kernel: MexicanHat, h: f64, tau: f64, length: f64, n: usize) -> Result<Self, FieldError> {
+        if n < 8 {
+            return Err(FieldError::TooFew { n });
+        }
+        if n > 512 {
+            return Err(FieldError::OutOfRange { what: "n", value: n as f64, low: 8.0, high: 512.0 });
+        }
+        if !(h < 0.0) || !h.is_finite() {
+            return Err(FieldError::OutOfRange { what: "h", value: h, low: f64::NEG_INFINITY, high: 0.0 });
+        }
+        let tau = positive("tau", tau)?;
+        if !(length >= 12.0 * kernel.s_i) || !length.is_finite() {
+            return Err(FieldError::OutOfRange { what: "length", value: length, low: 12.0 * kernel.s_i, high: f64::INFINITY });
+        }
+        Ok(Self { kernel, h, tau, length, n, u: vec![h; n * n] })
+    }
+
+    /// Grid spacing.
+    #[must_use]
+    pub fn dx(&self) -> f64 {
+        self.length / self.n as f64
+    }
+
+    /// The radius of the disc whose area equals the active area: `√(dx² · active/π)`.
+    #[must_use]
+    pub fn active_radius(&self) -> f64 {
+        let area = self.dx() * self.dx() * self.u.iter().filter(|u| **u > 0.0).count() as f64;
+        (area / PI).sqrt()
+    }
+
+    /// Make a disc of `radius` about `centre` just active and put the rest of the sheet at rest.
+    ///
+    /// # Errors
+    ///
+    /// [`FieldError::OutOfRange`] for a radius not in `(0, length/4]`, [`FieldError::NonFinite`] for
+    /// a non-finite centre.
+    pub fn seed(&mut self, centre: [f64; 2], radius: f64) -> Result<(), FieldError> {
+        if !centre[0].is_finite() || !centre[1].is_finite() {
+            return Err(FieldError::NonFinite { what: "centre", index: 0 });
+        }
+        if !(radius > 0.0) || !(radius <= 0.25 * self.length) {
+            return Err(FieldError::OutOfRange { what: "radius", value: radius, low: f64::MIN_POSITIVE, high: 0.25 * self.length });
+        }
+        let (dx, length, h, n) = (self.dx(), self.length, self.h, self.n);
+        let wrapped = |a: f64| {
+            let d = a.rem_euclid(length);
+            d.min(length - d)
+        };
+        for iy in 0..n {
+            for ix in 0..n {
+                let (ddx, ddy) = (wrapped(ix as f64 * dx - centre[0]), wrapped(iy as f64 * dx - centre[1]));
+                self.u[iy * n + ix] = if ddx.hypot(ddy) < radius { -h / 100.0 } else { h };
+            }
+        }
+        Ok(())
+    }
+
+    /// One Euler step of `dt` with no input; returns the number of active points.
+    ///
+    /// # Errors
+    ///
+    /// [`FieldError::OutOfRange`] for a `dt` outside `(0, τ]`.
+    pub fn step(&mut self, dt: f64) -> Result<usize, FieldError> {
+        if !(dt > 0.0) || !(dt <= self.tau) {
+            return Err(FieldError::OutOfRange { what: "dt", value: dt, low: f64::MIN_POSITIVE, high: self.tau });
+        }
+        let (n, dx) = (self.n, self.dx());
+        let half = n / 2 + 1;
+        let table: Vec<f64> = (0..half * half).map(|q| self.kernel.w(dx * ((q / half) as f64).hypot((q % half) as f64))).collect();
+        let active: Vec<(usize, usize)> = (0..n * n).filter(|&q| self.u[q] > 0.0).map(|q| (q / n, q % n)).collect();
+        let a = dt / self.tau;
+        let hops = |p: usize, q: usize| {
+            let d = p.abs_diff(q);
+            d.min(n - d)
+        };
+        let next: Vec<f64> = (0..n * n)
+            .map(|q| {
+                let (iy, ix) = (q / n, q % n);
+                let lateral: f64 = active.iter().map(|&(jy, jx)| table[hops(iy, jy) * half + hops(ix, jx)]).sum();
+                self.u[q] + a * (-self.u[q] + lateral * dx * dx + self.h)
+            })
+            .collect();
+        self.u = next;
+        Ok(active.len())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -498,6 +698,119 @@ mod tests {
         assert!(forgetful.active_width() > 0.0, "the cue is strong enough to activate the field while it lasts");
         forgetful.run(1e-3, &quiet, 3000).unwrap();
         assert_eq!(forgetful.active_width(), 0.0);
+    }
+
+    #[test]
+    fn the_scaled_bessel_function_is_its_integral_representation() {
+        // e^{−x} I₀(x) = (1/π) ∫₀^π e^{x (cos t − 1)} dt, by the midpoint rule on 200 000 points.
+        for x in [0.0, 0.5, 3.0, 12.0, 19.9, 20.1, 45.0, 300.0] {
+            let n = 200_000;
+            let quad: f64 = (0..n).map(|k| (x * ((PI * (f64::from(k) + 0.5) / f64::from(n)).cos() - 1.0)).exp()).sum::<f64>() / f64::from(n);
+            assert!((bessel_i0e(x) / quad - 1.0).abs() < 1e-10, "x = {x}: {} vs {quad}", bessel_i0e(x));
+        }
+        assert_eq!(bessel_i0e(0.0), 1.0);
+        assert_eq!(bessel_i0e(-3.0), bessel_i0e(3.0));
+        // The two branches meet at x = 20.
+        assert!((bessel_i0e(20.0) / bessel_i0e(20.0 + 1e-9) - 1.0).abs() < 1e-9);
+        // Far out it is 1/√(2πx).
+        assert!((bessel_i0e(1e6) * (TAU * 1e6f64).sqrt() - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_rim_integral_is_the_kernel_summed_over_the_disc_from_its_edge() {
+        let k = MexicanHat::new(2.0, 1.0, 1.0, 2.0).unwrap();
+        for r in [0.4, 1.0, 2.5] {
+            // Polar quadrature about the disc's centre, the observer at (r, 0).
+            let (nr, nt) = (1500, 1500);
+            let mut quad = 0.0;
+            for i in 0..nr {
+                let rho = r * (f64::from(i) + 0.5) / f64::from(nr);
+                for j in 0..nt {
+                    let t = TAU * (f64::from(j) + 0.5) / f64::from(nt);
+                    quad += k.w((rho * t.cos() - r).hypot(rho * t.sin())) * rho;
+                }
+            }
+            quad *= (r / f64::from(nr)) * (TAU / f64::from(nt));
+            assert!((quad - k.rim_integral(r)).abs() < 1e-5, "W₂({r}) = {}, quadrature {quad}", k.rim_integral(r));
+        }
+        assert_eq!(k.rim_integral(0.0), 0.0);
+        assert!((k.rim_integral_at_infinity() - PI * (2.0 - 4.0)).abs() < 1e-15);
+        // The rim of a huge disc is a straight edge, approached as 1/R: e^{−x} I₀(x) → 1/√(2πx)
+        // gives W₂(R) ≈ W₂(∞) − √(π/2)(A_e σ_e³ − A_i σ_i³)/R, which is +7.52/R for this kernel,
+        // and what is left after that term falls as 1/R³. (The first draft asserted "within 0.2%
+        // of W₂(∞) at R = 400"; it is 0.3%, and the approach has a law, so the law is tested.)
+        let correction = |r: f64| -FRAC_PI_2.sqrt() * (2.0 - 8.0) / r;
+        for r in [200.0, 400.0] {
+            let left = k.rim_integral(r) - k.rim_integral_at_infinity() - correction(r);
+            assert!(left.abs() < 1.0 / (r * r * r) * 50.0, "R = {r}: {left} left after the 1/R term");
+        }
+    }
+
+    #[test]
+    fn a_sheet_forgets_a_small_disc_and_holds_a_large_one_at_the_stable_radius() {
+        let k = MexicanHat::new(2.0, 1.0, 0.6, 2.0).unwrap();
+        let h = -1.274;
+        let Regime::Bistable { ignition, settled } = regime2(&k, h).unwrap() else { panic!("h = {h} is bistable") };
+        // Found independently, by a scan in another language, while choosing this fixture.
+        assert!((ignition - 0.664).abs() < 2e-3 && (settled - 1.75).abs() < 2e-3, "{ignition} {settled}");
+        assert!((k.rim_integral(ignition) + h).abs() < 1e-12 && (k.rim_integral(settled) + h).abs() < 1e-12);
+        assert!(ignition < settled);
+        let n = 144;
+        let mut small = Field2::new(k, h, 10e-3, 24.0, n).unwrap();
+        let dx = small.dx();
+        assert!(0.6 * ignition > 2.0 * dx, "the grid cannot draw a disc of 0.6 R₁: R₁ = {ignition}, dx = {dx}");
+        small.seed([12.0, 12.0], 0.6 * ignition).unwrap();
+        for _ in 0..100 {
+            small.step(5e-3).unwrap();
+        }
+        assert_eq!(small.active_radius(), 0.0, "a disc smaller than R₁ = {ignition} survived");
+        let mut large = Field2::new(k, h, 10e-3, 24.0, n).unwrap();
+        large.seed([12.0, 12.0], 1.5 * ignition).unwrap();
+        let mut active = 0;
+        for _ in 0..100 {
+            active = large.step(5e-3).unwrap();
+        }
+        assert!(active > 0);
+        assert!((large.active_radius() - settled).abs() <= dx, "settled at radius {}, Amari says {settled} (dx = {dx})", large.active_radius());
+        // A disc across the periodic corner is the same disc.
+        let mut corner = Field2::new(k, h, 10e-3, 24.0, n).unwrap();
+        corner.seed([0.0, 0.0], 1.5 * ignition).unwrap();
+        for _ in 0..100 {
+            corner.step(5e-3).unwrap();
+        }
+        assert!((corner.active_radius() - settled).abs() <= dx);
+        assert!(corner.u[0] > 0.0 && corner.u[n * n - 1] > 0.0 && corner.u[(n / 2) * n + n / 2] < 0.0);
+        // The regimes, as in one dimension.
+        assert_eq!(regime2(&k, -50.0).unwrap(), Regime::NoBump);
+        let greedy = MexicanHat::new(2.0, 1.5, 0.6, 2.0).unwrap();
+        assert!(matches!(regime2(&greedy, -0.1).unwrap(), Regime::Unbounded { .. }));
+        assert!(matches!(regime2(&k, 0.0), Err(FieldError::OutOfRange { what: "h", .. })));
+    }
+
+    #[test]
+    fn a_sheet_refuses_bad_arguments() {
+        let k = MexicanHat::new(2.0, 1.0, 1.0, 2.0).unwrap();
+        assert!(matches!(Field2::new(k, -0.5, 1e-2, 24.0, 7), Err(FieldError::TooFew { n: 7 })));
+        assert!(matches!(Field2::new(k, -0.5, 1e-2, 24.0, 513), Err(FieldError::OutOfRange { what: "n", .. })));
+        assert!(matches!(Field2::new(k, 0.5, 1e-2, 24.0, 16), Err(FieldError::OutOfRange { what: "h", .. })));
+        assert!(matches!(Field2::new(k, -0.5, 0.0, 24.0, 16), Err(FieldError::OutOfRange { what: "tau", .. })));
+        assert!(matches!(Field2::new(k, -0.5, 1e-2, 23.0, 16), Err(FieldError::OutOfRange { what: "length", .. })));
+        let mut f = Field2::new(k, -0.5, 1e-2, 24.0, 16).unwrap();
+        assert_eq!((f.dx(), f.u.len()), (1.5, 256));
+        assert!(matches!(f.step(0.0), Err(FieldError::OutOfRange { what: "dt", .. })));
+        assert!(matches!(f.step(2e-2), Err(FieldError::OutOfRange { what: "dt", .. })));
+        assert!(matches!(f.seed([f64::NAN, 0.0], 1.0), Err(FieldError::NonFinite { what: "centre", .. })));
+        assert!(matches!(f.seed([0.0, 0.0], 0.0), Err(FieldError::OutOfRange { what: "radius", .. })));
+        assert!(matches!(f.seed([0.0, 0.0], 6.5), Err(FieldError::OutOfRange { what: "radius", .. })));
+        // A disc of radius 2 about a grid point on a grid of 1.5 is that point and its four
+        // neighbours (the diagonals are 2.12 away): area 5 · 2.25, radius √(11.25/π).
+        f.seed([6.0, 6.0], 2.0).unwrap();
+        assert!((f.active_radius() - (11.25f64 / PI).sqrt()).abs() < 1e-12);
+        assert_eq!(f.step(1e-2).unwrap(), 5);
+        // A resting sheet stays at rest.
+        let mut rest = Field2::new(k, -0.5, 1e-2, 24.0, 16).unwrap();
+        assert_eq!(rest.step(5e-3).unwrap(), 0);
+        assert!(rest.u.iter().all(|u| *u == -0.5));
     }
 
     #[test]

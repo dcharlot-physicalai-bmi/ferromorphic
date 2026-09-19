@@ -108,5 +108,30 @@
   "label": "delay bound unchecked",
   "old": "if delay_steps > MAX_DELAY_STEPS {",
   "new": "if false {"
+ },
+ {
+  "label": "tendon low-pass is forward euler",
+  "old": "*s = force + (*s - force) * (-rate * dt).exp();",
+  "new": "*s += (force - *s) * rate * dt;"
+ },
+ {
+  "label": "tendon overshoot states swapped",
+  "old": "self.b_gain * (force - self.state[0]) + self.c_gain * (force - self.state[1])",
+  "new": "self.b_gain * (force - self.state[1]) + self.c_gain * (force - self.state[0])"
+ },
+ {
+  "label": "tendon rates swapped",
+  "old": "zip([self.b_rate, self.c_rate])",
+  "new": "zip([self.c_rate, self.b_rate])"
+ },
+ {
+  "label": "tendon rate may go negative",
+  "old": "Ok((self.k * (force + overshoot)).max(0.0))",
+  "new": "Ok(self.k * (force + overshoot))"
+ },
+ {
+  "label": "tendon overshoot not scaled by K",
+  "old": "Ok((self.k * (force + overshoot)).max(0.0))",
+  "new": "Ok((self.k * force + overshoot).max(0.0))"
  }
 ]

@@ -59,6 +59,13 @@
 //!   decoded value from spike counts matches the rate-mode decode.
 //! - Decoding error falls with `N`, monotonically, across an eightfold sweep.
 //! - The integrator holds a value and the oscillator holds its frequency, against the ideal system.
+//! - **A spiking recurrent network** ([`SpikingLoop`]) running the Legendre Memory Unit's matrices
+//!   tracks the ideal unit's state and reproduces its delayed output, and tracks it BETTER with
+//!   more neurons — the spiking LMU, which is how the LMU was first built (Voelker and Eliasmith,
+//!   *Improving spiking dynamical networks: accurate delays, higher-order synapses, and time
+//!   cells*, Neural Computation 30(3):569–609, 2018). The errors are measured, not derived — and
+//!   the largest of them is the TICK: at 1 ms a 300 Hz cell's interval is 3.3 ticks, rounded up to
+//!   4, every rate is biased low, and the network's state error is ten times what it is at 0.1 ms.
 //! - **PES** ([`Pes`]): on a fixed input every update multiplies the decoding error by exactly
 //!   `1 − κ|a|²/n`; the rule is stable iff `κ < 2n/|a|²`, at which the error neither shrinks nor
 //!   grows but alternates; and what it learns over a sample set can approach, and never beat, the
@@ -71,6 +78,12 @@
 //! - Nengo's exact random-number stream: encoders, intercepts and maximum rates are drawn from
 //!   this crate's generator, so a population built here with the same seed as a Nengo model is
 //!   *statistically* the same population and not the same neurons.
+//! - Sub-tick spike timing. Nengo carries a spike's overshoot into the next tick, which removes the
+//!   rate bias measured above; [`SpikingEnsemble`] steps this crate's tick-based [`Lif`] and does
+//!   not, so a spiking loop here needs a tick well below its shortest interspike interval.
+//! - Higher-order synapse corrections (the subject of the Voelker–Eliasmith paper): the loop here
+//!   uses the first-order mapping `A′ = τA + I`, whose error grows as the dynamics get fast
+//!   compared with `τ`.
 //! - PES on SPIKING activities with a filtered error, as Nengo runs it; [`Pes`] here takes rates.
 //!   The voja and BCM rules of the same family are not here.
 
@@ -864,6 +877,86 @@ impl RateLoop {
     }
 }
 
+/// A SPIKING population closed on itself through a synapse: `ẋ = A x + B u` carried by spikes.
+///
+/// Each tick the neurons that fired are decoded — a spike of neuron `i` is an impulse of weight
+/// `d_i / dt` — the recurrent and input terms `A′ p + B′ u` pass through the synapse, and the
+/// filtered value is the current that drives the population on the next tick. The readout
+/// `x_hat` is the same decoded spike train through a synapse of its own.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SpikingLoop {
+    /// The spiking population.
+    pub population: SpikingEnsemble,
+    /// Identity decoders for it, in units per hertz.
+    pub decoders: Decoders,
+    /// `A′ = τ A + I`, row-major `dim × dim`.
+    pub a_prime: Vec<f64>,
+    /// `B′ = τ B`, row-major `dim × k`.
+    pub b_prime: Vec<f64>,
+    /// Input dimension `k`.
+    pub input_dim: usize,
+    /// The recurrent synapses, one per dimension; their outputs are the represented state that
+    /// drives the population.
+    pub synapses: Vec<Lowpass>,
+    /// The readout synapses, one per dimension.
+    pub readout: Vec<Lowpass>,
+    /// The decoded state: the readout synapses' outputs.
+    pub x_hat: Vec<f64>,
+    /// Spikes emitted since construction: what the computation cost.
+    pub spikes: u64,
+}
+
+impl SpikingLoop {
+    /// Build for `ẋ = A x + B u` through synapses of time constant `tau`.
+    ///
+    /// # Errors
+    ///
+    /// As [`RateLoop::new`].
+    pub fn new(population: SpikingEnsemble, decoders: Decoders, a: &[f64], b: &[f64], tau: f64) -> Result<Self, NefError> {
+        let dim = population.ensemble.dim;
+        len("decoder outputs", decoders.out_dim, dim)?;
+        len("decoders", decoders.n, population.ensemble.n())?;
+        let (a_prime, b_prime) = dynamics_transform(a, b, dim, tau)?;
+        let input_dim = b.len() / dim;
+        let bank = || (0..dim).map(|_| Lowpass::new(tau)).collect::<Result<Vec<_>, _>>();
+        Ok(Self { population, decoders, a_prime, b_prime, input_dim, synapses: bank()?, readout: bank()?, x_hat: vec![0.0; dim], spikes: 0 })
+    }
+
+    /// Advance one tick of `dt` under input `u`; returns the decoded state.
+    ///
+    /// # Errors
+    ///
+    /// [`NefError::Dimension`] for a `u` of the wrong length, [`NefError::NonFinite`] for a
+    /// non-finite one, [`NefError::OutOfRange`] for a non-positive `dt`.
+    pub fn step(&mut self, dt: f64, u: &[f64]) -> Result<&[f64], NefError> {
+        len("u", u.len(), self.input_dim)?;
+        finite("u", u)?;
+        in_range("dt", dt, f64::MIN_POSITIVE, f64::MAX)?;
+        let dim = self.population.ensemble.dim;
+        let state: Vec<f64> = self.synapses.iter().map(|s| s.y).collect();
+        let fired = self.population.step(dt, &state)?;
+        let mut pulse = vec![0.0f64; dim];
+        for (i, _) in fired.iter().enumerate().filter(|(_, f)| **f) {
+            self.spikes += 1;
+            for (j, p) in pulse.iter_mut().enumerate() {
+                *p += self.decoders.d[i * dim + j] / dt;
+            }
+        }
+        for i in 0..dim {
+            let mut acc = 0.0;
+            for j in 0..dim {
+                acc += self.a_prime[i * dim + j] * pulse[j];
+            }
+            for (j, &uj) in u.iter().enumerate() {
+                acc += self.b_prime[i * self.input_dim + j] * uj;
+            }
+            let _ = self.synapses[i].step(dt, acc);
+            self.x_hat[i] = self.readout[i].step(dt, pulse[i]);
+        }
+        Ok(&self.x_hat)
+    }
+}
+
 // ---------------------------------------------------------------------------------------------
 // Learning the decoders
 // ---------------------------------------------------------------------------------------------
@@ -1043,7 +1136,7 @@ impl SpikingEnsemble {
 #[cfg(test)]
 mod tests {
     use super::{
-        Decoders, Ensemble, EnsembleSpec, LifRate, Lowpass, NefError, Pes, RateLoop, SpikingEnsemble,
+        Decoders, Ensemble, EnsembleSpec, LifRate, Lowpass, NefError, Pes, RateLoop, SpikingEnsemble, SpikingLoop,
         connection_traffic, dynamics_transform, factorisation_break_even, full_weights,
     };
     use crate::neuron::Lif;
@@ -1337,6 +1430,92 @@ mod tests {
         // A prototype whose constants do not match the tuning is refused.
         let other = Lif { tau_m: 10e-3, ..Lif::default() };
         assert!(matches!(SpikingEnsemble::new(ens, other), Err(NefError::OutOfRange { .. })));
+    }
+
+    /// The spiking LMU: a spiking population running the Legendre Memory Unit's `A` and `B` holds
+    /// the last `θ` seconds of its input — better with more neurons, and only at a tick fine enough
+    /// that a spike interval is many ticks long.
+    #[test]
+    fn a_spiking_population_runs_the_legendre_memory_unit() {
+        use crate::resonate::Lmu;
+        let (order, theta, tau) = (3usize, 0.5, 0.05);
+        let ideal = Lmu::new(order, theta).unwrap();
+        // Returns (relative error of the represented state, RMS error of the delayed readout Σ m_j
+        // for the network, the same for the ideal unit, spikes).
+        let run = |n: usize, dt: f64| {
+            let mut rng = Rng::new(27);
+            let mut spec = EnsembleSpec::default_for(n, order, 91);
+            spec.radius = 1.5;
+            let ens = Ensemble::new(&spec).unwrap();
+            let dec = ens.identity_decoders(3000, 0.05, &mut rng).unwrap();
+            let pop = SpikingEnsemble::new(ens, Lif::default()).unwrap();
+            let mut net = SpikingLoop::new(pop, dec, &ideal.a, &ideal.b, tau).unwrap();
+            let mut reference = Lmu::new(order, theta).unwrap();
+            let (mut err, mut power, mut read, mut read_ideal, mut count) = (0.0, 0.0, 0.0, 0.0, 0.0);
+            // The READOUT is the decoded spikes through one more synapse, so it trails the state by
+            // about τ; it is compared with the reference as it was τ ago.
+            let lag = (tau / dt) as usize;
+            let mut past_states: Vec<Vec<f64>> = Vec::new();
+            let mut readout_err = 0.0;
+            for k in 0..(4.0 / dt) as usize {
+                let t = k as f64 * dt;
+                let u = 0.8 * (core::f64::consts::TAU * t).sin();
+                reference.step(dt, u).unwrap();
+                past_states.push(reference.m.clone());
+                let x_hat = net.step(dt, &[u]).unwrap().to_vec();
+                if t >= 1.0 {
+                    for j in 0..order {
+                        readout_err += (x_hat[j] - past_states[k - lag][j]).powi(2);
+                    }
+                    let past = 0.8 * (core::f64::consts::TAU * (t - theta)).sin();
+                    let state: Vec<f64> = net.synapses.iter().map(|s| s.y).collect();
+                    for j in 0..order {
+                        err += (state[j] - reference.m[j]).powi(2);
+                        power += reference.m[j].powi(2);
+                    }
+                    read += (state.iter().sum::<f64>() - past).powi(2);
+                    read_ideal += (reference.m.iter().sum::<f64>() - past).powi(2);
+                    count += 1.0;
+                }
+            }
+            ((err / power).sqrt(), (read / count).sqrt(), (read_ideal / count).sqrt(), net.spikes, (readout_err / power).sqrt())
+        };
+        // All four numbers below are MEASURED; the bounds leave them a factor of about two.
+        let (few, _, _, _, _) = run(60, 1e-4);
+        let (many, read, read_ideal, spikes, readout) = run(300, 1e-4);
+        assert!(many < 0.5 * few, "five times the neurons: {few} → {many} (measured 0.249 → 0.046)");
+        assert!(many < 0.1, "relative state error {many}");
+        // An order-3 unit is itself only an approximation of a delay: 0.045 RMS on an amplitude of
+        // 0.8. The spiking network reads the past back nearly as well (measured 0.068).
+        assert!(read_ideal > 0.02 && read_ideal < 0.06, "{read_ideal}");
+        assert!(read < 0.12, "the delayed input is read back with RMS error {read}");
+        assert!(spikes > 50_000, "the population barely fired: {spikes} spikes");
+        // The filtered readout follows the state (measured 0.08); unfiltered it is a train of
+        // impulses of height d/dt, and the second mutation sweep found nothing was looking at it.
+        assert!(readout < 0.2, "the readout is {readout} of the state's size away from it");
+        // ⛔ At a 1 ms tick the SAME network is ten times worse (measured 0.467), and more neurons
+        // do not help: a cell firing at 300 Hz has an interval of 3.3 ticks, which the tick rounds
+        // up to 4, so every rate is biased low and the bias is systematic. The first draft of this
+        // test ran at 1 ms and blamed the mapping; rate mode, which has no ticks to round, showed
+        // the mapping was fine.
+        let (coarse, _, _, coarse_spikes, _) = run(300, 1e-3);
+        assert!(coarse > 5.0 * many, "a 1 ms tick: {coarse} against {many}");
+        assert!((coarse_spikes as f64) < 0.95 * spikes as f64, "and it loses spikes: {coarse_spikes} against {spikes}");
+        // Silence in, (near) silence out, and the refusals.
+        let mut rng = Rng::new(2);
+        let ens = Ensemble::new(&EnsembleSpec::default_for(200, 1, 5)).unwrap();
+        let dec = ens.identity_decoders(500, 0.05, &mut rng).unwrap();
+        let pop = SpikingEnsemble::new(ens, Lif::default()).unwrap();
+        let mut still = SpikingLoop::new(pop.clone(), dec.clone(), &[-10.0], &[10.0], 0.05).unwrap();
+        for _ in 0..2000 {
+            still.step(1e-3, &[0.0]).unwrap();
+        }
+        assert!(still.x_hat[0].abs() < 0.1, "a leaky loop with no input sits at {}", still.x_hat[0]);
+        assert!(matches!(still.step(1e-3, &[0.0, 0.0]), Err(NefError::Dimension { what: "u", .. })));
+        assert!(matches!(still.step(1e-3, &[f64::NAN]), Err(NefError::NonFinite { what: "u", .. })));
+        assert!(matches!(still.step(0.0, &[0.0]), Err(NefError::OutOfRange { what: "dt", .. })));
+        let two = Decoders { d: vec![0.0; 400], n: 200, out_dim: 2 };
+        assert!(matches!(SpikingLoop::new(pop, two, &[-10.0], &[10.0], 0.05), Err(NefError::Dimension { what: "decoder outputs", .. })));
     }
 
     /// PES on a fixed input is a geometric sequence with a ratio you can compute beforehand, and

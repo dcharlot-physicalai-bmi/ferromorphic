@@ -1,6 +1,6 @@
 [package]
 name = "ferromorphic"
-version = "0.11.0"
+version = "0.12.0"
 edition = "2024"
 # A POLICY floor, deliberately above the technical one, stated that way so nobody later "corrects"
 # it downward on the grounds that an older toolchain happens to work.
@@ -13,7 +13,7 @@ edition = "2024"
 # What is NOT claimed: that 1.98 is the lowest version that works. Nobody has bisected it. The line
 # says "verified here", which is the direction that cannot break a user.
 rust-version = "1.98"
-description = "Neuromorphic computing in pure Rust, the open corpus in one library, every module checked against a closed form and audited by mutation: spiking neurons from Hodgkin-Huxley to resonate-and-fire, synapses, STDP to three-factor and dendritic learning, surrogate gradients, BPTT, e-prop, ANN-to-SNN conversion, spiking convolutions and attention, reservoirs, the NEF, vector symbolic architectures, sparse coding, associative memories, QUBO by stochastic spiking, oscillators, ring attractors and neural fields, predictive coding, equilibrium propagation, a cerebellum, grid cells, learnable delays, stochastic resonance, spike-train metrics, graph algorithms by spike wavefront, cochlea, olfaction, touch, proprioception, sound localisation, event vision and fusion, hardware constraint models, NIR, AEDAT/EVT3/N-MNIST decoders, NeuroBench metrics, and a joules ledger that charges for synapse memory traffic. Zero dependencies, std-only, wasm-clean, deterministic by seed."
+description = "Neuromorphic computing in pure Rust, the open corpus in one library, every module checked against a closed form and audited by mutation: spiking neurons from Hodgkin-Huxley to resonate-and-fire, synapses, STDP to three-factor and dendritic learning, surrogate gradients, BPTT, e-prop, ANN-to-SNN conversion, spiking convolutions and attention, reservoirs, the NEF, vector symbolic architectures, sparse coding, associative memories, QUBO by stochastic spiking, oscillators, ring attractors and neural fields, predictive coding, equilibrium propagation, a cerebellum, grid cells, learnable delays, stochastic resonance, spike-train metrics, graph algorithms by spike wavefront, cochlea, olfaction, touch, proprioception, sound localisation, event vision and fusion, hardware constraint models, NIR, AEDAT 2-4/EVT3/N-MNIST/DVS-Gesture readers, NeuroBench metrics, and a joules ledger that charges for synapse memory traffic. Zero dependencies, std-only, wasm-clean, deterministic by seed."
 license = "Apache-2.0"
 repository = "https://github.com/dcharlot-physicalai-bmi/ferromorphic"
 # Live since 2026-09-18, and checked before this line was restored: the page runs the library's

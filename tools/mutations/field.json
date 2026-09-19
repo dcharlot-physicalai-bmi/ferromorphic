@@ -113,5 +113,70 @@
   "label": "short domain accepted",
   "old": "if !(length >= 20.0 * kernel.s_i) || !length.is_finite() {",
   "new": "if !length.is_finite() {"
+ },
+ {
+  "label": "bessel series term over k not k squared",
+  "old": "term *= q / (f64::from(k) * f64::from(k));",
+  "new": "term *= q / f64::from(k);"
+ },
+ {
+  "label": "bessel asymptotic series over 4x",
+  "old": "let next = term * odd * odd / (f64::from(k) * 8.0 * x);",
+  "new": "let next = term * odd * odd / (f64::from(k) * 4.0 * x);"
+ },
+ {
+  "label": "bessel asymptote without 2 pi",
+  "old": "        sum / (TAU * x).sqrt()\n",
+  "new": "        sum / x.sqrt()\n"
+ },
+ {
+  "label": "rim integral argument not squared",
+  "old": "(1.0 - bessel_i0e(r * r / (s * s)))",
+  "new": "(1.0 - bessel_i0e(r / s))"
+ },
+ {
+  "label": "rim integral is the full gaussian mass",
+  "old": "let part = |a: f64, s: f64| a * PI * s * s *",
+  "new": "let part = |a: f64, s: f64| a * TAU * s * s *"
+ },
+ {
+  "label": "rim limit is the whole kernel",
+  "old": "        PI * (self.a_e * self.s_e * self.s_e - self.a_i * self.s_i * self.s_i)\n",
+  "new": "        TAU * (self.a_e * self.s_e * self.s_e - self.a_i * self.s_i * self.s_i)\n"
+ },
+ {
+  "label": "regime2 takes the lowest point for the peak",
+  "old": "        if w > best.1 { (r, w) } else { best }\n",
+  "new": "        if w < best.1 || best.1 == f64::NEG_INFINITY { (r, w) } else { best }\n"
+ },
+ {
+  "label": "sheet lateral sum scaled by dx not dx squared",
+  "old": "self.u[q] + a * (-self.u[q] + lateral * dx * dx + self.h)",
+  "new": "self.u[q] + a * (-self.u[q] + lateral * dx + self.h)"
+ },
+ {
+  "label": "sheet seed is a square",
+  "old": "self.u[iy * n + ix] = if ddx.hypot(ddy) < radius",
+  "new": "self.u[iy * n + ix] = if ddx.max(ddy) < radius"
+ },
+ {
+  "label": "sheet seed does not wrap",
+  "old": "            let d = a.rem_euclid(length);\n            d.min(length - d)\n",
+  "new": "            let d = a.rem_euclid(length);\n            d.min(length + d)\n"
+ },
+ {
+  "label": "active radius without pi",
+  "old": "        (area / PI).sqrt()\n",
+  "new": "        area.sqrt()\n"
+ },
+ {
+  "label": "sheet kernel table indexed by row only",
+  "old": "table[hops(iy, jy) * half + hops(ix, jx)]",
+  "new": "table[hops(iy, jy) * half + hops(iy, jy)]"
+ },
+ {
+  "label": "short sheet accepted",
+  "old": "if !(length >= 12.0 * kernel.s_i) || !length.is_finite() {",
+  "new": "if !length.is_finite() {"
  }
 ]

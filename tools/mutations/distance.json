@@ -118,5 +118,50 @@
   "label": "pair bound unchecked",
   "old": "if n > MAX_PAIRS { Err(DistanceError::TooLarge { pairs: n }) } else { Ok(()) }",
   "new": "if false { Err(DistanceError::TooLarge { pairs: n }) } else { Ok(()) }"
+ },
+ {
+  "label": "isi profile divides by the shorter interval",
+  "old": "acc += (x1 - x2).abs() / x1.max(x2) * (pair[1] - pair[0]);",
+  "new": "acc += (x1 - x2).abs() / x1.min(x2) * (pair[1] - pair[0]);"
+ },
+ {
+  "label": "isi distance not averaged over the window",
+  "old": "* (pair[1] - pair[0]);\n    }\n    Ok(acc / (end - start))\n}\n\n/// The SPIKE-distance",
+  "new": "* (pair[1] - pair[0]);\n    }\n    Ok(acc)\n}\n\n/// The SPIKE-distance"
+ },
+ {
+  "label": "spike profile weights the trains by their own intervals",
+  "old": "(s1 * x2 + s2 * x1) / (2.0 * mean * mean)",
+  "new": "(s1 * x1 + s2 * x2) / (2.0 * mean * mean)"
+ },
+ {
+  "label": "spike profile interpolation reversed",
+  "old": "let s1 = (gaps[0] * (a[i + 1] - t) + gaps[1] * (t - a[i])) / x1;",
+  "new": "let s1 = (gaps[0] * (t - a[i]) + gaps[1] * (a[i + 1] - t)) / x1;"
+ },
+ {
+  "label": "spike profile normalised by the sum not the mean",
+  "old": "let mean = 0.5 * (x1 + x2);",
+  "new": "let mean = x1 + x2;"
+ },
+ {
+  "label": "spike distance integrates by the left endpoint",
+  "old": "acc += 0.5 * (profile(pair[0]) + profile(pair[1])) * (pair[1] - pair[0]);",
+  "new": "acc += profile(pair[0]) * (pair[1] - pair[0]);"
+ },
+ {
+  "label": "nearest gap looks only forward",
+  "old": "    after.min(before)\n",
+  "new": "    after\n"
+ },
+ {
+  "label": "kreuz window need not be bracketed",
+  "old": "let ok = t.first().is_some_and(|s| *s <= start) && t.last().is_some_and(|s| *s >= end) && t.windows(2).all(|p| p[1] > p[0]);",
+  "new": "let ok = !t.is_empty() && t.windows(2).all(|p| p[1] > p[0]);"
+ },
+ {
+  "label": "repeated spike accepted",
+  "old": "&& t.windows(2).all(|p| p[1] > p[0]);",
+  "new": "&& t.windows(2).all(|p| p[1] >= p[0]);"
  }
 ]

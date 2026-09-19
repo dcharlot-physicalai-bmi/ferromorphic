@@ -43,17 +43,22 @@
 //!   as `N` rises.
 //! - **Dither**: with uniform noise of full width `Δ` the firing probability is
 //!   `clamp((s − θ)/Δ + ½, 0, 1)` — exactly linear across the step.
+//! - **Suprathreshold resonance** ([`levels_information`]): for a signal of many equiprobable
+//!   levels straddling the threshold, ONE unit carries most with no noise at all, and its
+//!   information only falls as noise is added; SIXTY-THREE units carry exactly one bit with no
+//!   noise — they all agree — and MORE than that at a non-zero noise, under the ceiling
+//!   `log₂ min(M, N + 1)`. With two levels the function is [`population_information`].
 //!
 //! # What this module has NOT reproduced
 //!
 //! - Dynamical stochastic resonance in a bistable well or in a spiking neuron driven by a
 //!   periodic signal, where the measure is a spectral signal-to-noise ratio; this module is the
 //!   static threshold case, where the optimum is algebra.
-//! - **Suprathreshold resonance itself.** Stocks's effect — information peaking at non-zero noise
-//!   for a signal that is NOT sub-threshold — needs a signal with more than two values. With two,
-//!   a signal that straddles the threshold is already one clean bit at zero noise for any `N`,
-//!   and the first draft of this module's doc claimed otherwise until its test was written. The
-//!   signal here is binary and equiprobable, and what is shown is the sub-threshold case.
+//! - Stocks's curves for a CONTINUOUS Gaussian signal, or his large-`N` asymptote. The signal in
+//!   [`levels_information`] is a finite set of equiprobable levels, which is what can be summed
+//!   exactly. (With TWO levels the effect cannot appear — a straddling binary signal is already
+//!   one clean bit at zero noise for any `N` — and the first draft of this module's doc claimed
+//!   otherwise until its test was written.)
 
 use core::fmt;
 
@@ -222,6 +227,39 @@ pub fn population_information(low: f64, high: f64, threshold: f64, sigma: f64, n
     Ok(bits.clamp(0.0, 1.0))
 }
 
+/// The information, bits, that the count of `n` identical noisy units carries about a signal drawn
+/// uniformly from `levels` — the many-valued form of [`population_information`], and the setting
+/// in which noise helps a signal that is NOT sub-threshold. Bounded by `log₂ min(M, n + 1)`.
+///
+/// # Errors
+///
+/// As [`population_information`], plus [`ResonanceError::OutOfRange`] for fewer than two levels or
+/// more than [`MAX_UNITS`] of them, and [`ResonanceError::NonFinite`] for a non-finite level.
+pub fn levels_information(levels: &[f64], threshold: f64, sigma: f64, n: usize) -> Result<f64, ResonanceError> {
+    if levels.len() < 2 || levels.len() > MAX_UNITS {
+        return Err(ResonanceError::OutOfRange { what: "levels", value: levels.len() as f64, low: 2.0, high: MAX_UNITS as f64 });
+    }
+    if n == 0 || n > MAX_UNITS || n.saturating_mul(levels.len()) > 64 * MAX_UNITS {
+        return Err(ResonanceError::OutOfRange { what: "n", value: n as f64, low: 1.0, high: MAX_UNITS as f64 });
+    }
+    let mut conditionals = Vec::with_capacity(levels.len());
+    for &level in levels {
+        conditionals.push(binomial(n, fire_probability(level, threshold, sigma)?));
+    }
+    let weight = 1.0 / levels.len() as f64;
+    let mut bits = 0.0;
+    for k in 0..=n {
+        let mix: f64 = conditionals.iter().map(|c| weight * c[k]).sum();
+        for c in &conditionals {
+            if c[k] > 0.0 {
+                bits += weight * c[k] * (c[k] / mix).log2();
+            }
+        }
+    }
+    let ceiling = (levels.len().min(n + 1) as f64).log2();
+    Ok(bits.clamp(0.0, ceiling))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -332,6 +370,40 @@ mod tests {
         assert!(one.1 > 0.05 && one.1 < 3.0, "the single unit's best noise {} is at the edge of the grid", one.1);
         assert!(many.0 > 5.0 * one.0, "64 units at their best carry {} bits against {}", many.0, one.0);
         assert!(many.1 < one.1, "and want LESS noise to do it: {} against {}", many.1, one.1);
+    }
+
+    #[test]
+    fn many_units_want_noise_even_when_the_signal_crosses_the_threshold() {
+        // Thirty-two equiprobable levels, symmetric about the threshold and none on it.
+        let levels: Vec<f64> = (0..32).map(|k| (f64::from(k) - 15.5) / 16.0).collect();
+        let info = |sigma: f64, n: usize| levels_information(&levels, 0.0, sigma, n).unwrap();
+        // ONE unit: a clean sign bit with no noise, and less with any.
+        assert_eq!(info(0.0, 1), 1.0);
+        let mut last = 1.0;
+        for sigma in [0.1, 0.3, 0.6, 1.0, 2.0] {
+            let now = info(sigma, 1);
+            assert!(now < last, "one unit gained from noise: {last} → {now} at σ = {sigma}");
+            last = now;
+        }
+        // SIXTY-THREE units with no noise are sixty-three copies of that one bit…
+        assert_eq!(info(0.0, 63), 1.0);
+        // …and with noise they disagree in proportion to the signal, and carry more.
+        let grid: Vec<f64> = (1..=40).map(|k| 0.05 * f64::from(k)).collect();
+        let (best, at) = grid.iter().map(|&s| (info(s, 63), s)).fold((0.0, 0.0), |a, b| if b.0 > a.0 { b } else { a });
+        assert!(best > 2.0, "63 units at their best noise carry {best} bits");
+        assert!(at > 0.1 && at < 1.9, "the best noise {at} is at the edge of the grid");
+        assert!(info(2.0 * at, 63) < best && info(0.25 * at, 63) < best);
+        assert!(best <= 5.0, "and never more than log₂ 32");
+        // The ceiling is log₂ min(M, N + 1): three units have four counts, so at most two bits.
+        assert!(info(at, 3) <= 2.0);
+        // With two levels it is the binary function.
+        for sigma in [0.0, 0.3, 1.2] {
+            let two = levels_information(&[0.2, 0.6], 1.0, sigma, 8).unwrap();
+            assert!((two - population_information(0.2, 0.6, 1.0, sigma, 8).unwrap()).abs() < 1e-14);
+        }
+        assert!(matches!(levels_information(&[0.1], 0.0, 0.5, 4), Err(ResonanceError::OutOfRange { what: "levels", .. })));
+        assert!(matches!(levels_information(&[0.1, f64::NAN], 0.0, 0.5, 4), Err(ResonanceError::NonFinite { what: "signal" })));
+        assert!(matches!(levels_information(&[0.1, 0.2], 0.0, 0.5, 0), Err(ResonanceError::OutOfRange { what: "n", .. })));
     }
 
     #[test]

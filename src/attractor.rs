@@ -40,6 +40,11 @@
 //!   ([`uniform_rate`]).
 //! - **The low-rank identity**: the three-average recurrent input equals the pairwise sum to
 //!   rounding.
+//! - **A tuned input** `I₀ + I₁ cos(θ − θ₀)` pins the bump at `θ₀` ([`tuned_bump`]). Its half-width
+//!   is the root of `I₀/I₁ = −(cos θ_c + J₀ f₀(θ_c))/(1 − J₁ f₁(θ_c))` and its amplitude is
+//!   `A = I₁/(1 − J₁ f₁(θ_c))` — the input's tuning multiplied by a gain the recurrence sets, which
+//!   is the amplification of weakly tuned input the model was proposed for. When the root would
+//!   pass `π` nothing is rectified and the state is the linear `I₀/(1 − J₀) + I₁/(1 − J₁/2) cos`.
 //! - **The memory**: after the cue is removed the bump's population-vector angle stays where the
 //!   cue put it, and a bump cued anywhere has the same width and height — the attractor is a ring.
 //!
@@ -54,7 +59,9 @@
 //!   the first-draft guess `ω = tan(φ)/τ` for a kernel shifted by `φ` holds only for a bump that
 //!   keeps its resting shape, which it does not. It is left out rather than shipped with a
 //!   tolerance chosen to pass.
-//! - Spiking neurons, noise-driven diffusion of the bump, and the tuned-input (`ε > 0`) solution.
+//! - Spiking neurons and the noise-driven diffusion of the bump.
+//! - The tuned-input solution for `J₁ ≥ 2`, where the bump exists without the tuning and the
+//!   width equation can have more than one root; [`tuned_bump`] covers `J₁ < 2` and says so.
 
 use core::f64::consts::{PI, TAU};
 use core::fmt;
@@ -189,6 +196,64 @@ pub fn uniform_rate(i0: f64, j0: f64) -> Option<f64> {
         return None;
     }
     Some(i0 / (1.0 - j0))
+}
+
+/// What a tuned input `I₀ + I₁ cos(θ − θ₀)` settles the ring into, for `J₁ < 2`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Tuned {
+    /// Part of the ring is silent: the profile is `amplitude · [cos(θ − θ₀) − cos(half_width)]₊`.
+    Rectified {
+        /// Half-width `θ_c` of the active region, radians.
+        half_width: f64,
+        /// Amplitude `A = I₁/(1 − J₁ f₁(θ_c))`.
+        amplitude: f64,
+    },
+    /// Every neuron is active and nothing is rectified: `mean + amplitude · cos(θ − θ₀)`.
+    Linear {
+        /// `I₀/(1 − J₀)`.
+        mean: f64,
+        /// `I₁/(1 − J₁/2)`.
+        amplitude: f64,
+    },
+}
+
+/// The state a tuned input `i0 + i1 cos(θ − θ₀)` settles the ring into. `None` unless `i1 > 0`,
+/// `j0 < 1`, `j1 < 2` and the arguments are finite — and `None` when the input never reaches
+/// threshold anywhere (`i0 + i1 ≤ 0`), where the ring stays silent.
+#[must_use]
+pub fn tuned_bump(i0: f64, i1: f64, j0: f64, j1: f64) -> Option<Tuned> {
+    let finite = i0.is_finite() && i1.is_finite() && j0.is_finite() && j1.is_finite();
+    if !finite || !(i1 > 0.0) || !(j0 < 1.0) || !(j1 < 2.0) || i0 + i1 <= 0.0 {
+        return None;
+    }
+    let (mean, linear_amplitude) = (i0 / (1.0 - j0), i1 / (1.0 - 0.5 * j1));
+    if mean >= linear_amplitude {
+        return Some(Tuned::Linear { mean, amplitude: linear_amplitude });
+    }
+    // g(θ_c) = −(cos θ_c + J₀ f₀)/(1 − J₁ f₁) − I₀/I₁ is −1 − I₀/I₁ < 0 at θ_c = 0 and positive at
+    // π exactly when the linear state fails, which is the case here. Bisect the first crossing.
+    let g = |t: f64| -(t.cos() + j0 * f0(t)) / (1.0 - j1 * f1(t)) - i0 / i1;
+    let steps = 4000;
+    let mut lo = 0.0;
+    let mut hi = PI;
+    for k in 1..=steps {
+        let t = PI * f64::from(k) / f64::from(steps);
+        if g(t) >= 0.0 {
+            hi = t;
+            break;
+        }
+        lo = t;
+    }
+    for _ in 0..80 {
+        let mid = 0.5 * (lo + hi);
+        if g(mid) < 0.0 {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    let half_width = 0.5 * (lo + hi);
+    Some(Tuned::Rectified { half_width, amplitude: i1 / (1.0 - j1 * f1(half_width)) })
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -478,6 +543,44 @@ mod tests {
         assert!(ring.population_vector().1 < 1e-12);
         assert_eq!(bump_amplitude(i0, j0, 1.5), None, "no bump below J₁ = 2");
         for none in [uniform_rate(0.0, -1.0), uniform_rate(1.0, 1.0), uniform_rate(1.0, f64::NAN), uniform_rate(f64::INFINITY, 0.0)] {
+            assert_eq!(none, None);
+        }
+    }
+
+    #[test]
+    fn a_tuned_input_is_amplified_by_the_gain_the_recurrence_sets() {
+        let (n, j0, j1, i0, i1) = (512usize, -2.0, 1.5, -0.2, 1.0);
+        let Some(Tuned::Rectified { half_width, amplitude }) = tuned_bump(i0, i1, j0, j1) else { panic!("this input is rectified") };
+        // The two fixed-point conditions, substituted back.
+        assert!((amplitude * (1.0 - j1 * f1(half_width)) - i1).abs() < 1e-13);
+        assert!((i0 + amplitude * (half_width.cos() + j0 * f0(half_width))).abs() < 1e-12);
+        assert!(amplitude > i1, "the recurrence amplifies the tuning: A = {amplitude} from I₁ = {i1}");
+        let mut ring = Ring::new(n, j0, j1, 10e-3).unwrap();
+        let at = ring.angle(200);
+        let input: Vec<f64> = (0..n).map(|i| i0 + i1 * (ring.angle(i) - at).cos()).collect();
+        ring.run(1e-3, &input, 20_000).unwrap();
+        let grid = TAU / n as f64;
+        assert!((ring.active_half_width() - half_width).abs() <= 0.5 * grid + 1e-12, "{} vs {half_width}", ring.active_half_width());
+        let peak = ring.m.iter().fold(0.0f64, |p, m| p.max(*m));
+        let want = amplitude * (1.0 - half_width.cos());
+        assert!((peak / want - 1.0).abs() < grid * grid, "peak {peak}, theory {want}");
+        assert!(wrap_pi(ring.population_vector().0.unwrap() - at).abs() < 1e-9, "the bump sits on the input's peak");
+        // A strong uniform part leaves nothing rectified, and the state is linear and exact.
+        let Some(Tuned::Linear { mean, amplitude }) = tuned_bump(3.0, 0.2, -1.0, 1.0) else { panic!("this input is not rectified") };
+        assert_eq!((mean, amplitude), (1.5, 0.4));
+        let mut flat = Ring::new(64, -1.0, 1.0, 10e-3).unwrap();
+        let input: Vec<f64> = (0..64).map(|i| 3.0 + 0.2 * flat.angle(i).cos()).collect();
+        flat.run(1e-3, &input, 20_000).unwrap();
+        for i in 0..64 {
+            assert!((flat.m[i] - (1.5 + 0.4 * flat.angle(i).cos())).abs() < 1e-12, "neuron {i}");
+        }
+        // The boundary between the two: with J₀ = −1, J₁ = 1 the mean is I₀/2 and the amplitude 2I₁,
+        // so I₀ = 4I₁ touches zero at the trough and is still linear; a little less is rectified,
+        // with all but a sliver of the ring active.
+        assert_eq!(tuned_bump(4.0, 1.0, -1.0, 1.0), Some(Tuned::Linear { mean: 2.0, amplitude: 2.0 }));
+        let Some(Tuned::Rectified { half_width, .. }) = tuned_bump(3.9, 1.0, -1.0, 1.0) else { panic!("just under the boundary") };
+        assert!(half_width > 0.8 * PI && half_width < PI, "{half_width}");
+        for none in [tuned_bump(1.0, 0.0, -1.0, 1.0), tuned_bump(1.0, 1.0, 1.0, 1.0), tuned_bump(1.0, 1.0, -1.0, 2.0), tuned_bump(-2.0, 1.0, -1.0, 1.0), tuned_bump(f64::NAN, 1.0, -1.0, 1.0)] {
             assert_eq!(none, None);
         }
     }

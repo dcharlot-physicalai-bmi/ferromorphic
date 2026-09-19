@@ -59,6 +59,7 @@ def main():
     ap.add_argument("--root", default=DEFAULT_ROOT, help="the crate to mutate (default: this repo)")
     ap.add_argument("--lists", default=os.path.join(HERE, "mutations"), help="directory of <module>.json lists")
     ap.add_argument("--only", default=None, help="run only mutations whose label contains this text")
+    ap.add_argument("--skip", type=int, default=0, help="skip the first N mutations of each list (run only what was added since)")
     ap.add_argument("--timeout", type=int, default=900, help="seconds per test run")
     args = ap.parse_args()
 
@@ -75,6 +76,7 @@ def main():
     tally = {}
     for module in modules:
         muts = json.load(open(os.path.join(args.lists, f"{module}.json")))
+        muts = muts[args.skip:]
         if args.only:
             muts = [m for m in muts if args.only in m["label"]]
         path = os.path.join(args.root, "src", f"{module}.rs")

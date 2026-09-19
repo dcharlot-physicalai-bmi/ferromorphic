@@ -1,0 +1,67 @@
+[
+ {
+  "label": "aedat3 x and y swapped",
+  "old": "x: ((data >> 17) & 0x7FFF) as u16, y: ((data >> 2) & 0x7FFF) as u16, polarity });",
+  "new": "x: ((data >> 2) & 0x7FFF) as u16, y: ((data >> 17) & 0x7FFF) as u16, polarity });"
+ },
+ {
+  "label": "aedat3 polarity read from bit 2",
+  "old": "let polarity = if data & 2 != 0 { Polarity::On } else { Polarity::Off };\n                    out.events.push",
+  "new": "let polarity = if data & 4 != 0 { Polarity::On } else { Polarity::Off };\n                    out.events.push"
+ },
+ {
+  "label": "aedat3 overflow shifted by 32",
+  "old": "let t = (u64::from(overflow) << 31) | u64::from(stamp);",
+  "new": "let t = (u64::from(overflow) << 32) | u64::from(stamp);"
+ },
+ {
+  "label": "aedat3 invalid events kept",
+  "old": "                    if data & 1 == 0 {\n                        out.invalid += 1;\n                        continue;\n                    }",
+  "new": "                    if false {\n                        out.invalid += 1;\n                        continue;\n                    }"
+ },
+ {
+  "label": "aedat3 special packets read as polarity",
+  "old": "if event_type == Self::POLARITY {\n                if size != 8",
+  "new": "if event_type <= Self::POLARITY {\n                if size != 8"
+ },
+ {
+  "label": "aedat3 capacity not checked",
+  "old": "            if capacity != number {",
+  "new": "            if false {"
+ },
+ {
+  "label": "aedat3 valid count not checked",
+  "old": "                if found_valid != valid {",
+  "new": "                if false {"
+ },
+ {
+  "label": "aedat3 timestamp sign bit accepted",
+  "old": "                    if stamp > i32::MAX as u32 {",
+  "new": "                    if false {"
+ },
+ {
+  "label": "aedat3 encoder ignores the overflow boundary",
+  "old": "while stop < events.len() && stop - start < per_packet && events[stop].t >> 31 == overflow {",
+  "new": "while stop < events.len() && stop - start < per_packet {"
+ },
+ {
+  "label": "gesture slice excludes its last microsecond",
+  "old": "let to = events.partition_point(|e| e.t <= label.end_us);",
+  "new": "let to = events.partition_point(|e| e.t < label.end_us);"
+ },
+ {
+  "label": "gesture slice excludes its first microsecond",
+  "old": "let from = events.partition_point(|e| e.t < label.start_us);",
+  "new": "let from = events.partition_point(|e| e.t <= label.start_us);"
+ },
+ {
+  "label": "gesture class eleven refused",
+  "old": "if v[0] == 0 || v[0] > u64::from(GESTURE_CLASSES) {",
+  "new": "if v[0] == 0 || v[0] >= u64::from(GESTURE_CLASSES) {"
+ },
+ {
+  "label": "gesture interval order unchecked",
+  "old": "        if v[2] < v[1] {",
+  "new": "        if false {"
+ }
+]

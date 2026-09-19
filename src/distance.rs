@@ -21,6 +21,15 @@
 //!   the mean vector: 1 for perfect phase locking, near 0 for none.
 //! - **The Fano factor**: the variance of the spike count in a window over its mean. One for a
 //!   Poisson process, less for anything more regular.
+//! - **The ISI-distance and the SPIKE-distance** (Kreuz, Haas, Morelli, Abarbanel and Politi,
+//!   *Measuring spike train synchrony*, Journal of Neuroscience Methods 165(1):151–161, 2007;
+//!   Kreuz, Chicharro, Houghton, Andrzejak and Mormann, *Monitoring spike train synchrony*, Journal
+//!   of Neurophysiology 109(5):1457–1472, 2013). Both are PARAMETER-FREE: there is no `q` or `τ` to
+//!   choose. At every instant the first compares the lengths of the two interspike intervals that
+//!   contain it, `|x₁ − x₂|/max(x₁, x₂)`; the second compares spike TIMES, weighting each train's
+//!   distance to the other's nearest spikes by how close the instant is to them. Each is the time
+//!   average of its profile, which is piecewise constant for the first and piecewise linear for
+//!   the second, so both integrals are exact.
 //!
 //! # Why it is in a neuromorphic crate
 //!
@@ -47,10 +56,17 @@
 //!   count is `m` or `m + 1`, so the factor is exactly `f(1 − f)/(m + f)`; for a Poisson train it
 //!   is 1 within sampling error.
 //!
+//! - **ISI-distance**: two clocks of periods `p₁` and `p₂` are `|p₁ − p₂|/max(p₁, p₂)` apart
+//!   whatever their phases. **SPIKE-distance**: two clocks of the same period `p` offset by
+//!   `δ ≤ p/2` are exactly `δ/p` apart. Both are zero on identical trains, symmetric, and at
+//!   most one.
+//!
 //! # What this module has NOT reproduced
 //!
-//! - The ISI-distance and SPIKE-distance of Kreuz and colleagues, which are parameter-free and
-//!   need their own piecewise-linear profiles.
+//! - An edge convention for the Kreuz distances. Published implementations differ in what they
+//!   do before a train's first spike and after its last; [`isi_distance`] and [`spike_distance`]
+//!   instead REFUSE a window that either train does not bracket with a spike on each side.
+//! - Their multi-train averages and the adaptive and real-time variants.
 //! - Multi-neuron (labelled-line) extensions of either metric.
 //! - The Rayleigh test beyond its first-order p-value `e^{−n r²}`, which is loose for small `n`.
 
@@ -235,6 +251,103 @@ pub fn van_rossum_by_quadrature(a: &[f64], b: &[f64], tau: f64, dt: f64, tail: f
         acc += d * d;
     }
     Ok(acc * dt / tau)
+}
+
+// ---------------------------------------------------------------------------------------------
+// The Kreuz distances
+// ---------------------------------------------------------------------------------------------
+
+/// Index `k` with `t[k] <= x < t[k + 1]`, for a train that brackets `x`.
+fn interval_of(t: &[f64], x: f64) -> usize {
+    t.partition_point(|s| *s <= x).saturating_sub(1).min(t.len().saturating_sub(2))
+}
+
+fn nearest_gap(spike: f64, other: &[f64]) -> f64 {
+    let k = other.partition_point(|s| *s < spike);
+    let after = other.get(k).map_or(f64::INFINITY, |s| s - spike);
+    let before = if k > 0 { spike - other[k - 1] } else { f64::INFINITY };
+    after.min(before)
+}
+
+fn bracketed(what: &'static str, t: &[f64], start: f64, end: f64) -> Result<(), DistanceError> {
+    train(what, t)?;
+    let ok = t.first().is_some_and(|s| *s <= start) && t.last().is_some_and(|s| *s >= end) && t.windows(2).all(|p| p[1] > p[0]);
+    if ok { Ok(()) } else { Err(DistanceError::Empty { what: "a spike on each side of the window (or the train repeats a spike)" }) }
+}
+
+fn window(start: f64, end: f64) -> Result<(), DistanceError> {
+    if !start.is_finite() || !end.is_finite() {
+        return Err(DistanceError::NonFinite { what: "window", index: 0 });
+    }
+    if !(end > start) {
+        return Err(DistanceError::OutOfRange { what: "end", value: end, low: start, high: f64::INFINITY });
+    }
+    Ok(())
+}
+
+/// The breakpoints of both profiles inside `[start, end]`: the window's ends and every spike of
+/// either train strictly between them, in order.
+fn breakpoints(a: &[f64], b: &[f64], start: f64, end: f64) -> Vec<f64> {
+    let mut cuts: Vec<f64> = a.iter().chain(b).copied().filter(|t| *t > start && *t < end).collect();
+    cuts.push(start);
+    cuts.push(end);
+    cuts.sort_by(f64::total_cmp);
+    cuts.dedup();
+    cuts
+}
+
+/// The ISI-distance over `[start, end]`: the time average of `|x₁ − x₂|/max(x₁, x₂)`, with `x_n`
+/// the length of the interspike interval of train `n` that contains the instant.
+///
+/// # Errors
+///
+/// [`DistanceError::NonFinite`] or [`DistanceError::Unsorted`] for a bad train,
+/// [`DistanceError::OutOfRange`] for an empty window, and [`DistanceError::Empty`] unless BOTH
+/// trains have a spike at or before `start` and at or after `end`, with no repeated spike.
+pub fn isi_distance(a: &[f64], b: &[f64], start: f64, end: f64) -> Result<f64, DistanceError> {
+    window(start, end)?;
+    bracketed("a", a, start, end)?;
+    bracketed("b", b, start, end)?;
+    let cuts = breakpoints(a, b, start, end);
+    let mut acc = 0.0;
+    for pair in cuts.windows(2) {
+        let mid = 0.5 * (pair[0] + pair[1]);
+        let (i, j) = (interval_of(a, mid), interval_of(b, mid));
+        let (x1, x2) = (a[i + 1] - a[i], b[j + 1] - b[j]);
+        acc += (x1 - x2).abs() / x1.max(x2) * (pair[1] - pair[0]);
+    }
+    Ok(acc / (end - start))
+}
+
+/// The SPIKE-distance over `[start, end]`: the time average of
+/// `S(t) = (S₁ x₂ + S₂ x₁)/(2 ⟨x⟩²)`, where for train `n` with previous spike `P` and following
+/// spike `F`, `S_n = (Δ_P (t_F − t) + Δ_F (t − t_P))/x_n`, `Δ` being a spike's distance to the
+/// nearest spike of the OTHER train, `x_n = t_F − t_P`, and `⟨x⟩` the mean of the two intervals.
+///
+/// # Errors
+///
+/// As [`isi_distance`].
+pub fn spike_distance(a: &[f64], b: &[f64], start: f64, end: f64) -> Result<f64, DistanceError> {
+    window(start, end)?;
+    bracketed("a", a, start, end)?;
+    bracketed("b", b, start, end)?;
+    let cuts = breakpoints(a, b, start, end);
+    let mut acc = 0.0;
+    for pair in cuts.windows(2) {
+        let mid = 0.5 * (pair[0] + pair[1]);
+        let (i, j) = (interval_of(a, mid), interval_of(b, mid));
+        let (x1, x2) = (a[i + 1] - a[i], b[j + 1] - b[j]);
+        let gaps = [nearest_gap(a[i], b), nearest_gap(a[i + 1], b), nearest_gap(b[j], a), nearest_gap(b[j + 1], a)];
+        let profile = |t: f64| {
+            let s1 = (gaps[0] * (a[i + 1] - t) + gaps[1] * (t - a[i])) / x1;
+            let s2 = (gaps[2] * (b[j + 1] - t) + gaps[3] * (t - b[j])) / x2;
+            let mean = 0.5 * (x1 + x2);
+            (s1 * x2 + s2 * x1) / (2.0 * mean * mean)
+        };
+        // Linear between breakpoints, so the trapezoid is the integral.
+        acc += 0.5 * (profile(pair[0]) + profile(pair[1])) * (pair[1] - pair[0]);
+    }
+    Ok(acc / (end - start))
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -476,6 +589,109 @@ mod tests {
         assert!((ff - 1.0).abs() < 4.0 * (2.0f64 / 4000.0).sqrt(), "a Poisson train has a Fano factor of {ff}");
         for none in [periodic_fano(0.0, 1.0), periodic_fano(1.0, 0.0), periodic_fano(f64::NAN, 1.0)] {
             assert_eq!(none, None);
+        }
+    }
+
+    fn clock(period: f64, offset: f64, until: f64) -> Vec<f64> {
+        let mut t = Vec::new();
+        let mut k = 0.0;
+        while offset + period * k <= until {
+            t.push(offset + period * k);
+            k += 1.0;
+        }
+        t
+    }
+
+    #[test]
+    fn the_kreuz_distances_of_two_clocks_are_their_closed_forms() {
+        // Periods 2 and 3, any phases: every instant sits in an interval of 2 and one of 3.
+        let (a, b) = (clock(2.0, -1.5, 40.0), clock(3.0, -2.25, 40.0));
+        assert!((isi_distance(&a, &b, 0.0, 30.0).unwrap() - 1.0 / 3.0).abs() < 1e-15);
+        assert!((isi_distance(&a, &b, 3.7, 29.1).unwrap() - 1.0 / 3.0).abs() < 1e-15, "and on any window");
+        assert_eq!(isi_distance(&a, &a, 0.0, 30.0).unwrap(), 0.0);
+        assert_eq!(isi_distance(&a, &b, 0.0, 30.0).unwrap(), isi_distance(&b, &a, 0.0, 30.0).unwrap());
+        // The same period, offset by δ = 0.25 of a period of 2: SPIKE-distance δ/p = 0.125 exactly.
+        let (c, d) = (clock(2.0, -4.0, 40.0), clock(2.0, -3.5, 40.0));
+        assert!((spike_distance(&c, &d, 0.0, 30.0).unwrap() - 0.25).abs() < 1e-15, "δ/p = 0.5/2");
+        let e = clock(2.0, -3.75, 40.0);
+        assert!((spike_distance(&c, &e, 1.3, 27.9).unwrap() - 0.125).abs() < 1e-15);
+        assert_eq!(spike_distance(&c, &c, 0.0, 30.0).unwrap(), 0.0);
+        assert_eq!(spike_distance(&c, &e, 0.0, 30.0).unwrap(), spike_distance(&e, &c, 0.0, 30.0).unwrap());
+        // The ISI-distance cannot see a shift at all — that is what the SPIKE-distance is for.
+        assert_eq!(isi_distance(&c, &d, 0.0, 30.0).unwrap(), 0.0);
+        // By hand, one window between two spikes of each: a = {0, 4}, b = {0, 2, 4}.
+        // ISI profile is |4 − 2|/4 = ½ throughout.
+        assert_eq!(isi_distance(&[0.0, 4.0], &[0.0, 2.0, 4.0], 0.0, 4.0).unwrap(), 0.5);
+        // SPIKE: train a's spikes coincide with b's (Δ = 0) so S₁ = 0; b's middle spike is 2 from
+        // a's nearest, so on (0, 2) S₂ = 2·t/2 = t and S = (0·2 + t·4)/(2·3²) = 2t/9, mean 2/9;
+        // (2, 4) mirrors it.
+        assert!((spike_distance(&[0.0, 4.0], &[0.0, 2.0, 4.0], 0.0, 4.0).unwrap() - 2.0 / 9.0).abs() < 1e-15);
+        // Both stay within [0, 1] on random trains.
+        let mut rng = Rng::new(44);
+        for _ in 0..30 {
+            let mut x = random_train(20, 10.0, &mut rng);
+            let mut y = random_train(14, 10.0, &mut rng);
+            for t in [&mut x, &mut y] {
+                t.insert(0, -1.0);
+                t.push(11.0);
+            }
+            for d in [isi_distance(&x, &y, 0.0, 10.0).unwrap(), spike_distance(&x, &y, 0.0, 10.0).unwrap()] {
+                assert!((0.0..=1.0).contains(&d) && d > 0.01, "{d}");
+            }
+        }
+    }
+
+    /// The two profiles written straight from their definitions — linear scans, no bisection, no
+    /// breakpoints — and integrated on a fine grid: the referee for the exact integration above.
+    #[test]
+    fn the_kreuz_distances_equal_the_quadrature_of_their_definitions() {
+        let around = |t: &[f64], x: f64| {
+            let p = t.iter().copied().filter(|s| *s <= x).fold(f64::NEG_INFINITY, f64::max);
+            let f = t.iter().copied().filter(|s| *s > x).fold(f64::INFINITY, f64::min);
+            (p, f)
+        };
+        let gap = |spike: f64, other: &[f64]| other.iter().map(|s| (s - spike).abs()).fold(f64::INFINITY, f64::min);
+        let mut rng = Rng::new(52);
+        for _ in 0..4 {
+            let mut a = random_train(9, 6.0, &mut rng);
+            let mut b = random_train(6, 6.0, &mut rng);
+            for t in [&mut a, &mut b] {
+                t.insert(0, -0.7);
+                t.push(6.4);
+            }
+            b[0] = -0.2;
+            let n = 400_000;
+            let (mut isi, mut spk) = (0.0, 0.0);
+            for k in 0..n {
+                let t = 6.0 * (f64::from(k) + 0.5) / f64::from(n);
+                let ((p1, f1), (p2, f2)) = (around(&a, t), around(&b, t));
+                let (x1, x2) = (f1 - p1, f2 - p2);
+                isi += (x1 - x2).abs() / x1.max(x2);
+                let s1 = (gap(p1, &b) * (f1 - t) + gap(f1, &b) * (t - p1)) / x1;
+                let s2 = (gap(p2, &a) * (f2 - t) + gap(f2, &a) * (t - p2)) / x2;
+                spk += (s1 * x2 + s2 * x1) / (2.0 * (0.5 * (x1 + x2)).powi(2));
+            }
+            let (isi, spk) = (isi / f64::from(n), spk / f64::from(n));
+            // The ISI profile jumps at 15 spikes, each misplaced by at most half a grid step.
+            assert!((isi_distance(&a, &b, 0.0, 6.0).unwrap() - isi).abs() < 15.0 * 6.0 / f64::from(n));
+            assert!((spike_distance(&a, &b, 0.0, 6.0).unwrap() - spk).abs() < 15.0 * 6.0 / f64::from(n), "{} vs {spk}", spike_distance(&a, &b, 0.0, 6.0).unwrap());
+        }
+    }
+
+    #[test]
+    fn the_kreuz_distances_refuse_a_window_they_would_have_to_invent_an_edge_for() {
+        let inside = [1.0, 2.0, 3.0];
+        let around = [-1.0, 2.0, 5.0];
+        for f in [isi_distance, spike_distance] {
+            assert!(matches!(f(&inside, &around, 0.0, 4.0), Err(DistanceError::Empty { .. })), "train a starts inside the window");
+            assert!(matches!(f(&around, &inside, 0.0, 4.0), Err(DistanceError::Empty { .. })));
+            assert!(matches!(f(&[], &around, 0.0, 4.0), Err(DistanceError::Empty { .. })));
+            assert!(matches!(f(&[-1.0, 2.0, 2.0, 5.0], &around, 0.0, 4.0), Err(DistanceError::Empty { .. })), "a repeated spike is an interval of zero");
+            assert!(matches!(f(&around, &around, 4.0, 4.0), Err(DistanceError::OutOfRange { what: "end", .. })));
+            assert!(matches!(f(&around, &around, f64::NAN, 4.0), Err(DistanceError::NonFinite { what: "window", .. })));
+            assert!(matches!(f(&[5.0, -1.0], &around, 0.0, 4.0), Err(DistanceError::Unsorted { .. })));
+            // Spikes exactly ON the window's ends bracket it.
+            assert!(f(&[0.0, 4.0], &[0.0, 1.0, 4.0], 0.0, 4.0).is_ok());
         }
     }
 

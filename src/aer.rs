@@ -2744,11 +2744,235 @@ impl NMnist {
     }
 }
 
+// ---------------------------------------------------------------------------------------------
+// AEDAT 3.1 and the DVS128 Gesture dataset
+// ---------------------------------------------------------------------------------------------
+
+/// An `AEDAT` 3.1 file: the container of the DVS128 Gesture dataset (Amir, Taba, Berg, Melano,
+/// `McKinstry`, Di Nolfo, Nayak, Andreopoulos, Garreau, Mendoza, Kusnitz, Debole, Esser, Delbruck,
+/// Flickner and Modha, *A low power, fully event-based gesture recognition system*, CVPR 2017,
+/// pp. 7388–7397).
+///
+/// Transcribed from the vendor's specification (iniVation, *`AEDAT` 3.1 file format*) and checked
+/// against it field by field: a text header from `#!AER-DAT3.1\r\n` to `#!END-HEADER\r\n`, then
+/// packets, each a 28-byte little-endian header — `eventType` (2 bytes), `eventSource` (2),
+/// `eventSize` (4), `eventTSOffset` (4), `eventTSOverflow` (4), `eventCapacity` (4), `eventNumber`
+/// (4), `eventValid` (4) — followed by `eventNumber` events of `eventSize` bytes. A POLARITY event
+/// (type 1) is 8 bytes: a data word with validity in bit 0, polarity in bit 1, `y` in bits 2–16
+/// and `x` in bits 17–31, then a 32-bit microsecond timestamp; the full time is
+/// `(eventTSOverflow << 31) | timestamp`.
+///
+/// Packets of every other type are skipped by their declared length and counted. Events whose
+/// validity bit is clear are dropped and counted. Nothing is reordered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Aedat3 {
+    /// Valid polarity events, in file order.
+    pub events: Vec<AerEvent>,
+    /// Polarity events dropped because their validity bit was clear.
+    pub invalid: u64,
+    /// Packets of other types (special, frame, IMU, …) that were skipped.
+    pub skipped_packets: u64,
+}
+
+impl Aedat3 {
+    /// The first line of every file.
+    pub const MAGIC: &'static str = "#!AER-DAT3.1\r\n";
+    /// The line that ends the text header.
+    pub const END_HEADER: &'static str = "#!END-HEADER\r\n";
+    /// Bytes in a packet header.
+    pub const PACKET_HEADER: usize = 28;
+    /// The `eventType` of a polarity packet.
+    pub const POLARITY: u16 = 1;
+
+    /// Decode a file.
+    ///
+    /// # Errors
+    ///
+    /// [`DecodeError::BadMagic`] if the file does not start with [`Aedat3::MAGIC`] or has no
+    /// [`Aedat3::END_HEADER`]; [`DecodeError::Truncated`] for a packet header or body cut short;
+    /// [`DecodeError::UnsupportedRecordLayout`] for a polarity packet whose events are not 8 bytes
+    /// with the timestamp at offset 4; [`DecodeError::CountMismatch`] when `eventCapacity` differs
+    /// from `eventNumber` (the specification says they are equal in files) or `eventValid` from
+    /// the valid events found; [`DecodeError::FieldOutOfRange`] for a negative count, a timestamp
+    /// with its sign bit set, or an overflow counter past what a `u64` of microseconds holds;
+    /// [`DecodeError::NonMonotonicTimestamp`] if a polarity event is earlier than the one before.
+    pub fn decode(bytes: &[u8]) -> Result<Self, DecodeError> {
+        let magic = Self::MAGIC.as_bytes();
+        if bytes.len() < magic.len() || &bytes[..magic.len()] != magic {
+            let found = String::from_utf8_lossy(&bytes[..bytes.len().min(magic.len())]).into_owned();
+            return Err(DecodeError::BadMagic { offset: 0, expected: Self::MAGIC, found });
+        }
+        let end = Self::END_HEADER.as_bytes();
+        let Some(header_end) = bytes.windows(end.len()).position(|w| w == end) else {
+            return Err(DecodeError::BadMagic { offset: bytes.len(), expected: Self::END_HEADER, found: String::new() });
+        };
+        let mut at = header_end + end.len();
+        let mut out = Self { events: Vec::new(), invalid: 0, skipped_packets: 0 };
+        let mut previous: Option<u64> = None;
+        while at < bytes.len() {
+            let head = slice_at(bytes, at, Self::PACKET_HEADER)?;
+            let word = |k: usize| u32::from_le_bytes([head[k], head[k + 1], head[k + 2], head[k + 3]]);
+            let event_type = u16::from_le_bytes([head[0], head[1]]);
+            let (size, ts_offset, overflow, capacity, number, valid) = (word(4), word(8), word(12), word(16), word(20), word(24));
+            for (field, value) in [("eventSize", size), ("eventTSOverflow", overflow), ("eventNumber", number), ("eventValid", valid)] {
+                if value > i32::MAX as u32 {
+                    return Err(DecodeError::FieldOutOfRange { offset: at, field, value: u64::from(value), max: i32::MAX as u64 });
+                }
+            }
+            if capacity != number {
+                return Err(DecodeError::CountMismatch { offset: at + 16, declared: u64::from(capacity), actual: u64::from(number) });
+            }
+            let body_len = (size as usize).checked_mul(number as usize).ok_or(DecodeError::Truncated { offset: at, need: usize::MAX, have: 0 })?;
+            let body = slice_at(bytes, at + Self::PACKET_HEADER, body_len)?;
+            if event_type == Self::POLARITY {
+                if size != 8 || ts_offset != 4 {
+                    return Err(DecodeError::UnsupportedRecordLayout { offset: at, record_type: 1, record_size: size.min(255) as u8 });
+                }
+                let mut found_valid = 0u32;
+                for (k, e) in body.as_chunks::<8>().0.iter().enumerate() {
+                    let data = u32::from_le_bytes([e[0], e[1], e[2], e[3]]);
+                    let stamp = u32::from_le_bytes([e[4], e[5], e[6], e[7]]);
+                    let here = at + Self::PACKET_HEADER + 8 * k;
+                    if stamp > i32::MAX as u32 {
+                        return Err(DecodeError::FieldOutOfRange { offset: here + 4, field: "timestamp", value: u64::from(stamp), max: i32::MAX as u64 });
+                    }
+                    if data & 1 == 0 {
+                        out.invalid += 1;
+                        continue;
+                    }
+                    found_valid += 1;
+                    let t = (u64::from(overflow) << 31) | u64::from(stamp);
+                    if let Some(p) = previous.filter(|&p| t < p) {
+                        return Err(DecodeError::NonMonotonicTimestamp { offset: here, previous: p, found: t });
+                    }
+                    previous = Some(t);
+                    let polarity = if data & 2 != 0 { Polarity::On } else { Polarity::Off };
+                    out.events.push(AerEvent { t, x: ((data >> 17) & 0x7FFF) as u16, y: ((data >> 2) & 0x7FFF) as u16, polarity });
+                }
+                if found_valid != valid {
+                    return Err(DecodeError::CountMismatch { offset: at + 24, declared: u64::from(valid), actual: u64::from(found_valid) });
+                }
+            } else {
+                out.skipped_packets += 1;
+            }
+            at += Self::PACKET_HEADER + body_len;
+        }
+        Ok(out)
+    }
+
+    /// Encode events as one file of polarity packets of at most `per_packet` events, source 1, with
+    /// a minimal header. The result decodes bit-exactly.
+    ///
+    /// Returns `None` for `per_packet` of zero, a coordinate past 15 bits, or events out of time
+    /// order — the format has nowhere to put the first two and forbids the third.
+    #[must_use]
+    pub fn encode(events: &[AerEvent], per_packet: usize) -> Option<Vec<u8>> {
+        if per_packet == 0 || per_packet > i32::MAX as usize || events.windows(2).any(|p| p[1].t < p[0].t) {
+            return None;
+        }
+        let mut out = Vec::from(Self::MAGIC.as_bytes());
+        out.extend_from_slice(Self::END_HEADER.as_bytes());
+        // A packet has ONE overflow counter, so it is also cut where the counter changes.
+        let mut start = 0;
+        while start < events.len() {
+            let overflow = events[start].t >> 31;
+            let mut stop = start;
+            while stop < events.len() && stop - start < per_packet && events[stop].t >> 31 == overflow {
+                stop += 1;
+            }
+            let count = (stop - start) as u32;
+            out.extend_from_slice(&Self::POLARITY.to_le_bytes());
+            out.extend_from_slice(&1u16.to_le_bytes());
+            for word in [8u32, 4, u32::try_from(overflow).ok().filter(|o| *o <= i32::MAX as u32)?, count, count, count] {
+                out.extend_from_slice(&word.to_le_bytes());
+            }
+            for e in &events[start..stop] {
+                if e.x > 0x7FFF || e.y > 0x7FFF {
+                    return None;
+                }
+                let data = (u32::from(e.x) << 17) | (u32::from(e.y) << 2) | (u32::from(e.polarity == Polarity::On) << 1) | 1;
+                out.extend_from_slice(&data.to_le_bytes());
+                out.extend_from_slice(&((e.t & 0x7FFF_FFFF) as u32).to_le_bytes());
+            }
+            start = stop;
+        }
+        Some(out)
+    }
+}
+
+/// One labelled interval of a DVS128 Gesture recording.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GestureLabel {
+    /// Class, `1..=11` as the dataset numbers them (11 is "other gestures").
+    pub class: u8,
+    /// First microsecond of the gesture.
+    pub start_us: u64,
+    /// Last microsecond of the gesture.
+    pub end_us: u64,
+}
+
+/// The sensor of the DVS128 Gesture dataset is 128 × 128.
+pub const GESTURE_SENSOR: (u16, u16) = (128, 128);
+/// The dataset has eleven classes.
+pub const GESTURE_CLASSES: u8 = 11;
+
+/// Parse a DVS128 Gesture `*_labels.csv`: a header line `class,startTime_usec,endTime_usec` and one
+/// line per gesture.
+///
+/// # Errors
+///
+/// [`DecodeError::BadMagic`] if the first line is not that header; [`DecodeError::MalformedFlatBuffer`]
+/// — reused for "a text record that does not parse" — naming the byte offset of a line that does
+/// not have three unsigned integers; [`DecodeError::FieldOutOfRange`] for a class outside
+/// `1..=11` or an interval that ends before it starts.
+pub fn gesture_labels(csv: &str) -> Result<Vec<GestureLabel>, DecodeError> {
+    const HEADER: &str = "class,startTime_usec,endTime_usec";
+    let mut lines = csv.lines();
+    let first = lines.next().unwrap_or("");
+    if first.trim_end() != HEADER {
+        return Err(DecodeError::BadMagic { offset: 0, expected: HEADER, found: first.to_string() });
+    }
+    let mut at = first.len() + 1;
+    let mut out = Vec::new();
+    for line in lines {
+        let here = at;
+        at += line.len() + 1;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let parts: Vec<&str> = line.trim().split(',').collect();
+        let parsed: Option<Vec<u64>> = if parts.len() == 3 { parts.iter().map(|p| p.trim().parse().ok()).collect() } else { None };
+        let Some(v) = parsed else {
+            return Err(DecodeError::MalformedFlatBuffer { offset: here, what: "a label line is not three unsigned integers" });
+        };
+        if v[0] == 0 || v[0] > u64::from(GESTURE_CLASSES) {
+            return Err(DecodeError::FieldOutOfRange { offset: here, field: "class", value: v[0], max: u64::from(GESTURE_CLASSES) });
+        }
+        if v[2] < v[1] {
+            return Err(DecodeError::FieldOutOfRange { offset: here, field: "startTime_usec", value: v[1], max: v[2] });
+        }
+        out.push(GestureLabel { class: v[0] as u8, start_us: v[1], end_us: v[2] });
+    }
+    Ok(out)
+}
+
+/// The events of one labelled gesture: those with `start_us <= t <= end_us` — BOTH ends included,
+/// which is this function's choice and not something the dataset specifies. The events must be in
+/// time order, which every decoder in this module guarantees; the slice is found by bisection.
+/// Labels in the dataset are known to overlap in places (one recording's class 9 ends after its
+/// class 10 begins), so two gestures' slices may share events; nothing here forbids that.
+#[must_use]
+pub fn gesture_events<'a>(events: &'a [AerEvent], label: &GestureLabel) -> &'a [AerEvent] {
+    let from = events.partition_point(|e| e.t < label.start_us);
+    let to = events.partition_point(|e| e.t <= label.end_us);
+    &events[from..to.max(from)]
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
-        Aedat2, Aedat2Layout, Aedat4, Aedat4Compression, Aedat4Packet, AerEvent, Dat, DecodeError,
-        EncodeError, Evt2, Evt3, Flat, Marker, MarkerKind, TrainMap,
+        Aedat2, Aedat2Layout, Aedat3, Aedat4, Aedat4Compression, Aedat4Packet, AerEvent, Dat, DecodeError,
+        EncodeError, Evt2, Evt3, Flat, GestureLabel, Marker, MarkerKind, TrainMap, gesture_events, gesture_labels,
     };
     use crate::rng::Rng;
     use crate::spike::Polarity;
@@ -4543,5 +4767,131 @@ mod tests {
         let enc = super::NMnist::encode(&[top]).unwrap();
         assert_eq!(enc[2], 0x7F);
         assert_eq!(super::NMnist::decode(&enc).unwrap().events[0], top);
+    }
+
+    // ---- AEDAT 3.1 and DVS128 Gesture ----
+
+    /// A packet written byte by byte from the specification, NOT by the encoder under test.
+    fn hand_packet(event_type: u16, size: u32, ts_offset: u32, overflow: u32, body: &[u8], number: u32, valid: u32) -> Vec<u8> {
+        let mut p = Vec::new();
+        p.extend_from_slice(&event_type.to_le_bytes());
+        p.extend_from_slice(&7u16.to_le_bytes());
+        for w in [size, ts_offset, overflow, number, number, valid] {
+            p.extend_from_slice(&w.to_le_bytes());
+        }
+        p.extend_from_slice(body);
+        p
+    }
+
+    #[test]
+    fn aedat3_decodes_a_file_written_by_hand_from_the_specification() {
+        let mut file = Vec::from("#!AER-DAT3.1\r\n# a comment line\r\n#!END-HEADER\r\n".as_bytes());
+        // x = 100, y = 27, ON, valid: (100 << 17) | (27 << 2) | 0b11 = 13_107_311; t = 1000.
+        // x = 5, y = 127, OFF, valid: (5 << 17) | (127 << 2) | 0b01 = 655_869; t = 1500.
+        // The same second event again with its validity bit clear: dropped, counted.
+        let mut body = Vec::new();
+        for (data, t) in [(13_107_311u32, 1000u32), (655_869, 1500), (655_868, 1600)] {
+            body.extend_from_slice(&data.to_le_bytes());
+            body.extend_from_slice(&t.to_le_bytes());
+        }
+        file.extend(hand_packet(1, 8, 4, 0, &body, 3, 2));
+        // An IMU6 packet (type 3) of two 36-byte events is stepped over by its declared length, and
+        // so is a SPECIAL packet (type 0) — whose events are 8 bytes with the timestamp at offset
+        // 4, exactly like a polarity event, and would decode as one if the type were not checked.
+        file.extend(hand_packet(3, 36, 32, 0, &[0xAB; 72], 2, 2));
+        file.extend(hand_packet(0, 8, 4, 0, &[0xFF, 0xFF, 0xFF, 0x7F, 0x10, 0x27, 0, 0], 1, 1));
+        // A later polarity packet with the overflow counter at 1: t = 2³¹ + 5.
+        let mut late = Vec::new();
+        late.extend_from_slice(&((1u32 << 17) | (2 << 2) | 0b11).to_le_bytes());
+        late.extend_from_slice(&5u32.to_le_bytes());
+        file.extend(hand_packet(1, 8, 4, 1, &late, 1, 1));
+        let got = Aedat3::decode(&file).unwrap();
+        assert_eq!(
+            got.events,
+            vec![
+                AerEvent { t: 1000, x: 100, y: 27, polarity: Polarity::On },
+                AerEvent { t: 1500, x: 5, y: 127, polarity: Polarity::Off },
+                AerEvent { t: (1 << 31) + 5, x: 1, y: 2, polarity: Polarity::On },
+            ]
+        );
+        assert_eq!((got.invalid, got.skipped_packets), (1, 2));
+    }
+
+    #[test]
+    fn aedat3_round_trips_and_refuses_what_the_format_forbids() {
+        let mut rng = Rng::new(61);
+        let mut t = 2_147_000_000u64; // just under 2³¹, so the run crosses an overflow boundary
+        let events: Vec<AerEvent> = (0..500)
+            .map(|_| {
+                t += u64::from(rng.below(5000));
+                AerEvent { t, x: rng.below(128) as u16, y: rng.below(128) as u16, polarity: if rng.below(2) == 1 { Polarity::On } else { Polarity::Off } }
+            })
+            .collect();
+        assert!(events.last().unwrap().t > 1 << 31 && events[0].t < 1 << 31);
+        // The overflow counter changes INSIDE a packet, not between two. (With packets of 64 the
+        // crossing fell on event 192 = 3 × 64 by luck, the encoder's split at the boundary was never
+        // exercised, and removing it survived the mutation sweep.)
+        let crossing = events.iter().position(|e| e.t >= 1 << 31).unwrap();
+        assert!(crossing % 50 != 0, "the crossing at event {crossing} falls on a packet boundary");
+        let bytes = Aedat3::encode(&events, 50).unwrap();
+        // 500 events in packets of 50 would be 10 packets; the split at the crossing makes 11.
+        assert_eq!(bytes.len(), Aedat3::MAGIC.len() + Aedat3::END_HEADER.len() + 11 * Aedat3::PACKET_HEADER + 500 * 8);
+        let back = Aedat3::decode(&bytes).unwrap();
+        assert_eq!(back.events, events);
+        assert_eq!((back.invalid, back.skipped_packets), (0, 0));
+        assert_eq!(Aedat3::decode(&Aedat3::encode(&[], 8).unwrap()).unwrap().events, vec![]);
+        assert_eq!(Aedat3::encode(&events, 0), None);
+        assert_eq!(Aedat3::encode(&[AerEvent { t: 0, x: 0x8000, y: 0, polarity: Polarity::On }], 8), None);
+        assert_eq!(Aedat3::encode(&[events[1], events[0]], 8), None);
+        // Refusals, each on a file that differs from a good one in one field.
+        let good = Aedat3::encode(&events[..4], 8).unwrap();
+        let header = Aedat3::MAGIC.len() + Aedat3::END_HEADER.len();
+        assert!(matches!(Aedat3::decode(b"#!AER-DAT4.0\r\n"), Err(DecodeError::BadMagic { offset: 0, .. })));
+        assert!(matches!(Aedat3::decode(Aedat3::MAGIC.as_bytes()), Err(DecodeError::BadMagic { .. })), "no END-HEADER");
+        assert!(matches!(Aedat3::decode(&good[..good.len() - 3]), Err(DecodeError::Truncated { .. })));
+        assert!(matches!(Aedat3::decode(&good[..header + 10]), Err(DecodeError::Truncated { .. })));
+        let patch = |offset: usize, value: u32| {
+            let mut f = good.clone();
+            f[header + offset..header + offset + 4].copy_from_slice(&value.to_le_bytes());
+            Aedat3::decode(&f)
+        };
+        assert!(matches!(patch(16, 5), Err(DecodeError::CountMismatch { declared: 5, actual: 4, .. })), "capacity ≠ number");
+        assert!(matches!(patch(24, 3), Err(DecodeError::CountMismatch { declared: 3, actual: 4, .. })), "eventValid ≠ valid events found");
+        assert!(matches!(patch(8, 0), Err(DecodeError::UnsupportedRecordLayout { .. })), "timestamp offset is not 4");
+        assert!(matches!(patch(12, 0x8000_0000), Err(DecodeError::FieldOutOfRange { field: "eventTSOverflow", .. })));
+        assert!(matches!(patch(28 + 4, 0x8000_0001), Err(DecodeError::FieldOutOfRange { field: "timestamp", .. })));
+        assert!(matches!(patch(28 + 8 + 4, 1), Err(DecodeError::NonMonotonicTimestamp { .. })), "the second event before the first");
+    }
+
+    #[test]
+    fn gesture_labels_cut_a_recording_into_its_gestures() {
+        let csv = "class,startTime_usec,endTime_usec\n1,1000,1999\n\n8, 5000 ,5000\r\n11,7000,9000\n";
+        let labels = gesture_labels(csv).unwrap();
+        assert_eq!(
+            labels,
+            vec![
+                GestureLabel { class: 1, start_us: 1000, end_us: 1999 },
+                GestureLabel { class: 8, start_us: 5000, end_us: 5000 },
+                GestureLabel { class: 11, start_us: 7000, end_us: 9000 },
+            ]
+        );
+        let events: Vec<AerEvent> = [500u64, 1000, 1500, 1999, 2000, 5000, 5000, 8000, 9001]
+            .iter()
+            .map(|&t| AerEvent { t, x: 1, y: 1, polarity: Polarity::On })
+            .collect();
+        // Both ends are included. That is this function's stated choice; other readers differ.
+        let cut: Vec<Vec<u64>> = labels.iter().map(|l| gesture_events(&events, l).iter().map(|e| e.t).collect()).collect();
+        assert_eq!(cut, vec![vec![1000, 1500, 1999], vec![5000, 5000], vec![8000]]);
+        assert!(gesture_events(&events, &GestureLabel { class: 2, start_us: 3000, end_us: 4000 }).is_empty());
+        assert!(gesture_events(&[], &labels[0]).is_empty());
+        assert!(matches!(gesture_labels("class,start,end\n1,2,3\n"), Err(DecodeError::BadMagic { .. })));
+        assert!(matches!(gesture_labels(""), Err(DecodeError::BadMagic { .. })));
+        assert!(matches!(gesture_labels("class,startTime_usec,endTime_usec\n1,2\n"), Err(DecodeError::MalformedFlatBuffer { offset: 34, .. })));
+        assert!(matches!(gesture_labels("class,startTime_usec,endTime_usec\n1,2,x\n"), Err(DecodeError::MalformedFlatBuffer { .. })));
+        assert!(matches!(gesture_labels("class,startTime_usec,endTime_usec\n1,2,-3\n"), Err(DecodeError::MalformedFlatBuffer { .. })));
+        assert!(matches!(gesture_labels("class,startTime_usec,endTime_usec\n0,2,3\n"), Err(DecodeError::FieldOutOfRange { field: "class", .. })));
+        assert!(matches!(gesture_labels("class,startTime_usec,endTime_usec\n12,2,3\n"), Err(DecodeError::FieldOutOfRange { field: "class", value: 12, .. })));
+        assert!(matches!(gesture_labels("class,startTime_usec,endTime_usec\n3,9,8\n"), Err(DecodeError::FieldOutOfRange { field: "startTime_usec", .. })));
+        assert_eq!(gesture_labels("class,startTime_usec,endTime_usec\n").unwrap(), vec![]);
     }
 }
