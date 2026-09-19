@@ -43,5 +43,61 @@
   "label": "exact step accepts a non-positive dt",
   "old": "if !(dt > 0.0) || !dt.is_finite() || !i.is_finite() ||",
   "new": "if !dt.is_finite() || !i.is_finite() ||"
+ },
+ {
+  "label": "lif spike offset measured from the tick's end",
+  "old": "left -= crossing;\n                spike_at(dt - left);",
+  "new": "left -= crossing;\n                spike_at(left);"
+ },
+ {
+  "label": "adaptive spike offset measured from the tick's end",
+  "old": "left -= advance;\n                spike_at(dt - left);",
+  "new": "left -= advance;\n                spike_at(left);"
+ },
+ {
+  "label": "adapted interval ignores the refractory period",
+  "old": "(-(t - self.lif.t_ref) / self.lif.tau_m).exp();",
+  "new": "(-t / self.lif.tau_m).exp();"
+ },
+ {
+  "label": "adapted interval uses the threshold after the spike",
+  "old": "charged - self.theta_0 - self.beta / (t / self.tau_a).exp_m1()",
+  "new": "charged - self.theta_0 - self.beta / (1.0 - (-t / self.tau_a).exp())"
+ },
+ {
+  "label": "adapted interval offered below threshold",
+  "old": "if !(v_inf > self.theta_0) || !v_inf.is_finite()",
+  "new": "if !v_inf.is_finite()",
+  "equivalent": "the search for an upper bracket gives up after 200 doublings and returns None for the same input; the guard only makes the refusal immediate"
+ },
+ {
+  "label": "threshold frozen during the refractory period",
+  "old": "self.theta = theta_0 + (self.theta - theta_0) * (-served / tau_a).exp();",
+  "new": "self.theta = theta_0 + (self.theta - theta_0);"
+ },
+ {
+  "label": "exact adaptive step does not adapt",
+  "old": "                self.lif.refractory = self.lif.t_ref;\n                self.theta += self.beta;",
+  "new": "                self.lif.refractory = self.lif.t_ref;\n                self.theta += 0.0;"
+ },
+ {
+  "label": "rebound crossing not looked for",
+  "old": "let end = if turn > 0.0 && turn < left && over(turn) >= 0.0 {",
+  "new": "let end = if false {"
+ },
+ {
+  "label": "threshold decays at the membrane's rate",
+  "old": "- theta_0 - (th0 - theta_0) * (-t / tau_a).exp();",
+  "new": "- theta_0 - (th0 - theta_0) * (-t / tau_m).exp();"
+ },
+ {
+  "label": "membrane threshold not kept in step",
+  "old": "        self.lif.v_th = self.theta;\n        Some(spikes)",
+  "new": "        Some(spikes)"
+ },
+ {
+  "label": "endless adaptive cell not refused",
+  "old": "|| !(self.tau_a > 0.0) || endless {",
+  "new": "|| !(self.tau_a > 0.0) || (endless && dt < 0.0) {"
  }
 ]

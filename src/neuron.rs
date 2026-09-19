@@ -200,6 +200,19 @@ impl Lif {
     /// would fire infinitely often (`v_reset ≥ v_th` with no refractory period).
     #[must_use]
     pub fn step_exact(&mut self, dt: f64, i: f64) -> Option<u32> {
+        self.exact(dt, i, |_| {})
+    }
+
+    /// [`Lif::step_exact`], also appending each spike's TIME within the tick — seconds from the
+    /// tick's start, in order — to `offsets`. These are the spike times the membrane equation
+    /// gives, not tick boundaries: under constant current they are `isi − t_ref`, then one every
+    /// `isi`, whatever the tick.
+    #[must_use]
+    pub fn step_exact_times(&mut self, dt: f64, i: f64, offsets: &mut Vec<f64>) -> Option<u32> {
+        self.exact(dt, i, |t| offsets.push(t))
+    }
+
+    fn exact(&mut self, dt: f64, i: f64, mut spike_at: impl FnMut(f64)) -> Option<u32> {
         if !(dt > 0.0) || !dt.is_finite() || !i.is_finite() || (self.v_reset >= self.v_th && !(self.t_ref > 0.0)) {
             return None;
         }
@@ -225,6 +238,7 @@ impl Lif {
             if crossing <= left {
                 spikes = spikes.saturating_add(1);
                 left -= crossing;
+                spike_at(dt - left);
                 self.v = self.v_reset;
                 self.refractory = self.t_ref;
             } else {
@@ -395,6 +409,135 @@ impl AdaptiveLif {
     pub fn theta_after(&self, n: u32) -> f64 {
         self.theta_0 + f64::from(n) * self.beta
     }
+
+    /// The interspike interval the cell ADAPTS TO under constant current `i`, seconds: the period
+    /// `T` of the regime in which the threshold's decay over one interval exactly undoes the
+    /// increment of one spike. Just before each spike the threshold is then
+    /// `θ₀ + β/(e^{T/τ_a} − 1)`, and `T` is where the membrane, charging for `T − t_ref` from reset,
+    /// meets it:
+    ///
+    /// `V_∞ + (V_reset − V_∞) e^{−(T − t_ref)/τ_m} = θ₀ + β/(e^{T/τ_a} − 1)`,
+    ///
+    /// solved by bisection (the left side rises in `T` and the right side falls). `None` when
+    /// `V_∞ ≤ θ₀`: the cell stops firing once it has adapted, or never starts.
+    #[must_use]
+    pub fn adapted_isi(&self, i: f64) -> Option<f64> {
+        let v_inf = self.lif.v_inf(i);
+        if !(v_inf > self.theta_0) || !v_inf.is_finite() || !(self.tau_a > 0.0) || !(self.beta >= 0.0) {
+            return None;
+        }
+        let gap = |t: f64| {
+            let charged = v_inf + (self.lif.v_reset - v_inf) * (-(t - self.lif.t_ref) / self.lif.tau_m).exp();
+            charged - self.theta_0 - self.beta / (t / self.tau_a).exp_m1()
+        };
+        let mut lo = self.lif.t_ref.max(f64::MIN_POSITIVE);
+        let mut hi = (lo + self.lif.tau_m).max(1e-6);
+        let mut doublings = 0;
+        while gap(hi) < 0.0 {
+            hi *= 2.0;
+            doublings += 1;
+            if doublings > 200 {
+                return None;
+            }
+        }
+        for _ in 0..200 {
+            let mid = 0.5 * (lo + hi);
+            if gap(mid) < 0.0 {
+                lo = mid;
+            } else {
+                hi = mid;
+            }
+        }
+        Some(0.5 * (lo + hi))
+    }
+
+    /// [`Lif::step_exact`] for the adapting cell: the crossing of the rising membrane and the
+    /// falling threshold has no closed form, so it is found inside the tick by bisection to the
+    /// last bit, on a bracket chosen so that it holds exactly one crossing — the difference of two
+    /// exponentials has at most one turning point, and the bracket ends there if it is the first
+    /// place the membrane is over the threshold. Returns the spikes emitted in the tick.
+    ///
+    /// `None` for a `dt` that is not positive and finite, a non-finite current, or a cell that
+    /// would fire infinitely often (no refractory period, no adaptation, reset at or above
+    /// threshold).
+    #[must_use]
+    pub fn step_exact(&mut self, dt: f64, i: f64) -> Option<u32> {
+        self.exact(dt, i, |_| {})
+    }
+
+    /// [`AdaptiveLif::step_exact`], also appending each spike's time within the tick to `offsets`.
+    #[must_use]
+    pub fn step_exact_times(&mut self, dt: f64, i: f64, offsets: &mut Vec<f64>) -> Option<u32> {
+        self.exact(dt, i, |t| offsets.push(t))
+    }
+
+    fn exact(&mut self, dt: f64, i: f64, mut spike_at: impl FnMut(f64)) -> Option<u32> {
+        let endless = !(self.lif.t_ref > 0.0) && !(self.beta > 0.0) && self.lif.v_reset >= self.theta.min(self.theta_0);
+        if !(dt > 0.0) || !dt.is_finite() || !i.is_finite() || !(self.tau_a > 0.0) || endless {
+            return None;
+        }
+        let v_inf = self.lif.v_inf(i);
+        let (tau_m, tau_a, theta_0) = (self.lif.tau_m, self.tau_a, self.theta_0);
+        let mut left = dt;
+        let mut spikes = 0u32;
+        while left > 0.0 {
+            if self.lif.refractory > 0.0 {
+                let served = self.lif.refractory.min(left);
+                self.lif.refractory -= served;
+                left -= served;
+                self.lif.v = self.lif.v_reset;
+                self.theta = theta_0 + (self.theta - theta_0) * (-served / tau_a).exp();
+                continue;
+            }
+            let (v0, th0) = (self.lif.v, self.theta);
+            // Membrane minus threshold, t seconds from here.
+            let over = |t: f64| v_inf + (v0 - v_inf) * (-t / tau_m).exp() - theta_0 - (th0 - theta_0) * (-t / tau_a).exp();
+            let crossing = if over(0.0) >= 0.0 {
+                Some(0.0)
+            } else {
+                // Its one possible turning point: where the two exponentials' slopes are equal.
+                let (a, b) = ((v0 - v_inf) / tau_m, (th0 - theta_0) / tau_a);
+                let turn = if a * b > 0.0 && tau_m != tau_a { (a / b).ln() / (1.0 / tau_m - 1.0 / tau_a) } else { f64::NAN };
+                let end = if turn > 0.0 && turn < left && over(turn) >= 0.0 {
+                    Some(turn)
+                } else if over(left) >= 0.0 {
+                    Some(left)
+                } else {
+                    None
+                };
+                end.map(|mut hi| {
+                    let mut lo = 0.0;
+                    for _ in 0..200 {
+                        let mid = 0.5 * (lo + hi);
+                        if over(mid) < 0.0 {
+                            lo = mid;
+                        } else {
+                            hi = mid;
+                        }
+                    }
+                    hi
+                })
+            };
+            let advance = crossing.unwrap_or(left);
+            self.theta = theta_0 + (th0 - theta_0) * (-advance / tau_a).exp();
+            if crossing.is_some() {
+                spikes = spikes.saturating_add(1);
+                left -= advance;
+                spike_at(dt - left);
+                self.lif.v = self.lif.v_reset;
+                self.lif.refractory = self.lif.t_ref;
+                self.theta += self.beta;
+            } else {
+                self.lif.v = v_inf + (v0 - v_inf) * (-left / tau_m).exp();
+                left = 0.0;
+            }
+            if spikes > 10_000_000 {
+                return None;
+            }
+        }
+        self.lif.v_th = self.theta;
+        Some(spikes)
+    }
 }
 
 impl Neuron for AdaptiveLif {
@@ -562,6 +705,107 @@ impl Neuron for Izhikevich {
 #[cfg(test)]
 mod tests {
     use super::{AdaptiveLif, IntegrateAndFire, Izhikevich, Lif, Neuron};
+
+    /// Exact spike TIMES: under constant current they are `isi − t_ref`, then one every `isi` —
+    /// the same list whatever the tick they were found in.
+    #[test]
+    fn exact_spike_times_are_the_closed_forms_at_any_tick() {
+        let cell = Lif::default();
+        let i = 4e-9;
+        let isi = cell.isi(i).unwrap();
+        // Ticks that divide the half second exactly, so that every run covers the same interval.
+        for dt in [2e-4, 1e-3, 6.25e-3, 0.25] {
+            let mut c = cell;
+            let mut times = Vec::new();
+            let mut offsets = Vec::new();
+            for k in 0..(0.5f64 / dt).round() as usize {
+                offsets.clear();
+                let n = c.step_exact_times(dt, i, &mut offsets).unwrap();
+                assert_eq!(n as usize, offsets.len());
+                assert!(offsets.iter().all(|o| *o > 0.0 && *o <= dt) && offsets.windows(2).all(|p| p[0] < p[1]));
+                times.extend(offsets.iter().map(|o| k as f64 * dt + o));
+            }
+            assert_eq!(times.len(), 44, "dt = {dt}");
+            for (k, t) in times.iter().enumerate() {
+                // Each time is rebuilt from a tick index and an offset: a few ulps of half a second.
+                assert!((t - (isi - cell.t_ref + k as f64 * isi)).abs() < 1e-13, "dt = {dt}, spike {k}: {t}");
+            }
+        }
+    }
+
+    /// The adapting cell with exact timing settles into the interval its self-consistency equation
+    /// gives, at any tick — and the equation is checked by substituting its root back.
+    #[test]
+    fn the_adapting_cell_settles_into_its_self_consistent_interval() {
+        let cell = AdaptiveLif::new(Lif::default(), 0.1, 3e-3);
+        let i = 4e-9;
+        let t = cell.adapted_isi(i).unwrap();
+        // Substituted back: the membrane after T − t_ref of charging meets θ₀ + β/(e^{T/τ_a} − 1).
+        let v_inf = cell.lif.v_inf(i);
+        let charged = v_inf + (cell.lif.v_reset - v_inf) * (-(t - 2e-3) / 20e-3).exp();
+        assert!((charged - (-50e-3 + 3e-3 / ((t / 0.1).exp() - 1.0))).abs() < 1e-16);
+        // Adaptation makes it SLOWER than the plain cell, and with no adaptation it is the plain cell.
+        let plain = cell.lif.isi(i).unwrap();
+        assert!(t > 1.5 * plain, "adapted interval {t}, unadapted {plain}");
+        assert!((AdaptiveLif::new(Lif::default(), 0.1, 0.0).adapted_isi(i).unwrap() - plain).abs() < 1e-15);
+        assert_eq!(cell.adapted_isi(1e-9), None, "V∞ = −55 mV never reaches θ₀");
+        for dt in [1e-4, 1e-3, 6e-3] {
+            let mut c = cell;
+            let mut times = Vec::new();
+            let mut offsets = Vec::new();
+            for k in 0..(3.0f64 / dt).round() as usize {
+                offsets.clear();
+                c.step_exact_times(dt, i, &mut offsets).unwrap();
+                times.extend(offsets.iter().map(|o| k as f64 * dt + o));
+            }
+            // The first interval is the plain cell's; thirty time constants later they are T.
+            assert!((times[0] - (plain - 2e-3)).abs() < 1e-13, "dt = {dt}");
+            let last: Vec<f64> = times.windows(2).rev().take(5).map(|p| p[1] - p[0]).collect();
+            for gap in &last {
+                assert!((gap - t).abs() < 1e-10, "dt = {dt}: late interval {gap}, the equation says {t}");
+            }
+            assert!(times.windows(2).take(6).all(|p| p[1] - p[0] < t), "the early intervals are shorter");
+            // The threshold the struct reports is kept in step with the membrane's.
+            assert_eq!(c.lif.v_th, c.theta);
+        }
+        // The tick-based step on the same cell at 1 ms settles on a LONGER interval: every one of
+        // its intervals is a whole number of ticks.
+        let mut ticked = cell;
+        let mut spikes = Vec::new();
+        for k in 0..3000 {
+            if ticked.step(1e-3, i) {
+                spikes.push(f64::from(k));
+            }
+        }
+        let late = (spikes[spikes.len() - 1] - spikes[spikes.len() - 6]) / 5.0 * 1e-3;
+        assert!(late > t + 0.3e-3, "tick-based late interval {late} against {t}");
+        // A cell can fire on the REBOUND of its threshold: relaxing from −45 mV toward a
+        // sub-threshold −52 mV while the threshold falls from −40 mV to −50 mV five times faster,
+        // the membrane is over the threshold only for a while in the middle of a 50 ms tick —
+        // membrane minus threshold is −5 mV at its start and −1.4 mV at its end. The crossing is
+        // found from the turning point, not from the tick's end.
+        let mut rebound = AdaptiveLif { lif: Lif { v: -45e-3, ..Lif::default() }, theta_0: -50e-3, tau_a: 5e-3, beta: 3e-3, theta: -40e-3 };
+        let over = |t: f64| -2e-3 + 7e-3 * (-t / 20e-3f64).exp() - 10e-3 * (-t / 5e-3f64).exp();
+        assert!(over(0.0) < 0.0 && over(10e-3) > 0.0 && over(50e-3) < 0.0);
+        let (mut lo, mut hi) = (0.0f64, 10e-3f64);
+        for _ in 0..100 {
+            let mid = 0.5 * (lo + hi);
+            if over(mid) < 0.0 { lo = mid } else { hi = mid }
+        }
+        let mut when = Vec::new();
+        assert_eq!(rebound.step_exact_times(50e-3, 1.3e-9, &mut when), Some(1));
+        assert!((when[0] - hi).abs() < 1e-15, "fired at {}, the crossing is at {hi}", when[0]);
+        // Refusals.
+        let mut bad = cell;
+        assert_eq!(bad.step_exact(0.0, i), None);
+        assert_eq!(bad.step_exact(1e-3, f64::NAN), None);
+        let mut endless = AdaptiveLif::new(Lif { v_reset: -50e-3, t_ref: 0.0, ..Lif::default() }, 0.1, 0.0);
+        assert_eq!(endless.step_exact(1e-3, i), None);
+        // With adaptation the same reset-at-threshold cell is finite: each spike raises the bar.
+        let mut climbing = AdaptiveLif::new(Lif { v_reset: -50e-3, t_ref: 0.0, ..Lif::default() }, 0.1, 3e-3);
+        let n = climbing.step_exact(50e-3, i).unwrap();
+        assert!((2..50).contains(&n), "{n} spikes");
+    }
 
     /// With exact spike timing the spike count over a run of constant current does not depend on
     /// the tick, and is the closed form's: the first spike at `isi − t_ref`, then one every `isi`.

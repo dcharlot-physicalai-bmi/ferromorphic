@@ -163,5 +163,20 @@
   "label": "repeated spike accepted",
   "old": "&& t.windows(2).all(|p| p[1] > p[0]);",
   "new": "&& t.windows(2).all(|p| p[1] >= p[0]);"
+ },
+ {
+  "label": "multi-train sum not mean",
+  "old": "    Ok(acc / pairs)\n",
+  "new": "    Ok(acc)\n"
+ },
+ {
+  "label": "multi-train counts ordered pairs and self-pairs",
+  "old": "        for j in (i + 1)..trains.len() {\n            acc += distance(",
+  "new": "        for j in 0..trains.len() {\n            acc += distance("
+ },
+ {
+  "label": "multi-train accepts a single train",
+  "old": "    if trains.len() < 2 {",
+  "new": "    if trains.is_empty() {"
  }
 ]

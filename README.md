@@ -9,7 +9,7 @@ hardware constraint models, analog device non-idealities, NIR, event-camera deco
 metrics, teaching tasks — and a joules ledger that charges for the memory traffic a synaptic
 operation needs.
 
-**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 59 modules, 1,694 tests.**
+**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 59 modules, 1,698 tests.**
 
 Run it in a browser without installing anything:
 **[energy.physicalai-bmi.org/neuromorphic](https://energy.physicalai-bmi.org/neuromorphic)** — the
@@ -30,7 +30,7 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 
 | module | what it carries |
 |---|---|
-| `neuron` | LIF, integrate-and-fire, adaptive LIF, Izhikevich; and exact spike timing for the LIF, so that a spike count does not depend on the tick |
+| `neuron` | LIF, integrate-and-fire, adaptive LIF, Izhikevich; and exact spike timing — counts and TIMES that do not depend on the tick — for the LIF and the adaptive LIF, whose adapted interval is the root of a self-consistency equation |
 | `hh` | Hodgkin-Huxley, full four-variable squid axon, with the ionic currents exposed |
 | `exponential` | EIF, `AdEx` with the Naud firing-pattern taxonomy, QIF, theta |
 | `synapse` | delta / exponential / alpha / bi-exponential kernels, CUBA vs COBA, AMPA / GABA / NMDA with the magnesium block, Tsodyks-Markram short-term plasticity |
@@ -248,7 +248,7 @@ Every neuron model here has a test that runs it against an analytic solution.
 - **A sub-threshold current returns `None`, not a large number.** "Fires rarely" and "does not fire"
   are different statements and a rate-coded readout cannot recover the difference later.
 
-1,694 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
+1,698 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
 `#![forbid(unsafe_code)]`, and `cargo build --target wasm32-unknown-unknown` compiles the library
 unchanged. Three of the `examples/` are verification gates that exit non-zero when a closed form
 disagrees with the simulator.
@@ -294,11 +294,11 @@ be reproduced cannot be checked against anything, including itself.
 
 ## Status
 
-**0.13.0.** Fifty-nine modules, every one audited by mutation: thirty-six by an adversarial
+**0.14.0.** Fifty-nine modules, every one audited by mutation: thirty-six by an adversarial
 auditor in 0.5.0 and 0.6.0, the ten of the third wave by hand in 0.8.0 (156 mutations, 36
 survivors, every one now caught — see below), and everything since mutated as it was written. All
 290 mutations recorded before 0.10.0 were re-run against the finished code: 286 caught, 2
-equivalent by their stated arguments, none survived. The harness and every mutation list — 515 of
+equivalent by their stated arguments, none survived. The harness and every mutation list — 529 of
 them — are in `tools/`. The crate family is not built yet. Planned
 siblings, each following the same rule that a dependency lives outside the core:
 
@@ -469,6 +469,17 @@ tick. And the spiking LMU at 1 ms goes from 47% error to 8.7% with 300 neurons a
 all the way down, because what was left was never noise. The tick-based `Neuron::step` is
 unchanged, because 1,600 tests and every hardware model in this crate are defined by it; exact
 timing is a second method, and the spiking loop's default.
+
+0.14.0 takes it two steps further. `step_exact_times` returns the spike TIMES the membrane
+equation gives — `isi − t_ref`, then one every `isi`, the same list at a 0.2 ms tick and a 250 ms
+one — and a test across three modules feeds the exact times of two cells to the ISI-distance and
+gets the closed form of their two intervals, where tick-boundary times give the distance between
+12 ms and 21 ms instead of 11.4 and 20.3. And the ADAPTIVE cell gets exact timing too: its
+crossing has no closed form, so it is bisected inside the tick on a bracket that holds exactly one
+root — including the case where a cell fires on the rebound of its falling threshold, mid-tick,
+and is below threshold again by the tick's end. What it settles into is the root of
+`V_∞ + (V_reset − V_∞)e^{−(T − t_ref)/τ_m} = θ₀ + β/(e^{T/τ_a} − 1)`, and the simulated late
+intervals equal that root to 1e-10 at every tick tried.
 
 ### Re-running the audit
 

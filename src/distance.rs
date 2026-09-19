@@ -59,14 +59,16 @@
 //! - **ISI-distance**: two clocks of periods `p₁` and `p₂` are `|p₁ − p₂|/max(p₁, p₂)` apart
 //!   whatever their phases. **SPIKE-distance**: two clocks of the same period `p` offset by
 //!   `δ ≤ p/2` are exactly `δ/p` apart. Both are zero on identical trains, symmetric, and at
-//!   most one.
+//!   most one. For a POPULATION the distance is the mean over all pairs ([`multi_train`]): three
+//!   clocks of periods 2, 3 and 4 are `(1/3 + 1/2 + 1/4)/3` apart.
 //!
 //! # What this module has NOT reproduced
 //!
 //! - An edge convention for the Kreuz distances. Published implementations differ in what they
 //!   do before a train's first spike and after its last; [`isi_distance`] and [`spike_distance`]
 //!   instead REFUSE a window that either train does not bracket with a spike on each side.
-//! - Their multi-train averages and the adaptive and real-time variants.
+//! - The adaptive and real-time variants of the Kreuz distances. ([`multi_train`] is their
+//!   multi-train form, the mean over all pairs.)
 //! - Multi-neuron (labelled-line) extensions of either metric.
 //! - The Rayleigh test beyond its first-order p-value `e^{−n r²}`, which is loose for small `n`.
 
@@ -348,6 +350,31 @@ pub fn spike_distance(a: &[f64], b: &[f64], start: f64, end: f64) -> Result<f64,
         acc += 0.5 * (profile(pair[0]) + profile(pair[1])) * (pair[1] - pair[0]);
     }
     Ok(acc / (end - start))
+}
+
+/// A pairwise distance over a window, as [`isi_distance`] and [`spike_distance`] are.
+pub type PairDistance = fn(&[f64], &[f64], f64, f64) -> Result<f64, DistanceError>;
+
+/// The multi-train form of a Kreuz distance: the mean of `distance` over all PAIRS of trains — how
+/// far from synchronous a population is, as one number in `[0, 1]`.
+///
+/// # Errors
+///
+/// [`DistanceError::Empty`] for fewer than two trains, and whatever `distance` returns for any
+/// pair.
+pub fn multi_train(trains: &[&[f64]], start: f64, end: f64, distance: PairDistance) -> Result<f64, DistanceError> {
+    if trains.len() < 2 {
+        return Err(DistanceError::Empty { what: "trains (needs two)" });
+    }
+    let mut acc = 0.0;
+    let mut pairs = 0.0;
+    for i in 0..trains.len() {
+        for j in (i + 1)..trains.len() {
+            acc += distance(trains[i], trains[j], start, end)?;
+            pairs += 1.0;
+        }
+    }
+    Ok(acc / pairs)
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -639,6 +666,64 @@ mod tests {
                 assert!((0.0..=1.0).contains(&d) && d > 0.01, "{d}");
             }
         }
+    }
+
+    #[test]
+    fn a_population_is_as_far_from_synchrony_as_the_mean_of_its_pairs() {
+        let (a, b, c) = (clock(2.0, -1.5, 60.0), clock(3.0, -2.25, 60.0), clock(4.0, -0.5, 60.0));
+        let got = multi_train(&[&a, &b, &c], 0.0, 48.0, isi_distance).unwrap();
+        // |2−3|/3, |2−4|/4 and |3−4|/4.
+        assert!((got - (1.0 / 3.0 + 0.5 + 0.25) / 3.0).abs() < 1e-15, "{got}");
+        // Four copies of one clock offset by 0, ⅛, ¼ and ⅜ of a period of 2: the six pairwise
+        // offsets are ⅛ (three times), ¼ (twice) and ⅜ (once) of the period.
+        let shifted: Vec<Vec<f64>> = (0..4).map(|k| clock(2.0, -4.0 + 0.25 * f64::from(k), 60.0)).collect();
+        let refs: Vec<&[f64]> = shifted.iter().map(Vec::as_slice).collect();
+        let got = multi_train(&refs, 0.0, 48.0, spike_distance).unwrap();
+        assert!((got - (3.0 * 0.125 + 2.0 * 0.25 + 0.375) / 6.0).abs() < 1e-14, "{got}");
+        assert_eq!(multi_train(&[&a, &a, &a], 0.0, 48.0, spike_distance).unwrap(), 0.0);
+        // Two trains: the pairwise distance itself.
+        assert_eq!(multi_train(&[&a, &b], 0.0, 48.0, isi_distance).unwrap(), isi_distance(&a, &b, 0.0, 48.0).unwrap());
+        assert!(matches!(multi_train(&[&a], 0.0, 48.0, isi_distance), Err(DistanceError::Empty { .. })));
+        assert!(matches!(multi_train(&[&a, &[1.0, 2.0]], 0.0, 48.0, isi_distance), Err(DistanceError::Empty { .. })), "one train does not bracket the window");
+    }
+
+    /// Across three modules: two LIF cells under different currents, their spike times taken from
+    /// the membrane equation rather than from tick boundaries, are apart by the ISI-distance of
+    /// their two closed-form intervals — at a 1 ms tick that neither interval is a multiple of.
+    #[test]
+    fn two_cells_are_as_far_apart_as_their_closed_form_intervals() {
+        use crate::neuron::{Lif, Neuron};
+        let cell = Lif::default();
+        let (i1, i2) = (4e-9, 2.5e-9);
+        let (t1, t2) = (cell.isi(i1).unwrap(), cell.isi(i2).unwrap());
+        let dt = 1e-3;
+        let trains = |exact: bool| {
+            let mut out = Vec::new();
+            for i in [i1, i2] {
+                let (mut c, mut times, mut offsets) = (cell, Vec::new(), Vec::new());
+                for k in 0..4000u32 {
+                    if exact {
+                        offsets.clear();
+                        c.step_exact_times(dt, i, &mut offsets).unwrap();
+                        times.extend(offsets.iter().map(|o| f64::from(k) * dt + o));
+                    } else if c.step(dt, i) {
+                        times.push(f64::from(k + 1) * dt);
+                    }
+                }
+                out.push(times);
+            }
+            out
+        };
+        let want = (t1 - t2).abs() / t1.max(t2);
+        let exact = trains(true);
+        let got = isi_distance(&exact[0], &exact[1], 0.5, 3.5).unwrap();
+        assert!((got - want).abs() < 1e-10, "ISI-distance {got}, the two intervals say {want}");
+        // Spike times read off tick boundaries give the distance between the ROUNDED intervals —
+        // 12 and 21 ms for 11.4 and 20.3 — which is a different number.
+        let ticked = trains(false);
+        let rounded = isi_distance(&ticked[0], &ticked[1], 0.5, 3.5).unwrap();
+        assert!((rounded - want).abs() > 0.005, "tick-boundary spike times gave {rounded} against {want}");
+        assert!((rounded - 9.0 / 21.0).abs() < 1e-9, "{rounded}");
     }
 
     /// The two profiles written straight from their definitions — linear scans, no bisection, no
