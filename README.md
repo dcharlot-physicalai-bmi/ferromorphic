@@ -9,7 +9,7 @@ hardware constraint models, analog device non-idealities, NIR, event-camera deco
 metrics, teaching tasks — and a joules ledger that charges for the memory traffic a synaptic
 operation needs.
 
-**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 66 modules, 1,772 tests.**
+**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 69 modules, 1,797 tests.**
 
 Run it in a browser without installing anything:
 **[energy.physicalai-bmi.org/neuromorphic](https://energy.physicalai-bmi.org/neuromorphic)** — the
@@ -84,6 +84,9 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 | `field` | the Amari neural field of dynamic field theory: the kernel integral `W`, the narrow unstable bump below which activity dies and the wide stable one it settles at, both as roots of `W(a) + h = 0` and both found in the simulated field — on a line, and on a sheet, where the rim integral is `πσ²[1 − e^{−R²/σ²} I₀(R²/σ²)]` |
 | `resonance` | noise as a resource: the noise level at which a threshold unit best tells two sub-threshold values apart, `σ*² = (b² − a²)/(2 ln(b/a))`; the exact information in a noisy population's count, including suprathreshold resonance — 63 units carrying more than one bit only when noise is added; dither that makes a step linear |
 | `ttfs` | learning with spike TIMES: two neuron models whose first-spike time is a closed form (Mostafa's non-leaky integrator; the leaky cell with `τ_m = 2τ_s`), its exact gradient by the implicit function theorem, backpropagation through spike times checked against finite differences, and XOR learned with one spike per neuron |
+| `srm` | the Spike Response Model: the kernel form the crate's time-coded learning is written in, checked against `eventprop`'s own integration, plus escape noise — a hazard, a survivor function and an interval distribution — and the exact term SRM₀ drops when the synapse has a time constant |
+| `ottt` | online training through time: the gradient of a spiking layer computed FORWARD in constant memory, proven equal to the true gradient when the reset path is off and measured against it when it is on |
+| `polychron` | polychronous groups: the time-locked patterns axonal delays buy, enumerated by simulation — with the count shown to be combinatorics rather than evidence, and a prediction about cascade length refuted by the measurement |
 | `eventprop` | `EventProp`: exact gradients for LIF networks with exponential synapses whose neurons fire any number of times and may be recurrent — an event-driven forward pass with spike times found to the last bit, an adjoint that jumps only at the spikes, checked against a closed-form spike time and its derivative and against finite differences of every weight |
 | `alignment` | learning without weight transport: feedback alignment and direct feedback alignment beside the backpropagation they replace — identical to it when the feedback IS the transpose, and measured aligning from the output downward |
 | `decolle` | deep continuous local learning: every spiking layer descends its own loss through a fixed random readout — three local factors, no gradient between layers or through time — with the update checked as the exact gradient of that loss |
@@ -255,7 +258,7 @@ Every neuron model here has a test that runs it against an analytic solution.
 - **A sub-threshold current returns `None`, not a large number.** "Fires rarely" and "does not fire"
   are different statements and a rate-coded readout cannot recover the difference later.
 
-1,772 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
+1,797 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
 `#![forbid(unsafe_code)]`, and `cargo build --target wasm32-unknown-unknown` compiles the library
 unchanged. Three of the `examples/` are verification gates that exit non-zero when a closed form
 disagrees with the simulator.
@@ -301,11 +304,11 @@ be reproduced cannot be checked against anything, including itself.
 
 ## Status
 
-**0.16.0.** Sixty-six modules, every one audited by mutation: thirty-six by an adversarial
+**0.17.0.** Sixty-nine modules, every one audited by mutation: thirty-six by an adversarial
 auditor in 0.5.0 and 0.6.0, the ten of the third wave by hand in 0.8.0 (156 mutations, 36
 survivors, every one now caught — see below), and everything since mutated as it was written. All
 290 mutations recorded before 0.10.0 were re-run against the finished code: 286 caught, 2
-equivalent by their stated arguments, none survived. The harness and every mutation list — 782 of
+equivalent by their stated arguments, none survived. The harness and every mutation list — 905 of
 them — are in `tools/`. The crate family is not built yet. Planned
 siblings, each following the same rule that a dependency lives outside the core:
 
@@ -499,7 +502,7 @@ and, through two layers, of the loss; and gradient descent on spike times solves
 models with at most one spike per neuron. 24 mutations: 23 caught, 1 equivalent by a stated
 argument.
 
-0.16.0 is the wave that closes the list this README has been carrying under "still missing". Six
+0.16.0 is the wave that closed the list this README had been carrying under "still missing". Six
 modules and one simulator change, 229 mutations, 24 survivors — every one now caught — and 1
 equivalent by a stated argument.
 
@@ -569,6 +572,44 @@ period happened to equal its recharge time. And two mutations of the exact catch
 because every neuron in the fixtures was busy: the test that catches them drives one cell at just
 over half the voltage it needs, so whether it fires is decided by how much leaked away in the
 quiet.
+
+0.17.0 adds three more: 123 mutations, 13 survivors — every one now caught — and 3 equivalent by
+stated arguments.  `srm` is the formalism the rest of the crate's time-coded
+learning is written in — the neuron as two kernels and a threshold — and writing it down produced
+a correction to a claim that is usually made loosely. SRM₀ says a reset erases the past, and that
+is exact for a delta synapse and FALSE for a synapse with a time constant: the reset empties the
+membrane but not the synaptic current, so input that arrived before the spike keeps flowing in
+afterwards. The term SRM₀ drops is `ε(t − t̂) · Σ_{f < t̂} w e^{−(t̂ − t_f)/τ_s}`, it is a few
+percent of the potential in the fixture here, and adding it back closes the gap to rounding —
+which is how the module knows it has named the right term rather than a plausible one. The
+kernel itself is checked against `eventprop`'s integration of the same two equations, and the
+escape-noise half against the exponential interval distribution it implies.
+
+`ottt` is the current answer to the question `eprop` asks: can a spiking network be trained
+without storing the run? Its gradient is accumulated forward, and the state it carries is two
+filters of the input — ten numbers here, whatever the sequence length. The theorem is exact and
+worth stating precisely: with the reset path off, the online gradient IS the gradient, checked
+against central finite differences of the loss on every weight and, separately, against
+backpropagation through time on the same layer. With the reset on it is not, and the gap is
+measured rather than waved at. Its forward pass is required to agree with `surrogate::LifLayer`'s
+to the last bit, which is what makes the comparison a comparison of gradients rather than of two
+different networks — and that requirement caught a one-ulp disagreement from summing the readout
+in a different order.
+
+`polychron` closes the gap `delays` had been carrying, and is the module that most changed its
+mind. It enumerates the time-locked groups a network with axonal delays holds: anchors timed so
+their spikes coincide at a shared target, plus everything that coincidence goes on to fire. The
+count does exceed the neuron count — 3,736 groups for 120 neurons — but the module says plainly
+what that number is not. With as many anchors as the firing threshold, the anchors are timed to
+coincide BY CONSTRUCTION, so the target always fires and every anchor set sharing a target is a
+group; the count is combinatorics of the connectivity and barely moves when the delays change
+(3,736 spread, 3,556 narrow, 3,123 uniform). Worse for the expectation this module started with:
+it was written expecting a spread of delays to make cascades LONGER, and the measurement says
+the opposite. Four delays gave 167 groups of length four or more and a longest of 6; a single
+delay gave 657 and a longest of 25. Identical delays put every arrival on one grid, so
+coincidences downstream are easy, while scattered arrivals rarely land inside a 0.1 ms window
+together. The test asserts the measured direction, and the documentation says which claim was
+refuted.
 
 One more thing the audit found, and it was about the audit itself. Running every list against the
 finished code showed nine entries whose text no longer matched the source EXACTLY ONCE — seven of

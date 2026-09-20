@@ -1,0 +1,188 @@
+[
+ {
+  "label": "anchor times use the earliest delay, not the latest",
+  "old": "let latest = delays.iter().fold(f64::NEG_INFINITY, |a, b| a.max(*b));",
+  "new": "let latest = delays.iter().fold(f64::INFINITY, |a, b| a.min(*b));"
+ },
+ {
+  "label": "anchor times are not the complement of the delay",
+  "old": "Ok(delays.iter().map(|d| latest - d).collect())",
+  "new": "Ok(delays.iter().map(|d| latest + d).collect())"
+ },
+ {
+  "label": "anchor times are all zero",
+  "old": "Ok(delays.iter().map(|d| latest - d).collect())",
+  "new": "Ok(delays.iter().map(|_| 0.0).collect())"
+ },
+ {
+  "label": "too few anchors are accepted by the timing",
+  "old": "        if anchors.len() < self.threshold {\n            return Err(PolyError::TooFewAnchors { got: anchors.len(), threshold: self.threshold });\n        }\n        let delays: Vec<f64>",
+  "new": "        let delays: Vec<f64>"
+ },
+ {
+  "label": "an anchor that does not reach the target is accepted",
+  "old": "self.delay(a, target).ok_or(PolyError::NoSuchNeuron { index: a })).collect::<Result<_, _>>()?;",
+  "new": "self.delay(a, target).or(Some(0.0)).ok_or(PolyError::NoSuchNeuron { index: a })).collect::<Result<_, _>>()?;"
+ },
+ {
+  "label": "delay reports the first connection whoever it is to",
+  "old": "self.out.get(pre)?.iter().find(|(p, _)| *p == post).map(|(_, d)| *d)",
+  "new": "self.out.get(pre)?.first().map(|(_, d)| *d)"
+ },
+ {
+  "label": "a neuron may fire more than once",
+  "old": "                if fired[post].is_some() {\n                    continue;\n                }",
+  "new": "                if false {\n                    continue;\n                }"
+ },
+ {
+  "label": "an anchor fires more than once",
+  "old": "            if fired[a].is_none() {",
+  "new": "            if true {"
+ },
+ {
+  "label": "the coincidence window is ignored",
+  "old": "                let count = arrivals[i..].iter().take_while(|(u, _)| *u <= t + self.window).filter(|(_, p)| *p == post).count();",
+  "new": "                let count = arrivals[i..].iter().filter(|(_, p)| *p == post).count();"
+ },
+ {
+  "label": "one arrival is enough to fire a neuron",
+  "old": "                if count >= self.threshold {",
+  "new": "                if count >= 1 {"
+ },
+ {
+  "label": "the firing time is the first arrival, not the threshold-th",
+  "old": "                    let when = arrivals[i..].iter().filter(|(u, p)| *p == post && *u <= t + self.window).nth(self.threshold - 1).map_or(t, |(u, _)| *u);",
+  "new": "                    let when = t;"
+ },
+ {
+  "label": "the search does not take the earliest coincidence",
+  "old": "                    if best.is_none_or(|(b, _, _)| when < b) {",
+  "new": "                    if best.is_none_or(|(b, _, _)| when > b) {"
+ },
+ {
+  "label": "arrivals are not delayed by the axon",
+  "old": "                for &(post, d) in &self.out[a] {\n                    arrivals.push((t + d, post));",
+  "new": "                for &(post, d) in &self.out[a] {\n                    let _ = d;\n                    arrivals.push((t, post));"
+ },
+ {
+  "label": "a fired neuron does not propagate",
+  "old": "            for &(next, d) in &self.out[post] {\n                arrivals.push((when + d, next));\n            }",
+  "new": ""
+ },
+ {
+  "label": "the group is not put in time order",
+  "old": "        firings.sort_by(|a, b| a.time.total_cmp(&b.time).then(a.neuron.cmp(&b.neuron)));\n        Ok(Group",
+  "new": "        firings.reverse();\n        Ok(Group"
+ },
+ {
+  "label": "the anchors are not sorted before firing",
+  "old": "        queue.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.cmp(&b.1)));\n        // Anchors fire by fiat",
+  "new": "        queue.reverse();\n        // Anchors fire by fiat"
+ },
+ {
+  "label": "the group limit is not enforced",
+  "old": "            if firings.len() >= self.n.min(MAX_GROUP) {\n                break;\n            }\n",
+  "new": "",
+  "equivalent": "unreachable as the rule stands: a neuron fires at most once, so a group cannot exceed the neuron count and the bound is never the thing that stops the loop. It is the stop that keeps a future change to the fire-once rule from running forever, and the mutation that removes THAT rule is caught by the exact group census."
+ },
+ {
+  "label": "groups shorter than the minimum are kept",
+  "old": "                    && group.len() >= min_length\n",
+  "new": "                    && group.len() >= 0\n"
+ },
+ {
+  "label": "duplicate groups are kept",
+  "old": "                    && !found.iter().any(|g| g.firings == group.firings)\n",
+  "new": ""
+ },
+ {
+  "label": "targets with too few sources are still enumerated",
+  "old": "            if sources.len() < anchors {\n                continue;\n            }\n            let mut combination",
+  "new": "            if sources.len() < anchors {\n                let _ = ();\n            }\n            let mut combination"
+ },
+ {
+  "label": "the combination walk stops after the first set",
+  "old": "                let Some(i) = (0..anchors).rev().find(|&i| combination[i] < sources.len() - anchors + i) else { break };",
+  "new": "                let Some(i) = (0..anchors).rev().find(|&i| combination[i] < sources.len() - anchors + i).filter(|_| false) else { break };"
+ },
+ {
+  "label": "the combination walk repeats indices",
+  "old": "                for j in i + 1..anchors {\n                    combination[j] = combination[j - 1] + 1;\n                }",
+  "new": "                for j in i + 1..anchors {\n                    combination[j] = combination[j - 1];\n                }"
+ },
+ {
+  "label": "presynaptic neighbours are counted twice",
+  "old": "                if !into[post].contains(&pre) {\n                    into[post].push(pre);\n                }",
+  "new": "                into[post].push(pre);"
+ },
+ {
+  "label": "fewer anchors than the threshold are enumerated",
+  "old": "        if anchors < self.threshold {\n            return Err(PolyError::TooFewAnchors { got: anchors, threshold: self.threshold });\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "a zero minimum length is accepted",
+  "old": "        if min_length == 0 {\n            return Err(PolyError::OutOfRange { what: \"min_length\", value: 0.0 });\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "a non-positive delay is accepted",
+  "old": "        if !(delay > 0.0) || !delay.is_finite() {\n            return Err(PolyError::BadDelay { value: delay });\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "a connection to a neuron that does not exist is accepted",
+  "old": "        for index in [pre, post] {\n            if index >= self.n {\n                return Err(PolyError::NoSuchNeuron { index });\n            }\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "a non-finite anchor time is accepted",
+  "old": "            if !t.is_finite() {\n                return Err(PolyError::BadDelay { value: *t });\n            }\n",
+  "new": ""
+ },
+ {
+  "label": "a mismatched time list is accepted",
+  "old": "        if times.len() != anchors.len() {\n            return Err(PolyError::OutOfRange { what: \"times\", value: times.len() as f64 });\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "a zero threshold network is built",
+  "old": "        if threshold == 0 {\n            return Err(PolyError::OutOfRange { what: \"threshold\", value: 0.0 });\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "a non-positive window is accepted",
+  "old": "        if !(window > 0.0) || !window.is_finite() {\n            return Err(PolyError::OutOfRange { what: \"window\", value: window });\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "the neuron limit is not enforced",
+  "old": "        if n == 0 || n > MAX_NEURONS {",
+  "new": "        if n == 0 {"
+ },
+ {
+  "label": "random connects a neuron to itself",
+  "old": "        let mut candidates: Vec<usize> = (0..n).filter(|&p| p != pre).collect();",
+  "new": "        let mut candidates: Vec<usize> = (0..n).collect();"
+ },
+ {
+  "label": "random repeats a target",
+  "old": "            let pick = k + rng.below((candidates.len() - k) as u32) as usize;\n            candidates.swap(k, pick);",
+  "new": "            let pick = rng.below(candidates.len() as u32) as usize;"
+ },
+ {
+  "label": "random refuses a fan-out it could satisfy",
+  "old": "    if fan_out == 0 || fan_out >= n {\n        return Err(PolyError::OutOfRange { what: \"fan_out\", value: fan_out as f64 });\n    }",
+  "new": "    if fan_out == 0 || fan_out > n {\n        return Err(PolyError::OutOfRange { what: \"fan_out\", value: fan_out as f64 });\n    }"
+ },
+ {
+  "label": "random accepts an empty delay list",
+  "old": "    if delays.is_empty() {\n        return Err(PolyError::OutOfRange { what: \"delays\", value: 0.0 });\n    }\n",
+  "new": ""
+ },
+ {
+  "label": "neurons() reports repeats",
+  "old": "            if !seen.contains(&f.neuron) {\n                seen.push(f.neuron);\n            }",
+  "new": "            seen.push(f.neuron);"
+ }
+]

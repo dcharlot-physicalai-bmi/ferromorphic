@@ -1,0 +1,219 @@
+[
+ {
+  "label": "epsilon's coefficient is inverted",
+  "old": "self.tau_s / (self.tau_s - self.tau_m) * ((-s / self.tau_s).exp() - (-s / self.tau_m).exp())",
+  "new": "self.tau_s / (self.tau_m - self.tau_s) * ((-s / self.tau_s).exp() - (-s / self.tau_m).exp())"
+ },
+ {
+  "label": "epsilon's two exponentials are swapped",
+  "old": "((-s / self.tau_s).exp() - (-s / self.tau_m).exp())",
+  "new": "((-s / self.tau_m).exp() - (-s / self.tau_s).exp())"
+ },
+ {
+  "label": "epsilon is not causal",
+  "old": "        if !(s >= 0.0) {\n            return 0.0;\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "the delta kernel does not decay",
+  "old": "            (-s / self.tau_m).exp()\n        } else {",
+  "new": "            1.0\n        } else {"
+ },
+ {
+  "label": "peak_time drops the log",
+  "old": "self.tau_m * self.tau_s / (self.tau_m - self.tau_s) * (self.tau_m / self.tau_s).ln()",
+  "new": "self.tau_m * self.tau_s / (self.tau_m - self.tau_s)"
+ },
+ {
+  "label": "peak uses the charge-normalised exponent",
+  "old": "(self.tau_s / self.tau_m).powf(self.tau_m / (self.tau_m - self.tau_s))",
+  "new": "(self.tau_s / self.tau_m).powf(self.tau_s / (self.tau_m - self.tau_s))"
+ },
+ {
+  "label": "the charge-normalised peak uses the raw exponent",
+  "old": "(self.tau_s / self.tau_m).powf(self.tau_s / (self.tau_m - self.tau_s))\n        }\n    }\n\n    /// The after-potential",
+  "new": "(self.tau_s / self.tau_m).powf(self.tau_m / (self.tau_m - self.tau_s))\n        }\n    }\n\n    /// The after-potential"
+ },
+ {
+  "label": "eta is not causal",
+  "old": "        if s >= 0.0 { -amplitude * (-s / self.tau_m).exp() } else { 0.0 }",
+  "new": "        -amplitude * (-s / self.tau_m).exp()"
+ },
+ {
+  "label": "eta does not decay",
+  "old": "        if s >= 0.0 { -amplitude * (-s / self.tau_m).exp() } else { 0.0 }",
+  "new": "        if s >= 0.0 { -amplitude } else { 0.0 }"
+ },
+ {
+  "label": "eta has the wrong sign",
+  "old": "        if s >= 0.0 { -amplitude * (-s / self.tau_m).exp() } else { 0.0 }",
+  "new": "        if s >= 0.0 { amplitude * (-s / self.tau_m).exp() } else { 0.0 }"
+ },
+ {
+  "label": "equal time constants are accepted",
+  "old": "        if tau_s == tau_m {\n            return Err(SrmError::OutOfRange { what: \"tau_s - tau_m\", value: 0.0 });\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "a negative tau_s is accepted",
+  "old": "        if !(tau_s >= 0.0) || !tau_s.is_finite() {",
+  "new": "        if !tau_s.is_finite() {"
+ },
+ {
+  "label": "the potential drops the after-potentials",
+  "old": "        Ok(drive + after)\n    }\n\n    /// SRM₀",
+  "new": "        Ok(drive)\n    }\n\n    /// SRM₀"
+ },
+ {
+  "label": "the potential weights every input alike",
+  "old": "let drive: f64 = inputs.iter().map(|(f, w)| w * self.kernel.epsilon(t - f)).sum();",
+  "new": "let drive: f64 = inputs.iter().map(|(f, _)| self.kernel.epsilon(t - f)).sum();"
+ },
+ {
+  "label": "the after-potential is measured from the wrong end",
+  "old": "let after: f64 = own.iter().map(|f| self.kernel.eta(t - f, self.reset)).sum();",
+  "new": "let after: f64 = own.iter().map(|f| self.kernel.eta(f - t, self.reset)).sum();"
+ },
+ {
+  "label": "srm0 keeps the inputs before the last spike",
+  "old": "inputs.iter().filter(|(f, _)| *f >= t_hat).map(|(f, w)| w * self.kernel.epsilon(t - f)).sum()",
+  "new": "inputs.iter().map(|(f, w)| w * self.kernel.epsilon(t - f)).sum()"
+ },
+ {
+  "label": "srm0 applies an after-potential with no spike",
+  "old": "let after = if last.is_some() { self.kernel.eta(t - t_hat, self.reset) } else { 0.0 };",
+  "new": "let after = self.kernel.eta(t - t_hat, self.reset);",
+  "equivalent": "with `last: None` the last-spike time is negative infinity, so the after-potential's argument is +infinity and eta returns -0.0 whatever the amplitude and time constant are; adding -0.0 leaves the drive exactly unchanged. The conditional states the intent and guards a future eta that is not exponential, but no value of the present one can tell the two apart."
+ },
+ {
+  "label": "srm0 has no after-potential at all",
+  "old": "let after = if last.is_some() { self.kernel.eta(t - t_hat, self.reset) } else { 0.0 };",
+  "new": "let after = 0.0;"
+ },
+ {
+  "label": "the carried current is not decayed to the spike",
+  "old": "inputs.iter().filter(|(f, _)| *f < t_hat).map(|(f, w)| w * (-(t_hat - f) / self.kernel.tau_s).exp()).sum()",
+  "new": "inputs.iter().filter(|(f, _)| *f < t_hat).map(|(_, w)| *w).sum()"
+ },
+ {
+  "label": "the carried current decays with the membrane",
+  "old": "(-(t_hat - f) / self.kernel.tau_s).exp()",
+  "new": "(-(t_hat - f) / self.kernel.tau_m).exp()"
+ },
+ {
+  "label": "the carried current counts the inputs after the spike",
+  "old": "Ok(inputs.iter().filter(|(f, _)| *f < t_hat)",
+  "new": "Ok(inputs.iter().filter(|(f, _)| *f > t_hat)"
+ },
+ {
+  "label": "a delta synapse is said to carry current",
+  "old": "        if self.kernel.is_delta() {\n            return Ok(0.0);\n        }\n",
+  "new": "",
+  "equivalent": "the filter is `f < t_hat` strictly, so every term's argument is `-(t_hat - f)/0` with a strictly positive numerator, which is negative infinity, and exp of it is exactly zero. The early return says why the answer is zero rather than leaving it to an infinity in an exponent."
+ },
+ {
+  "label": "unsorted spikes are accepted",
+  "old": "        if i > 0 && *t < times[i - 1] {\n            return Err(SrmError::Unsorted { index: i });\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "non-finite spike times are accepted",
+  "old": "        if !t.is_finite() {\n            return Err(SrmError::NonFinite { what });\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "the spike limit is not enforced",
+  "old": "    if times.len() > MAX_SPIKES {\n        return Err(SrmError::TooManySpikes { got: times.len() });\n    }\n",
+  "new": ""
+ },
+ {
+  "label": "the hazard is linear, not exponential",
+  "old": "        self.rho0 * ((u - theta) / self.delta_u).exp()",
+  "new": "        self.rho0 * (1.0 + (u - theta) / self.delta_u)"
+ },
+ {
+  "label": "the hazard divides by delta_u twice",
+  "old": "((u - theta) / self.delta_u).exp()",
+  "new": "((u - theta) / (self.delta_u * self.delta_u)).exp()"
+ },
+ {
+  "label": "the hazard ignores the threshold",
+  "old": "self.rho0 * ((u - theta) / self.delta_u).exp()",
+  "new": "self.rho0 * (u / self.delta_u).exp()"
+ },
+ {
+  "label": "potential_for is not the hazard's inverse",
+  "old": "Some(theta + self.delta_u * (rate / self.rho0).ln())",
+  "new": "Some(theta + self.delta_u * (rate * self.rho0).ln())"
+ },
+ {
+  "label": "the survivor does not decay",
+  "old": "        if t <= 0.0 { 1.0 } else { (-rate * t).exp() }",
+  "new": "        1.0"
+ },
+ {
+  "label": "the survivor grows",
+  "old": "        if t <= 0.0 { 1.0 } else { (-rate * t).exp() }",
+  "new": "        if t <= 0.0 { 1.0 } else { (rate * t).exp() }"
+ },
+ {
+  "label": "the interval density is not scaled by the rate",
+  "old": "        if t < 0.0 { 0.0 } else { rate * Self::survivor_at(rate, t) }",
+  "new": "        if t < 0.0 { 0.0 } else { Self::survivor_at(rate, t) }"
+ },
+ {
+  "label": "the density is non-zero before the interval starts",
+  "old": "        if t < 0.0 { 0.0 } else { rate * Self::survivor_at(rate, t) }",
+  "new": "        rate * Self::survivor_at(rate, t)"
+ },
+ {
+  "label": "Simpson's rule uses equal weights",
+  "old": "        acc += self.hazard(u(h * k as f64), theta) * if k % 2 == 1 { 4.0 } else { 2.0 };",
+  "new": "        acc += self.hazard(u(h * k as f64), theta) * 3.0;"
+ },
+ {
+  "label": "the survivor integral is not divided by three",
+  "old": "        Ok((-acc * h / 3.0).exp())",
+  "new": "        Ok((-acc * h).exp())"
+ },
+ {
+  "label": "the survivor integral has the wrong sign",
+  "old": "        Ok((-acc * h / 3.0).exp())",
+  "new": "        Ok((acc * h / 3.0).exp())"
+ },
+ {
+  "label": "an odd panel count is not made even",
+  "old": "        let n = panels + panels % 2;",
+  "new": "        let n = panels;"
+ },
+ {
+  "label": "drawing inverts the wrong tail",
+  "old": "        Some(-(1.0 - uniform).ln() / rate)",
+  "new": "        Some(-uniform.ln() / rate)"
+ },
+ {
+  "label": "drawing does not scale by the rate",
+  "old": "        Some(-(1.0 - uniform).ln() / rate)",
+  "new": "        Some(-(1.0 - uniform).ln())"
+ },
+ {
+  "label": "drawing accepts a uniform of one",
+  "old": "    if !(rate > 0.0) || !rate.is_finite() || !(0.0..1.0).contains(&uniform) {",
+  "new": "    if !(rate > 0.0) || !rate.is_finite() || !(0.0..=1.0).contains(&uniform) {"
+ },
+ {
+  "label": "a non-positive rho0 is accepted",
+  "old": "        if !(rho0 > 0.0) || !rho0.is_finite() {",
+  "new": "        if !rho0.is_finite() {"
+ },
+ {
+  "label": "a non-positive delta_u is accepted",
+  "old": "        if !(delta_u > 0.0) || !delta_u.is_finite() {",
+  "new": "        if !delta_u.is_finite() {"
+ },
+ {
+  "label": "a zero threshold is accepted",
+  "old": "        if !(theta > 0.0) || !theta.is_finite() {\n            return Err(SrmError::OutOfRange { what: \"theta\", value: theta });\n        }\n",
+  "new": ""
+ }
+]

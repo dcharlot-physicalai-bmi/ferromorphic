@@ -1,0 +1,217 @@
+[
+ {
+  "label": "the trace filters only once",
+  "old": "            q[j] = self.alpha * q[j] + x[t * ni + j];\n                a[j] = self.beta * a[j] + q[j];",
+  "new": "            q[j] = self.alpha * q[j] + x[t * ni + j];\n                a[j] = q[j];"
+ },
+ {
+  "label": "the trace's two decays are swapped",
+  "old": "                q[j] = self.alpha * q[j] + x[t * ni + j];\n                a[j] = self.beta * a[j] + q[j];",
+  "new": "                q[j] = self.beta * q[j] + x[t * ni + j];\n                a[j] = self.alpha * a[j] + q[j];"
+ },
+ {
+  "label": "the current does not decay",
+  "old": "                i_syn[j] = self.alpha * i_syn[j] + drive;",
+  "new": "                i_syn[j] = drive;"
+ },
+ {
+  "label": "the membrane does not decay",
+  "old": "                let u = self.beta * u_prev[j] + i_syn[j] - reset;",
+  "new": "                let u = u_prev[j] + i_syn[j] - reset;"
+ },
+ {
+  "label": "the reset adds instead of subtracting",
+  "old": "                let u = self.beta * u_prev[j] + i_syn[j] - reset;",
+  "new": "                let u = self.beta * u_prev[j] + i_syn[j] + reset;"
+ },
+ {
+  "label": "the reset is applied whether or not it is switched on",
+  "old": "                let reset = if self.reset { self.theta * s_prev[j] } else { 0.0 };",
+  "new": "                let reset = self.theta * s_prev[j];"
+ },
+ {
+  "label": "the reset uses this step's spike, not the last",
+  "old": "                let reset = if self.reset { self.theta * s_prev[j] } else { 0.0 };",
+  "new": "                let reset = if self.reset { self.theta * tr.s[t * nr + j] } else { 0.0 };"
+ },
+ {
+  "label": "the spike compares against zero, not the threshold",
+  "old": "sur.forward(u - self.theta) };",
+  "new": "sur.forward(u) };"
+ },
+ {
+  "label": "the smooth switch is ignored",
+  "old": "                tr.s[t * nr + j] = if self.smooth { sur.antiderivative(u - self.theta) } else { sur.forward(u - self.theta) };",
+  "new": "                tr.s[t * nr + j] = sur.forward(u - self.theta);"
+ },
+ {
+  "label": "the readout does not leak",
+  "old": "                let mut acc = self.kappa * y_prev[c];",
+  "new": "                let mut acc = y_prev[c];"
+ },
+ {
+  "label": "an overflowing membrane is returned",
+  "old": "                if !u.is_finite() {\n                    return Err(OtttError::NonFinite { what: \"u\" });\n                }\n",
+  "new": ""
+ },
+ {
+  "label": "the loss has no factor of one half",
+  "old": "                loss += 0.5 * e * e;",
+  "new": "                loss += e * e;"
+ },
+ {
+  "label": "the loss derivative is the target minus the readout",
+  "old": "                let e = tr.y[t * self.n_out + c] - target[c];",
+  "new": "                let e = target[c] - tr.y[t * self.n_out + c];"
+ },
+ {
+  "label": "the online gradient does not carry the readout's leak",
+  "old": "                carried[c] = self.kappa * carried[c] + dy[t * no + c];",
+  "new": "                carried[c] = dy[t * no + c];"
+ },
+ {
+  "label": "the online gradient reads the readout untransposed",
+  "old": "                let broadcast: f64 = (0..no).map(|c| self.r[c * nr + j] * carried[c]).sum();",
+  "new": "                let broadcast: f64 = (0..no).map(|c| self.r[(j % no) * nr + c] * carried[c]).sum();"
+ },
+ {
+  "label": "the online gradient drops the surrogate slope",
+  "old": "                let local = broadcast * sur.backward(tr.u[t * nr + j] - self.theta);",
+  "new": "                let local = broadcast;"
+ },
+ {
+  "label": "the online gradient's slope is taken at the wrong offset",
+  "old": "                let local = broadcast * sur.backward(tr.u[t * nr + j] - self.theta);",
+  "new": "                let local = broadcast * sur.backward(tr.u[t * nr + j]);"
+ },
+ {
+  "label": "the online gradient uses the raw input, not the trace",
+  "old": "                    g[j * ni + i] += local * tr.trace[t * ni + i];",
+  "new": "                    g[j * ni + i] += local;"
+ },
+ {
+  "label": "BPTT does not carry the membrane's leak",
+  "old": "                gu[j] = local + self.beta * gu[j];",
+  "new": "                gu[j] = local;"
+ },
+ {
+  "label": "BPTT does not carry the current's leak",
+  "old": "                gi[j] = gu[j] + self.alpha * gi[j];",
+  "new": "                gi[j] = gu[j];"
+ },
+ {
+  "label": "BPTT's two leaks are swapped",
+  "old": "                gu[j] = local + self.beta * gu[j];\n                gi[j] = gu[j] + self.alpha * gi[j];",
+  "new": "                gu[j] = local + self.alpha * gu[j];\n                gi[j] = gu[j] + self.beta * gi[j];"
+ },
+ {
+  "label": "BPTT drops the reset path",
+  "old": "                gs_next[j] = if self.reset { -self.theta * gu[j] } else { 0.0 };",
+  "new": "                gs_next[j] = 0.0;"
+ },
+ {
+  "label": "BPTT's reset path has the wrong sign",
+  "old": "                gs_next[j] = if self.reset { -self.theta * gu[j] } else { 0.0 };",
+  "new": "                gs_next[j] = if self.reset { self.theta * gu[j] } else { 0.0 };"
+ },
+ {
+  "label": "BPTT drops the readout path",
+  "old": "                let mut gs: f64 = (0..no).map(|c| self.r[c * nr + j] * gy[c]).sum();",
+  "new": "                let mut gs: f64 = 0.0;"
+ },
+ {
+  "label": "BPTT does not carry the readout's leak",
+  "old": "                gy[c] = self.kappa * gy[c] + dy[t * no + c];",
+  "new": "                gy[c] = dy[t * no + c];"
+ },
+ {
+  "label": "BPTT walks forwards",
+  "old": "        for t in (0..tr.t_steps).rev() {\n            for c in 0..no {\n                gy[c] = self.kappa * gy[c] + dy[t * no + c];",
+  "new": "        for t in 0..tr.t_steps {\n            for c in 0..no {\n                gy[c] = self.kappa * gy[c] + dy[t * no + c];"
+ },
+ {
+  "label": "the online accumulation walks forwards",
+  "old": "        for t in (0..tr.t_steps).rev() {\n            for c in 0..no {\n                carried[c] = self.kappa * carried[c] + dy[t * no + c];",
+  "new": "        for t in 0..tr.t_steps {\n            for c in 0..no {\n                carried[c] = self.kappa * carried[c] + dy[t * no + c];"
+ },
+ {
+  "label": "apply moves with the gradient",
+  "old": "        self.w.iter_mut().zip(g).for_each(|(w, g)| *w -= rate * g);",
+  "new": "        self.w.iter_mut().zip(g).for_each(|(w, g)| *w += rate * g);"
+ },
+ {
+  "label": "apply accepts a non-finite rate",
+  "old": "        if !rate.is_finite() {\n            return Err(OtttError::NonFinite { what: \"rate\" });\n        }\n        checked(\"gradient\"",
+  "new": "        checked(\"gradient\""
+ },
+ {
+  "label": "the impulse closed form drops the alpha factor",
+  "old": "            Some(alpha * (alpha.powi(k) - beta.powi(k)) / (alpha - beta) / alpha)",
+  "new": "            Some(alpha * (alpha.powi(k) - beta.powi(k)) / (alpha - beta))"
+ },
+ {
+  "label": "the impulse's equal-decay branch is off by one",
+  "old": "            Some(f64::from(k) * alpha.powi(k - 1))",
+  "new": "            Some(f64::from(k) * alpha.powi(k))"
+ },
+ {
+  "label": "the impulse reports a value before the input",
+  "old": "        if t == 0 {\n            return None;\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "the online state's footprint counts one filter",
+  "old": "        self.q.len() + self.a.len()",
+  "new": "        self.q.len()"
+ },
+ {
+  "label": "the online state filters only once",
+  "old": "            self.q[j] = self.alpha * self.q[j] + x[j];\n            self.a[j] = self.beta * self.a[j] + self.q[j];",
+  "new": "            self.q[j] = self.alpha * self.q[j] + x[j];\n            self.a[j] = self.q[j];"
+ },
+ {
+  "label": "compare returns a cosine for a zero gradient",
+  "old": "    if !(na > 0.0) || !(nb > 0.0) {\n        return None;\n    }\n",
+  "new": ""
+ },
+ {
+  "label": "compare's relative distance is not normalised",
+  "old": "    Some(Comparison { cosine: dot / (na * nb), relative: gap / nb })",
+  "new": "    Some(Comparison { cosine: dot / (na * nb), relative: gap })"
+ },
+ {
+  "label": "compare's cosine forgets one norm",
+  "old": "    Some(Comparison { cosine: dot / (na * nb), relative: gap / nb })",
+  "new": "    Some(Comparison { cosine: dot / na, relative: gap / nb })"
+ },
+ {
+  "label": "compare accepts mismatched lengths",
+  "old": "    if online.len() != truth.len() {\n        return None;\n    }\n",
+  "new": ""
+ },
+ {
+  "label": "a decay of one is accepted",
+  "old": "            if !(v >= 0.0) || !(v < 1.0) {\n                return Err(OtttError::OutOfRange { what, value: v });\n            }\n        }\n        for (what, v) in [(\"theta\", theta), (\"scale\", scale)] {",
+  "new": "            if !(v >= 0.0) || !(v <= 1.0) {\n                return Err(OtttError::OutOfRange { what, value: v });\n            }\n        }\n        for (what, v) in [(\"theta\", theta), (\"scale\", scale)] {"
+ },
+ {
+  "label": "a non-positive threshold is accepted",
+  "old": "        for (what, v) in [(\"theta\", theta), (\"scale\", scale)] {\n            if !(v > 0.0) || !v.is_finite() {",
+  "new": "        for (what, v) in [(\"theta\", theta), (\"scale\", scale)] {\n            if !v.is_finite() {"
+ },
+ {
+  "label": "a layer past the weight limit is built",
+  "old": "        if n_in == 0 || n_rec == 0 || n_out == 0 || n_in.saturating_mul(n_rec) > MAX_WEIGHTS || n_out.saturating_mul(n_rec) > MAX_WEIGHTS {",
+  "new": "        if n_in == 0 || n_rec == 0 || n_out == 0 {"
+ },
+ {
+  "label": "an input that is not a whole number of steps is accepted",
+  "old": "        if x.is_empty() || !x.len().is_multiple_of(self.n_in) {",
+  "new": "        if x.is_empty() {"
+ },
+ {
+  "label": "checked does not look at the values",
+  "old": "    if v.iter().all(|x| x.is_finite()) { Ok(()) } else { Err(OtttError::NonFinite { what }) }",
+  "new": "    Ok(())"
+ }
+]
