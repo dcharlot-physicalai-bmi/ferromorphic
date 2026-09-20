@@ -1,0 +1,247 @@
+[
+ {
+  "label": "zero-order hold forgets the exponential",
+  "old": "                Discretisation::Zoh => (a * self.dt).exp(),",
+  "new": "                Discretisation::Zoh => 1.0 + a * self.dt,"
+ },
+ {
+  "label": "zero-order hold drops the step",
+  "old": "                Discretisation::Zoh => (a * self.dt).exp(),",
+  "new": "                Discretisation::Zoh => a.exp(),"
+ },
+ {
+  "label": "the bilinear transform is inverted",
+  "old": "                Discretisation::Bilinear => (1.0 + a * self.dt / 2.0) / (1.0 - a * self.dt / 2.0),",
+  "new": "                Discretisation::Bilinear => (1.0 - a * self.dt / 2.0) / (1.0 + a * self.dt / 2.0),"
+ },
+ {
+  "label": "the bilinear transform has no half",
+  "old": "                Discretisation::Bilinear => (1.0 + a * self.dt / 2.0) / (1.0 - a * self.dt / 2.0),",
+  "new": "                Discretisation::Bilinear => (1.0 + a * self.dt) / (1.0 - a * self.dt),"
+ },
+ {
+  "label": "b_bar does not divide by a",
+  "old": "                Discretisation::Zoh => (bar[i] - 1.0) * self.b[i] / self.a[i],",
+  "new": "                Discretisation::Zoh => (bar[i] - 1.0) * self.b[i],"
+ },
+ {
+  "label": "b_bar has the wrong sign",
+  "old": "                Discretisation::Zoh => (bar[i] - 1.0) * self.b[i] / self.a[i],",
+  "new": "                Discretisation::Zoh => (1.0 - bar[i]) * self.b[i] / self.a[i],"
+ },
+ {
+  "label": "b_bar forgets b",
+  "old": "                Discretisation::Zoh => (bar[i] - 1.0) * self.b[i] / self.a[i],",
+  "new": "                Discretisation::Zoh => (bar[i] - 1.0) / self.a[i],"
+ },
+ {
+  "label": "the bilinear b_bar drops the step",
+  "old": "                Discretisation::Bilinear => self.dt * self.b[i] / (1.0 - self.a[i] * self.dt / 2.0),",
+  "new": "                Discretisation::Bilinear => self.b[i] / (1.0 - self.a[i] * self.dt / 2.0),"
+ },
+ {
+  "label": "stability tests the continuous rate, not the discrete one",
+  "old": "        self.a_bar().iter().all(|x| x.abs() < 1.0)",
+  "new": "        self.a.iter().all(|x| x.abs() < 1.0)"
+ },
+ {
+  "label": "stability admits a pole on the unit circle",
+  "old": "        self.a_bar().iter().all(|x| x.abs() < 1.0)",
+  "new": "        self.a_bar().iter().all(|x| x.abs() <= 1.0)"
+ },
+ {
+  "label": "stability ignores the sign of a_bar",
+  "old": "        self.a_bar().iter().all(|x| x.abs() < 1.0)",
+  "new": "        self.a_bar().iter().all(|x| *x < 1.0)"
+ },
+ {
+  "label": "the impulse response is not causal",
+  "old": "        if !(t >= 0.0) {\n            return 0.0;\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "the impulse response forgets b",
+  "old": "        (0..self.modes()).map(|i| self.c[i] * self.b[i] * (self.a[i] * t).exp()).sum()",
+  "new": "        (0..self.modes()).map(|i| self.c[i] * (self.a[i] * t).exp()).sum()"
+ },
+ {
+  "label": "the impulse response uses the discrete rate",
+  "old": "        (0..self.modes()).map(|i| self.c[i] * self.b[i] * (self.a[i] * t).exp()).sum()",
+  "new": "        (0..self.modes()).map(|i| self.c[i] * self.b[i] * (self.a[i] * t / self.dt).exp()).sum()"
+ },
+ {
+  "label": "the kernel starts from b rather than b_bar",
+  "old": "        let mut power: Vec<f64> = self.c.iter().zip(&b_bar).map(|(c, b)| c * b).collect();",
+  "new": "        let mut power: Vec<f64> = self.c.iter().zip(&self.b).map(|(c, b)| c * b).collect();"
+ },
+ {
+  "label": "the kernel forgets c",
+  "old": "        let mut power: Vec<f64> = self.c.iter().zip(&b_bar).map(|(c, b)| c * b).collect();",
+  "new": "        let mut power: Vec<f64> = b_bar.clone();"
+ },
+ {
+  "label": "the kernel does not advance the power",
+  "old": "            for (p, a) in power.iter_mut().zip(&bar) {\n                *p *= a;\n            }",
+  "new": ""
+ },
+ {
+  "label": "the kernel advances before it records",
+  "old": "            k.push(power.iter().sum());\n            for (p, a) in power.iter_mut().zip(&bar) {\n                *p *= a;\n            }",
+  "new": "            for (p, a) in power.iter_mut().zip(&bar) {\n                *p *= a;\n            }\n            k.push(power.iter().sum());"
+ },
+ {
+  "label": "the kernel carries the feedthrough",
+  "old": "            k.push(power.iter().sum());",
+  "new": "            k.push(power.iter().sum::<f64>() + self.d);"
+ },
+ {
+  "label": "the step does not decay the state",
+  "old": "            x[i] = bar[i] * x[i] + b_bar[i] * u;",
+  "new": "            x[i] += b_bar[i] * u;"
+ },
+ {
+  "label": "the step reads the state before it is updated",
+  "old": "            x[i] = bar[i] * x[i] + b_bar[i] * u;\n            y += self.c[i] * x[i];",
+  "new": "            let before = x[i];\n            x[i] = bar[i] * x[i] + b_bar[i] * u;\n            y += self.c[i] * before;"
+ },
+ {
+  "label": "the step drops the feedthrough",
+  "old": "        let mut y = self.d * u;",
+  "new": "        let mut y = 0.0;"
+ },
+ {
+  "label": "the step drops c",
+  "old": "            y += self.c[i] * x[i];",
+  "new": "            y += x[i];"
+ },
+ {
+  "label": "an overflowed state is returned",
+  "old": "        if !y.is_finite() || !x.iter().all(|v| v.is_finite()) {\n            return Err(SsmError::NonFinite { what: \"state\" });\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "a non-finite input is accepted by the step",
+  "old": "        if !u.is_finite() {\n            return Err(SsmError::NonFinite { what: \"u\" });\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "the state's length is not checked",
+  "old": "        if x.len() != self.modes() {\n            return Err(SsmError::Shape { what: \"state\", got: x.len(), want: self.modes() });\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "the run does not start at rest",
+  "old": "        let mut x = vec![0.0; self.modes()];",
+  "new": "        let mut x = vec![1.0; self.modes()];"
+ },
+ {
+  "label": "the convolution reverses the kernel",
+  "old": "(0..=t).map(|m| k[m] * u[t - m]).sum::<f64>()",
+  "new": "(0..=t).map(|m| k[t - m] * u[t - m]).sum::<f64>()"
+ },
+ {
+  "label": "the convolution drops the feedthrough",
+  "old": "        Ok((0..u.len()).map(|t| self.d * u[t] + (0..=t).map(|m| k[m] * u[t - m]).sum::<f64>()).collect())",
+  "new": "        Ok((0..u.len()).map(|t| (0..=t).map(|m| k[m] * u[t - m]).sum::<f64>()).collect())"
+ },
+ {
+  "label": "the convolution is not causal",
+  "old": "(0..=t).map(|m| k[m] * u[t - m]).sum::<f64>()",
+  "new": "(0..u.len()).map(|m| k[m] * u[(t + m) % u.len()]).sum::<f64>()"
+ },
+ {
+  "label": "the dc gain forgets the feedthrough",
+  "old": "        self.d - (0..self.modes()).map(|i| self.c[i] * self.b[i] / self.a[i]).sum::<f64>()",
+  "new": "        -(0..self.modes()).map(|i| self.c[i] * self.b[i] / self.a[i]).sum::<f64>()"
+ },
+ {
+  "label": "the dc gain has the wrong sign",
+  "old": "        self.d - (0..self.modes()).map(|i| self.c[i] * self.b[i] / self.a[i]).sum::<f64>()",
+  "new": "        self.d + (0..self.modes()).map(|i| self.c[i] * self.b[i] / self.a[i]).sum::<f64>()"
+ },
+ {
+  "label": "the dc gain multiplies by a instead of dividing",
+  "old": "self.c[i] * self.b[i] / self.a[i]).sum::<f64>()",
+  "new": "self.c[i] * self.b[i] * self.a[i]).sum::<f64>()"
+ },
+ {
+  "label": "mismatched parameter lengths are accepted",
+  "old": "        if a.is_empty() || a.len() > MAX_MODES || a.len() != b.len() || a.len() != c.len() {",
+  "new": "        if a.is_empty() || a.len() > MAX_MODES {"
+ },
+ {
+  "label": "the mode limit is not enforced",
+  "old": "        if a.is_empty() || a.len() > MAX_MODES || a.len() != b.len() || a.len() != c.len() {",
+  "new": "        if a.is_empty() || a.len() != b.len() || a.len() != c.len() {"
+ },
+ {
+  "label": "non-finite parameters are accepted",
+  "old": "        if !a.iter().chain(&b).chain(&c).all(|v| v.is_finite()) || !d.is_finite() {\n            return Err(SsmError::NonFinite { what: \"parameter\" });\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "a non-finite feedthrough is accepted",
+  "old": "        if !a.iter().chain(&b).chain(&c).all(|v| v.is_finite()) || !d.is_finite() {",
+  "new": "        if !a.iter().chain(&b).chain(&c).all(|v| v.is_finite()) {"
+ },
+ {
+  "label": "a non-positive step is accepted",
+  "old": "        if !(dt > 0.0) || !dt.is_finite() {\n            return Err(SsmError::OutOfRange { what: \"dt\", value: dt });\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "a zero mode is accepted under zero-order hold",
+  "old": "            Discretisation::Zoh => **x == 0.0,",
+  "new": "            Discretisation::Zoh => false,"
+ },
+ {
+  "label": "the bilinear pole at 2/dt is accepted",
+  "old": "            Discretisation::Bilinear => 1.0 - **x * dt / 2.0 == 0.0,",
+  "new": "            Discretisation::Bilinear => false,"
+ },
+ {
+  "label": "the kernel length limit is not enforced",
+  "old": "        if len == 0 || len > MAX_STEPS {",
+  "new": "        if len == 0 {"
+ },
+ {
+  "label": "a zero-length kernel is built",
+  "old": "        if len == 0 || len > MAX_STEPS {",
+  "new": "        if len > MAX_STEPS {"
+ },
+ {
+  "label": "the exponential synapse has the wrong sign",
+  "old": "    Ssm::new(vec![-1.0 / tau], vec![1.0], vec![1.0], 0.0, dt, Discretisation::Zoh)",
+  "new": "    Ssm::new(vec![1.0 / tau], vec![1.0], vec![1.0], 0.0, dt, Discretisation::Zoh)"
+ },
+ {
+  "label": "the exponential synapse uses tau, not its reciprocal",
+  "old": "    Ssm::new(vec![-1.0 / tau], vec![1.0], vec![1.0], 0.0, dt, Discretisation::Zoh)",
+  "new": "    Ssm::new(vec![-tau], vec![1.0], vec![1.0], 0.0, dt, Discretisation::Zoh)"
+ },
+ {
+  "label": "a non-positive tau is accepted",
+  "old": "    if !(tau > 0.0) || !tau.is_finite() {\n        return Err(SsmError::OutOfRange { what: \"tau\", value: tau });\n    }\n",
+  "new": ""
+ },
+ {
+  "label": "the double exponential's scale is inverted",
+  "old": "    let scale = tau_s / (tau_s - tau_m);",
+  "new": "    let scale = tau_s / (tau_m - tau_s);"
+ },
+ {
+  "label": "the double exponential's two modes have the same sign",
+  "old": "vec![scale, -scale], 0.0, dt, Discretisation::Zoh)",
+  "new": "vec![scale, scale], 0.0, dt, Discretisation::Zoh)"
+ },
+ {
+  "label": "the double exponential's modes are swapped",
+  "old": "    Ssm::new(vec![-1.0 / tau_s, -1.0 / tau_m], vec![1.0, 1.0],",
+  "new": "    Ssm::new(vec![-1.0 / tau_m, -1.0 / tau_s], vec![1.0, 1.0],"
+ },
+ {
+  "label": "equal time constants are accepted",
+  "old": "    if tau_m == tau_s {\n        return Err(SsmError::OutOfRange { what: \"tau_s - tau_m\", value: 0.0 });\n    }\n",
+  "new": ""
+ }
+]

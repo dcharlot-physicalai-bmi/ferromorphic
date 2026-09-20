@@ -9,7 +9,7 @@ hardware constraint models, analog device non-idealities, NIR, event-camera deco
 metrics, teaching tasks — and a joules ledger that charges for the memory traffic a synaptic
 operation needs.
 
-**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 69 modules, 1,797 tests.**
+**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 71 modules, 1,811 tests.**
 
 Run it in a browser without installing anything:
 **[energy.physicalai-bmi.org/neuromorphic](https://energy.physicalai-bmi.org/neuromorphic)** — the
@@ -84,6 +84,8 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 | `field` | the Amari neural field of dynamic field theory: the kernel integral `W`, the narrow unstable bump below which activity dies and the wide stable one it settles at, both as roots of `W(a) + h = 0` and both found in the simulated field — on a line, and on a sheet, where the rim integral is `πσ²[1 − e^{−R²/σ²} I₀(R²/σ²)]` |
 | `resonance` | noise as a resource: the noise level at which a threshold unit best tells two sub-threshold values apart, `σ*² = (b² − a²)/(2 ln(b/a))`; the exact information in a noisy population's count, including suprathreshold resonance — 63 units carrying more than one bit only when noise is added; dither that makes a step linear |
 | `ttfs` | learning with spike TIMES: two neuron models whose first-spike time is a closed form (Mostafa's non-leaky integrator; the leaky cell with `τ_m = 2τ_s`), its exact gradient by the implicit function theorem, backpropagation through spike times checked against finite differences, and XOR learned with one spike per neuron |
+| `ssm` | diagonal state-space models: the S4D sequence model and a bank of multi-timescale synapses shown to be the same object — zero-order hold exact for held input, convolution and recurrence required to agree to rounding, and the continuous impulse response checked against `srm`'s postsynaptic potential |
+| `sdr` | sparse distributed representations: the hypergeometric arithmetic of why a few active bits out of many are unconfusable, computed in logarithms so it holds at a hundred thousand bits, with subsampling, noise and union capacity |
 | `srm` | the Spike Response Model: the kernel form the crate's time-coded learning is written in, checked against `eventprop`'s own integration, plus escape noise — a hazard, a survivor function and an interval distribution — and the exact term SRM₀ drops when the synapse has a time constant |
 | `ottt` | online training through time: the gradient of a spiking layer computed FORWARD in constant memory, proven equal to the true gradient when the reset path is off and measured against it when it is on |
 | `polychron` | polychronous groups: the time-locked patterns axonal delays buy, enumerated by simulation — with the count shown to be combinatorics rather than evidence, and a prediction about cascade length refuted by the measurement |
@@ -258,7 +260,7 @@ Every neuron model here has a test that runs it against an analytic solution.
 - **A sub-threshold current returns `None`, not a large number.** "Fires rarely" and "does not fire"
   are different statements and a rate-coded readout cannot recover the difference later.
 
-1,797 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
+1,811 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
 `#![forbid(unsafe_code)]`, and `cargo build --target wasm32-unknown-unknown` compiles the library
 unchanged. Three of the `examples/` are verification gates that exit non-zero when a closed form
 disagrees with the simulator.
@@ -304,11 +306,11 @@ be reproduced cannot be checked against anything, including itself.
 
 ## Status
 
-**0.17.0.** Sixty-nine modules, every one audited by mutation: thirty-six by an adversarial
+**0.18.0.** Seventy-one modules, every one audited by mutation: thirty-six by an adversarial
 auditor in 0.5.0 and 0.6.0, the ten of the third wave by hand in 0.8.0 (156 mutations, 36
 survivors, every one now caught — see below), and everything since mutated as it was written. All
 290 mutations recorded before 0.10.0 were re-run against the finished code: 286 caught, 2
-equivalent by their stated arguments, none survived. The harness and every mutation list — 905 of
+equivalent by their stated arguments, none survived. The harness and every mutation list — 999 of
 them — are in `tools/`. The crate family is not built yet. Planned
 siblings, each following the same rule that a dependency lives outside the core:
 
@@ -610,6 +612,59 @@ delay gave 657 and a longest of 25. Identical delays put every arrival on one gr
 coincidences downstream are easy, while scattered arrivals rarely land inside a 0.1 ms window
 together. The test asserts the measured direction, and the documentation says which claim was
 refuted.
+
+0.18.0 adds two modules whose value is in what they identify with something the crate already had.
+
+`ssm` is the diagonal state-space model of S4D, and the claim it makes is not an analogy: a bank of
+multi-timescale synapses IS a diagonal SSM. One mode with `A = −1/τ` is an exponential synapse; two
+with the right `C` are the double-exponential postsynaptic potential, and `double_exponential` is
+checked against `srm::Kernel::epsilon` entry for entry. So the sequence-modelling literature's
+initialisations are choices of synaptic time constants, and a spiking SSM is not a new mechanism
+bolted onto a sequence model. Three things are pinned: zero-order hold is EXACT for input held
+across the step (not an approximation, and the bilinear alternative's error is measured falling as
+`Δ²`); convolution and recurrence — the trainer's form and the chip's form — agree to rounding;
+and the continuous impulse response is kept distinct from the discrete kernel, because `K` answers
+a held sample and `h` answers a delta, and they meet only in the limit, which is also measured.
+
+Its audit found one thing worth the name. `stable()` asks whether `|Ā| < 1`, and under the
+bilinear transform a pole can land on the NEGATIVE real axis outside the unit circle — `A > 2/Δ`
+sends `(1 + AΔ/2)/(1 − AΔ/2)` below −1 — so a test on the value rather than the magnitude would
+call a diverging model stable. Zero-order hold never does this, because `e^{AΔ}` is positive
+whatever `A` is, so only the bilinear form can show it; the test now drives that mode and watches
+it grow AND alternate.
+
+`sdr` is the hypergeometric arithmetic of sparse distributed representations — why a few active
+bits out of many are unconfusable, and exactly how much of the pattern may be thrown away before
+they are not. It is computed in logarithms, which is what lets it answer at `n = 100,000` where
+`C(n, w)` is past `10^2000`, and the combinatorics are checked against directly enumerated bit
+vectors so that the counting and the bits agree.
+
+It also contains a correction this crate made to itself. The module was first written quoting a
+published false-positive rate of `10⁻¹⁰` for `n = 2048, w = 40, θ = 20`. Its own arithmetic gave
+`2.5 × 10⁻²⁶`, so the source was checked — and the abstract does not carry the numerical examples,
+and this review has no access to the body. No figure in the module is now attributed to the paper.
+What it states are its own measured values, and the ordering among them is not the obvious one and
+is asserted: demanding ALL of a twenty-bit subsample (`2.2 × 10⁻³⁷`) is rarer than demanding ANY
+twenty of the forty (`2.5 × 10⁻²⁶`), because there are fewer ways to do it.
+
+Ten of `sdr`'s forty-five mutations survived its first audit, and five of them turned out to be
+genuinely equivalent — a clamp that no configuration can reach, a loop bound past which every term
+is zero, a guard that returns what an empty sum returns anyway, a cap that the expectation it caps
+can never exceed, and a two-cursor walk that gets the same answer with one cursor because both
+lists are strictly increasing. Each is recorded with its argument. The other five were real gaps,
+and all of the same kind: they were invisible to a SINGLE draw. A subsample taken from the wrong
+end satisfies every property except being the one documented; noise that drops the wrong bits
+still drops the right NUMBER of them. The tests now draw thousands of times and check the
+distribution rather than the instance.
+
+The last of those five is worth stating because the first repair for it was WRONG. The mutation
+draws the shuffle's swap partner from the whole pool instead of the unplaced part, and the repair
+asserted that every draw still came back with the full complement of bits — on the theory that
+duplicates would be de-duplicated away. They would not: a swap cannot produce a duplicate however
+the partner is chosen, so the pool stays a permutation and the count is always right. What the
+naive shuffle breaks is not the count but the DISTRIBUTION, and the second repair measures that
+instead: at twenty bits with five active, correct sampling holds every marginal within a percent
+of `w/n` and the naive version misses by more than half.
 
 One more thing the audit found, and it was about the audit itself. Running every list against the
 finished code showed nine entries whose text no longer matched the source EXACTLY ONCE — seven of
