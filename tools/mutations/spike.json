@@ -1,0 +1,112 @@
+[
+ {
+  "label": "polarity signs are inverted",
+  "old": "            Self::On => 1.0,\n            Self::Off => -1.0,",
+  "new": "            Self::On => -1.0,\n            Self::Off => 1.0,"
+ },
+ {
+  "label": "both polarities carry the same sign",
+  "old": "            Self::On => 1.0,\n            Self::Off => -1.0,",
+  "new": "            Self::On => 1.0,\n            Self::Off => 1.0,"
+ },
+ {
+  "label": "from_spikes does not restore the sort invariant",
+  "old": "    pub fn from_spikes(mut spikes: Vec<Spike>) -> Self {\n        spikes.sort_unstable();",
+  "new": "    pub fn from_spikes(spikes: Vec<Spike>) -> Self {"
+ },
+ {
+  "label": "pushing backwards in time is accepted",
+  "old": "        if let Some(last) = self.spikes.last() {\n            assert!(\n                s.t >= last.t,",
+  "new": "        if let Some(last) = self.spikes.last() {\n            assert!(\n                s.t >= last.t || true,"
+ },
+ {
+  "label": "pushing at the same tick is refused",
+  "old": "                s.t >= last.t,",
+  "new": "                s.t > last.t,"
+ },
+ {
+  "label": "`of` returns every source's spikes",
+  "old": "        self.spikes.iter().copied().filter(|s| s.source == source).collect()",
+  "new": "        self.spikes.iter().copied().collect()"
+ },
+ {
+  "label": "the rate counts every source",
+  "old": "        let n = self.spikes.iter().filter(|s| s.source == source).count();",
+  "new": "        let n = self.spikes.len();"
+ },
+ {
+  "label": "the rate forgets the tick length",
+  "old": "        Some(n as f64 / (ticks as f64 * dt))",
+  "new": "        Some(n as f64 / ticks as f64)"
+ },
+ {
+  "label": "the rate forgets how long the run was",
+  "old": "        Some(n as f64 / (ticks as f64 * dt))",
+  "new": "        Some(n as f64 / dt)"
+ },
+ {
+  "label": "a run of no length reports a rate",
+  "old": "        if ticks == 0 || dt <= 0.0 {\n            return None;\n        }",
+  "new": ""
+ },
+ {
+  "label": "a negative tick length reports a rate",
+  "old": "        if ticks == 0 || dt <= 0.0 {",
+  "new": "        if ticks == 0 {"
+ },
+ {
+  "label": "intervals are taken across every source",
+  "old": "        let t: Vec<u64> = self.spikes.iter().filter(|s| s.source == source).map(|s| s.t).collect();",
+  "new": "        let t: Vec<u64> = self.spikes.iter().map(|s| s.t).collect();"
+ },
+ {
+  "label": "intervals are not converted to seconds",
+  "old": "        t.windows(2).map(|w| (w[1] - w[0]) as f64 * dt).collect()",
+  "new": "        t.windows(2).map(|w| (w[1] - w[0]) as f64).collect()"
+ },
+ {
+  "label": "intervals are measured from the wrong end",
+  "old": "        t.windows(2).map(|w| (w[1] - w[0]) as f64 * dt).collect()",
+  "new": "        t.windows(2).map(|w| (w[1] as f64 - w[0] as f64).abs() * dt * 2.0).collect()"
+ },
+ {
+  "label": "one interval is enough for a coefficient of variation",
+  "old": "        if iv.len() < 2 {\n            return None;\n        }",
+  "new": ""
+ },
+ {
+  "label": "the coefficient of variation is not normalised by the mean",
+  "old": "        Some(var.sqrt() / mean)",
+  "new": "        Some(var.sqrt())"
+ },
+ {
+  "label": "the coefficient of variation reports the variance, not its root",
+  "old": "        Some(var.sqrt() / mean)",
+  "new": "        Some(var / mean)"
+ },
+ {
+  "label": "the variance divides by n rather than n-1",
+  "old": "        let var = iv.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / (n - 1.0);",
+  "new": "        let var = iv.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / n;"
+ },
+ {
+  "label": "the variance is not centred on the mean",
+  "old": "        let var = iv.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / (n - 1.0);",
+  "new": "        let var = iv.iter().map(|x| x * x).sum::<f64>() / (n - 1.0);"
+ },
+ {
+  "label": "a zero mean interval still yields a coefficient of variation",
+  "old": "        if mean <= 0.0 {\n            return None;\n        }",
+  "new": ""
+ },
+ {
+  "label": "len reports the capacity, not the count",
+  "old": "        self.spikes.len()\n    }\n\n    /// Whether the train is empty.",
+  "new": "        self.spikes.capacity()\n    }\n\n    /// Whether the train is empty."
+ },
+ {
+  "label": "is_empty is never true",
+  "old": "        self.spikes.is_empty()",
+  "new": "        false"
+ }
+]

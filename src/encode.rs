@@ -353,6 +353,69 @@ mod tests {
 
     /// A change detector staring at a still scene must cost nothing. This is the property the whole
     /// event-sensor energy argument rests on.
+    /// Seven mutations of this module survived its first recorded audit, and all seven lived in
+    /// the edges: what an out-of-range input does, which source a value drives, and where the two
+    /// ends of the latency window fall. Those are the cases here.
+    #[test]
+    fn the_coding_windows_two_ends_and_what_lies_outside_them() {
+        let e = LatencyEncoder::new(10);
+        // The brightest value lands on the first tick, and the dimmest that still spikes lands on
+        // the LAST tick of the window, not one past it.
+        assert_eq!(e.tick_of(1.0), Some(0));
+        assert_eq!(e.tick_of(1e-12), Some(9));
+        assert_eq!(e.tick_of(0.5), Some(5));
+        // The interior is where the span shows. A window of ten has NINE gaps, so a quarter-bright
+        // value sits at round(0.75 * 9) = 7; spreading it over ten gaps would put it at 8, and the
+        // two ends alone cannot tell those apart because the clamp hides the difference there.
+        assert_eq!(e.tick_of(0.25), Some(7));
+        assert_eq!(e.tick_of(0.1), Some(8));
+        assert_eq!(e.tick_of(0.9), Some(1));
+        // Nothing may land outside the window, whatever it is handed.
+        for x in [1.0, 2.0, 1e9, f64::INFINITY] {
+            let t = e.tick_of(x).expect("a positive value spikes");
+            assert!(t < 10, "x = {x} landed on tick {t} of a ten-tick window");
+        }
+        // And a value above one is CLIPPED, not extrapolated: it is as bright as bright gets.
+        assert_eq!(e.tick_of(2.0), e.tick_of(1.0));
+        assert_eq!(e.tick_of(0.0), None);
+        assert_eq!(e.tick_of(-1.0), None);
+        assert_eq!(LatencyEncoder::new(0).tick_of(0.5), None);
+        // Decoding spans the same ends: the last tick decodes to zero, not to 1/window.
+        assert_eq!(e.value_of(0), 1.0);
+        assert_eq!(e.value_of(9), 0.0);
+        // The interior divides by `window - 1`, so a ten-tick window's tick 5 is 1 - 5/9, and an
+        // ELEVEN-tick window puts the midpoint exactly at one half.
+        assert!((e.value_of(5) - (1.0 - 5.0 / 9.0)).abs() < 1e-15, "{}", e.value_of(5));
+        assert!((LatencyEncoder::new(11).value_of(5) - 0.5).abs() < 1e-15);
+        assert_eq!(LatencyEncoder::new(1).value_of(0), 1.0);
+    }
+
+    #[test]
+    fn value_i_drives_source_i_and_an_input_past_one_is_no_faster_than_one() {
+        // Two values an order of magnitude apart, so which source carries which is unmistakable.
+        let (dt, max_hz, ticks) = (1e-4, 400.0, 40_000u64);
+        let mut e = RateEncoder::new(max_hz, dt, 5);
+        let tr = e.encode(&[0.05, 0.8], ticks);
+        let (slow, fast) = (tr.of(0).len(), tr.of(1).len());
+        assert!(fast > 8 * slow, "source 0 fired {slow} times and source 1 {fast}");
+        assert_eq!(slow + fast, tr.len(), "every spike belongs to one of the two sources");
+        assert!(slow > 10, "source 0 never fired, so the comparison is vacuous");
+        // The rate saturates at max_hz: an input above one is clamped before it sets the rate, so
+        // it cannot ask for a probability the tick cannot deliver.
+        assert_eq!(e.p_spike(2.0), e.p_spike(1.0));
+        assert_eq!(e.p_spike(1e9), e.p_spike(1.0));
+        assert_eq!(e.p_spike(-1.0), e.p_spike(0.0));
+        assert_eq!(e.p_spike(0.0), 0.0);
+        // The precision cost rounds UP: asking for a tick and a half of counting means two ticks,
+        // because a fractional tick buys nothing.
+        let slow_e = RateEncoder::new(1.0, 1.0, 1);
+        assert_eq!(slow_e.ticks_for_precision(1.0, 1.0), Some(1));
+        // 1/rel^2 = 2.25 spikes at one spike a tick: three ticks, not two.
+        assert_eq!(slow_e.ticks_for_precision(1.0, 1.0 / 1.5), Some(3));
+        assert_eq!(slow_e.ticks_for_precision(0.0, 0.1), None);
+        assert_eq!(slow_e.ticks_for_precision(1.0, 0.0), None);
+    }
+
     #[test]
     fn a_static_signal_produces_no_events_at_all() {
         let mut e = DeltaEncoder::new(2, 0.1, 8);

@@ -258,6 +258,83 @@ mod tests {
         assert!(cv.abs() < 1e-12, "cv {cv}");
     }
 
+    /// A regular train has zero variance, so EVERY way of normalising it gives zero: the existing
+    /// pacemaker test cannot tell a coefficient of variation from a standard deviation, from a
+    /// variance, or from a population estimator. This one uses intervals of one, two and three
+    /// ticks, whose CV is exactly one half, and works the arithmetic out by hand.
+    #[test]
+    fn the_coefficient_of_variation_is_the_sample_one_normalised_by_the_mean() {
+        let dt = 1e-3;
+        let tr = Train::from_spikes(vec![
+            Spike { t: 0, source: 0 },
+            Spike { t: 1, source: 0 },
+            Spike { t: 3, source: 0 },
+            Spike { t: 6, source: 0 },
+            // A second source, interleaved, so that anything reading the whole train sees it.
+            Spike { t: 0, source: 1 },
+            Spike { t: 2, source: 1 },
+            Spike { t: 4, source: 1 },
+        ]);
+        // Intervals in SECONDS, from this source only, in order.
+        assert_eq!(tr.intervals(0, dt), vec![1e-3, 2e-3, 3e-3]);
+        assert_eq!(tr.intervals(1, dt), vec![2e-3, 2e-3]);
+        // mean 2 ms; deviations -1, 0, +1 ms; sample variance (n-1 = 2) is 1e-6 s^2, so the
+        // standard deviation is 1 ms and the CV is exactly one half.
+        let cv = tr.cv(0, dt).expect("three intervals is enough");
+        assert!((cv - 0.5).abs() < 1e-15, "cv = {cv}");
+        // The population estimator would give sqrt(2/3)/2 = 0.408, the unnormalised deviation
+        // 1e-3, and the variance itself 5e-4. None of those is 0.5.
+        assert!((cv - (2.0f64 / 3.0).sqrt() / 2.0).abs() > 0.09, "this is the n, not n-1, answer");
+        assert!(cv > 1e-2 && cv < 1e2, "cv = {cv} is on the scale of a raw variance or deviation");
+        // The second source is regular, so ITS cv is zero — which is the case the old test had.
+        assert_eq!(tr.cv(1, dt), Some(0.0));
+    }
+
+    #[test]
+    fn a_source_is_read_apart_from_the_others_and_the_train_reports_its_own_size() {
+        let tr = Train::from_spikes(vec![
+            Spike { t: 4, source: 7 },
+            Spike { t: 0, source: 3 },
+            Spike { t: 2, source: 7 },
+        ]);
+        // `from_spikes` sorts, which `rate` and `intervals` both rely on.
+        assert_eq!(tr.spikes().iter().map(|s| (s.t, s.source)).collect::<Vec<_>>(), vec![(0, 3), (2, 7), (4, 7)]);
+        assert_eq!(tr.of(7), vec![Spike { t: 2, source: 7 }, Spike { t: 4, source: 7 }]);
+        assert_eq!(tr.of(3), vec![Spike { t: 0, source: 3 }]);
+        assert_eq!(tr.of(9), vec![]);
+        assert_eq!(tr.len(), 3);
+        assert!(!tr.is_empty());
+        // `len` is checked against the slice it is meant to count, not against zero, so that a
+        // `len` which always returned zero would not pass by agreeing with `is_empty`.
+        let fresh = Train::new();
+        assert!(fresh.is_empty() && fresh.len() == fresh.spikes().len());
+        // A train built by pushing has a capacity that grows in jumps, so `len` reporting the
+        // capacity would be right for some sizes and wrong for this one.
+        let mut built = Train::new();
+        for t in 0..3 {
+            built.push(Spike { t, source: 0 });
+        }
+        assert_eq!(built.len(), 3);
+        assert_eq!(built.spikes().len(), built.len());
+    }
+
+    #[test]
+    fn two_neurons_may_fire_on_the_same_tick_and_a_source_that_never_waits_has_no_variation() {
+        // Simultaneity is not an error: a push at the tick just recorded is ordinary.
+        let mut tr = Train::new();
+        tr.push(Spike { t: 5, source: 0 });
+        tr.push(Spike { t: 5, source: 1 });
+        tr.push(Spike { t: 5, source: 0 });
+        tr.push(Spike { t: 5, source: 0 });
+        assert_eq!(tr.len(), 4);
+        assert_eq!(tr.of(0).len(), 3, "three spikes from one source is what gives TWO intervals");
+        // Three spikes at one tick give two intervals of zero, so the mean is zero and there is no
+        // coefficient of variation to report — a division this must refuse rather than return an
+        // infinity or a NaN from.
+        assert_eq!(tr.intervals(0, 1e-3), vec![0.0, 0.0]);
+        assert_eq!(tr.cv(0, 1e-3), None);
+    }
+
     #[test]
     fn polarity_signs_are_the_obvious_way_round() {
         assert!((Polarity::On.sign() - 1.0).abs() < 1e-15);

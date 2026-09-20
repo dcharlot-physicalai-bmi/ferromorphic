@@ -9,7 +9,7 @@ hardware constraint models, analog device non-idealities, NIR, event-camera deco
 metrics, teaching tasks — and a joules ledger that charges for the memory traffic a synaptic
 operation needs.
 
-**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 71 modules, 1,811 tests.**
+**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 71 modules, 1,818 tests.**
 
 Run it in a browser without installing anything:
 **[energy.physicalai-bmi.org/neuromorphic](https://energy.physicalai-bmi.org/neuromorphic)** — the
@@ -260,7 +260,7 @@ Every neuron model here has a test that runs it against an analytic solution.
 - **A sub-threshold current returns `None`, not a large number.** "Fires rarely" and "does not fire"
   are different statements and a rate-coded readout cannot recover the difference later.
 
-1,811 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
+1,818 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
 `#![forbid(unsafe_code)]`, and `cargo build --target wasm32-unknown-unknown` compiles the library
 unchanged. Three of the `examples/` are verification gates that exit non-zero when a closed form
 disagrees with the simulator.
@@ -308,10 +308,19 @@ be reproduced cannot be checked against anything, including itself.
 
 **0.18.0.** Seventy-one modules, every one audited by mutation: thirty-six by an adversarial
 auditor in 0.5.0 and 0.6.0, the ten of the third wave by hand in 0.8.0 (156 mutations, 36
-survivors, every one now caught — see below), and everything since mutated as it was written. All
-290 mutations recorded before 0.10.0 were re-run against the finished code: 286 caught, 2
-equivalent by their stated arguments, none survived. The harness and every mutation list — 999 of
-them — are in `tools/`. The crate family is not built yet. Planned
+survivors, every one now caught — see below), and everything since mutated as it was written.
+
+**What of that is RE-RUNNABLE, which is a different question and the one that matters.** The
+repository holds 1,071 recorded mutations across 41 of the 71 modules. The other 30 were audited
+by the adversarial auditor of 0.5.0 and 0.6.0, whose edits were never written down — so that audit
+cannot be re-run against today's code, and its verdict is a historical claim about the code as it
+stood then, not a property of the code as it stands now. Counting those modules under "audited by
+mutation" without saying this would be exactly the confusion the harness exists to prevent, and
+the thirty are named below.
+
+Every one of the 999 mutations recorded before this release was re-run in full against 0.18.0:
+**985 caught, 14 equivalent by their stated arguments, none survived, none stale.** That is the
+whole record, not a sample of it. The crate family is not built yet. Planned
 siblings, each following the same rule that a dependency lives outside the core:
 
 | crate | what it would add | why separate |
@@ -677,17 +686,58 @@ though they were evidence. All nine now anchor to a unique site, and the four mo
 re-audited in full rather than spot-checked, because an entry that has never applied has never
 caught anything.
 
+0.18.1 is not a feature release. It is what happened when the audit record was audited.
+
+Counting the lists in `tools/mutations/` against the modules in `src/` showed 38 lists for 71
+modules. The other 33 had been audited in 0.5.0 and 0.6.0 by an adversarial auditor whose edits
+were never written down — so "every module audited by mutation" was true as history and
+unverifiable as a present-tense claim, and this README had been saying that the harness and every
+mutation it has run were in the repository. That sentence has been corrected, and the thirty
+modules still without a list are named, because a reader who runs the harness should know what
+fraction of the claim it checks.
+
+Then the whole recorded record was re-run against 0.18.0: **999 mutations, 985 caught, 14
+equivalent by their stated arguments, none survived and none stale.** That is the first time the
+entire record has been re-run in one pass.
+
+And three of the thirty were written: `rng`, `spike` and `encode`, 72 mutations between them. The
+result is the argument for doing the other twenty-seven. `spike` had TWELVE of its twenty-two
+mutations survive, and `encode` seven of twenty-nine — a coefficient of variation that could
+report a variance, a standard deviation or a population estimator and pass either way, because
+the only test of it used a perfectly regular train whose variance is zero however you normalise
+it; interval extraction that could read every source at once; a `len` that could report the
+capacity; a latency window that could span the wrong number of gaps. None of that was caught by
+the tests those modules already had.
+
+`rng` was worse, and it was not the tests. Writing its mutations meant reading `below` closely
+enough to check what each edit would break, and the rejection zone was wrong:
+`u32::MAX - u32::MAX % n - (n - 1)` leaves an accepted count of `(k − 1)n + 2`, which is two too
+many for every `n > 2` — a residual modulo bias where the documentation said there was none — and
+which collapses to an accepted count of exactly TWO once `n` passes `2³¹`, where the loop then
+spins about two billion times per draw. Nothing in the crate calls `below` with an `n` that large,
+which is the only reason it had never been seen. It is now `u32::MAX - 2³² % n`, the loop is
+bounded so that a wrong zone says so instead of hanging, and the module has the thing it most
+needed and did not have: a golden vector. Its own documentation opens by promising the same seed
+gives the same sequence on every platform and every release, and not one test pinned a value —
+every test asked whether the stream was well behaved, which a different generator would also be.
+The expected values were computed by a separate implementation of PCG32 XSH-RR written from the
+algorithm rather than from this code.
+
 ### Re-running the audit
 
-The harness and every mutation it has run are in the repository: `tools/mutate.py` and one list per
-module in `tools/mutations/`. `python3 tools/mutate.py nef` applies each recorded edit to
+The harness and every mutation THIS repository has recorded are in it: `tools/mutate.py` and one
+list per module in `tools/mutations/` — 41 modules of the 71. The 30 without a list are `attention`, `bayes`, `cochlea`, `coding`, `compress`, `continual`, `control`, `convert`, `crossover`, `device`, `eprop`, `exponential`, `fusion`, `hardware`, `hh`, `ledger`, `mapping`, `meanfield`, `metrics`, `net`, `nir`, `olfaction`, `plasticity`, `reservoir`, `spikeconv`, `surrogate`, `synapse`, `tasks`, `topology`, `vision`:
+audited in 0.5.0 and 0.6.0 by an adversarial auditor that did not record its edits. Writing their
+lists is outstanding work, and until it is done the claim anyone can check by running the harness
+is about those 41. `python3 tools/mutate.py nef` applies each recorded edit to
 `src/nef.rs` in turn, runs that module's tests, restores the file and prints `caught`, `SURVIVED`,
-or — for the two mutations no test could distinguish, each with its stated reason — `equivalent`.
+or — for the sixteen mutations no test could distinguish, each with its stated reason —
+`equivalent`.
 It prints the number of tests that ran unmutated first, because a test that has vanished looks
 exactly like a test that passes.
 
 `tools/slim.py` is what makes that affordable. The harness rebuilds the crate once per mutation,
-and building all sixty-six modules takes about a hundred seconds; a copy holding only the module
+and building all seventy-one modules takes about a hundred seconds; a copy holding only the module
 under audit and the modules it names through `crate::` builds in about six. `python3
 tools/slim.py . /tmp/slim_nef nef` writes that copy and `python3 tools/mutate.py --root
 /tmp/slim_nef nef` audits it, which is the difference between one module in an afternoon and nine

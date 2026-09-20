@@ -1,0 +1,107 @@
+[
+ {
+  "label": "the multiplier is not PCG's",
+  "old": "    const MULT: u64 = 6364136223846793005;",
+  "new": "    const MULT: u64 = 6364136223846793007;"
+ },
+ {
+  "label": "the stream increment is allowed to be even",
+  "old": "        let inc = (seed.wrapping_mul(0x9E3779B97F4A7C15) ^ 0xDA3E_39CB_94B9_5BDB) | 1;",
+  "new": "        let inc = seed.wrapping_mul(0x9E3779B97F4A7C15) ^ 0xDA3E_39CB_94B9_5BDB;"
+ },
+ {
+  "label": "the seed is not mixed into the increment",
+  "old": "        let inc = (seed.wrapping_mul(0x9E3779B97F4A7C15) ^ 0xDA3E_39CB_94B9_5BDB) | 1;",
+  "new": "        let inc = 0xDA3E_39CB_94B9_5BDB | 1;"
+ },
+ {
+  "label": "seeding skips its first warm-up draw",
+  "old": "        let mut r = Self { state: 0, inc };\n        r.next_u32();\n        r.state = r.state.wrapping_add(seed);",
+  "new": "        let mut r = Self { state: 0, inc };\n        r.state = r.state.wrapping_add(seed);"
+ },
+ {
+  "label": "the seed is never added to the state",
+  "old": "        r.state = r.state.wrapping_add(seed);",
+  "new": "        r.state = r.state;"
+ },
+ {
+  "label": "seeding skips its second warm-up draw",
+  "old": "        r.state = r.state.wrapping_add(seed);\n        r.next_u32();\n        r",
+  "new": "        r.state = r.state.wrapping_add(seed);\n        r"
+ },
+ {
+  "label": "the output is taken from the new state, not the old",
+  "old": "        let old = self.state;\n        self.state = old.wrapping_mul(Self::MULT).wrapping_add(self.inc);",
+  "new": "        let old = self.state.wrapping_mul(Self::MULT).wrapping_add(self.inc);\n        self.state = old;"
+ },
+ {
+  "label": "the output function drops its xorshift",
+  "old": "        let xorshifted = (((old >> 18) ^ old) >> 27) as u32;",
+  "new": "        let xorshifted = (old >> 27) as u32;"
+ },
+ {
+  "label": "the xorshift shifts by the wrong amount",
+  "old": "        let xorshifted = (((old >> 18) ^ old) >> 27) as u32;",
+  "new": "        let xorshifted = (((old >> 17) ^ old) >> 27) as u32;"
+ },
+ {
+  "label": "the output is taken from the wrong 32 bits",
+  "old": "        let xorshifted = (((old >> 18) ^ old) >> 27) as u32;",
+  "new": "        let xorshifted = (((old >> 18) ^ old) >> 28) as u32;"
+ },
+ {
+  "label": "the rotation count comes from the wrong bits",
+  "old": "        let rot = (old >> 59) as u32;",
+  "new": "        let rot = (old >> 60) as u32;"
+ },
+ {
+  "label": "the output rotates the wrong way",
+  "old": "        xorshifted.rotate_right(rot)",
+  "new": "        xorshifted.rotate_left(rot)"
+ },
+ {
+  "label": "the uniform takes too many bits from its high draw",
+  "old": "        let hi = u64::from(self.next_u32()) >> 5; // 27 bits",
+  "new": "        let hi = u64::from(self.next_u32()) >> 4; // 28 bits"
+ },
+ {
+  "label": "the uniform takes too many bits from its low draw",
+  "old": "        let lo = u64::from(self.next_u32()) >> 6; // 26 bits",
+  "new": "        let lo = u64::from(self.next_u32()) >> 5; // 27 bits"
+ },
+ {
+  "label": "the uniform's two halves overlap",
+  "old": "        ((hi << 26) | lo) as f64 * (1.0 / (1u64 << 53) as f64)",
+  "new": "        ((hi << 25) | lo) as f64 * (1.0 / (1u64 << 53) as f64)"
+ },
+ {
+  "label": "the uniform is scaled by the wrong power of two",
+  "old": "        ((hi << 26) | lo) as f64 * (1.0 / (1u64 << 53) as f64)",
+  "new": "        ((hi << 26) | lo) as f64 * (1.0 / (1u64 << 52) as f64)"
+ },
+ {
+  "label": "a bound of zero is accepted",
+  "old": "        assert!(n > 0, \"below(0) has no value to return\");\n",
+  "new": ""
+ },
+ {
+  "label": "the bound does no rejection at all",
+  "old": "        let zone = u32::MAX - excess;",
+  "new": "        let zone = u32::MAX;"
+ },
+ {
+  "label": "the rejection zone subtracts the bound instead of the remainder",
+  "old": "        let excess = (u32::MAX % n).wrapping_add(1) % n; // 2^32 mod n\n        let zone = u32::MAX - excess;",
+  "new": "        let excess = (u32::MAX % n).wrapping_add(1) % n; // 2^32 mod n\n        let zone = u32::MAX - (u32::MAX % n) - (n - 1);"
+ },
+ {
+  "label": "the returned value can reach the bound",
+  "old": "                return v % n;",
+  "new": "                return v % n.wrapping_add(1);"
+ },
+ {
+  "label": "the rejection loop accepts what it should reject",
+  "old": "            if v <= zone {",
+  "new": "            if v >= zone {"
+ }
+]

@@ -1,0 +1,149 @@
+[
+ {
+  "label": "the spike probability is linear, not exponential",
+  "old": "        1.0 - (-rate * self.dt).exp()",
+  "new": "        (rate * self.dt).min(1.0)"
+ },
+ {
+  "label": "the spike probability forgets the tick length",
+  "old": "        1.0 - (-rate * self.dt).exp()",
+  "new": "        1.0 - (-rate).exp()"
+ },
+ {
+  "label": "the spike probability is complemented the wrong way",
+  "old": "        1.0 - (-rate * self.dt).exp()",
+  "new": "        (-rate * self.dt).exp()"
+ },
+ {
+  "label": "the input is not clamped before it sets the rate",
+  "old": "        let rate = self.max_hz * x.clamp(0.0, 1.0);\n        1.0 - (-rate * self.dt).exp()",
+  "new": "        let rate = self.max_hz * x;\n        1.0 - (-rate * self.dt).exp()"
+ },
+ {
+  "label": "the rate encoder compares against the wrong tail",
+  "old": "                if self.rng.next_f64() < self.p_spike(v) {",
+  "new": "                if self.rng.next_f64() > self.p_spike(v) {"
+ },
+ {
+  "label": "every value drives source zero",
+  "old": "                    out.push(Spike { t, source: i as u32 });",
+  "new": "                    out.push(Spike { t, source: 0 });"
+ },
+ {
+  "label": "the precision cost ignores the rate",
+  "old": "        Some((n / (rate * self.dt)).ceil() as u64)",
+  "new": "        Some(n.ceil() as u64)"
+ },
+ {
+  "label": "the precision cost is linear in the relative error",
+  "old": "        let n = 1.0 / (rel * rel);",
+  "new": "        let n = 1.0 / rel;"
+ },
+ {
+  "label": "the precision cost rounds down",
+  "old": "        Some((n / (rate * self.dt)).ceil() as u64)",
+  "new": "        Some((n / (rate * self.dt)).floor() as u64)"
+ },
+ {
+  "label": "a zero input is given a finite precision cost",
+  "old": "        if rate <= 0.0 || rel <= 0.0 {\n            return None;\n        }",
+  "new": ""
+ },
+ {
+  "label": "latency coding does not invert the value",
+  "old": "        let t = ((1.0 - x) * (self.window - 1) as f64).round() as u64;",
+  "new": "        let t = (x * (self.window - 1) as f64).round() as u64;"
+ },
+ {
+  "label": "latency coding spans the whole window rather than its last tick",
+  "old": "        let t = ((1.0 - x) * (self.window - 1) as f64).round() as u64;",
+  "new": "        let t = ((1.0 - x) * self.window as f64).round() as u64;"
+ },
+ {
+  "label": "latency coding does not clamp to the window",
+  "old": "        Some(t.min(self.window - 1))",
+  "new": "        Some(t)",
+  "equivalent": "unreachable. `x` is clipped to at most one and must be strictly positive to get this far, so `(1 - x) * (window - 1)` is below `window - 1` and its rounding is at most `window - 1`. The clamp is there so that a future change to the span cannot silently put a spike outside the window — and the mutation that DOES change that span is caught by the interior values."
+ },
+ {
+  "label": "a value above one is not clipped",
+  "old": "        let x = x.min(1.0);",
+  "new": "        let x = x;",
+  "equivalent": "Rust's float-to-integer cast saturates, so an `x` above one gives a negative product that becomes tick 0 — the same tick the clip produces. The clip states the intent (a value brighter than the brightest is as early as it gets) rather than leaving it to the cast's saturation, but no input can tell the two apart."
+ },
+ {
+  "label": "a value of zero still spikes",
+  "old": "        if !(x > 0.0) || self.window == 0 {",
+  "new": "        if self.window == 0 {"
+ },
+ {
+  "label": "latency decoding does not invert its encoding",
+  "old": "        1.0 - (t as f64) / (self.window - 1) as f64",
+  "new": "        (t as f64) / (self.window - 1) as f64"
+ },
+ {
+  "label": "latency decoding divides by the whole window",
+  "old": "        1.0 - (t as f64) / (self.window - 1) as f64",
+  "new": "        1.0 - (t as f64) / self.window as f64"
+ },
+ {
+  "label": "the delta encoder's first sample emits events",
+  "old": "        if !self.started {\n            self.reference.copy_from_slice(x);\n            self.started = true;\n            return out;\n        }",
+  "new": ""
+ },
+ {
+  "label": "the delta encoder moves its reference to the sample",
+  "old": "                    self.reference[c] += self.threshold;",
+  "new": "                    self.reference[c] = v;"
+ },
+ {
+  "label": "the delta encoder never moves its reference up",
+  "old": "                    self.reference[c] += self.threshold;",
+  "new": "                    self.reference[c] += 0.0;"
+ },
+ {
+  "label": "a rise and a fall carry the same polarity",
+  "old": "                    out.push(Event { t, address: c as u32, polarity: Polarity::On });",
+  "new": "                    out.push(Event { t, address: c as u32, polarity: Polarity::Off });"
+ },
+ {
+  "label": "the fall branch never moves its reference down",
+  "old": "                    self.reference[c] -= self.threshold;",
+  "new": "                    self.reference[c] += self.threshold;"
+ },
+ {
+  "label": "the per-sample cap is not enforced",
+  "old": "            while n < self.max_events_per_sample {",
+  "new": "            while n < u32::MAX {"
+ },
+ {
+  "label": "the per-sample cap counts nothing",
+  "old": "                n += 1;",
+  "new": "                n += 0;"
+ },
+ {
+  "label": "the delta encoder fires below its threshold",
+  "old": "                if d >= self.threshold {",
+  "new": "                if d >= 0.0 {"
+ },
+ {
+  "label": "rate decoding forgets the maximum rate",
+  "old": "    Some((count as f64 / (ticks as f64 * dt)) / max_hz)",
+  "new": "    Some(count as f64 / (ticks as f64 * dt))"
+ },
+ {
+  "label": "rate decoding forgets how long the window was",
+  "old": "    Some((count as f64 / (ticks as f64 * dt)) / max_hz)",
+  "new": "    Some((count as f64 / dt) / max_hz)"
+ },
+ {
+  "label": "rate decoding accepts a window of no length",
+  "old": "    if ticks == 0 || dt <= 0.0 || max_hz <= 0.0 {\n        return None;\n    }",
+  "new": ""
+ },
+ {
+  "label": "rate decoding accepts a zero maximum rate",
+  "old": "    if ticks == 0 || dt <= 0.0 || max_hz <= 0.0 {",
+  "new": "    if ticks == 0 || dt <= 0.0 {"
+ }
+]

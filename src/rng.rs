@@ -83,15 +83,30 @@ impl Rng {
     /// there is no "empty" neuron index, and returning 0 would silently address a real neuron.
     pub fn below(&mut self, n: u32) -> u32 {
         assert!(n > 0, "below(0) has no value to return");
-        // Rejection against the largest multiple of n that fits, which is the standard debiasing
-        // and is cheap because rejection is rare for the n this crate uses (neuron counts).
-        let zone = u32::MAX - (u32::MAX % n) - (n - 1);
-        loop {
+        // Rejection against the largest multiple of `n` that fits in 32 bits: the accepted range
+        // is `0..=u32::MAX - 2^32 % n`, whose SIZE is exactly a multiple of `n`, and that exactness
+        // is what makes `v % n` unbiased rather than nearly so.
+        //
+        // `2^32 % n` cannot be written directly in `u32`, so it is built from `u32::MAX % n`. An
+        // earlier version of this line subtracted `n - 1` instead, which left an accepted count of
+        // `(k − 1)n + 2` — two values too many for every `n > 2`, and, worse, an accepted count of
+        // exactly TWO once `n` passed `2^31`, where the loop below then spun about two billion
+        // times per draw. Nothing in the crate called it with an `n` that large, which is the only
+        // reason it was never seen.
+        let excess = (u32::MAX % n).wrapping_add(1) % n; // 2^32 mod n
+        let zone = u32::MAX - excess;
+        // The accepted region is never smaller than half the word — `2^32 % n` is below `n`, and
+        // below `2^31` either way — so a hundred rejections in a row has probability under
+        // `2^-100` and cannot happen to a correct zone. It CAN happen to a wrong one, and the
+        // wrong one this replaced would have spun about two billion times per draw at large `n`.
+        // A loop that cannot say why it is not finishing is worse than one that stops.
+        for _ in 0..100 {
             let v = self.next_u32();
             if v <= zone {
                 return v % n;
             }
         }
+        panic!("below({n}) rejected a hundred draws in a row: the acceptance zone is wrong")
     }
 }
 
@@ -164,6 +179,73 @@ mod tests {
             let rel = (f64::from(c) - expect).abs() / expect;
             assert!(rel < 0.05, "bucket {i} off by {:.1}%", rel * 100.0);
         }
+    }
+
+    /// The promise this module's own documentation opens with — "same seed, same sequence, every
+    /// platform and every release" — is the one property no other test here can see. Every other
+    /// test asks whether the stream is WELL BEHAVED, and a different generator would be well
+    /// behaved too: a changed multiplier, a changed rotation, a changed seeding mix would all pass
+    /// them. These are the actual values, computed by a separate implementation of PCG32 XSH-RR
+    /// written from the algorithm rather than from this code. They are what makes changing the
+    /// generator a visible, breaking change instead of a silent one.
+    #[test]
+    fn the_stream_is_this_exact_sequence_and_not_merely_a_well_behaved_one() {
+        for (seed, want) in [
+            (0u64, [3_469_696_627u32, 1_581_262_666, 1_615_719_374, 3_412_491_734]),
+            (42, [86_690_733, 2_594_090_985, 4_127_782_882, 867_463_249]),
+            (1, [1_296_297_154, 1_900_379_881, 40_361_581, 826_615_500]),
+        ] {
+            let mut r = Rng::new(seed);
+            let got: [u32; 4] = core::array::from_fn(|_| r.next_u32());
+            assert_eq!(got, want, "seed {seed}");
+        }
+        // And the uniform built from two of those draws, to the last bit it carries.
+        let mut r = Rng::new(42);
+        for want in [0.020_184_260_636_447_85, 0.961_074_346_318_632_5, 0.331_237_497_802_463_5] {
+            let got = r.next_f64();
+            assert!((got - want).abs() < 1e-16, "{got} against {want}");
+        }
+    }
+
+    /// `below` rejects down to a whole number of blocks of `n`. Two things hide whether it does:
+    /// at the small `n` this crate actually uses the leftover bias is about `2n/2^32` — a few parts
+    /// per billion, which no counting test can see — and a bound that rejects TOO much looks
+    /// correct rather than slow. A large `n` exposes both at once: here the accepted region is
+    /// three quarters of the word, one third of the outputs would be drawn twice as often if the
+    /// rejection were dropped, and a bound that accepted only two values would take about two
+    /// billion draws to return even once.
+    #[test]
+    fn below_rejects_to_a_whole_number_of_blocks_even_when_n_is_most_of_the_word() {
+        let n = 3u32 << 30; // 3,221,225,472 — two thirds of the u32 range is a single block
+        let mut r = Rng::new(3);
+        let third = n / 3;
+        let mut counts = [0u32; 3];
+        let draws = 60_000;
+        for _ in 0..draws {
+            let v = r.below(n);
+            assert!(v < n, "below({n}) returned {v}");
+            counts[(v / third) as usize] += 1;
+        }
+        let expect = f64::from(draws) / 3.0;
+        for (i, &c) in counts.iter().enumerate() {
+            let rel = (f64::from(c) - expect).abs() / expect;
+            assert!(rel < 0.05, "third {i} off by {:.1}% — {c} of {draws}", rel * 100.0);
+        }
+        // The extremes of the range are reachable at all, which a bound that collapsed to a couple
+        // of values would not manage.
+        let mut r = Rng::new(4);
+        let (mut low, mut high) = (false, false);
+        for _ in 0..10_000 {
+            let v = r.below(u32::MAX);
+            low |= v < u32::MAX / 4;
+            high |= v > u32::MAX / 4 * 3;
+        }
+        assert!(low && high, "below(u32::MAX) did not cover its range");
+        // n = 1 has one answer, and n = 2 splits evenly.
+        let mut r = Rng::new(5);
+        assert!((0..100).all(|_| r.below(1) == 0));
+        let ones = (0..20_000).filter(|_| r.below(2) == 1).count();
+        assert!((9_600..10_400).contains(&ones), "{ones} of 20,000");
     }
 
     #[test]
