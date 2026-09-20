@@ -311,12 +311,12 @@ auditor in 0.5.0 and 0.6.0, the ten of the third wave by hand in 0.8.0 (156 muta
 survivors, every one now caught — see below), and everything since mutated as it was written.
 
 **What of that is RE-RUNNABLE, which is a different question and the one that matters.** The
-repository holds 1,189 recorded mutations across 45 of the 71 modules. The other 26 were audited
+repository holds 1,369 recorded mutations across 47 of the 71 modules. The other 24 were audited
 by the adversarial auditor of 0.5.0 and 0.6.0, whose edits were never written down — so that audit
 cannot be re-run against today's code, and its verdict is a historical claim about the code as it
 stood then, not a property of the code as it stands now. Counting those modules under "audited by
 mutation" without saying this would be exactly the confusion the harness exists to prevent, and
-the twenty-six are named below.
+the twenty-four are named below.
 
 Every one of the 999 mutations recorded before this release was re-run in full against 0.18.0:
 **985 caught, 14 equivalent by their stated arguments, none survived, none stale.** That is the
@@ -765,15 +765,52 @@ target's — a perfect fit, the mean itself, a symmetric error — so all of the
 centre taken from the wrong list. The new fixture has means of 2 and 4, where the two choices give
 −0.75 and 0.3.
 
+`synapse` (81 mutations) and `plasticity` (99) are the two largest modules in the crate and came
+back with six survivors between them. Three of `synapse`'s mutations are not caught by a test at
+all — they are caught by the **compiler**, because the receptor table's claims about itself are
+written as `const { assert!(..) }` and a mutant that falsifies one cannot be built. The harness
+used to report that as `COMPILE-ERROR`, the verdict that means "your edit was malformed, it says
+nothing either way", and it sent this audit looking for a broken list entry three times before the
+error code was read. It now distinguishes them: `caught(const)` for an `E0080` evaluation panic,
+`COMPILE-ERROR` for everything else.
+
+What the six survivors were:
+
+- **`RECEPTORS` was never asked what is in it.** The table's doc names four rows in a stated order
+  and quotes the factor of 100 they span; the test iterated the array and asserted properties of
+  each row separately, all of which are true of `[AMPA, NMDA, GABA_A, GABA_A]`. The slow inhibitory
+  row could be dropped and the fast one repeated with nothing failing.
+- **The `GABA_B` cascade's removable singularity.** The first mutation written for it — keep the
+  accurate `expm1` form and switch on the rate difference instead of on `z` — survived, and it is
+  *equivalent*: the two branches differ by less than `1e-9` relative. The threshold was never what
+  was wrong with the first version of that code. The **subtraction** was, and the mutation that
+  restores `(er - e4)/(k4 - a)` is caught by the same test whose doc says so, on the assertion that
+  the centring error must shrink quadratically.
+- **`MultiplicativeDepression`'s factor is the weight in its own unit, not a fraction of the span.**
+  Every fixture in `plasticity` bounds weights to `[0, 1]`, whose span is exactly one, and the one
+  test that varies the floor asserts only ratios of two steps — a common normalisation cancels out
+  of a ratio. Dividing by the span passed the whole module. The new test uses a span of four and
+  compares against the additive rule at one unit above the floor, where the factor is exactly one.
+- **A refused spike was allowed to register itself, three times over.** `on_pre` and `on_post` both
+  document that a refused call leaves the traces exactly as it found them. The test that checked it
+  asserted on the trace the call *reads* rather than the one it *writes*: after a refused `on_pre`
+  it checked the post trace, and after a refused triplet `on_post` it checked `r1` — neither of
+  which the registration touches. Moving `note_pre` above the guard passed. That is a new entry in
+  the vacuous-test register.
+- **The tag and the modulator accumulate, and nothing had ever delivered two of either.** `c += ..`
+  and `d += ..` both read as `=` under a test that plays exactly one pair and delivers exactly one
+  reward, which was every test in the module. A tag that is overwritten turns a burst into its last
+  pair alone — the whole quantity a three-factor rule exists to carry.
+
 ### Re-running the audit
 
 The harness and every mutation THIS repository has recorded are in it: `tools/mutate.py` and one
-list per module in `tools/mutations/` — 43 modules of the 71. The 28 without a list are `attention`, `bayes`, `cochlea`, `coding`, `compress`, `continual`, `control`, `convert`, `device`, `eprop`, `exponential`, `fusion`, `hardware`, `hh`, `ledger`, `mapping`, `meanfield`, `metrics`, `nir`, `olfaction`, `plasticity`, `reservoir`, `spikeconv`, `surrogate`, `synapse`, `tasks`, `topology`, `vision`:
+list per module in `tools/mutations/` — 47 modules of the 71. The 24 without a list are `attention`, `bayes`, `cochlea`, `coding`, `compress`, `continual`, `control`, `convert`, `device`, `eprop`, `exponential`, `fusion`, `hardware`, `hh`, `mapping`, `meanfield`, `nir`, `olfaction`, `reservoir`, `spikeconv`, `surrogate`, `tasks`, `topology`, `vision`:
 audited in 0.5.0 and 0.6.0 by an adversarial auditor that did not record its edits. Writing their
 lists is outstanding work, and until it is done the claim anyone can check by running the harness
-is about those 45. `python3 tools/mutate.py nef` applies each recorded edit to
+is about those 47. `python3 tools/mutate.py nef` applies each recorded edit to
 `src/nef.rs` in turn, runs that module's tests, restores the file and prints `caught`, `SURVIVED`,
-or — for the eighteen mutations no test could distinguish, each with its stated reason —
+or — for the nineteen mutations no test could distinguish, each with its stated reason —
 `equivalent`.
 It prints the number of tests that ran unmutated first, because a test that has vanished looks
 exactly like a test that passes.

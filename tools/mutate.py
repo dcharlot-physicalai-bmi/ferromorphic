@@ -11,6 +11,7 @@ restores the file, and prints
 a verdict:
 
     caught         a test failed, or the test process was killed — the edit is visible
+    caught(const)  the edit falsifies a `const { assert!(..) }`: it cannot even be compiled
     SURVIVED       every test passed with the edit in place: a test that cannot fail
     equivalent     survived, and the list states why no test could tell (read the reason)
     COMPILE-ERROR  the edit does not compile; it says nothing either way — fix the mutation
@@ -47,6 +48,13 @@ def run_tests(root, module, timeout, names=None):
         return "TIMEOUT", None
     ran = re.search(r"test result: \w+\. (\d+) passed; (\d+) failed", p.stdout)
     if "could not compile" in p.stderr and ran is None:
+        # A `const { assert!(..) }` that the edit falsifies fails the BUILD, with E0080 and the
+        # assertion's own message. That is the strongest catch there is — the mutant cannot be
+        # produced at all — and reporting it as the inconclusive COMPILE-ERROR sent an audit
+        # looking for a malformed edit three times over. Only that one error code is read this
+        # way; a syntax error or a type error still says nothing either way.
+        if "E0080" in p.stderr and "evaluation panicked" in p.stderr:
+            return "caught(const)", None
         return "COMPILE-ERROR", None
     if p.returncode == 0 and ran and ran.group(2) == "0":
         return "SURVIVED", int(ran.group(1))

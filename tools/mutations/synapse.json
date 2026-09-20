@@ -1,0 +1,408 @@
+[
+ {
+  "label": "the exponential kernel grows instead of decaying",
+  "old": "        Some((-t / self.tau).exp())\n    }\n\n    fn integral_seconds(&self) -> Option<f64> {\n        // ∫₀^∞ exp(-t/τ) dt = τ.",
+  "new": "        Some((t / self.tau).exp())\n    }\n\n    fn integral_seconds(&self) -> Option<f64> {\n        // ∫₀^∞ exp(-t/τ) dt = τ."
+ },
+ {
+  "label": "the exponential kernel's integral is twice its time constant",
+  "old": "        // equality in the test is bit-for-bit rather than to a tolerance.\n        Some(self.tau)",
+  "new": "        // equality in the test is bit-for-bit rather than to a tolerance.\n        Some(2.0 * self.tau)"
+ },
+ {
+  "label": "the exponential kernel decays on injection rather than on advance",
+  "old": "    fn inject(&mut self, w: f64) {\n        if w.is_finite() {\n            self.g += w;\n        }\n    }\n\n    fn advance(&mut self, dt: f64) {\n        if steppable(dt) {\n            self.g *= (-dt / self.tau).exp();",
+  "new": "    fn inject(&mut self, w: f64) {\n        if w.is_finite() {\n            self.g += w;\n        }\n    }\n\n    fn advance(&mut self, dt: f64) {\n        if steppable(dt) {\n            self.g *= (-dt / self.tau).exp() * (-dt / self.tau).exp();"
+ },
+ {
+  "label": "the alpha kernel is the un-normalised t·exp(-t/τ)",
+  "old": "        let s = t / self.tau;\n        Some(s * (1.0 - s).exp())\n    }\n\n    fn integral_seconds(&self) -> Option<f64> {\n        // ∫₀^∞ (t/τ)e^{1-t/τ} dt = e·(1/τ)·τ² = e·τ.",
+  "new": "        let s = t / self.tau;\n        Some(s * (-s).exp())\n    }\n\n    fn integral_seconds(&self) -> Option<f64> {\n        // ∫₀^∞ (t/τ)e^{1-t/τ} dt = e·(1/τ)·τ² = e·τ."
+ },
+ {
+  "label": "the alpha kernel's integral drops its factor of e",
+  "old": "        // ∫₀^∞ (t/τ)e^{1-t/τ} dt = e·(1/τ)·τ² = e·τ.\n        Some(E * self.tau)",
+  "new": "        // ∫₀^∞ (t/τ)e^{1-t/τ} dt = e·(1/τ)·τ² = e·τ.\n        Some(self.tau)"
+ },
+ {
+  "label": "the alpha kernel claims to peak at the origin",
+  "old": "        Some(s * (1.0 - s).exp())\n    }\n\n    fn integral_seconds(&self) -> Option<f64> {\n        // ∫₀^∞ (t/τ)e^{1-t/τ} dt = e·(1/τ)·τ² = e·τ.\n        Some(E * self.tau)\n    }\n\n    fn peak_time(&self) -> Option<f64> {\n        Some(self.tau)",
+  "new": "        Some(s * (1.0 - s).exp())\n    }\n\n    fn integral_seconds(&self) -> Option<f64> {\n        // ∫₀^∞ (t/τ)e^{1-t/τ} dt = e·(1/τ)·τ² = e·τ.\n        Some(E * self.tau)\n    }\n\n    fn peak_time(&self) -> Option<f64> {\n        Some(0.0)"
+ },
+ {
+  "label": "the alpha kernel injects the weight without the factor of e",
+  "old": "            // e·w, so that the resulting g(t) is w·(t/τ)·e^{1-t/τ} and the peak is w.\n            self.x += w * E;",
+  "new": "            // e·w, so that the resulting g(t) is w·(t/τ)·e^{1-t/τ} and the peak is w.\n            self.x += w;"
+ },
+ {
+  "label": "the alpha kernel's incremental update uses x at the END of the step",
+  "old": "            // g first: the update for g uses x at the START of the step.\n            self.g = (self.g + self.x * dt / self.tau) * d;\n            self.x *= d;",
+  "new": "            // g first: the update for g uses x at the START of the step.\n            self.x *= d;\n            self.g = (self.g + self.x * dt / self.tau) * d;"
+ },
+ {
+  "label": "the alpha kernel's incremental update drops the dt/τ coupling",
+  "old": "            self.g = (self.g + self.x * dt / self.tau) * d;\n            self.x *= d;\n        }\n    }\n\n    fn value(&self) -> f64 {\n        self.g\n    }\n\n    fn clear(&mut self) {\n        self.x = 0.0;\n        self.g = 0.0;\n    }\n}\n\n/// Separate rise and decay",
+  "new": "            self.g = (self.g + self.x * dt) * d;\n            self.x *= d;\n        }\n    }\n\n    fn value(&self) -> f64 {\n        self.g\n    }\n\n    fn clear(&mut self) {\n        self.x = 0.0;\n        self.g = 0.0;\n    }\n}\n\n/// Separate rise and decay"
+ },
+ {
+  "label": "the bi-exponential's rise and decay terms are swapped",
+  "old": "        Some(self.norm * ((-t / self.tau_decay).exp() - (-t / self.tau_rise).exp()))",
+  "new": "        Some(self.norm * ((-t / self.tau_rise).exp() - (-t / self.tau_decay).exp()))"
+ },
+ {
+  "label": "the bi-exponential is not normalised to a unit peak",
+  "old": "        Some(self.norm * ((-t / self.tau_decay).exp() - (-t / self.tau_rise).exp()))",
+  "new": "        Some((-t / self.tau_decay).exp() - (-t / self.tau_rise).exp())"
+ },
+ {
+  "label": "the bi-exponential's integral drops its normalisation",
+  "old": "        Some(self.norm * (self.tau_decay - self.tau_rise))",
+  "new": "        Some(self.tau_decay - self.tau_rise)"
+ },
+ {
+  "label": "the bi-exponential's integral sums the time constants",
+  "old": "        Some(self.norm * (self.tau_decay - self.tau_rise))",
+  "new": "        Some(self.norm * (self.tau_decay + self.tau_rise))"
+ },
+ {
+  "label": "the degenerate branch reports the harmonic mean as the integral",
+  "old": "            return Some(E * self.tau_eff);",
+  "new": "            return Some(self.tau_eff);"
+ },
+ {
+  "label": "the peak time of a bi-exponential drops its logarithm",
+  "old": "                (tau_decay / tau_rise).ln() * tau_rise * tau_decay / (tau_decay - tau_rise);",
+  "new": "                tau_rise * tau_decay / (tau_decay - tau_rise);"
+ },
+ {
+  "label": "the peak time's logarithm is inverted",
+  "old": "                (tau_decay / tau_rise).ln() * tau_rise * tau_decay / (tau_decay - tau_rise);",
+  "new": "                (tau_rise / tau_decay).ln() * tau_rise * tau_decay / (tau_decay - tau_rise);"
+ },
+ {
+  "label": "the harmonic effective time constant drops its factor of two",
+  "old": "        let tau_eff = 2.0 * tau_rise * tau_decay / (tau_rise + tau_decay);",
+  "new": "        let tau_eff = tau_rise * tau_decay / (tau_rise + tau_decay);"
+ },
+ {
+  "label": "the harmonic mean is replaced by the arithmetic mean",
+  "old": "        let tau_eff = 2.0 * tau_rise * tau_decay / (tau_rise + tau_decay);",
+  "new": "        let tau_eff = (tau_rise + tau_decay) / 2.0;"
+ },
+ {
+  "label": "a rise slower than the decay is accepted",
+  "old": "        if tau_rise > tau_decay {",
+  "new": "        if false {"
+ },
+ {
+  "label": "no bi-exponential is ever treated as degenerate",
+  "old": "        let degenerate = (tau_decay - tau_rise) <= Self::DEGENERATE_BELOW * mean;",
+  "new": "        let degenerate = false;"
+ },
+ {
+  "label": "every bi-exponential is treated as degenerate",
+  "old": "        let degenerate = (tau_decay - tau_rise) <= Self::DEGENERATE_BELOW * mean;",
+  "new": "        let degenerate = true;"
+ },
+ {
+  "label": "the bi-exponential's incremental coupling uses the wrong exponential difference",
+  "old": "        self.g = self.g * dd + self.x * self.k * (dd - dr);",
+  "new": "        self.g = self.g * dd + self.x * self.k * (dr - dd);"
+ },
+ {
+  "label": "the bi-exponential's rise state decays with the decay constant",
+  "old": "        self.g = self.g * dd + self.x * self.k * (dd - dr);\n        self.x *= dr;",
+  "new": "        self.g = self.g * dd + self.x * self.k * (dd - dr);\n        self.x *= dd;"
+ },
+ {
+  "label": "the bi-exponential's injection drops the 1/k scale",
+  "old": "                self.x += w * self.norm / self.k;",
+  "new": "                self.x += w * self.norm;"
+ },
+ {
+  "label": "jumping a gap advances by one tick instead of all of them",
+  "old": "    kernel.advance(dt * f64::from(ticks));",
+  "new": "    kernel.advance(dt);"
+ },
+ {
+  "label": "the magnesium block reports the blocked fraction as open",
+  "old": "        1.0 / (1.0 + blocked)",
+  "new": "        blocked / (1.0 + blocked)"
+ },
+ {
+  "label": "the magnesium block does not depend on voltage",
+  "old": "        let blocked = (-self.slope_per_mv * v_mv).exp() * self.mg_mm / self.k_mm;",
+  "new": "        let blocked = self.mg_mm / self.k_mm;"
+ },
+ {
+  "label": "the magnesium block's voltage dependence has the wrong sign",
+  "old": "        let blocked = (-self.slope_per_mv * v_mv).exp() * self.mg_mm / self.k_mm;",
+  "new": "        let blocked = (self.slope_per_mv * v_mv).exp() * self.mg_mm / self.k_mm;"
+ },
+ {
+  "label": "the magnesium block ignores the concentration",
+  "old": "        let blocked = (-self.slope_per_mv * v_mv).exp() * self.mg_mm / self.k_mm;",
+  "new": "        let blocked = (-self.slope_per_mv * v_mv).exp() / self.k_mm;"
+ },
+ {
+  "label": "zero magnesium still blocks the pore",
+  "old": "        if self.mg_mm == 0.0 {\n            return 1.0;\n        }\n        let v_mv = v * 1e3;",
+  "new": "        let v_mv = v * 1e3;"
+ },
+ {
+  "label": "the block's potential is not converted from volts to millivolts",
+  "old": "        let v_mv = v * 1e3;\n        let blocked =",
+  "new": "        let v_mv = v;\n        let blocked ="
+ },
+ {
+  "label": "a NaN block is reported as fully open",
+  "old": "        if !(blocked >= 0.0) {\n            return 0.0;\n        }",
+  "new": "        if blocked < 0.0 {\n            return 0.0;\n        }"
+ },
+ {
+  "label": "the half-block potential is not converted back to volts",
+  "old": "        Some((self.mg_mm / self.k_mm).ln() / self.slope_per_mv * 1e-3)",
+  "new": "        Some((self.mg_mm / self.k_mm).ln() / self.slope_per_mv)"
+ },
+ {
+  "label": "the half-block potential inverts its ratio",
+  "old": "        Some((self.mg_mm / self.k_mm).ln() / self.slope_per_mv * 1e-3)",
+  "new": "        Some((self.k_mm / self.mg_mm).ln() / self.slope_per_mv * 1e-3)"
+ },
+ {
+  "label": "a conductance ignores its magnesium block",
+  "old": "        let g = self.g_peak * self.kernel.value();\n        match self.mg {\n            Some(mg) => g * mg.open_fraction(v),\n            None => g,\n        }",
+  "new": "        let g = self.g_peak * self.kernel.value();\n        g"
+ },
+ {
+  "label": "a conductance ignores its kernel",
+  "old": "        let g = self.g_peak * self.kernel.value();\n        match self.mg {",
+  "new": "        let g = self.g_peak;\n        match self.mg {"
+ },
+ {
+  "label": "the synaptic current's driving force is inverted",
+  "old": "        self.open_conductance(v) * (self.e_rev - v)",
+  "new": "        self.open_conductance(v) * (v - self.e_rev)"
+ },
+ {
+  "label": "the reported conductance includes the block",
+  "old": "    fn conductance(&self) -> Option<f64> {\n        Some(self.g_peak * self.kernel.value())\n    }",
+  "new": "    fn conductance(&self) -> Option<f64> {\n        Some(self.open_conductance(0.0))\n    }"
+ },
+ {
+  "label": "the driving force is reported relative to zero",
+  "old": "    fn driving_force(&self, v: f64) -> Option<f64> {\n        Some(self.e_rev - v)\n    }",
+  "new": "    fn driving_force(&self, v: f64) -> Option<f64> {\n        Some(self.e_rev)\n    }"
+ },
+ {
+  "label": "a current-based synapse drops its gain",
+  "old": "        self.gain * self.kernel.value()\n    }\n\n    fn conductance(&self) -> Option<f64> {\n        None\n    }",
+  "new": "        self.kernel.value()\n    }\n\n    fn conductance(&self) -> Option<f64> {\n        None\n    }"
+ },
+ {
+  "label": "a current-based synapse claims a reversal potential",
+  "old": "    fn reversal_potential(&self) -> Option<f64> {\n        None\n    }\n\n    fn driving_force(&self, _v: f64) -> Option<f64> {\n        None\n    }",
+  "new": "    fn reversal_potential(&self) -> Option<f64> {\n        Some(0.0)\n    }\n\n    fn driving_force(&self, _v: f64) -> Option<f64> {\n        None\n    }"
+ },
+ {
+  "label": "a conductance-based synapse drops its block on construction",
+  "old": "        let mut d = ConductanceBased::new(self.kernel()?, g_peak, self.e_rev)?;\n        d.mg = self.mg_block;",
+  "new": "        let d = ConductanceBased::new(self.kernel()?, g_peak, self.e_rev)?;"
+ },
+ {
+  "label": "a current-based receptor keeps its reversal potential",
+  "old": "        CurrentBased::new(self.kernel()?, gain)",
+  "new": "        CurrentBased::new(self.kernel()?, gain * self.e_rev)"
+ },
+ {
+  "label": "AMPA's decay is transcribed as 20 ms",
+  "old": "    name: \"AMPA\",\n    e_rev: 0.0,\n    tau_rise: 0.5e-3,\n    tau_decay: 2.0e-3,",
+  "new": "    name: \"AMPA\",\n    e_rev: 0.0,\n    tau_rise: 0.5e-3,\n    tau_decay: 20.0e-3,"
+ },
+ {
+  "label": "NMDA loses its magnesium block",
+  "old": "    mg_block: Some(MgBlock { mg_mm: 1.0, slope_per_mv: 0.062, k_mm: 3.57 }),",
+  "new": "    mg_block: None,"
+ },
+ {
+  "label": "the Jahr & Stevens slope is transcribed as 0.62 per mV",
+  "old": "    mg_block: Some(MgBlock { mg_mm: 1.0, slope_per_mv: 0.062, k_mm: 3.57 }),",
+  "new": "    mg_block: Some(MgBlock { mg_mm: 1.0, slope_per_mv: 0.62, k_mm: 3.57 }),"
+ },
+ {
+  "label": "the GABA_A row goes back to the rounded 5.6 ms decay",
+  "old": "    tau_decay: 1.0 / 180.0,",
+  "new": "    tau_decay: 5.6e-3,"
+ },
+ {
+  "label": "GABA_A is given an excitatory reversal potential",
+  "old": "    name: \"GABA_A\",\n    e_rev: -70.0e-3,",
+  "new": "    name: \"GABA_A\",\n    e_rev: 0.0,"
+ },
+ {
+  "label": "GABA_B reverses at the GABA_A potential rather than at E_K",
+  "old": "    name: \"GABA_B\",\n    e_rev: -95.0e-3,",
+  "new": "    name: \"GABA_B\",\n    e_rev: -70.0e-3,"
+ },
+ {
+  "label": "the receptor table drops its slowest row",
+  "old": "pub const RECEPTORS: [Receptor; 4] = [AMPA, NMDA, GABA_A, GABA_B];",
+  "new": "pub const RECEPTORS: [Receptor; 4] = [AMPA, NMDA, GABA_A, GABA_A];"
+ },
+ {
+  "label": "the AMPA kinetic scheme's closing rate is transcribed as 19/s",
+  "old": "        Self { alpha: 1100.0, beta: 190.0, t_max_mm: 1.0, t_pulse: 1e-3, r: 0.0, pulse_left: 0.0 }",
+  "new": "        Self { alpha: 1100.0, beta: 19.0, t_max_mm: 1.0, t_pulse: 1e-3, r: 0.0, pulse_left: 0.0 }"
+ },
+ {
+  "label": "the GABA_A kinetic scheme's beta stops matching the receptor row",
+  "old": "        Self { alpha: 5000.0, beta: 180.0, t_max_mm: 1.0, t_pulse: 1e-3, r: 0.0, pulse_left: 0.0 }",
+  "new": "        Self { alpha: 5000.0, beta: 181.0, t_max_mm: 1.0, t_pulse: 1e-3, r: 0.0, pulse_left: 0.0 }"
+ },
+ {
+  "label": "the kinetic steady state forgets the closing rate",
+  "old": "        let on = self.alpha * t_mm;\n        let sum = on + self.beta;\n        if sum <= 0.0 { None } else { Some(on / sum) }",
+  "new": "        let on = self.alpha * t_mm;\n        let sum = on;\n        if sum <= 0.0 { None } else { Some(on / sum) }"
+ },
+ {
+  "label": "the kinetic decay constant is the closing rate itself",
+  "old": "        if self.beta > 0.0 { Some(1.0 / self.beta) } else { None }",
+  "new": "        if self.beta > 0.0 { Some(self.beta) } else { None }"
+ },
+ {
+  "label": "a release extends the pulse instead of restarting it",
+  "old": "    pub fn release(&mut self) {\n        self.pulse_left = self.t_pulse;\n    }\n\n    /// Advance by `dt` seconds, exactly, splitting the step at the end of the transmitter pulse.",
+  "new": "    pub fn release(&mut self) {\n        self.pulse_left += self.t_pulse;\n    }\n\n    /// Advance by `dt` seconds, exactly, splitting the step at the end of the transmitter pulse."
+ },
+ {
+  "label": "the kinetic step is not split at the end of the transmitter pulse",
+  "old": "        let in_pulse = dt.min(self.pulse_left.max(0.0));\n        if in_pulse > 0.0 {\n            self.relax(in_pulse, self.t_max_mm);\n            self.pulse_left -= in_pulse;\n        }\n        let after = dt - in_pulse;\n        if after > 0.0 {\n            self.relax(after, 0.0);\n        }\n    }\n\n    fn relax(&mut self, dt: f64, t_mm: f64) {\n        let on = self.alpha * t_mm;",
+  "new": "        let in_pulse = if self.pulse_left > 0.0 { dt } else { 0.0 };\n        if in_pulse > 0.0 {\n            self.relax(in_pulse, self.t_max_mm);\n            self.pulse_left -= in_pulse;\n        }\n        let after = dt - in_pulse;\n        if after > 0.0 {\n            self.relax(after, 0.0);\n        }\n    }\n\n    fn relax(&mut self, dt: f64, t_mm: f64) {\n        let on = self.alpha * t_mm;"
+ },
+ {
+  "label": "the kinetic relaxation relaxes towards zero rather than towards r_inf",
+  "old": "        let r_inf = on / rate;\n        self.r = r_inf + (self.r - r_inf) * (-rate * dt).exp();",
+  "new": "        let r_inf = on / rate;\n        let _ = r_inf;\n        self.r *= (-rate * dt).exp();"
+ },
+ {
+  "label": "the kinetic relaxation uses only the closing rate",
+  "old": "        let rate = on + self.beta;\n        if rate <= 0.0 {\n            return;\n        }\n        let r_inf = on / rate;",
+  "new": "        let rate = self.beta;\n        if rate <= 0.0 {\n            return;\n        }\n        let r_inf = on / rate;"
+ },
+ {
+  "label": "the Hill readout is not cooperative",
+  "old": "            n: 4,\n            r: 0.0,",
+  "new": "            n: 1,\n            r: 0.0,"
+ },
+ {
+  "label": "a NaN G-protein concentration reports a fully open channel",
+  "old": "    if gn.is_nan() {\n        return 0.0;\n    }",
+  "new": "    if gn.is_nan() {\n        return 1.0;\n    }"
+ },
+ {
+  "label": "the Hill readout is inverted",
+  "old": "    (gn / denom).clamp(0.0, 1.0)",
+  "new": "    (kd / denom).clamp(0.0, 1.0)"
+ },
+ {
+  "label": "the cascade's steady-state G forgets its decay rate",
+  "old": "        let g = self.k3 * r / self.k4;",
+  "new": "        let g = self.k3 * r;"
+ },
+ {
+  "label": "the cascade's steady-state receptor activation drops K2",
+  "old": "        let on = self.k1 * t_mm;\n        let sum = on + self.k2;\n        if sum <= 0.0 {\n            return None;\n        }\n        let r = on / sum;",
+  "new": "        let on = self.k1 * t_mm;\n        let sum = on;\n        if sum <= 0.0 {\n            return None;\n        }\n        let r = on / sum;"
+ },
+ {
+  "label": "the cascade's removable singularity is removed by subtraction, as it first was",
+  "old": "            let z = (self.k4 - a) * dt;\n            let shape = if z == 0.0 { dt * e4 } else { dt * e4 * z.exp_m1() / z };",
+  "new": "            let shape = if (self.k4 - a).abs() > 1e-9 * self.k4.max(a) {\n                (er - e4) / (self.k4 - a)\n            } else {\n                dt * e4\n            };"
+ },
+ {
+  "label": "the cascade's singular branch is chosen by the rate difference rather than by z",
+  "old": "            let shape = if z == 0.0 { dt * e4 } else { dt * e4 * z.exp_m1() / z };",
+  "new": "            let shape = if (self.k4 - a).abs() <= 1e-9 * self.k4.max(a) { dt * e4 } else { dt * e4 * z.exp_m1() / z };",
+  "equivalent": "the threshold is not what was wrong with the first version; the subtraction was. Both branches here keep the accurate expm1 form, and they differ only where 0 < |k4 - a| <= 1e-9 max(k4, a), inside which expm1(z)/z = 1 + z/2 + O(z^2) with |z| <= 1e-9 max(k4, a) dt: below 1e-9 relative for any step this crate can be driven with. The mutation that DOES reinstate the original bug is the entry above it, and that one is caught."
+ },
+ {
+  "label": "the cascade's transient term drops the exp_m1 shape entirely",
+  "old": "        self.g_conc = base + self.k3 * (r0 - r_inf) * shape;",
+  "new": "        self.g_conc = base;"
+ },
+ {
+  "label": "the cascade's transient term is centred on r rather than on r - r_inf",
+  "old": "        self.g_conc = base + self.k3 * (r0 - r_inf) * shape;",
+  "new": "        self.g_conc = base + self.k3 * r0 * shape;"
+ },
+ {
+  "label": "the cascade's G-protein production rate is transcribed as K4",
+  "old": "            let base = self.g_conc * e4 + self.k3 * r_inf * (1.0 - e4) / self.k4;",
+  "new": "            let base = self.g_conc * e4 + self.k4 * r_inf * (1.0 - e4) / self.k4;"
+ },
+ {
+  "label": "facilitation never decays between spikes",
+  "old": "            self.u *= (-dt / self.tau_f).exp();",
+  "new": "            self.u *= 1.0;"
+ },
+ {
+  "label": "depression never recovers between spikes",
+  "old": "        self.x = 1.0 + (self.x - 1.0) * (-dt / self.tau_d).exp();",
+  "new": "        self.x = self.x;"
+ },
+ {
+  "label": "resources recover to half rather than to one",
+  "old": "        self.x = 1.0 + (self.x - 1.0) * (-dt / self.tau_d).exp();",
+  "new": "        self.x = 0.5 + (self.x - 0.5) * (-dt / self.tau_d).exp();"
+ },
+ {
+  "label": "a spike resets the utilisation instead of facilitating it",
+  "old": "        self.u += self.u_rest * (1.0 - self.u);",
+  "new": "        self.u = self.u_rest;"
+ },
+ {
+  "label": "facilitation is unbounded",
+  "old": "        self.u += self.u_rest * (1.0 - self.u);",
+  "new": "        self.u += self.u_rest;"
+ },
+ {
+  "label": "a spike releases without consuming resources",
+  "old": "        let released = self.u * self.x;\n        self.x -= released;",
+  "new": "        let released = self.u * self.x;"
+ },
+ {
+  "label": "release is the utilisation alone",
+  "old": "        let released = self.u * self.x;\n        self.x -= released;",
+  "new": "        let released = self.u;\n        self.x -= released;"
+ },
+ {
+  "label": "the steady-state utilisation has no facilitation term",
+  "old": "        let u = self.u_rest / (1.0 - (1.0 - self.u_rest) * f);",
+  "new": "        let u = self.u_rest;"
+ },
+ {
+  "label": "the steady-state resource uses the resting utilisation",
+  "old": "        let x = (1.0 - d) / (1.0 - (1.0 - u) * d);",
+  "new": "        let x = (1.0 - d) / (1.0 - (1.0 - self.u_rest) * d);"
+ },
+ {
+  "label": "the steady-state resource is inverted",
+  "old": "        let x = (1.0 - d) / (1.0 - (1.0 - u) * d);",
+  "new": "        let x = (1.0 - (1.0 - u) * d) / (1.0 - d);"
+ },
+ {
+  "label": "the limiting transmission rate is the depression constant itself",
+  "old": "        1.0 / self.tau_d",
+  "new": "        self.tau_d"
+ },
+ {
+  "label": "the depressing preset is given the facilitating parameters",
+  "old": "        Self { u_rest: 0.5, tau_d: 0.8, tau_f: 0.0, u: 0.0, x: 1.0 }",
+  "new": "        Self { u_rest: 0.15, tau_d: 0.13, tau_f: 0.53, u: 0.0, x: 1.0 }"
+ },
+ {
+  "label": "the facilitating preset's two time constants are swapped",
+  "old": "        Self { u_rest: 0.15, tau_d: 0.13, tau_f: 0.53, u: 0.0, x: 1.0 }",
+  "new": "        Self { u_rest: 0.15, tau_d: 0.53, tau_f: 0.13, u: 0.0, x: 1.0 }"
+ }
+]

@@ -3780,6 +3780,86 @@ mod tests {
         assert_eq!(WeightRule::MultiplicativeDepression.depression_factor(-1e12, b), 0.0);
     }
 
+    /// [`WeightRule::MultiplicativeDepression`]'s factor is the weight in its **own unit**, not a
+    /// fraction of the span.
+    ///
+    /// Every other fixture in this module bounds weights to `[0, 1]`, whose span is exactly one,
+    /// and a factor divided by one is the same factor. The one test that varies the floor,
+    /// `multiplicative_depression_shrinks_as_the_weight_approaches_the_floor`, asserts only RATIOS
+    /// of two steps, and a common normalisation cancels out of a ratio. So dividing by the span —
+    /// which is what the rule's doc says van Rossum et al. do NOT do — passed the whole module.
+    /// A span that is not one, compared against [`WeightRule::Additive`] at exactly one unit above
+    /// the floor, is what pins the scale.
+    #[test]
+    fn the_multiplicative_depression_factor_is_the_weight_itself_not_a_fraction_of_the_span() {
+        let b = Bounds::new(0.0, 4.0).unwrap();
+        let step = |rule: WeightRule, w: f64| {
+            let mut s = PairStdp::new(0.05, 0.05, 16.8e-3, 33.7e-3, rule, b).unwrap();
+            w - s.apply_pair(w, -5e-3).unwrap()
+        };
+        let mult = step(WeightRule::MultiplicativeDepression, 1.0);
+        let add = step(WeightRule::Additive, 1.0);
+        assert!(mult > 0.0, "the fixture must actually depress");
+        // At `w - w_min = 1` the factor is exactly 1.0 and the two rules take the same step to the
+        // last bit. Normalised by the span of 4 it would be a quarter of it.
+        assert_eq!(mult, add, "at one unit above the floor the factor is exactly one");
+        // Linear in that unit and not in the fraction: two units above the floor is twice the step.
+        let twice = step(WeightRule::MultiplicativeDepression, 2.0);
+        assert!((twice / mult - 2.0).abs() < 1e-12, "{twice} is not twice {mult}");
+    }
+
+    /// The eligibility trace ACCUMULATES over pairs and the modulator ACCUMULATES over rewards.
+    ///
+    /// Both are `+=` in the source and both read as `=` under any test that delivers exactly one
+    /// pair and exactly one reward — which was every test in this module. A tag that is overwritten
+    /// rather than accumulated turns a burst into its last pair alone, which is precisely the
+    /// quantity a three-factor rule exists to carry across the gap to the reward.
+    #[test]
+    fn the_tag_and_the_modulator_both_accumulate_rather_than_overwrite() {
+        let b = Bounds::normalised();
+        let lag = 6e-3;
+        let one_pair = |r: &mut RewardStdp| {
+            r.on_pre(0.5).expect("pre");
+            r.advance(0.5, lag).expect("advance");
+            r.on_post(0.5).expect("post");
+        };
+
+        let mut single = RewardStdp::new(wide_pair(), 1.0, 0.2, b).unwrap();
+        one_pair(&mut single);
+        let one = single.c;
+        assert!(one > 0.0, "a pre-before-post pair tags for potentiation");
+
+        let mut r = RewardStdp::new(wide_pair(), 1.0, 0.2, b).unwrap();
+        one_pair(&mut r);
+        r.advance(0.5, 0.5).expect("gap");
+        // The WINDOW's traces are cleared between the pairs, and only those: `clear` on the inner
+        // `PairStdp` leaves `c` and `d` untouched. That makes the second pair arithmetically
+        // identical to the first, so the expected tag is an exact expression rather than a
+        // tolerance around one.
+        r.stdp.clear();
+        let carried = r.c;
+        assert!(carried > 0.0 && carried < one, "the tag decayed over the gap: {carried}");
+        one_pair(&mut r);
+        let want = carried * (-lag / r.tau_c).exp() + one;
+        assert!(
+            (r.c - want).abs() <= 1e-15 * want.abs(),
+            "the tag is {}, not the carried {} plus a second pair {}",
+            r.c,
+            carried,
+            one
+        );
+        assert!(r.c > one, "two pairs must tag more than one");
+
+        // The modulator, the same way: two impulses sum, and a punishment on top of a reward
+        // cancels it, which is the same arithmetic and the reason it cannot be an assignment.
+        let mut r = RewardStdp::new(wide_pair(), 1.0, 0.2, b).unwrap();
+        r.reward(1.0).unwrap();
+        r.reward(1.0).unwrap();
+        assert_eq!(r.d, 2.0, "two reward impulses must sum");
+        r.reward(-2.0).unwrap();
+        assert_eq!(r.d, 0.0, "a punishment of equal size cancels the reward");
+    }
+
     /// A PARAMETER WRITTEN INTO A `pub` FIELD AFTER CONSTRUCTION is refused by name rather than
     /// written into a weight. Every field on every rule here is public and every constructor
     /// validation is therefore advisory; the guard that is not advisory is the check on the value
@@ -3795,10 +3875,27 @@ mod tests {
             Err(PlasticityError::Diverged { what: "updated weight", .. })
         ));
         // The refusal left the traces exactly as it found them, so a caller who fixes the parameter
-        // can carry on rather than having silently lost a spike.
-        assert_eq!(s.post_trace.x, 1.0);
+        // can carry on rather than having silently lost a spike. BOTH traces, and the PRE trace is
+        // the load-bearing one: `on_pre` writes the pre trace and reads the post trace, so an
+        // assertion on the post trace alone is equally true when the spike is registered BEFORE the
+        // refusal instead of after it. Moving `note_pre` above the guard passed this test as it
+        // stood.
+        assert_eq!(s.pre_trace.x, 0.0, "a refused pre spike registered itself anyway");
+        assert_eq!(s.post_trace.x, 1.0, "a refused pre spike disturbed the partner trace");
         s.a_minus = 0.05;
         assert!(s.on_pre(0.5).unwrap().is_finite());
+
+        // And the mirror call, because `on_pre` and `on_post` are two pieces of code and only one
+        // of them was exercised here: a refused POST spike must not have registered itself either.
+        let mut s = PairStdp::new(0.05, 0.05, 16.8e-3, 33.7e-3, WeightRule::Additive, b).unwrap();
+        s.note_pre();
+        s.a_plus = f64::NAN;
+        assert!(matches!(
+            s.on_post(0.5),
+            Err(PlasticityError::Diverged { what: "updated weight", .. })
+        ));
+        assert_eq!(s.post_trace.x, 0.0, "a refused post spike registered itself anyway");
+        assert_eq!(s.pre_trace.x, 1.0, "a refused post spike disturbed the partner trace");
 
         let mut t = TripletStdp::visual_cortex_minimal(b).unwrap();
         t.note_pre();
@@ -3807,7 +3904,11 @@ mod tests {
             t.on_post(0.5),
             Err(PlasticityError::Diverged { what: "updated weight", .. })
         ));
-        assert_eq!(t.r1.x, 1.0, "a refused post spike still touched the traces");
+        // Again the side the call would WRITE, not the side it reads: `note_post` fires `o1` and
+        // `o2`, and `r1` is the partner trace the spike was never going to touch.
+        assert_eq!(t.o1.x, 0.0, "a refused post spike registered itself anyway");
+        assert_eq!(t.o2.x, 0.0, "a refused post spike registered itself anyway");
+        assert_eq!(t.r1.x, 1.0, "a refused post spike disturbed the partner trace");
 
         // The same guard on the three-factor rule's tag and on its weight.
         let mut r = RewardStdp::new(wide_pair(), 1.0, 0.2, b).unwrap();

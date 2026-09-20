@@ -1,0 +1,497 @@
+[
+ {
+  "label": "a computed non-finite weight is returned as Ok",
+  "old": "fn computed(what: &'static str, v: f64) -> Result<f64, PlasticityError> {\n    if v.is_finite() { Ok(v) } else { Err(PlasticityError::Diverged { what, value: v }) }",
+  "new": "fn computed(what: &'static str, v: f64) -> Result<f64, PlasticityError> {\n    let _ = what;\n    Ok(v)"
+ },
+ {
+  "label": "a non-negative check accepts a negative value",
+  "old": "    if v >= 0.0 { Ok(v) } else { Err(PlasticityError::Negative { what, value: v }) }",
+  "new": "    let _ = what;\n    Ok(v)"
+ },
+ {
+  "label": "a positive check accepts zero",
+  "old": "    if v > 0.0 { Ok(v) } else { Err(PlasticityError::NotPositive { what, value: v }) }",
+  "new": "    if v >= 0.0 { Ok(v) } else { Err(PlasticityError::NotPositive { what, value: v }) }"
+ },
+ {
+  "label": "the clamp only holds the floor",
+  "old": "        if w < self.w_min {\n            self.w_min\n        } else if w > self.w_max {\n            self.w_max\n        } else {\n            w\n        }",
+  "new": "        if w < self.w_min {\n            self.w_min\n        } else {\n            w\n        }"
+ },
+ {
+  "label": "the clamp only holds the ceiling",
+  "old": "        if w < self.w_min {\n            self.w_min\n        } else if w > self.w_max {\n            self.w_max\n        } else {\n            w\n        }",
+  "new": "        if w > self.w_max {\n            self.w_max\n        } else {\n            w\n        }"
+ },
+ {
+  "label": "a NaN weight is reported as inside the interval",
+  "old": "        w >= self.w_min && w <= self.w_max\n    }",
+  "new": "        !(w < self.w_min || w > self.w_max)\n    }"
+ },
+ {
+  "label": "the span is the sum of the two bounds",
+  "old": "        self.w_max - self.w_min\n    }\n}",
+  "new": "        self.w_max + self.w_min\n    }\n}"
+ },
+ {
+  "label": "an inverted Bounds literal is accepted by the constructor",
+  "old": "    pub fn new(w_min: f64, w_max: f64) -> Result<Self, PlasticityError> {",
+  "new": "    pub fn new(w_max: f64, w_min: f64) -> Result<Self, PlasticityError> {"
+ },
+ {
+  "label": "the soft potentiation bound measures distance from the floor",
+  "old": "                ((bounds.w_max - bounds.clamp(w)) / bounds.span()).max(0.0).powf(mu)",
+  "new": "                ((bounds.clamp(w) - bounds.w_min) / bounds.span()).max(0.0).powf(mu)"
+ },
+ {
+  "label": "the soft potentiation bound is not normalised by the span",
+  "old": "                ((bounds.w_max - bounds.clamp(w)) / bounds.span()).max(0.0).powf(mu)",
+  "new": "                (bounds.w_max - bounds.clamp(w)).max(0.0).powf(mu)"
+ },
+ {
+  "label": "the soft potentiation bound ignores its exponent",
+  "old": "                ((bounds.w_max - bounds.clamp(w)) / bounds.span()).max(0.0).powf(mu)",
+  "new": "                ((bounds.w_max - bounds.clamp(w)) / bounds.span()).max(0.0)"
+ },
+ {
+  "label": "the potentiation factor is not evaluated at the clamped weight",
+  "old": "                ((bounds.w_max - bounds.clamp(w)) / bounds.span()).max(0.0).powf(mu)",
+  "new": "                ((bounds.w_max - w) / bounds.span()).max(0.0).powf(mu)"
+ },
+ {
+  "label": "multiplicative depression is additive",
+  "old": "            Self::MultiplicativeDepression => (bounds.clamp(w) - bounds.w_min).max(0.0),",
+  "new": "            Self::MultiplicativeDepression => 1.0,"
+ },
+ {
+  "label": "multiplicative depression is normalised by the span",
+  "old": "            Self::MultiplicativeDepression => (bounds.clamp(w) - bounds.w_min).max(0.0),",
+  "new": "            Self::MultiplicativeDepression => ((bounds.clamp(w) - bounds.w_min) / bounds.span()).max(0.0),"
+ },
+ {
+  "label": "the soft depression bound measures distance from the ceiling",
+  "old": "                ((bounds.clamp(w) - bounds.w_min) / bounds.span()).max(0.0).powf(mu)\n            }\n        }\n    }\n\n    fn validate",
+  "new": "                ((bounds.w_max - bounds.clamp(w)) / bounds.span()).max(0.0).powf(mu)\n            }\n        }\n    }\n\n    fn validate"
+ },
+ {
+  "label": "multiplicative depression also damps potentiation",
+  "old": "            Self::Additive | Self::MultiplicativeDepression => 1.0,",
+  "new": "            Self::Additive => 1.0,\n            Self::MultiplicativeDepression => (bounds.w_max - bounds.clamp(w)).max(0.0),"
+ },
+ {
+  "label": "a negative soft-bound exponent is accepted",
+  "old": "        if let Self::SoftBound { mu } = self {\n            non_negative(\"soft-bound exponent mu\", mu)?;\n        }",
+  "new": "        if let Self::SoftBound { mu } = self {\n            let _ = mu;\n        }"
+ },
+ {
+  "label": "a trace decays linearly instead of exponentially",
+  "old": "        self.x *= (-dt / self.tau).exp();\n        Ok(())",
+  "new": "        self.x -= self.x * dt / self.tau;\n        Ok(())"
+ },
+ {
+  "label": "a trace is amplified by negative time",
+  "old": "        let dt = non_negative(\"dt\", dt)?;\n        self.x *= (-dt / self.tau).exp();",
+  "new": "        let dt = finite(\"dt\", dt)?;\n        self.x *= (-dt / self.tau).exp();"
+ },
+ {
+  "label": "all-to-all pairing resets the trace like nearest-neighbour",
+  "old": "            Pairing::AllToAll => self.x += 1.0,",
+  "new": "            Pairing::AllToAll => self.x = 1.0,"
+ },
+ {
+  "label": "nearest-neighbour pairing accumulates like all-to-all",
+  "old": "            Pairing::NearestNeighbour => self.x = 1.0,",
+  "new": "            Pairing::NearestNeighbour => self.x += 1.0,"
+ },
+ {
+  "label": "the trace's closed form drops the present value",
+  "old": "        self.x * (-dt / self.tau).exp()",
+  "new": "        (-dt / self.tau).exp()"
+ },
+ {
+  "label": "a zero trace time constant is accepted",
+  "old": "        Ok(Self { tau: positive(\"trace time constant tau\", tau)?, x: 0.0 })",
+  "new": "        Ok(Self { tau: non_negative(\"trace time constant tau\", tau)?, x: 0.0 })"
+ },
+ {
+  "label": "the pair rule's two traces get each other's time constants",
+  "old": "            pre_trace: Trace::new(tau_plus)?,\n            post_trace: Trace::new(tau_minus)?,",
+  "new": "            pre_trace: Trace::new(tau_minus)?,\n            post_trace: Trace::new(tau_plus)?,"
+ },
+ {
+  "label": "the window's potentiation branch decays with the depression constant",
+  "old": "            self.a_plus * (-lag / self.tau_plus).exp()",
+  "new": "            self.a_plus * (-lag / self.tau_minus).exp()"
+ },
+ {
+  "label": "the window's depression branch is positive",
+  "old": "            -self.a_minus * (lag / self.tau_minus).exp()",
+  "new": "            self.a_minus * (lag / self.tau_minus).exp()"
+ },
+ {
+  "label": "the window's depression branch has the wrong sign inside the exponential",
+  "old": "            -self.a_minus * (lag / self.tau_minus).exp()",
+  "new": "            -self.a_minus * (-lag / self.tau_minus).exp()"
+ },
+ {
+  "label": "the window is symmetric about zero lag",
+  "old": "        if lag > 0.0 {\n            self.a_plus * (-lag / self.tau_plus).exp()\n        } else if lag < 0.0 {",
+  "new": "        if lag != 0.0 {\n            self.a_plus * (-lag.abs() / self.tau_plus).exp()\n        } else if lag < 0.0 {"
+ },
+ {
+  "label": "the window integral is the sum rather than the difference of its two halves",
+  "old": "        Ok(pot - dep)",
+  "new": "        Ok(pot + dep)"
+ },
+ {
+  "label": "the window integral drops the saturating factor",
+  "old": "        let pot = self.a_plus * self.tau_plus * (1.0 - (-t / self.tau_plus).exp());",
+  "new": "        let pot = self.a_plus * self.tau_plus;"
+ },
+ {
+  "label": "the total window area weights the amplitudes equally",
+  "old": "        self.a_plus * self.tau_plus - self.a_minus * self.tau_minus\n    }",
+  "new": "        self.a_plus - self.a_minus\n    }"
+ },
+ {
+  "label": "depression dominance is reported for a positive area",
+  "old": "        self.total_window_area() < 0.0",
+  "new": "        self.total_window_area() > 0.0"
+ },
+ {
+  "label": "the Bi and Poo time constants are swapped",
+  "old": "        Self::new(a_plus, a_minus, 16.8e-3, 33.7e-3, rule, bounds)",
+  "new": "        Self::new(a_plus, a_minus, 33.7e-3, 16.8e-3, rule, bounds)"
+ },
+ {
+  "label": "the Song-Abbott asymmetry is removed",
+  "old": "            1.05 * a_plus,\n            20e-3,\n            20e-3,",
+  "new": "            a_plus,\n            20e-3,\n            20e-3,"
+ },
+ {
+  "label": "the Song-Abbott potentiation amplitude loses its g_max scale",
+  "old": "        let a_plus = 0.005 * g_max;",
+  "new": "        let a_plus = 0.005;"
+ },
+ {
+  "label": "a presynaptic spike potentiates",
+  "old": "        -(self.a_minus * self.post_trace.x) * self.rule.depression_factor(w, self.bounds)",
+  "new": "        (self.a_minus * self.post_trace.x) * self.rule.depression_factor(w, self.bounds)"
+ },
+ {
+  "label": "a presynaptic spike reads its own trace instead of the partner's",
+  "old": "        -(self.a_minus * self.post_trace.x) * self.rule.depression_factor(w, self.bounds)",
+  "new": "        -(self.a_minus * self.pre_trace.x) * self.rule.depression_factor(w, self.bounds)"
+ },
+ {
+  "label": "a postsynaptic spike reads its own trace instead of the partner's",
+  "old": "        (self.a_plus * self.pre_trace.x) * self.rule.potentiation_factor(w, self.bounds)",
+  "new": "        (self.a_plus * self.post_trace.x) * self.rule.potentiation_factor(w, self.bounds)"
+ },
+ {
+  "label": "the pair rule ignores its weight dependence on depression",
+  "old": "        -(self.a_minus * self.post_trace.x) * self.rule.depression_factor(w, self.bounds)",
+  "new": "        -(self.a_minus * self.post_trace.x)"
+ },
+ {
+  "label": "the pair rule ignores its weight dependence on potentiation",
+  "old": "        (self.a_plus * self.pre_trace.x) * self.rule.potentiation_factor(w, self.bounds)",
+  "new": "        (self.a_plus * self.pre_trace.x)"
+ },
+ {
+  "label": "a presynaptic spike registers itself before it reads the window",
+  "old": "        let out = computed(\"updated weight\", self.bounds.clamp(w + self.pre_increment(w)))?;\n        self.note_pre();\n        Ok(out)\n    }\n\n    /// A postsynaptic spike arrives: potentiate by the pre trace, then register the spike.",
+  "new": "        self.note_pre();\n        let out = computed(\"updated weight\", self.bounds.clamp(w + self.pre_increment(w)))?;\n        Ok(out)\n    }\n\n    /// A postsynaptic spike arrives: potentiate by the pre trace, then register the spike."
+ },
+ {
+  "label": "a postsynaptic spike registers itself before it reads the window",
+  "old": "        let out = computed(\"updated weight\", self.bounds.clamp(w + self.post_increment(w)))?;\n        self.note_post();\n        Ok(out)\n    }\n\n    /// Play one isolated pre/post pair",
+  "new": "        self.note_post();\n        let out = computed(\"updated weight\", self.bounds.clamp(w + self.post_increment(w)))?;\n        Ok(out)\n    }\n\n    /// Play one isolated pre/post pair"
+ },
+ {
+  "label": "the pair rule's update is not clamped",
+  "old": "        let out = computed(\"updated weight\", self.bounds.clamp(w + self.pre_increment(w)))?;\n        self.note_pre();\n        Ok(out)\n    }\n\n    /// A postsynaptic spike arrives: potentiate by the pre trace",
+  "new": "        let out = computed(\"updated weight\", w + self.pre_increment(w))?;\n        self.note_pre();\n        Ok(out)\n    }\n\n    /// A postsynaptic spike arrives: potentiate by the pre trace"
+ },
+ {
+  "label": "a negative-lag pair is played pre first anyway",
+  "old": "        if lag >= 0.0 {\n            let w = self.on_pre(w)?;\n            self.advance(lag)?;\n            self.on_post(w)\n        } else {",
+  "new": "        if true {\n            let w = self.on_pre(w)?;\n            self.advance(lag.abs())?;\n            self.on_post(w)\n        } else {"
+ },
+ {
+  "label": "a pair protocol does not start from a cleared state",
+  "old": "        self.clear();\n        if lag >= 0.0 {",
+  "new": "        if lag >= 0.0 {"
+ },
+ {
+  "label": "a pair protocol leaves no time between its two spikes",
+  "old": "            let w = self.on_pre(w)?;\n            self.advance(lag)?;\n            self.on_post(w)",
+  "new": "            let w = self.on_pre(w)?;\n            self.on_post(w)"
+ },
+ {
+  "label": "clearing a pair rule forgets only the pre trace",
+  "old": "        self.pre_trace.clear();\n        self.post_trace.clear();\n    }\n}",
+  "new": "        self.pre_trace.clear();\n    }\n}"
+ },
+ {
+  "label": "the triplet rule's four traces get the constants in the wrong order",
+  "old": "            r1: Trace::new(tau_plus)?,\n            r2: Trace::new(tau_x)?,\n            o1: Trace::new(tau_minus)?,\n            o2: Trace::new(tau_y)?,",
+  "new": "            r1: Trace::new(tau_plus)?,\n            r2: Trace::new(tau_y)?,\n            o1: Trace::new(tau_minus)?,\n            o2: Trace::new(tau_x)?,"
+ },
+ {
+  "label": "the triplet depression term drops its triplet contribution",
+  "old": "        -(self.o1.x * (self.a2_minus + self.a3_minus * self.r2.x))",
+  "new": "        -(self.o1.x * self.a2_minus)"
+ },
+ {
+  "label": "the triplet potentiation term drops its triplet contribution",
+  "old": "        (self.r1.x * (self.a2_plus + self.a3_plus * self.o2.x))",
+  "new": "        (self.r1.x * self.a2_plus)"
+ },
+ {
+  "label": "the triplet potentiation term reads the slow PRE trace",
+  "old": "        (self.r1.x * (self.a2_plus + self.a3_plus * self.o2.x))",
+  "new": "        (self.r1.x * (self.a2_plus + self.a3_plus * self.r2.x))"
+ },
+ {
+  "label": "the triplet terms multiply rather than add",
+  "old": "        (self.r1.x * (self.a2_plus + self.a3_plus * self.o2.x))",
+  "new": "        (self.r1.x * (self.a2_plus * self.a3_plus * self.o2.x))"
+ },
+ {
+  "label": "a presynaptic spike fires only the fast pre trace",
+  "old": "        self.r1.fire(self.pairing);\n        self.r2.fire(self.pairing);",
+  "new": "        self.r1.fire(self.pairing);"
+ },
+ {
+  "label": "a postsynaptic spike fires only the fast post trace",
+  "old": "        self.o1.fire(self.pairing);\n        self.o2.fire(self.pairing);",
+  "new": "        self.o1.fire(self.pairing);"
+ },
+ {
+  "label": "a postsynaptic spike sees its own contribution to the slow post trace",
+  "old": "        let out = computed(\"updated weight\", self.bounds.clamp(w + self.post_increment(w)))?;\n        self.note_post();\n        Ok(out)\n    }\n\n    /// Forget all spike history.",
+  "new": "        self.note_post();\n        let out = computed(\"updated weight\", self.bounds.clamp(w + self.post_increment(w)))?;\n        Ok(out)\n    }\n\n    /// Forget all spike history."
+ },
+ {
+  "label": "the triplet advance leaves the slow post trace standing",
+  "old": "        self.r1.advance(dt)?;\n        self.r2.advance(dt)?;\n        self.o1.advance(dt)?;\n        self.o2.advance(dt)",
+  "new": "        self.r1.advance(dt)?;\n        self.r2.advance(dt)?;\n        self.o1.advance(dt)?;\n        Ok(())"
+ },
+ {
+  "label": "clearing a triplet rule forgets three of its four traces",
+  "old": "        self.r1.clear();\n        self.r2.clear();\n        self.o1.clear();\n        self.o2.clear();",
+  "new": "        self.r1.clear();\n        self.r2.clear();\n        self.o1.clear();"
+ },
+ {
+  "label": "the minimal visual-cortex fit is given the full model's tau_y",
+  "old": "            16.8e-3,\n            101e-3,\n            33.7e-3,\n            114e-3,",
+  "new": "            16.8e-3,\n            101e-3,\n            33.7e-3,\n            125e-3,"
+ },
+ {
+  "label": "the minimal visual-cortex fit acquires a pair potentiation term",
+  "old": "        Self::new(\n            0.0,\n            6.5e-3,\n            7.1e-3,\n            0.0,",
+  "new": "        Self::new(\n            5e-10,\n            6.5e-3,\n            7.1e-3,\n            0.0,"
+ },
+ {
+  "label": "the full visual-cortex fit's amplitudes are transcribed from the minimal row",
+  "old": "            5e-10,\n            6.2e-3,\n            7e-3,\n            2.3e-4,",
+  "new": "            0.0,\n            6.5e-3,\n            7.1e-3,\n            0.0,"
+ },
+ {
+  "label": "the hippocampal fit is given the visual-cortex slow constants",
+  "old": "            16.8e-3,\n            946e-3,\n            33.7e-3,\n            27e-3,",
+  "new": "            16.8e-3,\n            101e-3,\n            33.7e-3,\n            125e-3,"
+ },
+ {
+  "label": "the nearest-spike hippocampal fit keeps all-to-all pairing",
+  "old": "        t.pairing = Pairing::NearestNeighbour;\n        Ok(t)",
+  "new": "        Ok(t)"
+ },
+ {
+  "label": "the nearest-spike hippocampal amplitudes are the all-to-all row's",
+  "old": "            4.6e-3,\n            9.1e-3,\n            3e-3,\n            7.5e-9,",
+  "new": "            6.1e-3,\n            6.7e-3,\n            1.6e-3,\n            1.4e-3,"
+ },
+ {
+  "label": "Hebbian learning has no decay term",
+  "old": "            self.w[i] += self.eta * (y * x[i] - self.decay * self.w[i]);",
+  "new": "            self.w[i] += self.eta * y * x[i];"
+ },
+ {
+  "label": "Hebbian decay is applied without the learning rate",
+  "old": "            self.w[i] += self.eta * (y * x[i] - self.decay * self.w[i]);",
+  "new": "            self.w[i] += self.eta * y * x[i] - self.decay * self.w[i];"
+ },
+ {
+  "label": "a diverged Hebbian weight is returned rather than reported",
+  "old": "            if !self.w[i].is_finite() {\n                return Err(PlasticityError::Diverged { what: \"Hebbian weight\", value: self.w[i] });\n            }",
+  "new": ""
+ },
+ {
+  "label": "Oja's rule loses its normalising term",
+  "old": "            self.w[i] += self.eta * y * (x[i] - y * self.w[i]);",
+  "new": "            self.w[i] += self.eta * y * x[i];"
+ },
+ {
+  "label": "Oja's normalising term is linear in the output rather than quadratic",
+  "old": "            self.w[i] += self.eta * y * (x[i] - y * self.w[i]);",
+  "new": "            self.w[i] += self.eta * y * (x[i] - self.w[i]);"
+ },
+ {
+  "label": "a diverged Oja weight is returned rather than reported",
+  "old": "            if !self.w[i].is_finite() {\n                return Err(PlasticityError::Diverged { what: \"Oja weight\", value: self.w[i] });\n            }",
+  "new": ""
+ },
+ {
+  "label": "the all-zero weight vector is accepted by Oja",
+  "old": "        if norm(&w) == 0.0 {\n            return Err(PlasticityError::Empty { what: \"weight vector (all zero, a fixed point)\" });\n        }",
+  "new": ""
+ },
+ {
+  "label": "the BCM threshold is absorbed before the weights step",
+  "old": "        let phi = y * (y - self.theta);\n        for i in 0..self.w.len() {\n            self.w[i] = self.bounds.clamp(self.w[i] + self.eta * dt * x[i] * phi);\n        }\n        let target = y * y / self.y_0;\n        self.theta = target + (self.theta - target) * (-dt / self.tau_theta).exp();",
+  "new": "        let target = y * y / self.y_0;\n        self.theta = target + (self.theta - target) * (-dt / self.tau_theta).exp();\n        let phi = y * (y - self.theta);\n        for i in 0..self.w.len() {\n            self.w[i] = self.bounds.clamp(self.w[i] + self.eta * dt * x[i] * phi);\n        }"
+ },
+ {
+  "label": "the BCM step loses its quadratic factor",
+  "old": "        let phi = y * (y - self.theta);",
+  "new": "        let phi = y - self.theta;"
+ },
+ {
+  "label": "the BCM threshold relaxes toward the output rather than its square over y_0",
+  "old": "        let target = y * y / self.y_0;",
+  "new": "        let target = y;"
+ },
+ {
+  "label": "the BCM threshold relaxes by forward Euler",
+  "old": "        self.theta = target + (self.theta - target) * (-dt / self.tau_theta).exp();",
+  "new": "        self.theta += dt * (target - self.theta) / self.tau_theta;"
+ },
+ {
+  "label": "BCM weights are not clamped",
+  "old": "            self.w[i] = self.bounds.clamp(self.w[i] + self.eta * dt * x[i] * phi);",
+  "new": "            self.w[i] += self.eta * dt * x[i] * phi;"
+ },
+ {
+  "label": "the selective fixed point does not scale with the number of patterns",
+  "old": "        Some(n_patterns as f64 * self.y_0)",
+  "new": "        Some(self.y_0)"
+ },
+ {
+  "label": "a mismatched input length is silently truncated",
+  "old": "    if x.len() != w.len() {\n        return Err(PlasticityError::LengthMismatch {\n            what: \"input vector\",\n            got: x.len(),\n            want: w.len(),\n        });\n    }",
+  "new": ""
+ },
+ {
+  "label": "the dot product does not check its inputs are finite",
+  "old": "        finite(\"input\", x[i])?;\n        y += w[i] * x[i];",
+  "new": "        y += w[i] * x[i];"
+ },
+ {
+  "label": "the norm is the sum of squares, unrooted",
+  "old": "    s.sqrt()\n}",
+  "new": "    s\n}"
+ },
+ {
+  "label": "the effective time constant is the sum rather than the harmonic combination",
+  "old": "        self.tau_c * self.tau_d / (self.tau_c + self.tau_d)",
+  "new": "        self.tau_c + self.tau_d"
+ },
+ {
+  "label": "the pending change drops the effective time constant",
+  "old": "        self.c * self.d * self.tau_effective()",
+  "new": "        self.c * self.d"
+ },
+ {
+  "label": "the eligibility trace is overwritten rather than accumulated",
+  "old": "        self.c = computed(\"eligibility trace\", self.c + self.stdp.pre_increment(w))?;",
+  "new": "        self.c = computed(\"eligibility trace\", self.stdp.pre_increment(w))?;"
+ },
+ {
+  "label": "a presynaptic spike writes the potentiation increment into the tag",
+  "old": "        self.c = computed(\"eligibility trace\", self.c + self.stdp.pre_increment(w))?;\n        self.stdp.note_pre();",
+  "new": "        self.c = computed(\"eligibility trace\", self.c + self.stdp.post_increment(w))?;\n        self.stdp.note_pre();"
+ },
+ {
+  "label": "the reward impulse replaces the modulator rather than adding to it",
+  "old": "        self.d += finite(\"reward\", amount)?;",
+  "new": "        self.d = finite(\"reward\", amount)?;"
+ },
+ {
+  "label": "the weight change integral is forward Euler",
+  "old": "        let dw = self.c * self.d * tau_eff * (1.0 - (-dt / tau_eff).exp());",
+  "new": "        let dw = self.c * self.d * dt;"
+ },
+ {
+  "label": "the weight change integral saturates on the wrong time constant",
+  "old": "        let dw = self.c * self.d * tau_eff * (1.0 - (-dt / tau_eff).exp());",
+  "new": "        let dw = self.c * self.d * tau_eff * (1.0 - (-dt / self.tau_c).exp());"
+ },
+ {
+  "label": "the eligibility trace never decays",
+  "old": "        self.c *= (-dt / self.tau_c).exp();",
+  "new": "        self.c *= 1.0;"
+ },
+ {
+  "label": "the modulator never decays",
+  "old": "        self.d *= (-dt / self.tau_d).exp();",
+  "new": "        self.d *= 1.0;"
+ },
+ {
+  "label": "the reward rule forgets to decay its STDP window",
+  "old": "        self.d *= (-dt / self.tau_d).exp();\n        self.stdp.advance(dt)?;\n        Ok(out)",
+  "new": "        self.d *= (-dt / self.tau_d).exp();\n        Ok(out)"
+ },
+ {
+  "label": "clearing a reward rule leaves the modulator standing",
+  "old": "        self.c = 0.0;\n        self.d = 0.0;\n        self.stdp.clear();",
+  "new": "        self.c = 0.0;\n        self.stdp.clear();"
+ },
+ {
+  "label": "the rate estimator relaxes toward the spike count rather than the rate",
+  "old": "        let instant = f64::from(spikes) / dt;",
+  "new": "        let instant = f64::from(spikes);"
+ },
+ {
+  "label": "the rate estimator jumps straight to the instantaneous rate",
+  "old": "        self.rate = instant + (self.rate - instant) * (-dt / self.rate_tau).exp();",
+  "new": "        self.rate = instant;"
+ },
+ {
+  "label": "the scaling factor has the wrong sign in its exponent",
+  "old": "        (dt * (self.target_hz - self.rate) / (self.target_hz * self.tau)).exp()",
+  "new": "        (dt * (self.rate - self.target_hz) / (self.target_hz * self.tau)).exp()"
+ },
+ {
+  "label": "the scaling factor is not normalised by the target rate",
+  "old": "        (dt * (self.target_hz - self.rate) / (self.target_hz * self.tau)).exp()",
+  "new": "        (dt * (self.target_hz - self.rate) / self.tau).exp()"
+ },
+ {
+  "label": "the scaling factor does not scale with the elapsed time",
+  "old": "        (dt * (self.target_hz - self.rate) / (self.target_hz * self.tau)).exp()",
+  "new": "        ((self.target_hz - self.rate) / (self.target_hz * self.tau)).exp()"
+ },
+ {
+  "label": "scaling is additive rather than multiplicative",
+  "old": "            self.w[i] = self.bounds.clamp(self.w[i] * g);",
+  "new": "            self.w[i] = self.bounds.clamp(self.w[i] + g - 1.0);"
+ },
+ {
+  "label": "a non-finite scaling factor is applied rather than reported",
+  "old": "        if !g.is_finite() {\n            return Err(PlasticityError::Diverged { what: \"scaling factor\", value: g });\n        }",
+  "new": ""
+ },
+ {
+  "label": "the total drive is the mean rather than the sum",
+  "old": "        self.w.iter().sum()\n    }",
+  "new": "        self.w.iter().sum::<f64>() / self.w.len() as f64\n    }"
+ },
+ {
+  "label": "settling is reported for a one-sided deviation only",
+  "old": "        (self.rate - self.target_hz).abs() <= tol_hz",
+  "new": "        self.rate - self.target_hz <= tol_hz"
+ }
+]

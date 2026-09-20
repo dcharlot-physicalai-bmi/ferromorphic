@@ -3219,6 +3219,39 @@ mod tests {
         assert!((GABA_A.e_rev - rest).abs() < 5.1e-3, "GABA_A sits {} V from rest", GABA_A.e_rev - rest);
     }
 
+    /// [`RECEPTORS`] holds the four named rows, in the order its own doc states.
+    ///
+    /// `the_receptor_table_is_internally_consistent` iterates the array and never asks what is in
+    /// it, so every claim it makes is a claim about each row separately. A table built as
+    /// `[AMPA, NMDA, GABA_A, GABA_A]` — the slow inhibitory row dropped and the fast one repeated
+    /// — passed all of it. The table doc names the rows and quotes the span; this is where those
+    /// two sentences are held to.
+    #[test]
+    fn the_receptor_table_holds_the_four_named_rows_in_its_stated_order() {
+        let names: Vec<&str> = RECEPTORS.iter().map(|r| r.name).collect();
+        assert_eq!(
+            names,
+            ["AMPA", "NMDA", "GABA_A", "GABA_B"],
+            "the table doc names these four in this order"
+        );
+        // `const` blocks, because both sides are constants: these two are checked when the crate
+        // is BUILT and a table that breaks the stated order cannot be compiled at all.
+        const { assert!(AMPA.tau_decay < NMDA.tau_decay, "excitation is listed fast then slow") };
+        const { assert!(GABA_A.tau_decay < GABA_B.tau_decay, "inhibition is listed fast then slow") };
+        // "a factor of 100", asserted as the ratio of the extremes actually present in the array
+        // rather than as the two endpoints named, so that dropping either end fails this whether
+        // or not the replacement row is one of the other three.
+        let slowest = RECEPTORS.iter().map(|r| r.tau_decay).fold(f64::MIN, f64::max);
+        let fastest = RECEPTORS.iter().map(|r| r.tau_decay).fold(f64::MAX, f64::min);
+        assert_eq!(slowest, GABA_B.tau_decay, "the slowest row in the table is GABA_B");
+        assert_eq!(fastest, AMPA.tau_decay, "the fastest row in the table is AMPA");
+        assert!(
+            (slowest / fastest - 100.0).abs() < 1e-9,
+            "the table spans {}x, not the 100x its doc quotes",
+            slowest / fastest
+        );
+    }
+
     /// The [`GABA_A`] row's decay **is** `1/β`, bit-for-bit, and not a rounding of it.
     ///
     /// Two docs say this row and [`KineticTwoState::gaba_a`] are "consistent by construction". The
