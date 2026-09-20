@@ -311,12 +311,12 @@ auditor in 0.5.0 and 0.6.0, the ten of the third wave by hand in 0.8.0 (156 muta
 survivors, every one now caught — see below), and everything since mutated as it was written.
 
 **What of that is RE-RUNNABLE, which is a different question and the one that matters.** The
-repository holds 1,369 recorded mutations across 47 of the 71 modules. The other 24 were audited
+repository holds 1,598 recorded mutations across 49 of the 71 modules. The other 22 were audited
 by the adversarial auditor of 0.5.0 and 0.6.0, whose edits were never written down — so that audit
 cannot be re-run against today's code, and its verdict is a historical claim about the code as it
 stood then, not a property of the code as it stands now. Counting those modules under "audited by
 mutation" without saying this would be exactly the confusion the harness exists to prevent, and
-the twenty-four are named below.
+the twenty-two are named below.
 
 Every one of the 999 mutations recorded before this release was re-run in full against 0.18.0:
 **985 caught, 14 equivalent by their stated arguments, none survived, none stale.** That is the
@@ -802,15 +802,66 @@ What the six survivors were:
   reward, which was every test in the module. A tag that is overwritten turns a burst into its last
   pair alone — the whole quantity a three-factor rule exists to carry.
 
+`hh` (101 mutations) and `surrogate` (128) came back with sixteen survivors between them, and the
+two modules failed in the same two ways.
+
+**A parameter that is 1 in every fixture makes the operation on it invisible.** `hh`'s
+`derivatives` divides `dV/dt` by the membrane capacitance; every cell in the module is the default,
+whose `c_m` is exactly `1.0`. Dropping the division passed both convergence tests and the
+independent-integrator cross-check. The new test runs the same cell at `c_m = 2` and asserts the
+initial slope halves exactly. This is the third module in a row with this shape — `plasticity`'s
+span was 1, `synapse`'s receptor table was never asked what was in it.
+
+**An assertion made of differences cannot see a constant.**
+`the_antiderivative_is_the_integral_of_the_backward_pass` checks the rise `Phi(big) - Phi(-big)`
+against the analytic mass and the slope by central differences. Both are differences. `ArcTan`
+could drop the `0.5` that makes `Phi(-inf)` zero, `StraightThrough` its `+ half_width`, and
+`Triangular` the offset from either interior branch — the last two of which are not a shift at all
+but a JUMP inside the support, which the twelve central-difference probes are positioned to miss
+because they are positioned to miss the kinks. The trait doc has said `Phi(-inf) == 0` all along.
+The new test asserts that absolutely, asserts `Phi(+inf) == mass` absolutely, and walks 40,000
+points asserting `Phi` never rises by more than `step * peak` — the bound an integral of a bounded
+function obeys, and the one a jump breaks.
+
+The rest, briefly:
+
+- **`Scaled` was in no property test.** Every one of them iterates `catalogue()`, which is the eight
+  published families and not the wrapper. Three survivors lived there: an unscaled antiderivative, a
+  width that moved with a vertical scale, and a `NaN` gain from sharpening a zero-mass inner at
+  constant mass. The fixtures now run `Scaled` too.
+- **The logistic's two branches are not cosmetic.** `1 / (1 + exp(-z))` overflows its denominator
+  below `z = -709.78` and returns exactly `0.0` where the true value is a representable subnormal;
+  measured across `[-900, 900]` the two forms differ by up to 25% relative. A `SigmoidDeriv` neuron
+  710 thresholds below firing gets a real gradient from the branch form and none from the naive one.
+- **The spike detector re-arms below `detect_reset`, not below `v_detect`,** and on a healthy action
+  potential the two are indistinguishable — a spike that reaches +40 mV passes -20 mV on the way
+  down anyway. They part on the small oscillation, which is the regime `voltage_range_mv`'s doc is
+  about. Tested now against `detect_crossing` itself on a synthetic trajectory.
+- **`repetitive_onset_ua_cm2` scans before it bisects**, and every fixture passed an `i_max` of 40 —
+  inside the firing band, where a plain bisection happens to land on the same answer. At `i_max =
+  200`, above the band, a plain bisection converges on `i_max` itself. The method's own doc warns
+  about exactly this and nothing held it to the warning.
+- **`Integrator::Rk4`'s order was never measured.** Uniform `(1,1,1,1)/4` weights — a consistent
+  second-order method — passed the cross-check against the exponential scheme at both steps it uses.
+  The error ratio under step halving separates them: 16 for fourth order, about 4 for second.
+- **A `substeps` of zero froze the cell and reported `Ok`.** Both models clamp it with `.max(1)`;
+  nothing checked that the clamp was on the loop bound and not only on the step width.
+- **`ReducedHh`'s `Neuron` boundary is a second copy of the unit conversions** and the module's SI
+  test only ever exercised the full model's.
+- **A real fix, not a test.** `bisect_rest` chose its half of the bracket with `flo * fmid <= 0.0`.
+  Two same-signed values below about `1e-162` multiply to `+0.0`, which satisfies `<= 0.0`, so the
+  loop keeps the half without the root. It is sign comparisons now, and the fixture scales a root
+  into that range.
+
 ### Re-running the audit
 
 The harness and every mutation THIS repository has recorded are in it: `tools/mutate.py` and one
-list per module in `tools/mutations/` — 47 modules of the 71. The 24 without a list are `attention`, `bayes`, `cochlea`, `coding`, `compress`, `continual`, `control`, `convert`, `device`, `eprop`, `exponential`, `fusion`, `hardware`, `hh`, `mapping`, `meanfield`, `nir`, `olfaction`, `reservoir`, `spikeconv`, `surrogate`, `tasks`, `topology`, `vision`:
+list per module in `tools/mutations/` — 49 modules of the 71. The 22 without a list are `attention`, `bayes`, `cochlea`, `coding`, `compress`, `continual`, `control`, `convert`, `device`, `eprop`, `exponential`, `fusion`, `hardware`, `mapping`, `meanfield`, `nir`, `olfaction`, `reservoir`, `spikeconv`, `tasks`, `topology`, `vision`:
 audited in 0.5.0 and 0.6.0 by an adversarial auditor that did not record its edits. Writing their
 lists is outstanding work, and until it is done the claim anyone can check by running the harness
-is about those 47. `python3 tools/mutate.py nef` applies each recorded edit to
+is about those 49. `python3 tools/mutate.py nef` applies each recorded edit to
 `src/nef.rs` in turn, runs that module's tests, restores the file and prints `caught`, `SURVIVED`,
-or — for the nineteen mutations no test could distinguish, each with its stated reason —
+or — for the twenty-three mutations no test could distinguish, each with its stated reason —
 `equivalent`.
 It prints the number of tests that ran unmutated first, because a test that has vanished looks
 exactly like a test that passes.

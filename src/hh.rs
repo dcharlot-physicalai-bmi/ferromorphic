@@ -238,9 +238,16 @@ fn detect_crossing(armed: &mut bool, prev: f64, now: f64, level: f64, reset: f64
 /// a seventh of the transcendental evaluations — which `ReducedHh::default` pays on construction and
 /// `Neuron::reset` pays again.
 fn bisect_rest(f: impl Fn(f64) -> f64) -> Option<f64> {
+    // Sign comparisons, NOT the product `flo * fhi > 0.0` this used to be written with. The product
+    // of two same-signed values below about 1e-162 UNDERFLOWS to +0.0, and `flo * fmid <= 0.0` is
+    // then true where both values are on the same side of the root, so the bisection keeps the
+    // wrong half and returns a point that is not a root. A current-balance function scaled into
+    // that range is not hypothetical — every conductance here is a public field — and
+    // `the_bisection_does_not_lose_a_root_to_an_underflowing_product` is the fixture.
+    let opposite = |a: f64, b: f64| (a <= 0.0 && b >= 0.0) || (a >= 0.0 && b <= 0.0);
     let (mut lo, mut hi) = (-90.0_f64, -40.0_f64);
     let (mut flo, fhi) = (f(lo), f(hi));
-    if !flo.is_finite() || !fhi.is_finite() || flo * fhi > 0.0 {
+    if !flo.is_finite() || !fhi.is_finite() || !opposite(flo, fhi) {
         return None;
     }
     for _ in 0..200 {
@@ -249,7 +256,7 @@ fn bisect_rest(f: impl Fn(f64) -> f64) -> Option<f64> {
             break;
         }
         let fmid = f(mid);
-        if flo * fmid <= 0.0 {
+        if opposite(flo, fmid) {
             hi = mid;
         } else {
             lo = mid;
@@ -884,6 +891,8 @@ impl HodgkinHuxley {
                 self.m = inf.m + (self.m - inf.m) * (-h_ms * (r.alpha_m + r.beta_m)).exp();
                 self.h = inf.h + (self.h - inf.h) * (-h_ms * (r.alpha_h + r.beta_h)).exp();
                 self.n = inf.n + (self.n - inf.n) * (-h_ms * (r.alpha_n + r.beta_n)).exp();
+                // The NEW gates, and that is the documented half of the ordering: `conductances`
+                // reads the fields that were just written three lines above.
                 let c = self.conductances();
                 let v_inf = (c.g_na * self.e_na
                     + c.g_k * self.e_k
@@ -1767,6 +1776,271 @@ mod tests {
             peak = peak.max(x.v);
         }
         (peak, spikes, x)
+    }
+
+    /// The detector re-arms BELOW `detect_reset`, not below `v_detect`, and the difference is a
+    /// spike count.
+    ///
+    /// Written against `detect_crossing` itself on a synthetic trajectory, because the difference
+    /// is invisible on a healthy action potential: a spike that reaches +40 mV passes -20 mV on its
+    /// way down anyway, so both re-arm rules arm at essentially the same moment and every
+    /// membrane-level test in this module agrees under either. Where they part is the **small**
+    /// oscillation — the regime this module's own `voltage_range_mv` doc is about, where the cell
+    /// swings tens of millivolts without ever reaching `detect_reset`. Re-arming at the detection
+    /// level turns one crossing into one per cycle.
+    #[test]
+    fn the_detector_re_arms_below_its_reset_level_and_not_below_its_detection_level() {
+        // A trajectory that crosses 0 mV upward, dips to -5 (below the level, above the reset),
+        // and rises through 0 again. One spike, not two.
+        let trace = [-10.0, 5.0, 20.0, 5.0, -5.0, 5.0, 20.0];
+        let mut armed = true;
+        let mut fired = 0;
+        for w in trace.windows(2) {
+            if super::detect_crossing(&mut armed, w[0], w[1], 0.0, -20.0) {
+                fired += 1;
+            }
+        }
+        assert_eq!(fired, 1, "an oscillation that never reached the reset level was counted twice");
+        assert!(!armed, "the detector must still be disarmed above the reset level");
+
+        // And it DOES re-arm once the trajectory reaches the reset level, which is the other half
+        // of the claim and the reason the reset is a separate number rather than the level itself.
+        assert!(!super::detect_crossing(&mut armed, -5.0, -25.0, 0.0, -20.0));
+        assert!(armed, "falling below the reset level must re-arm the detector");
+        assert!(super::detect_crossing(&mut armed, -25.0, 5.0, 0.0, -20.0), "the next spike");
+    }
+
+    /// The bisection does not lose a root to an **underflowing product**.
+    ///
+    /// `bisect_rest` used to decide which half of the bracket to keep with `flo * fmid <= 0.0`.
+    /// Two same-signed values below about 1e-162 multiply to `+0.0`, which satisfies `<= 0.0`, so
+    /// the loop kept the half that does not contain the root and returned a point that is not one.
+    /// Nothing in this module could reach that, because every current-balance function it builds is
+    /// O(1) — but every conductance and reversal potential on both models is a `pub` field, and a
+    /// cell scaled into that range is a legal value of the type.
+    #[test]
+    fn the_bisection_does_not_lose_a_root_to_an_underflowing_product() {
+        // A root at exactly -65 mV, with values small enough that same-signed products underflow.
+        let tiny = 1e-170;
+        let root = super::bisect_rest(|v| (v + 65.0) * tiny).expect("a sign change in the bracket");
+        assert!((root + 65.0).abs() < 1e-12, "found {root} mV, not the root at -65");
+        // The scaled and unscaled problems must give the same answer to the last bit: the bisection
+        // is a sequence of sign decisions and a positive scale changes no sign.
+        let plain = super::bisect_rest(|v| v + 65.0).expect("a sign change in the bracket");
+        assert_eq!(root, plain, "the answer depended on the scale of the function");
+        // A bracket with no sign change is still refused.
+        assert!(super::bisect_rest(|v| (v + 200.0) * tiny).is_none(), "no root in [-90, -40]");
+    }
+
+    /// `derivatives` divides by the membrane capacitance, and **every fixture in this module uses
+    /// `c_m = 1.0`**, where dividing by it is the identity.
+    ///
+    /// So dropping the division passed the whole module, including both convergence tests and the
+    /// independent-integrator cross-check — they all run the default cell. A capacitance that is
+    /// not one is the only thing that can see it, and `dv/dt` is what it changes: doubling `c_m`
+    /// must halve the initial slope under the same current, exactly.
+    #[test]
+    fn the_capacitance_divides_the_voltage_derivative_and_no_default_fixture_can_see_it() {
+        let slope = |c_m: f64| {
+            let cell = HodgkinHuxley { c_m, integrator: Integrator::ForwardEuler, substeps: 1,
+                ..HodgkinHuxley::default() };
+            let mut x = cell;
+            x.advance(1e-4, 20.0).expect("one tiny forward-Euler step cannot diverge");
+            (x.v - cell.v) / 1e-4
+        };
+        let one = slope(1.0);
+        let two = slope(2.0);
+        assert!(one > 0.0, "20 uA/cm2 must depolarise a resting cell, got {one} mV/ms");
+        // Forward Euler's first step IS the derivative, so this is the ratio of the derivatives and
+        // it is exact to rounding rather than to a simulation tolerance.
+        assert!(
+            (one / two - 2.0).abs() < 1e-9,
+            "doubling the capacitance changed the slope by {}x, not 2x",
+            one / two
+        );
+        // And the same cell at c_m = 1 is what every other fixture here runs, which is the point:
+        // the default makes the division invisible.
+        assert_eq!(HodgkinHuxley::default().c_m, 1.0);
+    }
+
+    /// `Integrator::Rk4` is **fourth** order, and nothing here measured the order.
+    ///
+    /// `an_independent_integrator_agrees_on_the_spike_time` compares it against the exponential
+    /// scheme at a fine step and at a 6x coarser one; a second-order scheme passes both, because at
+    /// `dt = 0.01 ms` a second-order error is still under the millisecond tolerance. Replacing the
+    /// `(1, 2, 2, 1)/6` weights with a uniform `(1, 1, 1, 1)/4` — a consistent but second-order
+    /// method — survived the module. The error ratio under step halving is what separates them: 16
+    /// for fourth order, 4 for second.
+    #[test]
+    fn the_runge_kutta_weights_make_it_fourth_order_and_the_order_is_measured() {
+        let reference = crossing_ms(0.0005, 1, Integrator::ExponentialEuler, 10.0).expect("fires");
+        let err = |dt: f64| {
+            (crossing_ms(dt, 1, Integrator::Rk4, 10.0).expect("rk4 fires") - reference).abs()
+        };
+        let (coarse, fine) = (err(0.04), err(0.02));
+        let ratio = coarse / fine;
+        assert!(
+            ratio > 9.0,
+            "halving the step improved Rk4 by {ratio}x ({coarse} then {fine} ms): that is not \
+             fourth order, and a second-order scheme gives about 4"
+        );
+    }
+
+    /// A `substeps` of **zero** must still take the step, and `advance` must still refuse a bad one.
+    ///
+    /// `substeps` is a `pub u32`, so zero is a legal value of the type, and both models clamp it
+    /// with `.max(1)`. Removing the clamp from the loop bound makes `advance` return `Ok(false)`
+    /// having moved nothing — a cell that is silently frozen and reports success, which is the one
+    /// outcome the checked entry point exists to make impossible.
+    #[test]
+    fn a_substep_count_of_zero_still_advances_the_cell() {
+        let mut x = HodgkinHuxley { substeps: 0, ..HodgkinHuxley::default() };
+        let before = x.v;
+        x.advance(0.01, 20.0).expect("a legal cell at a legal step");
+        assert!(x.v != before, "substeps = 0 left the membrane at {before} mV");
+        // One substep of the whole step is exactly what the clamp means, so the two agree bit for
+        // bit rather than approximately.
+        let mut one = HodgkinHuxley { substeps: 1, ..HodgkinHuxley::default() };
+        one.advance(0.01, 20.0).expect("a legal cell at a legal step");
+        assert_eq!(x.v, one.v, "substeps = 0 is not the same step as substeps = 1");
+
+        let mut r = ReducedHh { substeps: 0, ..ReducedHh::default() };
+        let before = r.v;
+        r.advance(0.01, 20.0).expect("a legal cell at a legal step");
+        assert!(r.v != before, "the reduced model froze at {before} mV");
+    }
+
+    /// The reduced model's `Neuron` boundary converts the same two units the full model's does.
+    ///
+    /// `ReducedHh`'s `step` and `bump` are a second copy of that arithmetic, and the module's SI
+    /// test only exercised the full model's. Dropping `/ area_cm2` from the reduced `step`, and the
+    /// `* 1e3` from its `bump`, both survived.
+    #[test]
+    fn the_reduced_models_si_boundary_converts_both_directions_too() {
+        // `step` takes amperes and divides by the membrane area to get uA/cm2. At the default
+        // 1e-4 cm2, 1e-9 A is 10 uA/cm2, and stepping must match `advance` given that density.
+        let mut by_trait = ReducedHh::default();
+        let mut by_density = ReducedHh::default();
+        by_trait.step(1e-5, 1e-9);
+        by_density.advance(1e-2, 10.0).expect("a legal step");
+        assert_eq!(by_trait.v, by_density.v, "the trait boundary is not amperes over the area");
+
+        // Halving the area doubles the density, so the two cannot agree unless the area is used.
+        let mut small = ReducedHh { area_cm2: 0.5e-4, ..ReducedHh::default() };
+        small.step(1e-5, 1e-9);
+        assert!(small.v != by_trait.v, "the area did not enter the conversion");
+
+        // `bump` takes volts. 10 mV is 0.01 V, and the membrane is in millivolts.
+        let mut b = ReducedHh::default();
+        let rest = b.v;
+        b.bump(0.01);
+        assert!((b.v - (rest + 10.0)).abs() < 1e-12, "bumped to {} from {rest}", b.v);
+        assert!((b.potential() - b.v * 1e-3).abs() < 1e-18, "the potential is not in volts");
+    }
+
+    /// The firing rate is spikes per **inter-spike span**, not per window, and a single spike is no
+    /// rate at all.
+    ///
+    /// Every existing rate fixture runs a window that starts at a settled limit cycle, where the
+    /// first spike lands early and `last` and `last - first` are close enough that the assertions —
+    /// all of them ranges or monotonicity — hold either way. Dividing by `last` alone survived. The
+    /// check that cannot: the rate must not depend on the window length, because a limit cycle has
+    /// one rate.
+    #[test]
+    fn the_firing_rate_is_per_interval_and_does_not_depend_on_the_window_length() {
+        let c = HodgkinHuxley::default();
+        let short = c.firing_rate_hz(10.0, 0.01, 150.0, 100.0).expect("fires");
+        let long = c.firing_rate_hz(10.0, 0.01, 150.0, 400.0).expect("fires");
+        assert!(
+            (short / long - 1.0).abs() < 0.02,
+            "the rate moved from {short} Hz to {long} Hz when the window quadrupled"
+        );
+        // And it is the reciprocal of the measured interval: at 10 uA/cm2 this cell's period is
+        // about 15 ms, so the rate is near 67 Hz and not near the 1000/window a per-window count
+        // would give.
+        assert!((60.0..=75.0).contains(&short), "rate {short} Hz is not the period's reciprocal");
+
+        // One spike is not a rate. The onset spike at 3 uA/cm2 is a single spike and nothing else
+        // happens afterwards, so this is `None` and not an arbitrarily small number.
+        assert!(
+            c.firing_rate_hz(3.0, 0.01, 0.0, 300.0).is_none(),
+            "a single onset spike was reported as a firing rate"
+        );
+    }
+
+    /// The after-hyperpolarisation is measured **after the spike**, not over the whole run.
+    ///
+    /// Every fixture starts the cell at its resting -65 mV, which is above the trough, so the
+    /// minimum over the whole run and the minimum after the downstroke are the same number and
+    /// widening the window changed nothing. Start the cell below the trough and they differ by the
+    /// starting potential.
+    #[test]
+    fn the_after_hyperpolarisation_is_measured_after_the_spike_and_not_over_the_whole_run() {
+        let cold = HodgkinHuxley::at(-85.0);
+        let shape = cold.spike_shape(20.0, 0.01, 25.0, 0.0).expect("20 uA/cm2 fires");
+        let ahp = shape.after_hyperpolarisation_mv.expect("the run contains the trough");
+        assert!(
+            ahp > -85.0,
+            "the reported trough {ahp} mV is at or below the -85 mV the cell STARTED at, which is \
+             the whole-run minimum rather than the after-hyperpolarisation"
+        );
+        assert!((-80.0..-65.0).contains(&ahp), "trough {ahp} mV is not an after-hyperpolarisation");
+        // The same cell started at rest gives the same trough, which is what makes the default
+        // fixture unable to see the difference.
+        let warm = HodgkinHuxley::default()
+            .spike_shape(20.0, 0.01, 25.0, 0.0)
+            .expect("fires")
+            .after_hyperpolarisation_mv
+            .expect("the trough");
+        assert!((ahp - warm).abs() < 1.0, "troughs {ahp} and {warm} mV should agree");
+    }
+
+    /// The bisection's finiteness guard is still load-bearing after the sign rewrite, and an
+    /// INFINITE bracket is the case that needs it.
+    ///
+    /// `opposite` is written as comparisons, and every comparison against `NaN` is false, so a
+    /// `NaN` endpoint fails it and is refused without the guard — which is why removing the guard
+    /// passed `a_non_finite_parameter_is_refused_rather_than_answered_with_a_bracket_endpoint`.
+    /// Infinities are not `NaN`: `-inf` and `+inf` have opposite signs, so the loop runs, bisects on
+    /// infinities and returns the midpoint of a bracket that contains no root.
+    #[test]
+    fn the_bisection_refuses_an_infinite_bracket_as_well_as_a_non_finite_one() {
+        assert!(
+            super::bisect_rest(|v| if v < -65.0 { f64::NEG_INFINITY } else { f64::INFINITY })
+                .is_none(),
+            "an infinite bracket was bisected and answered with a midpoint"
+        );
+        assert!(super::bisect_rest(|_| f64::NAN).is_none(), "a NaN bracket was answered");
+        assert!(
+            super::bisect_rest(|v| if v < -65.0 { -1.0 } else { f64::INFINITY }).is_none(),
+            "one infinite endpoint was enough to bisect on"
+        );
+    }
+
+    /// `repetitive_onset_ua_cm2` scans upward before it bisects, and the scan is what makes it
+    /// right for a **wide** `i_max`.
+    ///
+    /// The set of currents this cell fires repetitively at is an interval, not a ray — the method's
+    /// own doc says so, and `the_reported_firing_band_ends_where_the_detector_stops_not_where_the_cell_does`
+    /// measures the upper end. A plain bisection over `[0, i_max]` walks straight past the interval
+    /// whenever `i_max` is above it and converges on `i_max` itself. Every existing fixture passes
+    /// `i_max = 40`, inside the band, where a plain bisection happens to land on the same answer,
+    /// so replacing the scan with one survived the module.
+    #[test]
+    fn the_repetitive_onset_scan_is_what_makes_a_wide_search_range_safe() {
+        let c = HodgkinHuxley::default();
+        let narrow =
+            c.repetitive_onset_ua_cm2(0.01, 150.0, 300.0, 40.0, 0.5).expect("fires in range");
+        let wide =
+            c.repetitive_onset_ua_cm2(0.01, 150.0, 300.0, 200.0, 0.5).expect("fires in range");
+        assert!((narrow - wide).abs() < 1e-9, "onset moved from {narrow} to {wide} with i_max");
+        assert!((wide - 6.26).abs() < 0.1, "onset {wide} uA/cm2 vs the documented 6.26");
+        // And the band really does end below the wide range's ceiling, which is what makes a plain
+        // bisection over it wrong rather than merely wasteful.
+        assert!(
+            c.firing_rate_hz(200.0, 0.01, 150.0, 300.0).is_none(),
+            "the detector still reports a rate at 200 uA/cm2, so this fixture proves nothing"
+        );
     }
 
     /// **The two transcriptions agree.** The rate functions in [`rates`] must be the 1952 paper's

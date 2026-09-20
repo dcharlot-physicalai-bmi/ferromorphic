@@ -1970,6 +1970,199 @@ mod tests {
         normal_cdf, DEFAULT_PANELS, MAX_PANELS,
     };
 
+    /// Every family under test, including the two wrappers `catalogue` does not build.
+    ///
+    /// `catalogue` is the eight published families at their defaults. [`Scaled`] is not one of
+    /// them and is where three of this module's survivors lived, because every property test in the
+    /// file iterated `catalogue` and no test ever asked a `Scaled` anything.
+    fn every_family() -> Vec<Box<dyn Surrogate>> {
+        let mut v = catalogue();
+        v.push(Box::new(
+            Scaled::unit_mass(Box::new(FastSigmoid::default())).expect("fast sigmoid has mass"),
+        ));
+        v.push(Box::new(Exponential::slayer(5.0, 10.0).expect("finite positive rates")));
+        v.push(Box::new(
+            Scaled::new(Box::new(Gaussian::default()), 7.0).expect("a finite positive gain"),
+        ));
+        v
+    }
+
+    /// `Phi(-inf) == 0`, `Phi(+inf) == mass`, and `Phi` never jumps — **absolute** statements, not
+    /// differences.
+    ///
+    /// `the_antiderivative_is_the_integral_of_the_backward_pass` checks the RISE
+    /// `Phi(big) - Phi(-big)` against the mass and the slope by central differences. Both are
+    /// differences, and an additive constant cancels out of a difference. Four families' offsets
+    /// could therefore be moved with nothing failing: `ArcTan` dropping its `0.5`,
+    /// `StraightThrough` dropping its `+ half_width`, and `Triangular` dropping the offset from
+    /// either of its two interior branches — the last two of which are not a global shift at all
+    /// but a JUMP at `x = -h` or `x = 0`, which the twelve central-difference probes are placed to
+    /// miss because they are placed to miss the kinks.
+    #[test]
+    fn the_antiderivative_starts_at_zero_ends_at_the_mass_and_never_jumps() {
+        const BIG: f64 = 1e12;
+        for s in every_family() {
+            let mass = s.mass();
+            let tol = 1e-9 * (1.0 + mass);
+            assert!(
+                s.antiderivative(-BIG).abs() < tol,
+                "{}: Phi(-inf) is {}, not 0",
+                s.name(),
+                s.antiderivative(-BIG)
+            );
+            assert!(
+                (s.antiderivative(BIG) - mass).abs() < tol,
+                "{}: Phi(+inf) is {}, not the mass {mass}",
+                s.name(),
+                s.antiderivative(BIG)
+            );
+
+            // No jump anywhere, which is what a branch-local offset produces. `Phi` is an integral
+            // of a function bounded by `peak`, so over a step of `d` it can rise by at most
+            // `d * peak` and can never fall.
+            let peak = s.peak();
+            let half = 20.0 * s.fwhm().max(1e-3) + 5.0;
+            let n = 40_000;
+            let d = 2.0 * half / n as f64;
+            let bound = d * peak * (1.0 + 1e-9) + 1e-12 * (1.0 + mass);
+            let mut prev = s.antiderivative(-half);
+            for k in 1..=n {
+                let x = -half + d * k as f64;
+                let now = s.antiderivative(x);
+                let rise = now - prev;
+                assert!(
+                    rise >= -1e-12 * (1.0 + mass),
+                    "{}: Phi fell by {} at x = {x}",
+                    s.name(),
+                    -rise
+                );
+                assert!(
+                    rise <= bound,
+                    "{}: Phi rose by {rise} over a step of {d} at x = {x}, which is more than \
+                     the peak {peak} allows ({bound}) -- a jump, not an integral",
+                    s.name()
+                );
+                prev = now;
+            }
+        }
+    }
+
+    /// The logistic's two branches are not cosmetic: the naive form **loses the gradient entirely**
+    /// below `z = -709.78`.
+    ///
+    /// `1 / (1 + exp(-z))` overflows its denominator to `+inf` there and returns exactly `0.0`,
+    /// where the true value is a small but perfectly representable subnormal. Measured across
+    /// `[-900, 900]` the two forms differ by up to **25% relative**, all of it in that window. It
+    /// matters because `SigmoidDeriv::backward` is `beta s (1 - s)`: a neuron far below threshold
+    /// gets a gradient of exactly zero from the naive form and a real one from this one, which is
+    /// the difference between a unit that can recover and one that cannot.
+    #[test]
+    fn the_logistic_does_not_lose_a_gradient_to_an_overflowing_denominator() {
+        // ln(f64::MAX) is about 709.78, so this is the first z at which `exp(-z)` is infinite.
+        let z = -710.0_f64;
+        let naive = 1.0 / (1.0 + (-z).exp());
+        assert_eq!(naive, 0.0, "this fixture assumes the naive form has already overflowed");
+        let ours = SigmoidDeriv::logistic(z);
+        assert!(ours > 0.0, "the logistic returned {ours} at z = {z}");
+        assert!((ours / z.exp() - 1.0).abs() < 1e-12, "logistic({z}) = {ours}, not exp({z})");
+
+        // And the consequence, which is the reason the branch is there at all.
+        let sd = SigmoidDeriv::new(1.0).expect("beta = 1");
+        assert!(sd.backward(z) > 0.0, "a neuron 710 thresholds down got a gradient of exactly 0");
+
+        // The two forms still agree everywhere the naive one is finite, so this is a tail fix and
+        // not a different function.
+        for &q in &[-700.0_f64, -100.0, -1.0, 0.0, 1.0, 100.0, 700.0] {
+            let n = 1.0 / (1.0 + (-q).exp());
+            let o = SigmoidDeriv::logistic(q);
+            assert!((o - n).abs() <= 1e-15 * n.max(1e-300), "logistic({q}): {o} vs {n}");
+        }
+    }
+
+    /// A [`Scaled`] scales its mass, its peak and its antiderivative and **not** its width.
+    ///
+    /// Nothing asked a `Scaled` for its `fwhm`, so reporting `gain * inner.fwhm()` survived — and
+    /// that would make the module's one comparable measure of sharpness depend on a vertical
+    /// scale, which is exactly the confusion the `fwhm` doc exists to prevent.
+    #[test]
+    fn a_scaled_surrogate_scales_everything_except_its_width() {
+        let inner = Gaussian::default();
+        let (w, m, p) = (inner.fwhm(), inner.mass(), inner.peak());
+        let scaled = Scaled::new(Box::new(Gaussian::default()), 7.0).expect("a finite gain");
+        assert_eq!(scaled.fwhm(), w, "a vertical scale moved the width");
+        assert_eq!(scaled.mass(), 7.0 * m, "the mass was not scaled");
+        assert_eq!(scaled.peak(), 7.0 * p, "the peak was not scaled");
+        assert_eq!(scaled.backward(0.3), 7.0 * inner.backward(0.3), "backward was not scaled");
+        assert_eq!(
+            scaled.antiderivative(0.3),
+            7.0 * inner.antiderivative(0.3),
+            "the antiderivative was not scaled"
+        );
+        // The numeric width agrees, which is the independent check that `fwhm` is not simply
+        // returning a number nobody measured.
+        let got = fwhm_numeric(&scaled).expect("a scaled Gaussian has a width");
+        assert!((got / w - 1.0).abs() < 1e-6, "numeric width {got} vs analytic {w}");
+    }
+
+    /// A surrogate with **no mass** cannot be normalised to unit mass or sharpened at constant
+    /// mass, and both paths say so rather than returning a `NaN` gain.
+    ///
+    /// `Triangular`'s fields are `pub`, so `peak: 0.0` is a legal value of the type that no
+    /// constructor can refuse. `Scaled::unit_mass` divides by that mass and `Scaled::sharpened`
+    /// forms `gain * m0 / m1` with both zero; without their guards the first returns a surrogate
+    /// whose every output is an infinity and the second one whose every output is a `NaN`.
+    #[test]
+    fn a_surrogate_with_no_mass_is_refused_by_both_normalising_paths() {
+        let flat = Triangular { half_width: 1.0, peak: 0.0 };
+        assert_eq!(flat.mass(), 0.0, "this fixture depends on a zero mass");
+        assert!(matches!(
+            Scaled::unit_mass(Box::new(flat)),
+            Err(SurrogateError::NotPositive { what: "inner mass", .. })
+        ));
+        let wrapped = Scaled::new(Box::new(flat), 1.0).expect("a gain of one is fine");
+        assert!(
+            wrapped.sharpened(2.0).is_none(),
+            "sharpening at constant mass divided zero by zero and returned a surrogate"
+        );
+        // A non-zero mass still sharpens, so the guard is not refusing everything.
+        let ok = Scaled::unit_mass(Box::new(Triangular::default())).expect("the default has mass");
+        assert!(ok.sharpened(2.0).is_some());
+    }
+
+    /// A forward pass that leaves the finite numbers **names the step and the unit** rather than
+    /// filling the trace with infinities.
+    ///
+    /// The guard is what a too-large learning rate looks like from inside, and removing it survived
+    /// the module: every existing fixture is a small, well-scaled network that never diverges.
+    #[test]
+    fn a_forward_pass_that_leaves_the_finite_numbers_names_the_step_and_the_unit() {
+        let mut layer = LifLayerSpec { n_in: 1, n_rec: 2, n_out: 2, ..LifLayerSpec::default() }
+            .build()
+            .expect("a legal spec");
+        for j in 0..layer.n_rec {
+            let idx = layer.idx_w(j, 0);
+            layer.p[idx] = 1e308;
+        }
+        let sur = FastSigmoid::default();
+        let x = vec![1.0; 4];
+        let err = layer.forward(&sur, &x, SpikeFn::Heaviside).expect_err("this must diverge");
+        match err {
+            SurrogateError::Diverged { step, neuron, value } => {
+                assert_eq!(step, 1, "the first infinite state is at step 1, not {step}");
+                assert!(neuron < 2, "neuron {neuron} is not in the layer");
+                assert!(!value.is_finite(), "Diverged reported the finite value {value}");
+            }
+            other => panic!("expected Diverged, got {other}"),
+        }
+        // The same layer with ordinary weights runs to the end, so the guard is not refusing
+        // everything it is handed.
+        for j in 0..layer.n_rec {
+            let idx = layer.idx_w(j, 0);
+            layer.p[idx] = 0.5;
+        }
+        assert!(layer.forward(&sur, &x, SpikeFn::Heaviside).is_ok());
+    }
+
     /// The forward pass is the same step function for every family. If this ever fails, the module's
     /// premise has been quietly abandoned somewhere.
     #[test]

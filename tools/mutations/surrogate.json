@@ -1,0 +1,642 @@
+[
+ {
+  "label": "the step function is open at the threshold rather than closed",
+  "old": "    if x >= 0.0 { 1.0 } else { 0.0 }",
+  "new": "    if x > 0.0 { 1.0 } else { 0.0 }"
+ },
+ {
+  "label": "a sharpening factor of zero is accepted",
+  "old": "    factor.is_finite() && factor > 0.0",
+  "new": "    factor.is_finite()"
+ },
+ {
+  "label": "a non-finite sharpening factor is accepted",
+  "old": "    factor.is_finite() && factor > 0.0",
+  "new": "    factor > 0.0"
+ },
+ {
+  "label": "the erf series drops its double-factorial denominator",
+  "old": "        term *= z / (2.0 * f64::from(n) + 1.0);",
+  "new": "        term *= z / (2.0 * f64::from(n));"
+ },
+ {
+  "label": "the erf series uses x squared rather than twice x squared",
+  "old": "    let z = 2.0 * a * a;",
+  "new": "    let z = a * a;"
+ },
+ {
+  "label": "erf loses its leading two over root pi",
+  "old": "    let r = 2.0 / core::f64::consts::PI.sqrt() * a * (-a * a).exp() * sum;",
+  "new": "    let r = a * (-a * a).exp() * sum;"
+ },
+ {
+  "label": "erf drops the exponential that the all-positive series needs",
+  "old": "    let r = 2.0 / core::f64::consts::PI.sqrt() * a * (-a * a).exp() * sum;",
+  "new": "    let r = 2.0 / core::f64::consts::PI.sqrt() * a * sum;"
+ },
+ {
+  "label": "erf is even rather than odd",
+  "old": "    if x < 0.0 { -r } else { r }",
+  "new": "    r"
+ },
+ {
+  "label": "erf saturates far too early",
+  "old": "    if a > 6.0 {",
+  "new": "    if a > 1.0 {"
+ },
+ {
+  "label": "the erf series stops after one term",
+  "old": "        if term < 1e-18 * sum {\n            break;\n        }",
+  "new": "        break;"
+ },
+ {
+  "label": "the normal CDF forgets its root two",
+  "old": "    0.5 * (1.0 + erf(x / core::f64::consts::SQRT_2))",
+  "new": "    0.5 * (1.0 + erf(x))"
+ },
+ {
+  "label": "the normal CDF is not centred on a half",
+  "old": "    0.5 * (1.0 + erf(x / core::f64::consts::SQRT_2))",
+  "new": "    0.5 * erf(x / core::f64::consts::SQRT_2)"
+ },
+ {
+  "label": "the fast sigmoid's tail falls as one over x rather than its square",
+  "old": "        let d = 1.0 + self.beta * x.abs();\n        1.0 / (d * d)",
+  "new": "        let d = 1.0 + self.beta * x.abs();\n        1.0 / d"
+ },
+ {
+  "label": "the fast sigmoid is one-sided",
+  "old": "        let d = 1.0 + self.beta * x.abs();\n        1.0 / (d * d)",
+  "new": "        let d = 1.0 + self.beta * x;\n        1.0 / (d * d)"
+ },
+ {
+  "label": "the fast sigmoid's antiderivative does not reach its mass on the right",
+  "old": "        if x < 0.0 { t / self.beta } else { (2.0 - t) / self.beta }",
+  "new": "        if x < 0.0 { t / self.beta } else { (1.0 - t) / self.beta }"
+ },
+ {
+  "label": "the fast sigmoid's antiderivative is not scaled by its width",
+  "old": "        if x < 0.0 { t / self.beta } else { (2.0 - t) / self.beta }",
+  "new": "        if x < 0.0 { t } else { 2.0 - t }"
+ },
+ {
+  "label": "the fast sigmoid's mass is claimed to be one",
+  "old": "    fn mass(&self) -> f64 {\n        2.0 / self.beta\n    }\n    fn peak(&self) -> f64 {\n        1.0\n    }\n    fn fwhm(&self) -> f64 {\n        2.0 * (core::f64::consts::SQRT_2 - 1.0) / self.beta",
+  "new": "    fn mass(&self) -> f64 {\n        1.0\n    }\n    fn peak(&self) -> f64 {\n        1.0\n    }\n    fn fwhm(&self) -> f64 {\n        2.0 * (core::f64::consts::SQRT_2 - 1.0) / self.beta"
+ },
+ {
+  "label": "the fast sigmoid's width uses root two rather than root two minus one",
+  "old": "        2.0 * (core::f64::consts::SQRT_2 - 1.0) / self.beta",
+  "new": "        2.0 * core::f64::consts::SQRT_2 / self.beta"
+ },
+ {
+  "label": "sharpening the fast sigmoid widens it",
+  "old": "        ok_factor(factor).then(|| Box::new(Self { beta: self.beta * factor }) as Box<dyn Surrogate>)\n    }\n}\n\n/// Arctangent surrogate",
+  "new": "        ok_factor(factor).then(|| Box::new(Self { beta: self.beta / factor }) as Box<dyn Surrogate>)\n    }\n}\n\n/// Arctangent surrogate"
+ },
+ {
+  "label": "the arctan surrogate loses its half",
+  "old": "        self.alpha / (2.0 * (1.0 + b * b))",
+  "new": "        self.alpha / (1.0 + b * b)"
+ },
+ {
+  "label": "the arctan surrogate's Lorentzian is not squared in its argument",
+  "old": "        let b = core::f64::consts::FRAC_PI_2 * self.alpha * x;\n        self.alpha / (2.0 * (1.0 + b * b))",
+  "new": "        let b = core::f64::consts::FRAC_PI_2 * self.alpha * x;\n        self.alpha / (2.0 * (1.0 + b))"
+ },
+ {
+  "label": "the arctan surrogate's scale drops its pi over two",
+  "old": "        let b = core::f64::consts::FRAC_PI_2 * self.alpha * x;",
+  "new": "        let b = self.alpha * x;"
+ },
+ {
+  "label": "the arctan antiderivative does not start at zero at minus infinity",
+  "old": "        0.5 + (core::f64::consts::FRAC_PI_2 * self.alpha * x).atan() / core::f64::consts::PI",
+  "new": "        (core::f64::consts::FRAC_PI_2 * self.alpha * x).atan() / core::f64::consts::PI"
+ },
+ {
+  "label": "the arctan antiderivative is not divided by pi",
+  "old": "        0.5 + (core::f64::consts::FRAC_PI_2 * self.alpha * x).atan() / core::f64::consts::PI",
+  "new": "        0.5 + (core::f64::consts::FRAC_PI_2 * self.alpha * x).atan()"
+ },
+ {
+  "label": "the arctan peak forgets its half",
+  "old": "    fn peak(&self) -> f64 {\n        self.alpha / 2.0\n    }\n    fn fwhm(&self) -> f64 {\n        4.0 / (core::f64::consts::PI * self.alpha)",
+  "new": "    fn peak(&self) -> f64 {\n        self.alpha\n    }\n    fn fwhm(&self) -> f64 {\n        4.0 / (core::f64::consts::PI * self.alpha)"
+ },
+ {
+  "label": "the arctan width is two over pi alpha",
+  "old": "        4.0 / (core::f64::consts::PI * self.alpha)",
+  "new": "        2.0 / (core::f64::consts::PI * self.alpha)"
+ },
+ {
+  "label": "the logistic overflows for a large negative argument",
+  "old": "        if z >= 0.0 {\n            1.0 / (1.0 + (-z).exp())\n        } else {\n            let e = z.exp();\n            e / (1.0 + e)\n        }",
+  "new": "        1.0 / (1.0 + (-z).exp())"
+ },
+ {
+  "label": "the logistic derivative drops its slope factor",
+  "old": "        let s = Self::logistic(self.beta * x);\n        self.beta * s * (1.0 - s)",
+  "new": "        let s = Self::logistic(self.beta * x);\n        s * (1.0 - s)"
+ },
+ {
+  "label": "the logistic derivative is the logistic itself",
+  "old": "        let s = Self::logistic(self.beta * x);\n        self.beta * s * (1.0 - s)",
+  "new": "        let s = Self::logistic(self.beta * x);\n        self.beta * s"
+ },
+ {
+  "label": "the sigmoid derivative's antiderivative is not the logistic",
+  "old": "    fn antiderivative(&self, x: f64) -> f64 {\n        Self::logistic(self.beta * x)\n    }",
+  "new": "    fn antiderivative(&self, x: f64) -> f64 {\n        Self::logistic(x)\n    }"
+ },
+ {
+  "label": "the sigmoid derivative's peak is beta over two",
+  "old": "        self.beta / 4.0",
+  "new": "        self.beta / 2.0"
+ },
+ {
+  "label": "the sigmoid derivative's width loses its factor of four",
+  "old": "        4.0 * (1.0 + core::f64::consts::SQRT_2).ln() / self.beta",
+  "new": "        (1.0 + core::f64::consts::SQRT_2).ln() / self.beta"
+ },
+ {
+  "label": "the triangular surrogate is not clipped at its base",
+  "old": "        let t = 1.0 - x.abs() / self.half_width;\n        if t > 0.0 { self.peak * t } else { 0.0 }",
+  "new": "        let t = 1.0 - x.abs() / self.half_width;\n        self.peak * t"
+ },
+ {
+  "label": "the triangular surrogate is a rectangle",
+  "old": "        let t = 1.0 - x.abs() / self.half_width;\n        if t > 0.0 { self.peak * t } else { 0.0 }",
+  "new": "        let t = 1.0 - x.abs() / self.half_width;\n        if t > 0.0 { self.peak } else { 0.0 }"
+ },
+ {
+  "label": "the triangular antiderivative's left branch drops its offset",
+  "old": "            self.peak * (x + x * x / (2.0 * h) + 0.5 * h)",
+  "new": "            self.peak * (x + x * x / (2.0 * h))"
+ },
+ {
+  "label": "the triangular antiderivative's right branch loses its head start",
+  "old": "            half + self.peak * (x - x * x / (2.0 * h))",
+  "new": "            self.peak * (x - x * x / (2.0 * h))"
+ },
+ {
+  "label": "the triangular antiderivative saturates at half its mass",
+  "old": "        } else if x >= h {\n            2.0 * half",
+  "new": "        } else if x >= h {\n            half"
+ },
+ {
+  "label": "the triangular mass is the area of the enclosing rectangle",
+  "old": "    fn mass(&self) -> f64 {\n        self.peak * self.half_width\n    }\n    fn peak(&self) -> f64 {\n        self.peak\n    }\n    fn fwhm(&self) -> f64 {\n        self.half_width",
+  "new": "    fn mass(&self) -> f64 {\n        2.0 * self.peak * self.half_width\n    }\n    fn peak(&self) -> f64 {\n        self.peak\n    }\n    fn fwhm(&self) -> f64 {\n        self.half_width"
+ },
+ {
+  "label": "the triangular width is its whole base",
+  "old": "    fn fwhm(&self) -> f64 {\n        self.half_width\n    }\n    fn sharpened(&self, factor: f64) -> Option<Box<dyn Surrogate>> {\n        ok_factor(factor).then(|| {\n            Box::new(Self { half_width: self.half_width / factor, peak: self.peak })",
+  "new": "    fn fwhm(&self) -> f64 {\n        2.0 * self.half_width\n    }\n    fn sharpened(&self, factor: f64) -> Option<Box<dyn Surrogate>> {\n        ok_factor(factor).then(|| {\n            Box::new(Self { half_width: self.half_width / factor, peak: self.peak })"
+ },
+ {
+  "label": "sharpening the triangle also raises its peak",
+  "old": "            Box::new(Self { half_width: self.half_width / factor, peak: self.peak })",
+  "new": "            Box::new(Self { half_width: self.half_width / factor, peak: self.peak * factor })"
+ },
+ {
+  "label": "the boxcar is twice as wide as its parameter",
+  "old": "        if x.abs() < 0.5 * self.width { 1.0 / self.width } else { 0.0 }",
+  "new": "        if x.abs() < self.width { 1.0 / self.width } else { 0.0 }"
+ },
+ {
+  "label": "the boxcar is not normalised by its width",
+  "old": "        if x.abs() < 0.5 * self.width { 1.0 / self.width } else { 0.0 }",
+  "new": "        if x.abs() < 0.5 * self.width { 1.0 } else { 0.0 }"
+ },
+ {
+  "label": "the boxcar's antiderivative is not clamped outside its support",
+  "old": "        ((x + 0.5 * self.width) / self.width).clamp(0.0, 1.0)",
+  "new": "        (x + 0.5 * self.width) / self.width"
+ },
+ {
+  "label": "the boxcar's antiderivative is not centred on the threshold",
+  "old": "        ((x + 0.5 * self.width) / self.width).clamp(0.0, 1.0)",
+  "new": "        (x / self.width).clamp(0.0, 1.0)"
+ },
+ {
+  "label": "the boxcar's peak is one",
+  "old": "    fn peak(&self) -> f64 {\n        1.0 / self.width\n    }\n    fn fwhm(&self) -> f64 {\n        self.width\n    }\n    fn sharpened(&self, factor: f64) -> Option<Box<dyn Surrogate>> {\n        ok_factor(factor)\n            .then(|| Box::new(Self { width: self.width / factor }) as Box<dyn Surrogate>)",
+  "new": "    fn peak(&self) -> f64 {\n        1.0\n    }\n    fn fwhm(&self) -> f64 {\n        self.width\n    }\n    fn sharpened(&self, factor: f64) -> Option<Box<dyn Surrogate>> {\n        ok_factor(factor)\n            .then(|| Box::new(Self { width: self.width / factor }) as Box<dyn Surrogate>)"
+ },
+ {
+  "label": "the straight-through estimator has no clipping window",
+  "old": "        if x.abs() <= self.half_width { 1.0 } else { 0.0 }",
+  "new": "        1.0"
+ },
+ {
+  "label": "the straight-through antiderivative is not shifted to start at zero",
+  "old": "        x.clamp(-self.half_width, self.half_width) + self.half_width",
+  "new": "        x.clamp(-self.half_width, self.half_width)"
+ },
+ {
+  "label": "the straight-through antiderivative is not clipped",
+  "old": "        x.clamp(-self.half_width, self.half_width) + self.half_width",
+  "new": "        x + self.half_width"
+ },
+ {
+  "label": "the straight-through mass is its half width",
+  "old": "    fn mass(&self) -> f64 {\n        2.0 * self.half_width\n    }\n    fn peak(&self) -> f64 {\n        1.0\n    }\n    fn fwhm(&self) -> f64 {\n        2.0 * self.half_width",
+  "new": "    fn mass(&self) -> f64 {\n        self.half_width\n    }\n    fn peak(&self) -> f64 {\n        1.0\n    }\n    fn fwhm(&self) -> f64 {\n        2.0 * self.half_width"
+ },
+ {
+  "label": "the Laplace surrogate loses its half",
+  "old": "        0.5 * self.alpha * (-self.alpha * x.abs()).exp()",
+  "new": "        self.alpha * (-self.alpha * x.abs()).exp()"
+ },
+ {
+  "label": "the Laplace surrogate is one-sided",
+  "old": "        0.5 * self.alpha * (-self.alpha * x.abs()).exp()",
+  "new": "        0.5 * self.alpha * (-self.alpha * x).exp()"
+ },
+ {
+  "label": "the Laplace antiderivative's two branches are swapped",
+  "old": "        if x < 0.0 {\n            0.5 * (self.alpha * x).exp()\n        } else {\n            1.0 - 0.5 * (-self.alpha * x).exp()\n        }",
+  "new": "        if x < 0.0 {\n            1.0 - 0.5 * (-self.alpha * x).exp()\n        } else {\n            0.5 * (self.alpha * x).exp()\n        }"
+ },
+ {
+  "label": "the Laplace antiderivative's left branch is not halved",
+  "old": "            0.5 * (self.alpha * x).exp()\n        } else {\n            1.0 - 0.5 * (-self.alpha * x).exp()",
+  "new": "            (self.alpha * x).exp()\n        } else {\n            1.0 - 0.5 * (-self.alpha * x).exp()"
+ },
+ {
+  "label": "the Laplace width drops its log two",
+  "old": "        2.0 * core::f64::consts::LN_2 / self.alpha",
+  "new": "        2.0 / self.alpha"
+ },
+ {
+  "label": "the SLAYER gain is not the reciprocal of the two rate constants",
+  "old": "        Scaled::new(Box::new(inner), 2.0 / (alpha_s * beta_s))",
+  "new": "        Scaled::new(Box::new(inner), 2.0 / alpha_s)"
+ },
+ {
+  "label": "the SLAYER form puts its two parameters the wrong way round",
+  "old": "        let inner = Self::new(beta_s)?;",
+  "new": "        let inner = Self::new(alpha_s)?;"
+ },
+ {
+  "label": "the Gaussian loses the half in its exponent",
+  "old": "        (-0.5 * z * z).exp() / (self.sigma * (2.0 * core::f64::consts::PI).sqrt())",
+  "new": "        (-z * z).exp() / (self.sigma * (2.0 * core::f64::consts::PI).sqrt())"
+ },
+ {
+  "label": "the Gaussian is not normalised by its width",
+  "old": "        (-0.5 * z * z).exp() / (self.sigma * (2.0 * core::f64::consts::PI).sqrt())",
+  "new": "        (-0.5 * z * z).exp() / (2.0 * core::f64::consts::PI).sqrt()"
+ },
+ {
+  "label": "the Gaussian's antiderivative is not scaled by sigma",
+  "old": "        normal_cdf(x / self.sigma)",
+  "new": "        normal_cdf(x)"
+ },
+ {
+  "label": "the Gaussian width uses log two rather than twice it",
+  "old": "        2.0 * self.sigma * (2.0 * core::f64::consts::LN_2).sqrt()",
+  "new": "        2.0 * self.sigma * core::f64::consts::LN_2.sqrt()"
+ },
+ {
+  "label": "sharpening the Gaussian widens it",
+  "old": "            .then(|| Box::new(Self { sigma: self.sigma / factor }) as Box<dyn Surrogate>)",
+  "new": "            .then(|| Box::new(Self { sigma: self.sigma * factor }) as Box<dyn Surrogate>)"
+ },
+ {
+  "label": "a scaled surrogate does not scale its antiderivative",
+  "old": "    fn antiderivative(&self, x: f64) -> f64 {\n        self.gain * self.inner.antiderivative(x)\n    }\n    fn mass(&self) -> f64 {\n        self.gain * self.inner.mass()",
+  "new": "    fn antiderivative(&self, x: f64) -> f64 {\n        self.inner.antiderivative(x)\n    }\n    fn mass(&self) -> f64 {\n        self.gain * self.inner.mass()"
+ },
+ {
+  "label": "a scaled surrogate does not scale its reported mass",
+  "old": "    fn mass(&self) -> f64 {\n        self.gain * self.inner.mass()\n    }\n    fn peak(&self) -> f64 {\n        self.gain * self.inner.peak()",
+  "new": "    fn mass(&self) -> f64 {\n        self.inner.mass()\n    }\n    fn peak(&self) -> f64 {\n        self.gain * self.inner.peak()"
+ },
+ {
+  "label": "a vertical scale is reported as changing the width",
+  "old": "        self.inner.fwhm()\n    }\n    fn sharpened",
+  "new": "        self.gain * self.inner.fwhm()\n    }\n    fn sharpened"
+ },
+ {
+  "label": "sharpening a scaled surrogate does not hold its mass",
+  "old": "        Some(Box::new(Self { inner, gain: self.gain * m0 / m1 }))",
+  "new": "        Some(Box::new(Self { inner, gain: self.gain }))"
+ },
+ {
+  "label": "sharpening a scaled surrogate accepts a zero inner mass",
+  "old": "        if !(m0.is_finite() && m1.is_finite() && m1 > 0.0) {\n            return None;\n        }",
+  "new": ""
+ },
+ {
+  "label": "unit-mass scaling uses the mass rather than its reciprocal",
+  "old": "        let m = inner.mass();\n        check_positive(\"inner mass\", m)?;\n        Self::new(inner, 1.0 / m)",
+  "new": "        let m = inner.mass();\n        check_positive(\"inner mass\", m)?;\n        Self::new(inner, m)"
+ },
+ {
+  "label": "the mass integral drops the tangent substitution's Jacobian",
+  "old": "        sum += s.backward(x) * (1.0 + x * x);",
+  "new": "        sum += s.backward(x);"
+ },
+ {
+  "label": "the mass integral uses the left endpoint rather than the midpoint",
+  "old": "        let t = -core::f64::consts::FRAC_PI_2 + (k as f64 + 0.5) * h;",
+  "new": "        let t = -core::f64::consts::FRAC_PI_2 + k as f64 * h;"
+ },
+ {
+  "label": "the panel count is not forced even, so the kink lands inside a panel",
+  "old": "    let n = (panels.clamp(2, MAX_PANELS) + 1) & !1;",
+  "new": "    let n = panels.clamp(2, MAX_PANELS);"
+ },
+ {
+  "label": "the panel count is clamped after the increment rather than before it",
+  "old": "    let n = (panels.clamp(2, MAX_PANELS) + 1) & !1;",
+  "new": "    let n = ((panels + 1) & !1).clamp(2, MAX_PANELS);"
+ },
+ {
+  "label": "the panel width is not the interval over the count",
+  "old": "    let h = core::f64::consts::PI / n as f64;",
+  "new": "    let h = 1.0 / n as f64;"
+ },
+ {
+  "label": "the numeric width returns a half width",
+  "old": "    Some(lo + hi)",
+  "new": "    Some(0.5 * (lo + hi))"
+ },
+ {
+  "label": "the numeric width brackets from the wrong side",
+  "old": "        if s.backward(mid) >= half {\n            lo = mid;\n        } else {\n            hi = mid;\n        }",
+  "new": "        if s.backward(mid) >= half {\n            hi = mid;\n        } else {\n            lo = mid;\n        }"
+ },
+ {
+  "label": "the numeric width never expands its bracket",
+  "old": "    while s.backward(hi) >= half {\n        hi *= 2.0;",
+  "new": "    while false {\n        hi *= 2.0;"
+ },
+ {
+  "label": "the numeric width compares against the peak rather than half of it",
+  "old": "    let half = 0.5 * peak;",
+  "new": "    let half = peak;"
+ },
+ {
+  "label": "the numeric width answers for a surrogate with no peak",
+  "old": "    if !(peak > 0.0) || !peak.is_finite() {\n        return None;\n    }",
+  "new": ""
+ },
+ {
+  "label": "the decay factors for the synapse and the membrane are swapped",
+  "old": "            alpha: (-self.dt / self.tau_syn).exp(),\n            beta: (-self.dt / self.tau_mem).exp(),",
+  "new": "            alpha: (-self.dt / self.tau_mem).exp(),\n            beta: (-self.dt / self.tau_syn).exp(),"
+ },
+ {
+  "label": "the decay factors grow rather than decay",
+  "old": "            kappa: (-self.dt / self.tau_out).exp(),",
+  "new": "            kappa: (self.dt / self.tau_out).exp(),"
+ },
+ {
+  "label": "the recurrent weight block overlaps the input block",
+  "old": "        self.n_rec * self.n_in + j * self.n_rec + k",
+  "new": "        j * self.n_rec + k"
+ },
+ {
+  "label": "the readout weight block overlaps the recurrent block",
+  "old": "        self.n_rec * self.n_in + self.n_rec * self.n_rec + c * self.n_rec + j",
+  "new": "        self.n_rec * self.n_in + c * self.n_rec + j"
+ },
+ {
+  "label": "the bias block overlaps the readout block",
+  "old": "        self.n_rec * self.n_in + self.n_rec * self.n_rec + self.n_out * self.n_rec + j",
+  "new": "        self.n_rec * self.n_in + self.n_rec * self.n_rec + j"
+ },
+ {
+  "label": "the weight draw is not scaled by the fan-in",
+  "old": "            (2.0 * rng.next_f64() - 1.0) * self.w_scale / (fan_in as f64).sqrt()",
+  "new": "            (2.0 * rng.next_f64() - 1.0) * self.w_scale"
+ },
+ {
+  "label": "the weight draw is one-sided",
+  "old": "            (2.0 * rng.next_f64() - 1.0) * self.w_scale / (fan_in as f64).sqrt()",
+  "new": "            rng.next_f64() * self.w_scale / (fan_in as f64).sqrt()"
+ },
+ {
+  "label": "an empty population is accepted",
+  "old": "            if n == 0 {\n                return Err(SurrogateError::NotPositive { what, value: 0.0 });\n            }",
+  "new": ""
+ },
+ {
+  "label": "the synaptic current does not leak",
+  "old": "                let i_now = self.alpha * i_prev + drive;",
+  "new": "                let i_now = i_prev + drive;"
+ },
+ {
+  "label": "the membrane does not leak",
+  "old": "                let u_now = self.beta * u_prev + i_now - self.theta * s_prev;",
+  "new": "                let u_now = u_prev + i_now - self.theta * s_prev;"
+ },
+ {
+  "label": "the reset is by addition rather than subtraction",
+  "old": "                let u_now = self.beta * u_prev + i_now - self.theta * s_prev;",
+  "new": "                let u_now = self.beta * u_prev + i_now + self.theta * s_prev;"
+ },
+ {
+  "label": "there is no reset at all",
+  "old": "                let u_now = self.beta * u_prev + i_now - self.theta * s_prev;",
+  "new": "                let u_now = self.beta * u_prev + i_now;"
+ },
+ {
+  "label": "the spike is emitted on the membrane rather than on its distance to threshold",
+  "old": "                    SpikeFn::Heaviside => sur.forward(u_now - self.theta),",
+  "new": "                    SpikeFn::Heaviside => sur.forward(u_now),"
+ },
+ {
+  "label": "the smooth forward pass uses the backward pass rather than the antiderivative",
+  "old": "                    SpikeFn::Smooth => sur.antiderivative(u_now - self.theta),",
+  "new": "                    SpikeFn::Smooth => sur.backward(u_now - self.theta),"
+ },
+ {
+  "label": "the readout does not leak",
+  "old": "                let mut acc = self.kappa * y_prev;",
+  "new": "                let mut acc = y_prev;"
+ },
+ {
+  "label": "the logits are the sum over time rather than the mean",
+  "old": "            tr.logits[c] = acc / t_steps as f64;",
+  "new": "            tr.logits[c] = acc;"
+ },
+ {
+  "label": "a diverged forward pass is not reported",
+  "old": "                if !u_now.is_finite() || !i_now.is_finite() {\n                    let value = if i_now.is_finite() { u_now } else { i_now };\n                    return Err(SurrogateError::Diverged { step: t, neuron: j, value });\n                }",
+  "new": ""
+ },
+ {
+  "label": "the readout gradient does not flow backwards through the leak",
+  "old": "                gy[c] = d_logits[c] * inv_t + self.kappa * gy[c];",
+  "new": "                gy[c] = d_logits[c] * inv_t;"
+ },
+ {
+  "label": "the readout gradient is not averaged over time",
+  "old": "                gy[c] = d_logits[c] * inv_t + self.kappa * gy[c];",
+  "new": "                gy[c] = d_logits[c] + self.kappa * gy[c];"
+ },
+ {
+  "label": "the spike gradient forgets the soft reset it caused",
+  "old": "                gs -= self.theta * gu_next[j];",
+  "new": "                gs += 0.0 * gu_next[j];"
+ },
+ {
+  "label": "the spike gradient's reset term has the wrong sign",
+  "old": "                gs -= self.theta * gu_next[j];",
+  "new": "                gs += self.theta * gu_next[j];"
+ },
+ {
+  "label": "the spike gradient forgets the recurrent synapses it drove",
+  "old": "                if self.recurrent {\n                    for m in 0..nr {\n                        gs += gi_next[m] * self.p[self.idx_v(m, j)];\n                    }\n                }",
+  "new": ""
+ },
+ {
+  "label": "the recurrent gradient transposes its weight matrix",
+  "old": "                        gs += gi_next[m] * self.p[self.idx_v(m, j)];",
+  "new": "                        gs += gi_next[m] * self.p[self.idx_v(j, m)];"
+ },
+ {
+  "label": "the surrogate never enters the backward pass",
+  "old": "                let dsdu = sur.backward(tr.u[t * nr + j] - self.theta);",
+  "new": "                let dsdu = 1.0;"
+ },
+ {
+  "label": "the surrogate is evaluated on the membrane rather than its distance to threshold",
+  "old": "                let dsdu = sur.backward(tr.u[t * nr + j] - self.theta);",
+  "new": "                let dsdu = sur.backward(tr.u[t * nr + j]);"
+ },
+ {
+  "label": "the membrane gradient does not flow backwards through its own leak",
+  "old": "                gu[j] = gs * dsdu + self.beta * gu_next[j];",
+  "new": "                gu[j] = gs * dsdu;"
+ },
+ {
+  "label": "the synaptic gradient does not pick up the membrane's",
+  "old": "                gi[j] = gu[j] + self.alpha * gi_next[j];",
+  "new": "                gi[j] = self.alpha * gi_next[j];"
+ },
+ {
+  "label": "the readout weight gradient uses the membrane rather than the spike",
+  "old": "                    g[idx] += gy[c] * tr.s[t * nr + j];",
+  "new": "                    g[idx] += gy[c] * tr.u[t * nr + j];"
+ },
+ {
+  "label": "the recurrent weight gradient reads this step's spikes rather than the previous step's",
+  "old": "                        g[idx] += gij * tr.s[(t - 1) * nr + k];",
+  "new": "                        g[idx] += gij * tr.s[t * nr + k];"
+ },
+ {
+  "label": "the bias gradient is the membrane gradient rather than the synaptic one",
+  "old": "                let idx = self.idx_b(j);\n                g[idx] += gij;",
+  "new": "                let idx = self.idx_b(j);\n                g[idx] += 0.0;"
+ },
+ {
+  "label": "the carried gradients are not handed to the previous step",
+  "old": "            gu_next.copy_from_slice(&gu);\n            gi_next.copy_from_slice(&gi);",
+  "new": ""
+ },
+ {
+  "label": "the log-sum-exp is not shifted by the maximum logit",
+  "old": "    let mut m = logits[0];\n    for &v in logits {\n        if v > m {\n            m = v;\n        }\n    }",
+  "new": "    let m = 0.0;"
+ },
+ {
+  "label": "the loss forgets to subtract the target's logit",
+  "old": "    let loss = log_z - logits[target];",
+  "new": "    let loss = log_z;"
+ },
+ {
+  "label": "the cross-entropy gradient subtracts one from every class",
+  "old": "        d.push(if c == target { p - 1.0 } else { p });",
+  "new": "        d.push(p - 1.0)"
+ },
+ {
+  "label": "the cross-entropy gradient is the softmax alone",
+  "old": "        d.push(if c == target { p - 1.0 } else { p });",
+  "new": "        d.push(p);"
+ },
+ {
+  "label": "a target outside the readout is accepted",
+  "old": "    if target >= logits.len() {\n        return Err(SurrogateError::TargetOutOfRange { target, n_out: logits.len() });\n    }",
+  "new": ""
+ },
+ {
+  "label": "Adam does not correct its first-moment bias",
+  "old": "            let mh = self.m[k] / bc1;",
+  "new": "            let mh = self.m[k];"
+ },
+ {
+  "label": "Adam does not correct its second-moment bias",
+  "old": "            let vh = self.v[k] / bc2;",
+  "new": "            let vh = self.v[k];"
+ },
+ {
+  "label": "Adam's second moment is not squared",
+  "old": "            self.v[k] = self.beta2 * self.v[k] + (1.0 - self.beta2) * g[k] * g[k];",
+  "new": "            self.v[k] = self.beta2 * self.v[k] + (1.0 - self.beta2) * g[k];"
+ },
+ {
+  "label": "Adam ascends rather than descends",
+  "old": "            p[k] -= self.lr * mh / (vh.sqrt() + self.eps);",
+  "new": "            p[k] += self.lr * mh / (vh.sqrt() + self.eps);"
+ },
+ {
+  "label": "Adam divides by the second moment rather than its root",
+  "old": "            p[k] -= self.lr * mh / (vh.sqrt() + self.eps);",
+  "new": "            p[k] -= self.lr * mh / (vh + self.eps);"
+ },
+ {
+  "label": "Adam absorbs a non-finite gradient",
+  "old": "        for (k, &v) in g.iter().enumerate() {\n            if !v.is_finite() {\n                return Err(SurrogateError::NonFiniteInput { index: k, value: v });\n            }\n        }\n        self.t += 1;",
+  "new": "        self.t += 1;"
+ },
+ {
+  "label": "Adam never advances its step counter",
+  "old": "        self.t += 1;\n        let bc1",
+  "new": "        let bc1"
+ },
+ {
+  "label": "the delayed-XOR label is the OR of its two cues",
+  "old": "                out.push((x, usize::from(a != b)));",
+  "new": "                out.push((x, usize::from(a || b)));"
+ },
+ {
+  "label": "the second cue window starts without the gap",
+  "old": "                    let start = self.cue + self.gap;",
+  "new": "                    let start = self.cue;"
+ },
+ {
+  "label": "the two cue windows are the same length as the whole pattern",
+  "old": "                    for t in start..start + self.cue {",
+  "new": "                    for t in start..self.t_steps {"
+ },
+ {
+  "label": "a zero-length cue is accepted",
+  "old": "        if self.cue == 0 || span.is_none_or(|v| v > self.t_steps) {",
+  "new": "        if span.is_none_or(|v| v > self.t_steps) {"
+ },
+ {
+  "label": "the window arithmetic can overflow",
+  "old": "        let span = self.cue.checked_mul(2).and_then(|v| v.checked_add(self.gap));",
+  "new": "        let span = Some(self.cue * 2 + self.gap);"
+ },
+ {
+  "label": "the mean rate is not divided by the population",
+  "old": "        Some(self.spike_count() / (self.t_steps as f64 * self.n_rec as f64 * dt))",
+  "new": "        Some(self.spike_count() / (self.t_steps as f64 * dt))"
+ },
+ {
+  "label": "the mean rate answers for a zero time step",
+  "old": "        if !(dt > 0.0) || !dt.is_finite() || self.t_steps == 0 || self.n_rec == 0 {\n            return None;\n        }",
+  "new": ""
+ },
+ {
+  "label": "unit-mass scaling accepts a surrogate with no mass",
+  "old": "        let m = inner.mass();\n        check_positive(\"inner mass\", m)?;\n        Self::new(inner, 1.0 / m)",
+  "new": "        let m = inner.mass();\n        Self::new(inner, 1.0 / m)"
+ }
+]

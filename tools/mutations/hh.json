@@ -1,0 +1,511 @@
+[
+ {
+  "label": "the exprel series branch drops its quadratic term",
+  "old": "        1.0 + 0.5 * x + x * x / 12.0",
+  "new": "        1.0 + 0.5 * x",
+  "equivalent": "the series branch runs only for |x| < 1e-8, where x^2/12 <= 8.4e-18 against a result of about 1, whose half-ulp is 1.1e-16. The term cannot move the rounded double by more than one bit and no quantity in this module is read to that precision. The LINEAR term is a different matter and is pinned by the identity f(x) - f(-x) = x and the slope check in the_removable_singularities_equal_their_limits_and_the_branches_join, which a previous audit added for exactly that reason."
+ },
+ {
+  "label": "the exprel series branch has the wrong quadratic coefficient",
+  "old": "        1.0 + 0.5 * x + x * x / 12.0",
+  "new": "        1.0 + 0.5 * x + x * x / 6.0",
+  "equivalent": "as above: x^2/6 <= 1.7e-17 for every x the branch accepts, still under the half-ulp of 1.1e-16."
+ },
+ {
+  "label": "the exprel general branch is never reached",
+  "old": "    if x.abs() < 1e-8 {",
+  "new": "    if x.abs() < 1e8 {"
+ },
+ {
+  "label": "the exprel series branch is never reached",
+  "old": "    if x.abs() < 1e-8 {",
+  "new": "    if false {"
+ },
+ {
+  "label": "the exprel general branch uses exp rather than exp_m1",
+  "old": "        x / -((-x).exp_m1())",
+  "new": "        x / (1.0 - (-x).exp())"
+ },
+ {
+  "label": "the gate legality guard has no slack at all",
+  "old": "    (-GATE_SLACK..=1.0 + GATE_SLACK).contains(&x)",
+  "new": "    (0.0..=1.0).contains(&x)"
+ },
+ {
+  "label": "the gate legality guard is eight orders of magnitude looser",
+  "old": "const GATE_SLACK: f64 = 1e-9;",
+  "new": "const GATE_SLACK: f64 = 1e-1;"
+ },
+ {
+  "label": "a NaN gate is reported legal",
+  "old": "    (-GATE_SLACK..=1.0 + GATE_SLACK).contains(&x)",
+  "new": "    !(x < -GATE_SLACK || x > 1.0 + GATE_SLACK)"
+ },
+ {
+  "label": "the detector reports a level rather than a crossing",
+  "old": "    if *armed && prev < level && now >= level {",
+  "new": "    if *armed && now >= level {"
+ },
+ {
+  "label": "the detector never re-arms",
+  "old": "    if !*armed && now <= reset {\n        *armed = true;\n    }",
+  "new": ""
+ },
+ {
+  "label": "the detector re-arms at the detection level rather than below it",
+  "old": "    if !*armed && now <= reset {",
+  "new": "    if !*armed && now <= level {"
+ },
+ {
+  "label": "the detector reports a downward crossing too",
+  "old": "    if *armed && prev < level && now >= level {",
+  "new": "    if *armed && (prev < level) != (now >= level) {"
+ },
+ {
+  "label": "the bisection returns a bracket endpoint for a non-finite cell",
+  "old": "    if !flo.is_finite() || !fhi.is_finite() || !opposite(flo, fhi) {\n        return None;\n    }",
+  "new": "    if !opposite(flo, fhi) {\n        return None;\n    }"
+ },
+ {
+  "label": "the bisection accepts a bracket with no sign change",
+  "old": "    if !flo.is_finite() || !fhi.is_finite() || !opposite(flo, fhi) {",
+  "new": "    if !flo.is_finite() || !fhi.is_finite() || false {"
+ },
+ {
+  "label": "the bisection keeps the wrong half of the bracket",
+  "old": "        if opposite(flo, fmid) {\n            hi = mid;\n        } else {\n            lo = mid;\n            flo = fmid;\n        }",
+  "new": "        if opposite(flo, fmid) {\n            lo = mid;\n            flo = fmid;\n        } else {\n            hi = mid;\n        }"
+ },
+ {
+  "label": "the bisection forgets to carry the value at the moving endpoint",
+  "old": "            lo = mid;\n            flo = fmid;",
+  "new": "            lo = mid;",
+  "equivalent": "`flo` is used only in a SIGN test, and the sign of f(lo) is invariant along a correct bisection: the branch that moves `lo` is precisely the branch in which f(mid) has the same sign as f(lo). So the stale value and the carried one take every branch identically. The assignment is kept because it makes that invariant local rather than something a reader has to reconstruct."
+ },
+ {
+  "label": "the resting bracket is narrowed above the true rest",
+  "old": "    let (mut lo, mut hi) = (-90.0_f64, -40.0_f64);",
+  "new": "    let (mut lo, mut hi) = (-60.0_f64, -40.0_f64);"
+ },
+ {
+  "label": "the steady-state gate is the closing rate over the sum",
+  "old": "            m: self.alpha_m / (self.alpha_m + self.beta_m),",
+  "new": "            m: self.beta_m / (self.alpha_m + self.beta_m),"
+ },
+ {
+  "label": "the h steady state uses the m rates",
+  "old": "            h: self.alpha_h / (self.alpha_h + self.beta_h),",
+  "new": "            h: self.alpha_m / (self.alpha_m + self.beta_m),"
+ },
+ {
+  "label": "the gate time constant is the sum of the rates rather than its reciprocal",
+  "old": "            tau_m: 1.0 / (self.alpha_m + self.beta_m),",
+  "new": "            tau_m: self.alpha_m + self.beta_m,"
+ },
+ {
+  "label": "the n time constant uses only the opening rate",
+  "old": "            tau_n: 1.0 / (self.alpha_n + self.beta_n),",
+  "new": "            tau_n: 1.0 / self.alpha_n,"
+ },
+ {
+  "label": "alpha_m's half-offset is transcribed as 45 mV",
+  "old": "        alpha_m: exprel_recip((v_mv + 40.0) / 10.0),",
+  "new": "        alpha_m: exprel_recip((v_mv + 45.0) / 10.0),"
+ },
+ {
+  "label": "alpha_m's voltage scale is transcribed as 1 mV",
+  "old": "        alpha_m: exprel_recip((v_mv + 40.0) / 10.0),",
+  "new": "        alpha_m: exprel_recip(v_mv + 40.0),"
+ },
+ {
+  "label": "beta_m's amplitude is transcribed as 0.4",
+  "old": "        beta_m: 4.0 * (-(v_mv + 65.0) / 18.0).exp(),",
+  "new": "        beta_m: 0.4 * (-(v_mv + 65.0) / 18.0).exp(),"
+ },
+ {
+  "label": "beta_m rises with depolarisation",
+  "old": "        beta_m: 4.0 * (-(v_mv + 65.0) / 18.0).exp(),",
+  "new": "        beta_m: 4.0 * ((v_mv + 65.0) / 18.0).exp(),"
+ },
+ {
+  "label": "alpha_h's amplitude is transcribed as 0.7",
+  "old": "        alpha_h: 0.07 * (-(v_mv + 65.0) / 20.0).exp(),",
+  "new": "        alpha_h: 0.7 * (-(v_mv + 65.0) / 20.0).exp(),"
+ },
+ {
+  "label": "alpha_h's exponential scale is transcribed as 18 mV",
+  "old": "        alpha_h: 0.07 * (-(v_mv + 65.0) / 20.0).exp(),",
+  "new": "        alpha_h: 0.07 * (-(v_mv + 65.0) / 18.0).exp(),"
+ },
+ {
+  "label": "beta_h's sigmoid is inverted",
+  "old": "        beta_h: 1.0 / (1.0 + (-(v_mv + 35.0) / 10.0).exp()),",
+  "new": "        beta_h: 1.0 / (1.0 + ((v_mv + 35.0) / 10.0).exp()),"
+ },
+ {
+  "label": "beta_h's half-point is transcribed as -30 mV",
+  "old": "        beta_h: 1.0 / (1.0 + (-(v_mv + 35.0) / 10.0).exp()),",
+  "new": "        beta_h: 1.0 / (1.0 + (-(v_mv + 30.0) / 10.0).exp()),"
+ },
+ {
+  "label": "alpha_n loses its factor of a tenth",
+  "old": "        alpha_n: 0.1 * exprel_recip((v_mv + 55.0) / 10.0),",
+  "new": "        alpha_n: exprel_recip((v_mv + 55.0) / 10.0),"
+ },
+ {
+  "label": "alpha_n's half-offset is transcribed as 50 mV",
+  "old": "        alpha_n: 0.1 * exprel_recip((v_mv + 55.0) / 10.0),",
+  "new": "        alpha_n: 0.1 * exprel_recip((v_mv + 50.0) / 10.0),"
+ },
+ {
+  "label": "beta_n's amplitude is transcribed as 0.0125",
+  "old": "        beta_n: 0.125 * (-(v_mv + 65.0) / 80.0).exp(),",
+  "new": "        beta_n: 0.0125 * (-(v_mv + 65.0) / 80.0).exp(),"
+ },
+ {
+  "label": "beta_n's exponential scale is transcribed as 8 mV",
+  "old": "        beta_n: 0.125 * (-(v_mv + 65.0) / 80.0).exp(),",
+  "new": "        beta_n: 0.125 * (-(v_mv + 65.0) / 8.0).exp(),"
+ },
+ {
+  "label": "the paper's alpha_m loses the sign flip that makes it the paper's convention",
+  "old": "        alpha_m: exprel_recip(-(v + 25.0) / 10.0),",
+  "new": "        alpha_m: exprel_recip((v + 25.0) / 10.0),"
+ },
+ {
+  "label": "the paper's alpha_m offset is transcribed as the modern 40",
+  "old": "        alpha_m: exprel_recip(-(v + 25.0) / 10.0),",
+  "new": "        alpha_m: exprel_recip(-(v + 40.0) / 10.0),"
+ },
+ {
+  "label": "the paper's beta_m decays with its own V",
+  "old": "        beta_m: 4.0 * (v / 18.0).exp(),",
+  "new": "        beta_m: 4.0 * (-v / 18.0).exp(),"
+ },
+ {
+  "label": "the paper's alpha_h decays with its own V",
+  "old": "        alpha_h: 0.07 * (v / 20.0).exp(),",
+  "new": "        alpha_h: 0.07 * (-v / 20.0).exp(),"
+ },
+ {
+  "label": "the paper's beta_h offset is transcribed as the modern 35",
+  "old": "        beta_h: 1.0 / (((v + 30.0) / 10.0).exp() + 1.0),",
+  "new": "        beta_h: 1.0 / (((v + 35.0) / 10.0).exp() + 1.0),"
+ },
+ {
+  "label": "the paper's alpha_n offset is transcribed as the modern 55",
+  "old": "        alpha_n: 0.1 * exprel_recip(-(v + 10.0) / 10.0),",
+  "new": "        alpha_n: 0.1 * exprel_recip(-(v + 55.0) / 10.0),"
+ },
+ {
+  "label": "the paper's beta_n decays with its own V",
+  "old": "        beta_n: 0.125 * (v / 80.0).exp(),",
+  "new": "        beta_n: 0.125 * (-v / 80.0).exp(),"
+ },
+ {
+  "label": "the sodium conductance is m squared rather than m cubed",
+  "old": "        let g_na = self.g_na * self.m * self.m * self.m * self.h;",
+  "new": "        let g_na = self.g_na * self.m * self.m * self.h;"
+ },
+ {
+  "label": "the sodium conductance forgets its inactivation gate",
+  "old": "        let g_na = self.g_na * self.m * self.m * self.m * self.h;",
+  "new": "        let g_na = self.g_na * self.m * self.m * self.m;"
+ },
+ {
+  "label": "the potassium conductance is n cubed rather than n to the fourth",
+  "old": "        let g_k = self.g_k * self.n * self.n * self.n * self.n;\n        Conductances { g_na, g_k, g_leak: self.g_leak, total: g_na + g_k + self.g_leak }\n    }\n\n    /// The instantaneous ionic currents at the current state",
+  "new": "        let g_k = self.g_k * self.n * self.n * self.n;\n        Conductances { g_na, g_k, g_leak: self.g_leak, total: g_na + g_k + self.g_leak }\n    }\n\n    /// The instantaneous ionic currents at the current state"
+ },
+ {
+  "label": "the total conductance forgets the leak",
+  "old": "        Conductances { g_na, g_k, g_leak: self.g_leak, total: g_na + g_k + self.g_leak }\n    }\n\n    /// The instantaneous ionic currents at the current state",
+  "new": "        Conductances { g_na, g_k, g_leak: self.g_leak, total: g_na + g_k }\n    }\n\n    /// The instantaneous ionic currents at the current state"
+ },
+ {
+  "label": "the sodium current's driving force is measured from the potassium reversal",
+  "old": "        let i_na = c.g_na * (self.v - self.e_na);\n        let i_k = c.g_k * (self.v - self.e_k);\n        let i_leak = c.g_leak * (self.v - self.e_leak);\n        Currents { i_na, i_k, i_leak, i_ion: i_na + i_k + i_leak }\n    }\n\n    /// The instantaneous membrane time constant",
+  "new": "        let i_na = c.g_na * (self.v - self.e_k);\n        let i_k = c.g_k * (self.v - self.e_k);\n        let i_leak = c.g_leak * (self.v - self.e_leak);\n        Currents { i_na, i_k, i_leak, i_ion: i_na + i_k + i_leak }\n    }\n\n    /// The instantaneous membrane time constant"
+ },
+ {
+  "label": "the membrane time constant is conductance over capacitance",
+  "old": "        self.c_m / self.conductances().total",
+  "new": "        self.conductances().total / self.c_m"
+ },
+ {
+  "label": "the ionic current at an arbitrary state drops the leak",
+  "old": "            + self.g_leak * (v - self.e_leak)\n    }",
+  "new": "    }"
+ },
+ {
+  "label": "the voltage derivative is not divided by the capacitance",
+  "old": "            (i_ext - self.i_ion_at(v, g)) / self.c_m,",
+  "new": "            i_ext - self.i_ion_at(v, g),"
+ },
+ {
+  "label": "the injected current and the ionic current have the same sign",
+  "old": "            (i_ext - self.i_ion_at(v, g)) / self.c_m,",
+  "new": "            (i_ext + self.i_ion_at(v, g)) / self.c_m,"
+ },
+ {
+  "label": "the gate derivative drops the closing term",
+  "old": "            r.alpha_m * (1.0 - g.m) - r.beta_m * g.m,",
+  "new": "            r.alpha_m * (1.0 - g.m),"
+ },
+ {
+  "label": "the h derivative uses the n rates",
+  "old": "            r.alpha_h * (1.0 - g.h) - r.beta_h * g.h,",
+  "new": "            r.alpha_n * (1.0 - g.h) - r.beta_n * g.h,"
+ },
+ {
+  "label": "the exponential gate update relaxes toward zero rather than toward m_inf",
+  "old": "                self.m = inf.m + (self.m - inf.m) * (-h_ms * (r.alpha_m + r.beta_m)).exp();",
+  "new": "                self.m = self.m * (-h_ms * (r.alpha_m + r.beta_m)).exp();"
+ },
+ {
+  "label": "the exponential gate update relaxes at the opening rate alone",
+  "old": "                self.n = inf.n + (self.n - inf.n) * (-h_ms * (r.alpha_n + r.beta_n)).exp();",
+  "new": "                self.n = inf.n + (self.n - inf.n) * (-h_ms * r.alpha_n).exp();"
+ },
+ {
+  "label": "the voltage's fixed point forgets the injected current",
+  "old": "                    + i_ext)\n                    / c.total;",
+  "new": "                    + 0.0 * i_ext)\n                    / c.total;"
+ },
+ {
+  "label": "the voltage's fixed point is not a conductance-weighted mean",
+  "old": "                let v_inf = (c.g_na * self.e_na\n                    + c.g_k * self.e_k\n                    + c.g_leak * self.e_leak\n                    + i_ext)\n                    / c.total;",
+  "new": "                let v_inf = (self.e_na + self.e_k + self.e_leak + i_ext) / 3.0;"
+ },
+ {
+  "label": "the voltage relaxes at the leak conductance rather than the total",
+  "old": "                self.v = v_inf + (self.v - v_inf) * (-h_ms * c.total / self.c_m).exp();\n            }\n            Integrator::ForwardEuler =>",
+  "new": "                self.v = v_inf + (self.v - v_inf) * (-h_ms * self.g_leak / self.c_m).exp();\n            }\n            Integrator::ForwardEuler =>"
+ },
+ {
+  "label": "the Runge-Kutta weights are uniform",
+  "old": "                    y[j] += h_ms / 6.0 * (k1[j] + 2.0 * k2[j] + 2.0 * k3[j] + k4[j]);",
+  "new": "                    y[j] += h_ms / 4.0 * (k1[j] + k2[j] + k3[j] + k4[j]);"
+ },
+ {
+  "label": "the Runge-Kutta stages are all taken at the same point",
+  "old": "                let y1 = shift(y0, k1, 0.5 * h_ms);",
+  "new": "                let y1 = y0;"
+ },
+ {
+  "label": "the third Runge-Kutta stage takes a full step",
+  "old": "                let y2 = shift(y0, k2, 0.5 * h_ms);",
+  "new": "                let y2 = shift(y0, k2, h_ms);"
+ },
+ {
+  "label": "the Runge-Kutta stage shift ignores its scale",
+  "old": "    [y[0] + s * k[0], y[1] + s * k[1], y[2] + s * k[2], y[3] + s * k[3]]",
+  "new": "    [y[0] + k[0], y[1] + k[1], y[2] + k[2], y[3] + k[3]]"
+ },
+ {
+  "label": "advance does not check its state afterwards",
+  "old": "        if self.state_is_legal() { Ok(fired) } else { Err(HhError::Diverged) }",
+  "new": "        Ok(fired)"
+ },
+ {
+  "label": "advance accepts a step of zero",
+  "old": "        if dt_ms <= 0.0 {\n            return Err(HhError::NonPositiveStep);\n        }\n        if !i_ua_cm2.is_finite() {\n            return Err(HhError::NonFiniteCurrent);\n        }\n        let n = self.substeps.max(1);\n        let h = dt_ms / f64::from(n);\n        let mut fired = false;\n        for _ in 0..n {\n            fired |= self.sub_step(h, i_ua_cm2);\n        }\n        if self.state_is_legal()",
+  "new": "        if false {\n            return Err(HhError::NonPositiveStep);\n        }\n        if !i_ua_cm2.is_finite() {\n            return Err(HhError::NonFiniteCurrent);\n        }\n        let n = self.substeps.max(1);\n        let h = dt_ms / f64::from(n);\n        let mut fired = false;\n        for _ in 0..n {\n            fired |= self.sub_step(h, i_ua_cm2);\n        }\n        if self.state_is_legal()"
+ },
+ {
+  "label": "a substep count of zero is allowed to skip the step entirely",
+  "old": "        let n = self.substeps.max(1);\n        let h = dt_ms / f64::from(n);\n        let mut fired = false;\n        for _ in 0..n {\n            fired |= self.sub_step(h, i_ua_cm2);\n        }\n        if self.state_is_legal() { Ok(fired) } else { Err(HhError::Diverged) }",
+  "new": "        let n = self.substeps;\n        let h = dt_ms / f64::from(n.max(1));\n        let mut fired = false;\n        for _ in 0..n {\n            fired |= self.sub_step(h, i_ua_cm2);\n        }\n        if self.state_is_legal() { Ok(fired) } else { Err(HhError::Diverged) }"
+ },
+ {
+  "label": "the state legality check ignores the gates",
+  "old": "        self.v.is_finite()\n            && gate_is_legal(self.m)\n            && gate_is_legal(self.h)\n            && gate_is_legal(self.n)",
+  "new": "        self.v.is_finite()"
+ },
+ {
+  "label": "an illegal step is written rather than rolled back",
+  "old": "        if self.state_is_legal() {\n            fired\n        } else {\n            *self = before;\n            false\n        }",
+  "new": "        let _ = before;\n        self.state_is_legal() && fired"
+ },
+ {
+  "label": "the trait step accepts a non-positive dt",
+  "old": "        if !dt.is_finite() || dt <= 0.0 || !i.is_finite() {\n            return false;\n        }\n        let before = *self;\n        let dt_ms = dt * 1e3;",
+  "new": "        if !dt.is_finite() || !i.is_finite() {\n            return false;\n        }\n        let before = *self;\n        let dt_ms = dt * 1e3;"
+ },
+ {
+  "label": "the trait step does not convert seconds to milliseconds",
+  "old": "        let dt_ms = dt * 1e3;",
+  "new": "        let dt_ms = dt;"
+ },
+ {
+  "label": "the trait step does not divide the current by the membrane area",
+  "old": "        let dt_ms = dt * 1e3;\n        let i_density = i * 1e6 / self.area_cm2;",
+  "new": "        let dt_ms = dt * 1e3;\n        let i_density = i * 1e6;"
+ },
+ {
+  "label": "the reduced model's trait step does not divide the current by the membrane area",
+  "old": "        let h = dt * 1e3 / f64::from(n);\n        let i_density = i * 1e6 / self.area_cm2;",
+  "new": "        let h = dt * 1e3 / f64::from(n);\n        let i_density = i * 1e6;"
+ },
+ {
+  "label": "the potential is reported in millivolts",
+  "old": "    /// Membrane potential in **volts**, converted from the model's millivolts.\n    fn potential(&self) -> f64 {\n        self.v * 1e-3",
+  "new": "    /// Membrane potential in **volts**, converted from the model's millivolts.\n    fn potential(&self) -> f64 {\n        self.v"
+ },
+ {
+  "label": "bump does not convert volts to millivolts",
+  "old": "    /// `dv` in volts, added to the membrane in millivolts.\n    fn bump(&mut self, dv: f64) {\n        self.v += dv * 1e3;",
+  "new": "    /// `dv` in volts, added to the membrane in millivolts.\n    fn bump(&mut self, dv: f64) {\n        self.v += dv;"
+ },
+ {
+  "label": "the model claims to be exact over gaps",
+  "old": "    const EXACT_OVER_GAPS: bool = false;\n\n    /// `dt` in **seconds**, `i` in **amperes**: the SI boundary.",
+  "new": "    const EXACT_OVER_GAPS: bool = true;\n\n    /// `dt` in **seconds**, `i` in **amperes**: the SI boundary."
+ },
+ {
+  "label": "a diverged probe is reported as not firing",
+  "old": "            fired |= c.advance(dt_ms, i_ua_cm2)?;\n        }\n        Ok(fired)",
+  "new": "            fired |= c.advance(dt_ms, i_ua_cm2).unwrap_or(false);\n        }\n        Ok(fired)"
+ },
+ {
+  "label": "fires_checked stops at the first spike rather than running the window out",
+  "old": "            fired |= c.advance(dt_ms, i_ua_cm2)?;\n        }\n        Ok(fired)",
+  "new": "            if c.advance(dt_ms, i_ua_cm2)? {\n                return Ok(true);\n            }\n        }\n        Ok(fired)"
+ },
+ {
+  "label": "the firing rate divides by the number of spikes rather than the intervals",
+  "old": "        Some(1000.0 * f64::from(count - 1) / span_ms)",
+  "new": "        Some(1000.0 * f64::from(count) / span_ms)"
+ },
+ {
+  "label": "the firing rate divides by the window rather than the inter-spike span",
+  "old": "        let span_ms = last - first?;",
+  "new": "        let span_ms = last;"
+ },
+ {
+  "label": "a single spike is reported as a firing rate",
+  "old": "        if count < 2 {\n            return None;\n        }",
+  "new": "        if count < 1 {\n            return None;\n        }",
+  "equivalent": "count == 1 implies first == last, so span_ms is 0.0 and the `span_ms <= 0.0` guard two lines below returns None anyway. The `count < 2` test is the one that NAMES the condition; the span guard is what enforces it, and it is there for the separate case of two spikes reported in the same step. the_firing_rate_is_per_interval_and_does_not_depend_on_the_window_length asserts the single-spike case returns None, whichever of the two guards answers it."
+ },
+ {
+  "label": "the settling period is not discarded before counting",
+  "old": "        let settle = (settle_ms / dt_ms).ceil().max(0.0) as u64;\n        for _ in 0..settle {\n            c.advance(dt_ms, i_ua_cm2).ok()?;\n        }\n        let steps = (window_ms / dt_ms).ceil().max(0.0) as u64;\n        let mut first = None;",
+  "new": "        let steps = (window_ms / dt_ms).ceil().max(0.0) as u64;\n        let mut first = None;"
+ },
+ {
+  "label": "the repetitive-onset scan is replaced by a plain bisection over the whole range",
+  "old": "        let mut lo = 0.0_f64;\n        let mut hi = None;\n        let mut i = coarse;\n        while i <= i_max {\n            if fires_twice(i) {\n                hi = Some(i);\n                break;\n            }\n            lo = i;\n            i += coarse;\n        }\n        let mut hi = hi?;",
+  "new": "        let mut lo = 0.0_f64;\n        let mut hi = i_max;"
+ },
+ {
+  "label": "the rheobase bisection keeps the wrong half",
+  "old": "            if self.fires_checked(mid, dt_ms, probe_ms).ok()? {\n                hi = mid;\n            } else {\n                lo = mid;\n            }",
+  "new": "            if self.fires_checked(mid, dt_ms, probe_ms).ok()? {\n                lo = mid;\n            } else {\n                hi = mid;\n            }"
+ },
+ {
+  "label": "the repetitive onset asks for one spike rather than two",
+  "old": "            |i: f64| self.firing_rate_hz(i, dt_ms, settle_ms, window_ms).is_some();",
+  "new": "            |i: f64| self.fires(i, dt_ms, settle_ms + window_ms);"
+ },
+ {
+  "label": "the voltage range reports the swing of the settling transient too",
+  "old": "        let settle = (settle_ms / dt_ms).ceil().max(0.0) as u64;\n        for _ in 0..settle {\n            c.advance(dt_ms, i_ua_cm2).ok()?;\n        }\n        let steps = (window_ms / dt_ms).ceil().max(0.0) as u64;\n        if steps == 0 {",
+  "new": "        let steps = ((settle_ms + window_ms) / dt_ms).ceil().max(0.0) as u64;\n        if steps == 0 {"
+ },
+ {
+  "label": "the voltage range reports the extremes the wrong way round",
+  "old": "            lo = lo.min(c.v);\n            hi = hi.max(c.v);",
+  "new": "            lo = lo.max(c.v);\n            hi = hi.min(c.v);"
+ },
+ {
+  "label": "the spike peak is timestamped one step early",
+  "old": "            let t = (k + 1) as f64 * dt_ms;",
+  "new": "            let t = k as f64 * dt_ms;"
+ },
+ {
+  "label": "the spike width is measured from the start of the run",
+  "old": "        let width_ms = down? - upstroke_time_ms;",
+  "new": "        let width_ms = down?;"
+ },
+ {
+  "label": "the after-hyperpolarisation is taken over the whole run",
+  "old": "            if down.is_some() && c.v < ahp {",
+  "new": "            if c.v < ahp {"
+ },
+ {
+  "label": "the peak is tracked after the downstroke as well",
+  "old": "            if up.is_some() && down.is_none() {\n                if c.v > peak {",
+  "new": "            if up.is_some() {\n                if c.v > peak {"
+ },
+ {
+  "label": "the reduced model's h is not clamped into the unit interval",
+  "old": "        (self.h_intercept - self.h_slope * self.n).clamp(0.0, 1.0)",
+  "new": "        self.h_intercept - self.h_slope * self.n"
+ },
+ {
+  "label": "the reduced model's h rises with n rather than falling",
+  "old": "        (self.h_intercept - self.h_slope * self.n).clamp(0.0, 1.0)",
+  "new": "        (self.h_intercept + self.h_slope * self.n).clamp(0.0, 1.0)"
+ },
+ {
+  "label": "the reduced model's h-from-n intercept is transcribed as 0.98",
+  "old": "            h_intercept: 0.89,\n            h_slope: 1.1,",
+  "new": "            h_intercept: 0.98,\n            h_slope: 1.1,"
+ },
+ {
+  "label": "the reduced model's m is not instantaneous",
+  "old": "    pub fn m(&self) -> f64 {\n        steady_state_gates(self.v).m\n    }",
+  "new": "    pub fn m(&self) -> f64 {\n        steady_state_gates(-65.0).m\n    }"
+ },
+ {
+  "label": "the reduced model's sodium conductance uses the full model's h",
+  "old": "        let g_na = self.g_na * m * m * m * self.h();",
+  "new": "        let g_na = self.g_na * m * m * m * steady_state_gates(self.v).h;"
+ },
+ {
+  "label": "the reduced model's resting balance forgets the affine h",
+  "old": "            let h = (self.h_intercept - self.h_slope * g.n).clamp(0.0, 1.0);",
+  "new": "            let h = g.h;"
+ },
+ {
+  "label": "the reduced model's settled cell keeps its old n",
+  "old": "        Some(Self { v, n: steady_state_gates(v).n, armed: true, ..*self })",
+  "new": "        Some(Self { v, armed: true, ..*self })"
+ },
+ {
+  "label": "the reduced model's n relaxes toward zero rather than toward n_inf",
+  "old": "        self.n = n_inf + (self.n - n_inf) * (-h_ms * (r.alpha_n + r.beta_n)).exp();",
+  "new": "        self.n = self.n * (-h_ms * (r.alpha_n + r.beta_n)).exp();"
+ },
+ {
+  "label": "the reduced model's voltage relaxes at the leak conductance alone",
+  "old": "        self.v = v_inf + (self.v - v_inf) * (-h_ms * c.total / self.c_m).exp();\n        detect_crossing",
+  "new": "        self.v = v_inf + (self.v - v_inf) * (-h_ms * self.g_leak / self.c_m).exp();\n        detect_crossing"
+ },
+ {
+  "label": "the reduced model does not guard its gate after a step",
+  "old": "        if self.v.is_finite() && gate_is_legal(self.n) {\n            Ok(fired)\n        } else {\n            Err(HhError::Diverged)\n        }",
+  "new": "        Ok(fired)"
+ },
+ {
+  "label": "the reduced model's gate guard is exact where the full model's has slack",
+  "old": "        if self.v.is_finite() && gate_is_legal(self.n) {\n            Ok(fired)",
+  "new": "        if self.v.is_finite() && (0.0..=1.0).contains(&self.n) {\n            Ok(fired)"
+ },
+ {
+  "label": "the reduced model's trait step writes an illegal state rather than rolling it back",
+  "old": "        if self.v.is_finite() && gate_is_legal(self.n) {\n            fired\n        } else {\n            *self = before;\n            false\n        }",
+  "new": "        let _ = before;\n        fired"
+ },
+ {
+  "label": "the voltage half-step is taken with the OLD gates",
+  "old": "                // The NEW gates, and that is the documented half of the ordering: `conductances`\n                // reads the fields that were just written three lines above.\n                let c = self.conductances();",
+  "new": "                let c = HodgkinHuxley { m: inf.m, h: inf.h, n: inf.n, ..*self }.conductances();\n                let c = c;"
+ },
+ {
+  "label": "the sign test is a product that underflows to zero",
+  "old": "    let opposite = |a: f64, b: f64| (a <= 0.0 && b >= 0.0) || (a >= 0.0 && b <= 0.0);",
+  "new": "    let opposite = |a: f64, b: f64| a * b <= 0.0;"
+ }
+]
