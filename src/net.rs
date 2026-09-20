@@ -290,6 +290,75 @@ mod tests {
         assert!((net.fan_out_mean() - 1.0).abs() < 1e-15);
     }
 
+    /// Six of this module's twenty-six recorded mutations survived its first audit, and they were
+    /// all in the same place: the edges of the index. A row that is not the FIRST row, a neuron
+    /// index that is exactly the neuron count, an empty network, and the error path of the bulk
+    /// connector. Each of those is here.
+    #[test]
+    fn rows_after_the_first_hold_only_their_own_synapses() {
+        let mut b = NetBuilder::new(4);
+        b.connect(0, 1, 0.1, 0).unwrap();
+        b.connect(0, 2, 0.2, 1).unwrap();
+        b.connect(2, 3, 0.3, 2).unwrap();
+        b.connect(3, 0, 0.4, 3).unwrap();
+        let net = b.build();
+        // Neuron 0's row is the one a bug that always starts at zero would still get right.
+        assert_eq!(net.out_of(0).collect::<Vec<_>>(), vec![(1, 0.1, 0), (2, 0.2, 1)]);
+        // These are the rows that catch it.
+        assert_eq!(net.out_of(2).collect::<Vec<_>>(), vec![(3, 0.3, 2)]);
+        assert_eq!(net.out_of(3).collect::<Vec<_>>(), vec![(0, 0.4, 3)]);
+        assert_eq!(net.out_of(1).collect::<Vec<_>>(), vec![]);
+        assert_eq!(net.out_degree(0), 2);
+        assert_eq!(net.out_degree(1), 0);
+        assert_eq!(net.out_degree(2), 1);
+        // An index at or past the neuron count has no synapses and does not reach past the end of
+        // the offset array, which is one entry longer than the network.
+        assert_eq!(net.out_degree(4), 0);
+        assert_eq!(net.out_degree(99), 0);
+        assert_eq!(net.out_of(4).collect::<Vec<_>>(), vec![]);
+        assert_eq!(net.out_of(99).collect::<Vec<_>>(), vec![]);
+    }
+
+    #[test]
+    fn the_fan_out_mean_is_synapses_per_neuron_and_an_empty_network_has_no_fan_out() {
+        let mut b = NetBuilder::new(4);
+        // Six synapses over four neurons: 1.5. The two counts are deliberately different, so
+        // dividing the wrong way round gives 0.667 rather than the same answer.
+        for (pre, post) in [(0u32, 1u32), (0, 2), (0, 3), (1, 2), (2, 3), (3, 1)] {
+            b.connect(pre, post, 0.1, 0).unwrap();
+        }
+        let net = b.build();
+        assert_eq!(net.n_syn, 6);
+        assert!((net.fan_out_mean() - 1.5).abs() < 1e-15, "{}", net.fan_out_mean());
+        assert_eq!(net.in_degrees(), vec![0, 2, 2, 2]);
+        // An empty network divides nothing by nothing; it reports zero rather than a NaN, which
+        // would compare false against every threshold it was ever checked against.
+        let empty = NetBuilder::new(0).build();
+        let fan = empty.fan_out_mean();
+        assert_eq!(fan, 0.0);
+        assert!(fan.is_finite(), "an empty network's fan-out was {fan}");
+        assert_eq!(NetBuilder::new(3).build().fan_out_mean(), 0.0, "neurons but no synapses");
+    }
+
+    #[test]
+    fn an_index_equal_to_the_neuron_count_is_past_the_end_and_bulk_connection_says_so() {
+        // Indices are zero-based, so a network of three neurons has no neuron 3.
+        let mut b = NetBuilder::new(3);
+        assert_eq!(b.connect(3, 0, 0.1, 0).unwrap_err(), NetError::OutOfRange { index: 3, n: 3 });
+        assert_eq!(b.connect(0, 3, 0.1, 0).unwrap_err(), NetError::OutOfRange { index: 3, n: 3 });
+        assert!(b.connect(2, 2, 0.1, 0).is_ok(), "neuron 2 is the last one and does exist");
+        // `connect_all` must not swallow what `connect` refuses — the whole call fails, and it
+        // fails naming the offending index.
+        let mut b = NetBuilder::new(3);
+        assert_eq!(b.connect_all(&[0, 1], &[0, 5], 0.1, 0).unwrap_err(), NetError::OutOfRange { index: 5, n: 3 });
+        assert_eq!(b.connect_all(&[7], &[0], 0.1, 0).unwrap_err(), NetError::OutOfRange { index: 7, n: 3 });
+        assert!(b.connect_all(&[0, 1], &[1, 2], 0.1, 0).is_ok());
+        assert_eq!(b.build().n_syn, 5, "the four good pairs, plus the 2 -> 2 above");
+        // And a non-finite weight is refused through the bulk path too.
+        let mut b = NetBuilder::new(3);
+        assert_eq!(b.connect_all(&[0], &[1], f64::NAN, 0).unwrap_err(), NetError::NonFiniteWeight { pre: 0, post: 1 });
+    }
+
     #[test]
     fn an_index_past_the_end_has_no_synapses_rather_than_a_panic() {
         let net = NetBuilder::new(2).build();

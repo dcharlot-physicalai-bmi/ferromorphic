@@ -1,0 +1,132 @@
+[
+ {
+  "label": "out_of reads the wrong row of the CSR index",
+  "old": "            (self.offset[pre], self.offset[pre + 1])",
+  "new": "            (self.offset[pre + 1], self.offset[pre])"
+ },
+ {
+  "label": "out_of starts every row at the beginning",
+  "old": "            (self.offset[pre], self.offset[pre + 1])",
+  "new": "            (0, self.offset[pre + 1])"
+ },
+ {
+  "label": "out_of includes one synapse too many",
+  "old": "        (a..b).map(move |k| (self.post[k], self.w[k], self.delay[k]))",
+  "new": "        (a..=b.min(self.post.len().saturating_sub(1))).map(move |k| (self.post[k], self.w[k], self.delay[k]))"
+ },
+ {
+  "label": "out_of pairs each target with another synapse's weight",
+  "old": "        (a..b).map(move |k| (self.post[k], self.w[k], self.delay[k]))",
+  "new": "        (a..b).map(move |k| (self.post[k], self.w[(k + 1) % self.w.len().max(1)], self.delay[k]))"
+ },
+ {
+  "label": "out_of panics past the end instead of reporting nothing",
+  "old": "        let (a, b) = if pre + 1 < self.offset.len() {\n            (self.offset[pre], self.offset[pre + 1])\n        } else {\n            (0, 0)\n        };",
+  "new": "        let (a, b) = (self.offset[pre], self.offset[pre + 1]);"
+ },
+ {
+  "label": "the out-degree is the row start, not its length",
+  "old": "        if pre + 1 < self.offset.len() { self.offset[pre + 1] - self.offset[pre] } else { 0 }",
+  "new": "        if pre + 1 < self.offset.len() { self.offset[pre] } else { 0 }"
+ },
+ {
+  "label": "the out-degree counts past the end",
+  "old": "        if pre + 1 < self.offset.len() { self.offset[pre + 1] - self.offset[pre] } else { 0 }",
+  "new": "        if pre < self.offset.len() { self.offset[pre + 1] - self.offset[pre] } else { 0 }"
+ },
+ {
+  "label": "in-degrees count the presynaptic side",
+  "old": "        for &p in &self.post {\n            d[p as usize] += 1;\n        }",
+  "new": "        for (i, _) in self.post.iter().enumerate() {\n            d[i % self.n] += 1;\n        }"
+ },
+ {
+  "label": "in-degrees count each synapse twice",
+  "old": "            d[p as usize] += 1;",
+  "new": "            d[p as usize] += 2;"
+ },
+ {
+  "label": "the fan-out mean divides by the synapse count",
+  "old": "        if self.n == 0 { 0.0 } else { self.n_syn as f64 / self.n as f64 }",
+  "new": "        if self.n == 0 { 0.0 } else { self.n as f64 / self.n_syn as f64 }"
+ },
+ {
+  "label": "the fan-out mean of an empty network divides by zero",
+  "old": "        if self.n == 0 { 0.0 } else { self.n_syn as f64 / self.n as f64 }",
+  "new": "        self.n_syn as f64 / self.n as f64"
+ },
+ {
+  "label": "the fan-out mean halves the synapse count, as an undirected edge list would",
+  "old": "        if self.n == 0 { 0.0 } else { self.n_syn as f64 / self.n as f64 }",
+  "new": "        if self.n == 0 { 0.0 } else { self.n_syn as f64 / 2.0 / self.n as f64 }"
+ },
+ {
+  "label": "an index equal to the neuron count is accepted",
+  "old": "            if idx as usize >= self.n {",
+  "new": "            if idx as usize > self.n {"
+ },
+ {
+  "label": "only the presynaptic index is range-checked",
+  "old": "        for idx in [pre, post] {",
+  "new": "        for idx in [pre] {"
+ },
+ {
+  "label": "a non-finite weight is accepted",
+  "old": "        if !weight.is_finite() {\n            return Err(NetError::NonFiniteWeight { pre, post });\n        }",
+  "new": ""
+ },
+ {
+  "label": "the non-finite check uses a comparison, which NaN passes",
+  "old": "        if !weight.is_finite() {",
+  "new": "        if weight.is_infinite() {"
+ },
+ {
+  "label": "connect_all drops the inner loop's errors",
+  "old": "                self.connect(a, b, weight, delay)?;",
+  "new": "                let _ = self.connect(a, b, weight, delay);"
+ },
+ {
+  "label": "connect_all connects only the first of each set",
+  "old": "        for &a in pre {\n            for &b in post {",
+  "new": "        for &a in pre.iter().take(1) {\n            for &b in post.iter().take(1) {"
+ },
+ {
+  "label": "build does not sort into CSR order",
+  "old": "        self.edges.sort_unstable_by_key(|&(a, b, _, _)| (a, b));\n        let n_syn = self.edges.len();",
+  "new": "        let n_syn = self.edges.len();"
+ },
+ {
+  "label": "build sorts by target rather than by source",
+  "old": "        self.edges.sort_unstable_by_key(|&(a, b, _, _)| (a, b));",
+  "new": "        self.edges.sort_unstable_by_key(|&(a, b, _, _)| (b, a));"
+ },
+ {
+  "label": "build counts each synapse against its target",
+  "old": "        for &(a, _, _, _) in &self.edges {\n            offset[a as usize + 1] += 1;\n        }",
+  "new": "        for &(_, b, _, _) in &self.edges {\n            offset[b as usize + 1] += 1;\n        }"
+ },
+ {
+  "label": "the row offsets are never accumulated",
+  "old": "        for i in 0..self.n {\n            offset[i + 1] += offset[i];\n        }",
+  "new": ""
+ },
+ {
+  "label": "the row offsets accumulate the wrong way",
+  "old": "            offset[i + 1] += offset[i];",
+  "new": "            offset[i + 1] += offset[i] * 0;"
+ },
+ {
+  "label": "the synapse count is halved, as an undirected edge list would be",
+  "old": "        let n_syn = self.edges.len();",
+  "new": "        let n_syn = self.edges.len() / 2;"
+ },
+ {
+  "label": "the largest delay is not tracked",
+  "old": "            max_delay = max_delay.max(d);",
+  "new": "            max_delay = max_delay.max(0);"
+ },
+ {
+  "label": "the largest delay is the smallest",
+  "old": "            max_delay = max_delay.max(d);",
+  "new": "            max_delay = max_delay.min(d);"
+ }
+]

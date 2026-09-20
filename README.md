@@ -9,7 +9,7 @@ hardware constraint models, analog device non-idealities, NIR, event-camera deco
 metrics, teaching tasks — and a joules ledger that charges for the memory traffic a synaptic
 operation needs.
 
-**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 71 modules, 1,818 tests.**
+**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 71 modules, 1,822 tests.**
 
 Run it in a browser without installing anything:
 **[energy.physicalai-bmi.org/neuromorphic](https://energy.physicalai-bmi.org/neuromorphic)** — the
@@ -260,7 +260,7 @@ Every neuron model here has a test that runs it against an analytic solution.
 - **A sub-threshold current returns `None`, not a large number.** "Fires rarely" and "does not fire"
   are different statements and a rate-coded readout cannot recover the difference later.
 
-1,818 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
+1,822 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
 `#![forbid(unsafe_code)]`, and `cargo build --target wasm32-unknown-unknown` compiles the library
 unchanged. Three of the `examples/` are verification gates that exit non-zero when a closed form
 disagrees with the simulator.
@@ -311,12 +311,12 @@ auditor in 0.5.0 and 0.6.0, the ten of the third wave by hand in 0.8.0 (156 muta
 survivors, every one now caught — see below), and everything since mutated as it was written.
 
 **What of that is RE-RUNNABLE, which is a different question and the one that matters.** The
-repository holds 1,071 recorded mutations across 41 of the 71 modules. The other 30 were audited
+repository holds 1,118 recorded mutations across 43 of the 71 modules. The other 28 were audited
 by the adversarial auditor of 0.5.0 and 0.6.0, whose edits were never written down — so that audit
 cannot be re-run against today's code, and its verdict is a historical claim about the code as it
 stood then, not a property of the code as it stands now. Counting those modules under "audited by
 mutation" without saying this would be exactly the confusion the harness exists to prevent, and
-the thirty are named below.
+the twenty-eight are named below.
 
 Every one of the 999 mutations recorded before this release was re-run in full against 0.18.0:
 **985 caught, 14 equivalent by their stated arguments, none survived, none stale.** That is the
@@ -723,13 +723,34 @@ every test asked whether the stream was well behaved, which a different generato
 The expected values were computed by a separate implementation of PCG32 XSH-RR written from the
 algorithm rather than from this code.
 
+`net` and `crossover` were the next two lists written, and both came back the same way the first
+three did: six of `net`'s twenty-six mutations survived and two of `crossover`'s twenty-one. `net`
+could read every row of its sparse index from the start of the array, report an out-degree that
+ran past the end, divide its fan-out the wrong way round, return a `NaN` for an empty network, and
+accept a neuron index exactly equal to the neuron count — none of which its tests could see,
+because every one of them used the FIRST row of a network whose neuron count and synapse count
+happened to differ from nothing. `crossover` could not see the thing it exists for: nothing
+asserted the evidence GRADE on a published threshold, so a table could quietly upgrade an analysis
+to a measurement.
+
+One more thing happened while that work was going on, and it belongs here because it is a finding
+about method rather than about code. A subagent asked to READ a module and return a mutation list
+as data instead ran the mutations against the live working tree, and when it was stopped it left
+one behind. The mutant it left was the worst one available: `Evidence::Simulated` to
+`Evidence::Measured` on the Loihi price table — the single line that keeps this crate from saying
+a pre-silicon simulation was a measurement. Three tests failed instantly and the tree was
+restored, which is the system working; but the reason `tools/mutate.py` writes an in-flight marker
+and restores on its next start, and the reason `tools/slim.py` exists to give it a COPY to work
+on, is exactly this. A mutation harness that edits the tree you are about to commit is one
+interruption away from shipping the bug it was hunting.
+
 ### Re-running the audit
 
 The harness and every mutation THIS repository has recorded are in it: `tools/mutate.py` and one
-list per module in `tools/mutations/` — 41 modules of the 71. The 30 without a list are `attention`, `bayes`, `cochlea`, `coding`, `compress`, `continual`, `control`, `convert`, `crossover`, `device`, `eprop`, `exponential`, `fusion`, `hardware`, `hh`, `ledger`, `mapping`, `meanfield`, `metrics`, `net`, `nir`, `olfaction`, `plasticity`, `reservoir`, `spikeconv`, `surrogate`, `synapse`, `tasks`, `topology`, `vision`:
+list per module in `tools/mutations/` — 43 modules of the 71. The 28 without a list are `attention`, `bayes`, `cochlea`, `coding`, `compress`, `continual`, `control`, `convert`, `device`, `eprop`, `exponential`, `fusion`, `hardware`, `hh`, `ledger`, `mapping`, `meanfield`, `metrics`, `nir`, `olfaction`, `plasticity`, `reservoir`, `spikeconv`, `surrogate`, `synapse`, `tasks`, `topology`, `vision`:
 audited in 0.5.0 and 0.6.0 by an adversarial auditor that did not record its edits. Writing their
 lists is outstanding work, and until it is done the claim anyone can check by running the harness
-is about those 41. `python3 tools/mutate.py nef` applies each recorded edit to
+is about those 43. `python3 tools/mutate.py nef` applies each recorded edit to
 `src/nef.rs` in turn, runs that module's tests, restores the file and prints `caught`, `SURVIVED`,
 or — for the sixteen mutations no test could distinguish, each with its stated reason —
 `equivalent`.

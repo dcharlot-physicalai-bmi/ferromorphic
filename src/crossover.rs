@@ -251,6 +251,34 @@ mod tests {
 
     /// A busy network is refuted by all three, and the report says so for each rather than picking
     /// the one it passes.
+    /// The table is the module's whole claim, and two things about it were unguarded: that every
+    /// entry is the constant it names, and that not one of them claims to have been MEASURED.
+    /// That second grade is the point of grading at all — every threshold here is an analysis of
+    /// somebody's silicon, not a reading from it, and a module that quietly upgraded one to
+    /// `Measured` would be making the exact claim this crate refuses to make.
+    #[test]
+    fn every_published_threshold_is_derived_evidence_and_appears_once() {
+        use crate::ledger::Evidence;
+        assert_eq!(THRESHOLDS.len(), 3);
+        for (name, c) in THRESHOLDS {
+            assert_eq!(c.evidence, Evidence::Derived, "{name} claims to be measured");
+            assert!(!c.source.is_empty(), "{name} cites nothing");
+            assert!(c.min_spikes_per_synapse <= c.max_spikes_per_synapse, "{name} has its band inverted");
+        }
+        // Three distinct names, each paired with the constant it names.
+        let names: Vec<&str> = THRESHOLDS.iter().map(|(n, _)| *n).collect();
+        let mut sorted = names.clone();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(sorted.len(), 3, "the table repeats a name: {names:?}");
+        assert_eq!(THRESHOLDS[0], ("davidson-furber-2021", DAVIDSON_FURBER_2021));
+        assert_eq!(THRESHOLDS[1], ("dampfhoffer-2023", DAMPFHOFFER_2023));
+        assert_eq!(THRESHOLDS[2], ("yan-2024", YAN_2024));
+        // And the three are genuinely different thresholds, so a table that listed one of them
+        // twice would be reporting a workload against two fewer opinions than it says it does.
+        assert!(DAVIDSON_FURBER_2021 != DAMPFHOFFER_2023 && DAMPFHOFFER_2023 != YAN_2024 && DAVIDSON_FURBER_2021 != YAN_2024);
+    }
+
     #[test]
     fn a_dense_firing_workload_is_refuted_by_every_threshold() {
         let led = Ledger { syn_ops: 50_000_000, ..Ledger::default() };

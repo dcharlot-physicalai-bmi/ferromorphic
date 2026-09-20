@@ -1,0 +1,107 @@
+[
+ {
+  "label": "below the band is called marginal",
+  "old": "        if spikes_per_synapse < self.min_spikes_per_synapse {\n            Verdict::Plausible",
+  "new": "        if spikes_per_synapse < self.min_spikes_per_synapse {\n            Verdict::Marginal"
+ },
+ {
+  "label": "the verdicts either side of the band are swapped",
+  "old": "            Verdict::Plausible\n        } else if spikes_per_synapse <= self.max_spikes_per_synapse {\n            Verdict::Marginal\n        } else {\n            Verdict::Refuted",
+  "new": "            Verdict::Refuted\n        } else if spikes_per_synapse <= self.max_spikes_per_synapse {\n            Verdict::Marginal\n        } else {\n            Verdict::Plausible"
+ },
+ {
+  "label": "the band has no upper end, so nothing is ever refuted",
+  "old": "        } else if spikes_per_synapse <= self.max_spikes_per_synapse {",
+  "new": "        } else if spikes_per_synapse <= f64::INFINITY {"
+ },
+ {
+  "label": "a workload exactly at the top of the band is refuted",
+  "old": "        } else if spikes_per_synapse <= self.max_spikes_per_synapse {",
+  "new": "        } else if spikes_per_synapse < self.max_spikes_per_synapse {"
+ },
+ {
+  "label": "a workload exactly at the bottom of the band is called plausible",
+  "old": "        if spikes_per_synapse < self.min_spikes_per_synapse {",
+  "new": "        if spikes_per_synapse <= self.min_spikes_per_synapse {"
+ },
+ {
+  "label": "the band is read against the wrong end",
+  "old": "        if spikes_per_synapse < self.min_spikes_per_synapse {",
+  "new": "        if spikes_per_synapse < self.max_spikes_per_synapse {"
+ },
+ {
+  "label": "spikes per synapse forgets the inference count",
+  "old": "        Some(self.syn_ops as f64 / (n_syn as f64 * inferences as f64))",
+  "new": "        Some(self.syn_ops as f64 / n_syn as f64)"
+ },
+ {
+  "label": "spikes per synapse forgets the synapse count",
+  "old": "        Some(self.syn_ops as f64 / (n_syn as f64 * inferences as f64))",
+  "new": "        Some(self.syn_ops as f64 / inferences as f64)"
+ },
+ {
+  "label": "spikes per synapse multiplies where it should divide",
+  "old": "        Some(self.syn_ops as f64 / (n_syn as f64 * inferences as f64))",
+  "new": "        Some(self.syn_ops as f64 * n_syn as f64 / inferences as f64)"
+ },
+ {
+  "label": "spikes per synapse counts weight fetches, not deliveries",
+  "old": "        Some(self.syn_ops as f64 / (n_syn as f64 * inferences as f64))",
+  "new": "        Some(self.syn_fetches as f64 / (n_syn as f64 * inferences as f64))"
+ },
+ {
+  "label": "a network with no synapses is given a flattering zero",
+  "old": "        if n_syn == 0 || inferences == 0 {\n            return None;\n        }",
+  "new": ""
+ },
+ {
+  "label": "a run with no inferences is given an answer",
+  "old": "        if n_syn == 0 || inferences == 0 {",
+  "new": "        if n_syn == 0 {"
+ },
+ {
+  "label": "only one threshold is reported",
+  "old": "        Some(THRESHOLDS.iter().map(|(name, c)| (*name, c.verdict(sps))).collect())",
+  "new": "        Some(THRESHOLDS.iter().take(1).map(|(name, c)| (*name, c.verdict(sps))).collect())"
+ },
+ {
+  "label": "every threshold is reported against a workload figure of zero",
+  "old": "        Some(THRESHOLDS.iter().map(|(name, c)| (*name, c.verdict(sps))).collect())",
+  "new": "        Some(THRESHOLDS.iter().map(|(name, c)| (*name, c.verdict(0.0))).collect())"
+ },
+ {
+  "label": "Davidson and Furber's threshold is not a point",
+  "old": "    max_spikes_per_synapse: 1.72,\n    min_spikes_per_synapse: 1.72,",
+  "new": "    max_spikes_per_synapse: 1.72,\n    min_spikes_per_synapse: 0.5,"
+ },
+ {
+  "label": "Davidson and Furber's threshold is transcribed wrongly",
+  "old": "    max_spikes_per_synapse: 1.72,\n    min_spikes_per_synapse: 1.72,",
+  "new": "    max_spikes_per_synapse: 2.72,\n    min_spikes_per_synapse: 2.72,"
+ },
+ {
+  "label": "Dampfhoffer's band is transcribed as a point",
+  "old": "    max_spikes_per_synapse: 1.38,\n    min_spikes_per_synapse: 0.15,",
+  "new": "    max_spikes_per_synapse: 1.38,\n    min_spikes_per_synapse: 1.38,"
+ },
+ {
+  "label": "Yan's band is transcribed above two spikes per synapse",
+  "old": "    max_spikes_per_synapse: 0.35,\n    min_spikes_per_synapse: 0.06,",
+  "new": "    max_spikes_per_synapse: 2.35,\n    min_spikes_per_synapse: 0.06,"
+ },
+ {
+  "label": "a band is recorded with its ends the wrong way round",
+  "old": "    max_spikes_per_synapse: 0.35,\n    min_spikes_per_synapse: 0.06,",
+  "new": "    max_spikes_per_synapse: 0.06,\n    min_spikes_per_synapse: 0.35,"
+ },
+ {
+  "label": "a threshold's evidence is upgraded from derived to measured",
+  "old": "             it is this review's reading of their figure rather than a number they print.\",\n    evidence: Evidence::Derived,",
+  "new": "             it is this review's reading of their figure rather than a number they print.\",\n    evidence: Evidence::Measured,"
+ },
+ {
+  "label": "one threshold is listed twice in the published table",
+  "old": "pub const THRESHOLDS: [(&str, Crossover); 3] = [\n    (\"davidson-furber-2021\", DAVIDSON_FURBER_2021),",
+  "new": "pub const THRESHOLDS: [(&str, Crossover); 3] = [\n    (\"dampfhoffer-2023\", DAMPFHOFFER_2023),"
+ }
+]
