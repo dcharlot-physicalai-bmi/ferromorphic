@@ -1,0 +1,122 @@
+[
+ {
+  "label": "RLS gain is 1/(1 - rPr)",
+  "old": "let c = 1.0 / (1.0 + r.iter().zip(&k).map(|(r, k)| r * k).sum::<f64>());",
+  "new": "let c = 1.0 / (1.0 - r.iter().zip(&k).map(|(r, k)| r * k).sum::<f64>());"
+ },
+ {
+  "label": "RLS gain ignores rPr",
+  "old": "let c = 1.0 / (1.0 + r.iter().zip(&k).map(|(r, k)| r * k).sum::<f64>());",
+  "new": "let c = 1.0;"
+ },
+ {
+  "label": "P is not updated",
+  "old": "                self.p[i * n + j] -= scaled * k[j];",
+  "new": "                self.p[i * n + j] -= 0.0 * scaled * k[j];"
+ },
+ {
+  "label": "P is updated with the wrong sign",
+  "old": "                self.p[i * n + j] -= scaled * k[j];",
+  "new": "                self.p[i * n + j] += scaled * k[j];"
+ },
+ {
+  "label": "the weights move with the error",
+  "old": "            self.w[i] -= error_before * scaled;",
+  "new": "            self.w[i] += error_before * scaled;"
+ },
+ {
+  "label": "the error is the target minus the output",
+  "old": "let error_before = self.output(r) - target;",
+  "new": "let error_before = target - self.output(r);"
+ },
+ {
+  "label": "the reported error after is the error before",
+  "old": "Ok(RlsStep { error_before, error_after: error_before * c })",
+  "new": "Ok(RlsStep { error_before, error_after: error_before })"
+ },
+ {
+  "label": "P starts at alpha, not 1/alpha",
+  "old": "            p[i * n + i] = 1.0 / alpha;",
+  "new": "            p[i * n + i] = alpha;"
+ },
+ {
+  "label": "RLS does not check the input's length",
+  "old": "        all_finite(\"r\", r, n)?;\n        if !target.is_finite() {",
+  "new": "        if !target.is_finite() {"
+ },
+ {
+  "label": "RLS accepts a non-finite target",
+  "old": "        if !target.is_finite() {\n            return Err(ForceError::NonFinite { what: \"target\" });\n        }\n        let k",
+  "new": "        let k"
+ },
+ {
+  "label": "all_finite does not look at the values",
+  "old": "if v.iter().all(|x| x.is_finite()) { Ok(()) } else { Err(ForceError::NonFinite { what }) }",
+  "new": "Ok(())"
+ },
+ {
+  "label": "the network step ignores the leak",
+  "old": "self.x[i] += a * (-self.x[i] + self.g * recurrent + self.feedback[i] * self.z);",
+  "new": "self.x[i] += a * (self.g * recurrent + self.feedback[i] * self.z);"
+ },
+ {
+  "label": "the network step ignores the gain",
+  "old": "self.x[i] += a * (-self.x[i] + self.g * recurrent + self.feedback[i] * self.z);",
+  "new": "self.x[i] += a * (-self.x[i] + recurrent + self.feedback[i] * self.z);"
+ },
+ {
+  "label": "the network step ignores the feedback",
+  "old": "self.x[i] += a * (-self.x[i] + self.g * recurrent + self.feedback[i] * self.z);",
+  "new": "self.x[i] += a * (-self.x[i] + self.g * recurrent);"
+ },
+ {
+  "label": "the step uses dt times tau",
+  "old": "        let a = dt / self.tau;",
+  "new": "        let a = dt * self.tau;"
+ },
+ {
+  "label": "the rates are not refreshed",
+  "old": "            self.r[i] = self.x[i].tanh();\n        }\n        self.z",
+  "new": "            self.r[i] = self.r[i].tanh().atanh();\n        }\n        self.z"
+ },
+ {
+  "label": "the rates are linear",
+  "old": "            self.r[i] = self.x[i].tanh();\n        }\n        self.z",
+  "new": "            self.r[i] = self.x[i];\n        }\n        self.z"
+ },
+ {
+  "label": "training feeds back the uncorrected readout",
+  "old": "        let step = self.readout.update(&self.r, target)?;\n        self.z = self.readout.output(&self.r);",
+  "new": "        let step = self.readout.update(&self.r, target)?;"
+ },
+ {
+  "label": "training does not update the readout",
+  "old": "        let step = self.readout.update(&self.r, target)?;\n        self.z = self.readout.output(&self.r);",
+  "new": "        let step = self.readout.clone().update(&self.r, target)?;\n        self.z = self.readout.output(&self.r);"
+ },
+ {
+  "label": "an overflowed state is returned",
+  "old": "        if !self.x.iter().all(|x| x.is_finite()) {\n            return Err(ForceError::NonFinite { what: \"x\" });\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "J has unit variance, not 1/n",
+  "old": "let scale = 1.0 / (n as f64).sqrt();\n        let j =",
+  "new": "let scale = 1.0;\n        let j ="
+ },
+ {
+  "label": "a negative gain is accepted",
+  "old": "        if !(g >= 0.0) || !g.is_finite() {",
+  "new": "        if !g.is_finite() {"
+ },
+ {
+  "label": "units accepts zero",
+  "old": "    if n == 0 || n > MAX_UNITS {",
+  "new": "    if n > MAX_UNITS {"
+ },
+ {
+  "label": "units accepts more than the limit",
+  "old": "    if n == 0 || n > MAX_UNITS {",
+  "new": "    if n == 0 {"
+ }
+]

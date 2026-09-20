@@ -121,8 +121,8 @@
  },
  {
   "label": "spiking loop pulse not a rate",
-  "old": "*p += self.decoders.d[i * dim + j] / dt;",
-  "new": "*p += self.decoders.d[i * dim + j];"
+  "old": "*p += f64::from(count) * self.decoders.d[i * dim + j] / dt;",
+  "new": "*p += f64::from(count) * self.decoders.d[i * dim + j];"
  },
  {
   "label": "spiking loop feeds back the readout",
@@ -136,7 +136,7 @@
  },
  {
   "label": "spiking loop does not count spikes",
-  "old": "            self.spikes += 1;\n",
+  "old": "            self.spikes += u64::from(count);\n",
   "new": "            self.spikes += 0;\n"
  },
  {

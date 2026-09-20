@@ -57,9 +57,28 @@ pub trait Neuron: Clone {
     /// plausible raster plot and an unreproducible result.
     const EXACT_OVER_GAPS: bool;
 
+    /// Whether [`Neuron::step_counted`] resolves spike times INSIDE the step, so that the number
+    /// of spikes it reports does not depend on how time was cut into steps.
+    ///
+    /// True for [`Lif`] and [`AdaptiveLif`], whose threshold crossings have closed forms. False by
+    /// default, and [`crate::sim::Sim::with_exact_timing`] refuses a model that lacks it: a
+    /// simulation that says it keeps exact spike counts has to be running a model that can.
+    const EXACT_TIMING: bool = false;
+
     /// Advance by `dt` seconds under input current `i` amperes. Returns `true` if the neuron
     /// spiked during this step.
     fn step(&mut self, dt: f64, i: f64) -> bool;
+
+    /// Advance by `dt` seconds under input current `i` amperes and return HOW MANY spikes fell in
+    /// the step. `None` if the model refuses the step (a non-finite current, say), in which case
+    /// its state has not moved.
+    ///
+    /// The default is [`Neuron::step`] counted: at most one spike, recorded at the end of the
+    /// step. A model with [`Neuron::EXACT_TIMING`] overrides it with its exact solver — more than
+    /// one spike can fall in a step, and none is rounded up to the next.
+    fn step_counted(&mut self, dt: f64, i: f64) -> Option<u32> {
+        Some(u32::from(self.step(dt, i)))
+    }
 
     /// Apply an instantaneous displacement of `dv` volts to the membrane.
     ///
@@ -254,6 +273,11 @@ impl Neuron for Lif {
     // Exponential Euler is the exact solution over any interval of constant input, and exponentials
     // compose across concatenated intervals, so a gap may be jumped in one step.
     const EXACT_OVER_GAPS: bool = true;
+    const EXACT_TIMING: bool = true;
+
+    fn step_counted(&mut self, dt: f64, i: f64) -> Option<u32> {
+        self.step_exact(dt, i)
+    }
 
     fn step(&mut self, dt: f64, i: f64) -> bool {
         if self.refractory > 0.0 {
@@ -543,6 +567,11 @@ impl AdaptiveLif {
 impl Neuron for AdaptiveLif {
     // Both state variables are exponential relaxations, and both compose across a gap.
     const EXACT_OVER_GAPS: bool = true;
+    const EXACT_TIMING: bool = true;
+
+    fn step_counted(&mut self, dt: f64, i: f64) -> Option<u32> {
+        self.step_exact(dt, i)
+    }
 
     fn step(&mut self, dt: f64, i: f64) -> bool {
         // The threshold decays whether or not the membrane is refractory. Adaptation is a slow
@@ -699,6 +728,54 @@ impl Neuron for Izhikevich {
     fn reset(&mut self) {
         self.v = self.c;
         self.u = self.b * self.c;
+    }
+}
+
+#[cfg(test)]
+mod counted {
+    use super::{AdaptiveLif, Izhikevich, Lif, Neuron};
+
+    /// [`Neuron::step_counted`] is the hook [`crate::sim`] runs on; the mutations that break it
+    /// live in this file, so the test that catches them does too.
+    #[test]
+    fn the_counted_step_is_the_exact_solver_where_there_is_one_and_step_itself_where_there_is_not() {
+        const { assert!(Lif::EXACT_TIMING && AdaptiveLif::EXACT_TIMING && !Izhikevich::EXACT_TIMING) };
+        // The LIF: more than one spike in a tick, and the same state as `step_exact` throughout.
+        let (mut counted, mut exact) = (Lif::default(), Lif::default());
+        let mut total = 0;
+        for _ in 0..50 {
+            let n = counted.step_counted(20e-3, 4e-9).unwrap();
+            assert_eq!(n, exact.step_exact(20e-3, 4e-9).unwrap());
+            assert_eq!(counted, exact);
+            total += n;
+        }
+        // DERIVED, not typed: from rest the first crossing is τ ln((V∞ − V_rest)/(V∞ − V_th))
+        // and every one after it is an `isi`, so a tick of length `T` holds ⌊(T − first)/isi⌋ + 1.
+        let (isi, first) = (Lif::default().isi(4e-9).unwrap(), 20e-3 * (40.0f64 / 25.0).ln());
+        let in_one_tick = ((20e-3 - first) / isi).floor() as u32 + 1;
+        assert!((total as f64 - 50.0 * 20e-3 / isi).abs() < 2.0, "{total} spikes in a second of ticks at an isi of {isi}");
+        assert!(total > 50, "{total} spikes in 50 ticks: the fixture must fire more than once a tick");
+        assert_eq!(Lif::default().step_counted(20e-3, 4e-9), Some(in_one_tick));
+        assert_eq!(Lif::default().step_counted(20e-3, f64::NAN), None, "a refused step is None, not zero");
+        // The adaptive cell, likewise.
+        let proto = AdaptiveLif::new(Lif::default(), 100e-3, 2e-3);
+        let (mut counted, mut exact) = (proto, proto);
+        let mut total = 0;
+        for _ in 0..50 {
+            let n = counted.step_counted(20e-3, 4e-9).unwrap();
+            assert_eq!(n, exact.step_exact(20e-3, 4e-9).unwrap());
+            total += n;
+        }
+        assert!(total > 50, "{total} adaptive spikes in 50 ticks");
+        // A model without EXACT_TIMING gets the default: `step`, counted, never more than one.
+        let (mut a, mut b) = (Izhikevich::regular_spiking(), Izhikevich::regular_spiking());
+        let mut spikes = 0;
+        for _ in 0..2_000 {
+            let n = a.step_counted(1e-3, 10.0).unwrap();
+            assert!(n <= 1 && n == u32::from(b.step(1e-3, 10.0)));
+            spikes += n;
+        }
+        assert!(spikes > 3, "the default hook was never seen to report a spike");
     }
 }
 

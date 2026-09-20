@@ -1,0 +1,102 @@
+[
+ {
+  "label": "backprop uses the feedback matrix's layout (no transpose)",
+  "old": "(0..cols).map(|j| (0..rows).map(|i| self.w[l][i * cols + j] * delta[i]).sum()).collect()",
+  "new": "(0..cols).map(|j| (0..rows).map(|i| self.w[l][(i * cols + j + 1) % (rows * cols)] * delta[i]).sum()).collect()"
+ },
+ {
+  "label": "the hidden slope is dropped",
+  "old": "delta = arriving.iter().zip(&h[l]).map(|(a, h)| a * self.activation.slope(*h)).collect();",
+  "new": "delta = arriving.iter().zip(&h[l]).map(|(a, _)| *a).collect();"
+ },
+ {
+  "label": "tanh's slope is 1 - h",
+  "old": "            Self::Tanh => 1.0 - h * h,",
+  "new": "            Self::Tanh => 1.0 - h,"
+ },
+ {
+  "label": "direct feedback uses the running delta, not the output error",
+  "old": "m[j * n_out..(j + 1) * n_out].iter().zip(&error).map(|(m, e)| m * e).sum()",
+  "new": "m[j * n_out..(j + 1) * n_out].iter().zip(&delta).map(|(m, e)| m * e).sum()"
+ },
+ {
+  "label": "alignment uses the output error, not the running delta",
+  "old": "m[j * from..(j + 1) * from].iter().zip(&delta).map(|(m, d)| m * d).sum()",
+  "new": "m[j * from..(j + 1) * from].iter().zip(&error).map(|(m, d)| m * d).sum()"
+ },
+ {
+  "label": "the error is the target minus the output",
+  "old": "let error: Vec<f64> = h[layers].iter().zip(target).map(|(y, t)| y - t).collect();",
+  "new": "let error: Vec<f64> = h[layers].iter().zip(target).map(|(y, t)| t - y).collect();"
+ },
+ {
+  "label": "the output layer is squashed too",
+  "old": "                    if last { a } else { self.activation.f(a) }",
+  "new": "                    self.activation.f(a)"
+ },
+ {
+  "label": "the bias is left out of the forward pass",
+  "old": "let a = self.b[l][i] + self.w[l][i * cols..(i + 1) * cols]",
+  "new": "let a = 0.0 * self.b[l][i] + self.w[l][i * cols..(i + 1) * cols]"
+ },
+ {
+  "label": "apply moves WITH the update",
+  "old": "self.w[l].iter_mut().zip(&u.w).for_each(|(w, g)| *w -= rate * g);",
+  "new": "self.w[l].iter_mut().zip(&u.w).for_each(|(w, g)| *w += rate * g);"
+ },
+ {
+  "label": "apply leaves the biases alone",
+  "old": "self.b[l].iter_mut().zip(&u.b).for_each(|(b, g)| *b -= rate * g);",
+  "new": "self.b[l].iter_mut().zip(&u.b).for_each(|(b, g)| *b -= 0.0 * rate * g);"
+ },
+ {
+  "label": "apply does not check every layer before moving any",
+  "old": "            if u.w.len() != self.w[l].len() || u.b.len() != self.b[l].len() {",
+  "new": "            if l == 0 && (u.w.len() != self.w[l].len() || u.b.len() != self.b[l].len()) {"
+ },
+ {
+  "label": "apply accepts a non-finite rate",
+  "old": "        if !rate.is_finite() {\n            return Err(AlignmentError::NonFinite { what: \"rate\" });\n        }\n        if updates.len()",
+  "new": "        if updates.len()"
+ },
+ {
+  "label": "a non-finite target is accepted",
+  "old": "        if !target.iter().all(|v| v.is_finite()) {\n            return Err(AlignmentError::NonFinite { what: \"target\" });\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "a non-finite input is accepted",
+  "old": "        if !x.iter().all(|v| v.is_finite()) {\n            return Err(AlignmentError::NonFinite { what: \"x\" });\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "a mis-sized direct matrix is used anyway",
+  "old": "                    if m.len() != cols * n_out {\n                        return Err(AlignmentError::NoDirectFeedback);\n                    }\n",
+  "new": ""
+ },
+ {
+  "label": "a mis-sized feedback matrix is used anyway",
+  "old": "                    if m.len() != cols * from {\n                        return Err(AlignmentError::Shape { what: \"feedback\", got: m.len(), want: cols * from });\n                    }\n",
+  "new": ""
+ },
+ {
+  "label": "the loss has no factor of one half",
+  "old": "Ok(0.5 * y.iter().zip(target).map(|(y, t)| (y - t) * (y - t)).sum::<f64>())",
+  "new": "Ok(y.iter().zip(target).map(|(y, t)| (y - t) * (y - t)).sum::<f64>())"
+ },
+ {
+  "label": "cosine forgets to normalise by b",
+  "old": "if na > 0.0 && nb > 0.0 { Some(dot / (na * nb)) } else { None }",
+  "new": "if na > 0.0 && nb > 0.0 { Some(dot / (na * na)) } else { None }"
+ },
+ {
+  "label": "cosine of a zero vector is reported",
+  "old": "if na > 0.0 && nb > 0.0 { Some(dot / (na * nb)) } else { None }",
+  "new": "if na > 0.0 || nb > 0.0 { Some(dot / (na * nb)) } else { None }"
+ },
+ {
+  "label": "a layer past the weight limit is built",
+  "old": "sizes.len() < 2 || sizes.contains(&0) || sizes.windows(2).any(|p| p[0].saturating_mul(p[1]) > MAX_WEIGHTS)",
+  "new": "sizes.len() < 2 || sizes.contains(&0)"
+ }
+]

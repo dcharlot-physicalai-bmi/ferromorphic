@@ -97,9 +97,11 @@
 #![forbid(unsafe_code)]
 
 pub mod aer;
+pub mod alignment;
 pub mod attention;
 pub mod attractor;
 pub mod bayes;
+pub mod biosignal;
 pub mod cerebellum;
 pub mod cochlea;
 pub mod coding;
@@ -108,6 +110,7 @@ pub mod continual;
 pub mod control;
 pub mod convert;
 pub mod crossover;
+pub mod decolle;
 pub mod delays;
 pub mod dendrite;
 pub mod device;
@@ -115,8 +118,11 @@ pub mod distance;
 pub mod encode;
 pub mod eprop;
 pub mod equilibrium;
+pub mod eventprop;
 pub mod exponential;
 pub mod field;
+pub mod force;
+pub mod forwardforward;
 pub mod fusion;
 pub mod graph;
 pub mod grid;

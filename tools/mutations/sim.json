@@ -1,0 +1,47 @@
+[
+ {
+  "label": "exact timing posts only one spike per neuron per tick",
+  "old": "        for _ in 0..count {\n            fired.push(i as u32);\n        }",
+  "new": "        if count > 0 {\n            fired.push(i as u32);\n        }"
+ },
+ {
+  "label": "exact timing is never switched on",
+  "old": "        self.exact_timing = true;\n        Ok(self)",
+  "new": "        Ok(self)"
+ },
+ {
+  "label": "exact timing is not refused for a model without it",
+  "old": "        if !N::EXACT_TIMING {\n            return Err(SimError::NoExactTiming);\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "exact timing accepts a bad tick",
+  "old": "        if !(self.dt > 0.0) || !self.dt.is_finite() {\n            return Err(SimError::BadTick);\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "the exact catch-up jumps the refractory period in one subtraction",
+  "old": "            while left > 0 && self.neurons[i].refractory_left() > 0.0 {",
+  "new": "            while false && left > 0 && self.neurons[i].refractory_left() > 0.0 {"
+ },
+ {
+  "label": "the exact catch-up forgets the quiet remainder",
+  "old": "            if left > 0 {\n                let _ = self.neurons[i].step_counted(left as f64 * self.dt, 0.0);\n            }",
+  "new": "            if false {\n                let _ = self.neurons[i].step_counted(left as f64 * self.dt, 0.0);\n            }"
+ },
+ {
+  "label": "the exact catch-up jumps one tick too far",
+  "old": "                let _ = self.neurons[i].step_counted(left as f64 * self.dt, 0.0);",
+  "new": "                let _ = self.neurons[i].step_counted((left + 1) as f64 * self.dt, 0.0);"
+ },
+ {
+  "label": "a refused step is a silent tick",
+  "old": "                .unwrap_or_else(|| panic!(\"neuron {i} refused a step under external current {ext}\"))",
+  "new": "                .unwrap_or(0)"
+ },
+ {
+  "label": "the exact path uses the tick-based step",
+  "old": "        let count = if self.exact_timing {",
+  "new": "        let count = if false && self.exact_timing {"
+ }
+]

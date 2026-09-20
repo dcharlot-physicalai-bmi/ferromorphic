@@ -1,0 +1,142 @@
+[
+ {
+  "label": "P is fed by the input directly, skipping Q",
+  "old": "            self.p[j] = d.alpha * self.p[j] + self.q[j];",
+  "new": "            self.p[j] = d.alpha * self.p[j] + input[j];"
+ },
+ {
+  "label": "Q is updated before P reads it",
+  "old": "            self.p[j] = d.alpha * self.p[j] + self.q[j];\n            self.q[j] = d.beta * self.q[j] + input[j];",
+  "new": "            self.q[j] = d.beta * self.q[j] + input[j];\n            self.p[j] = d.alpha * self.p[j] + self.q[j];"
+ },
+ {
+  "label": "P decays with beta",
+  "old": "            self.p[j] = d.alpha * self.p[j] + self.q[j];",
+  "new": "            self.p[j] = d.beta * self.p[j] + self.q[j];"
+ },
+ {
+  "label": "R decays with alpha",
+  "old": "            self.r[i] = d.gamma * self.r[i] + self.s[i];",
+  "new": "            self.r[i] = d.alpha * self.r[i] + self.s[i];"
+ },
+ {
+  "label": "the refractory trace excites",
+  "old": "            self.u[i] = drive - d.rho * self.r[i] + self.b[i];",
+  "new": "            self.u[i] = drive + d.rho * self.r[i] + self.b[i];"
+ },
+ {
+  "label": "the bias is left out of the potential",
+  "old": "            self.u[i] = drive - d.rho * self.r[i] + self.b[i];",
+  "new": "            self.u[i] = drive - d.rho * self.r[i];"
+ },
+ {
+  "label": "a neuron spikes only strictly above zero",
+  "old": "                Output::Spiking => f64::from(u8::from(self.u[i] >= 0.0)),",
+  "new": "                Output::Spiking => f64::from(u8::from(self.u[i] > 1e-9)),"
+ },
+ {
+  "label": "the surrogate slope forgets its steepness",
+  "old": "        self.dynamics.steepness * s * (1.0 - s)",
+  "new": "        s * (1.0 - s)"
+ },
+ {
+  "label": "the surrogate slope is s squared",
+  "old": "        self.dynamics.steepness * s * (1.0 - s)",
+  "new": "        self.dynamics.steepness * s * s"
+ },
+ {
+  "label": "the sigmoid ignores the steepness",
+  "old": "        1.0 / (1.0 + (-self.dynamics.steepness * u).exp())",
+  "new": "        1.0 / (1.0 + (-u).exp())"
+ },
+ {
+  "label": "the error is broadcast through G, not its transpose",
+  "old": "let broadcast: f64 = (0..self.n_out).map(|k| self.g[k * self.n + i] * error[k]).sum();",
+  "new": "let broadcast: f64 = (0..self.n_out).map(|k| self.g[(i % self.n_out) * self.n + k] * error[k]).sum();"
+ },
+ {
+  "label": "the update drops the slope",
+  "old": "                broadcast * self.slope(self.u[i])",
+  "new": "                broadcast"
+ },
+ {
+  "label": "the update uses the layer's current trace, not the one that produced U",
+  "old": "                let error: Vec<f64> = layer.readout().iter().zip(target).map(|(y, t)| y - t).collect();\n                layer.update_from_error(&error, trace)",
+  "new": "                let error: Vec<f64> = layer.readout().iter().zip(target).map(|(y, t)| y - t).collect();\n                let _ = trace;\n                layer.update_from_error(&error, &layer.p)"
+ },
+ {
+  "label": "the error is the target minus the readout",
+  "old": "let error: Vec<f64> = layer.readout().iter().zip(target).map(|(y, t)| y - t).collect();",
+  "new": "let error: Vec<f64> = layer.readout().iter().zip(target).map(|(y, t)| t - y).collect();"
+ },
+ {
+  "label": "the readout reads the potentials, not the output",
+  "old": "self.g[k * self.n..(k + 1) * self.n].iter().zip(&self.s).map(|(g, s)| g * s).sum()",
+  "new": "self.g[k * self.n..(k + 1) * self.n].iter().zip(&self.u).map(|(g, s)| g * s).sum()"
+ },
+ {
+  "label": "the network records the trace after the step",
+  "old": "            traces.push(layer.p.clone());\n            signal = layer.step(&signal)?.to_vec();",
+  "new": "            signal = layer.step(&signal)?.to_vec();\n            traces.push(layer.p.clone());"
+ },
+ {
+  "label": "every layer is fed the raw input",
+  "old": "            signal = layer.step(&signal)?.to_vec();",
+  "new": "            let out = layer.step(&signal)?.to_vec();\n            if out.len() == signal.len() { signal = out; }"
+ },
+ {
+  "label": "apply moves with the update",
+  "old": "        self.w.iter_mut().zip(&update.w).for_each(|(w, g)| *w -= rate * g);",
+  "new": "        self.w.iter_mut().zip(&update.w).for_each(|(w, g)| *w += rate * g);"
+ },
+ {
+  "label": "apply leaves the biases alone",
+  "old": "        self.b.iter_mut().zip(&update.b).for_each(|(b, g)| *b -= rate * g);",
+  "new": "        self.b.iter_mut().zip(&update.b).for_each(|(b, g)| *b -= 0.0 * rate * g);"
+ },
+ {
+  "label": "apply checks the biases after moving the weights",
+  "old": "        checked(\"update.w\", &update.w, self.w.len())?;\n        checked(\"update.b\", &update.b, self.b.len())?;\n        self.w.iter_mut().zip(&update.w).for_each(|(w, g)| *w -= rate * g);",
+  "new": "        checked(\"update.w\", &update.w, self.w.len())?;\n        self.w.iter_mut().zip(&update.w).for_each(|(w, g)| *w -= rate * g);\n        checked(\"update.b\", &update.b, self.b.len())?;"
+ },
+ {
+  "label": "apply accepts a non-finite rate",
+  "old": "        if !rate.is_finite() {\n            return Err(DecolleError::NonFinite { what: \"rate\" });\n        }\n        checked(\"update.w\"",
+  "new": "        checked(\"update.w\""
+ },
+ {
+  "label": "reset leaves the refractory trace",
+  "old": "        for v in [&mut self.p, &mut self.q, &mut self.r, &mut self.u, &mut self.s] {",
+  "new": "        for v in [&mut self.p, &mut self.q, &mut self.u, &mut self.s] {"
+ },
+ {
+  "label": "a decay of exactly one is accepted",
+  "old": "            if !(v >= 0.0) || !(v < 1.0) {",
+  "new": "            if !(v >= 0.0) || !(v <= 1.0) {"
+ },
+ {
+  "label": "a negative decay is accepted",
+  "old": "            if !(v >= 0.0) || !(v < 1.0) {",
+  "new": "            if v.is_nan() || !(v < 1.0) {"
+ },
+ {
+  "label": "a negative refractory weight is accepted",
+  "old": "        if !(self.rho >= 0.0) || !self.rho.is_finite() {",
+  "new": "        if !self.rho.is_finite() {"
+ },
+ {
+  "label": "a zero steepness is accepted",
+  "old": "        if !(self.steepness > 0.0) || !self.steepness.is_finite() {",
+  "new": "        if !self.steepness.is_finite() {"
+ },
+ {
+  "label": "checked does not look at the values",
+  "old": "    if v.iter().all(|x| x.is_finite()) { Ok(()) } else { Err(DecolleError::NonFinite { what }) }",
+  "new": "    Ok(())"
+ },
+ {
+  "label": "the traces count is not checked",
+  "old": "        if traces.len() != self.layers.len() {\n            return Err(DecolleError::Shape { what: \"traces\", got: traces.len(), want: self.layers.len() });\n        }\n",
+  "new": ""
+ }
+]

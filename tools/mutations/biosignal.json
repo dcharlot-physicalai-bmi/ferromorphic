@@ -1,0 +1,197 @@
+[
+ {
+  "label": "the heart-rate factor is not a square root",
+  "old": "let h = (positive(\"mean_bpm\", mean_bpm)? / 60.0).sqrt();",
+  "new": "let h = positive(\"mean_bpm\", mean_bpm)? / 60.0;"
+ },
+ {
+  "label": "P and T angles scale like Q and S",
+  "old": "let scale = [h.sqrt(), h, 1.0, h, h.sqrt()];",
+  "new": "let scale = [h, h, 1.0, h, h];"
+ },
+ {
+  "label": "the widths do not scale with heart rate",
+  "old": "            b[i] = h * ECGSYN_B[i];",
+  "new": "            b[i] = ECGSYN_B[i];"
+ },
+ {
+  "label": "the drive does not wrap the angle difference",
+  "old": "                let d = wrapped(theta - self.angles[i]);\n                self.a[i] * d",
+  "new": "                let d = theta - self.angles[i];\n                self.a[i] * d"
+ },
+ {
+  "label": "the drive has the wrong sign",
+  "old": "        -(0..5)\n            .map(|i| {",
+  "new": "        (0..5)\n            .map(|i| {"
+ },
+ {
+  "label": "the drive's Gaussian forgets the one half",
+  "old": "                self.a[i] * d * (-0.5 * (d / self.b[i]).powi(2)).exp()",
+  "new": "                self.a[i] * d * (-(d / self.b[i]).powi(2)).exp()"
+ },
+ {
+  "label": "the stepper ignores the relaxation",
+  "old": "let rate = |s: f64, z: f64| self.drive(self.theta + omega * s) - (z - self.baseline_at(self.t + s));",
+  "new": "let rate = |s: f64, _z: f64| self.drive(self.theta + omega * s) + self.baseline_at(self.t + s);"
+ },
+ {
+  "label": "the stepper ignores the baseline",
+  "old": "let rate = |s: f64, z: f64| self.drive(self.theta + omega * s) - (z - self.baseline_at(self.t + s));",
+  "new": "let rate = |s: f64, z: f64| self.drive(self.theta + omega * s) - z;"
+ },
+ {
+  "label": "the stepper holds the phase still within a step",
+  "old": "let rate = |s: f64, z: f64| self.drive(self.theta + omega * s) - (z - self.baseline_at(self.t + s));",
+  "new": "let rate = |s: f64, z: f64| self.drive(self.theta + omega * 0.0 * s) - (z - self.baseline_at(self.t + s));"
+ },
+ {
+  "label": "RK4 weights are 1-1-1-1",
+  "old": "        self.z += dt / 6.0 * (k1 + 2.0 * k2 + 2.0 * k3 + k4);",
+  "new": "        self.z += dt / 4.0 * (k1 + k2 + k3 + k4);"
+ },
+ {
+  "label": "the phase advances at 1/rr, not 2 pi / rr",
+  "old": "        let omega = TAU / rr;\n        if !(omega * dt < PI) {",
+  "new": "        let omega = 1.0 / rr;\n        if !(omega * dt < PI) {"
+ },
+ {
+  "label": "the R peak's offset is measured from the end of the step",
+  "old": "Some(-self.theta / omega) } else { None };",
+  "new": "Some(dt + self.theta / omega) } else { None };"
+ },
+ {
+  "label": "R peaks are reported on every step with a negative phase",
+  "old": "let r_peak = if self.theta < 0.0 && advanced >= 0.0 {",
+  "new": "let r_peak = if self.theta < 0.0 {"
+ },
+ {
+  "label": "time does not advance",
+  "old": "        self.theta = wrapped(advanced);\n        self.t += dt;",
+  "new": "        self.theta = wrapped(advanced);"
+ },
+ {
+  "label": "a step longer than half a beat is accepted",
+  "old": "        if !(omega * dt < PI) {\n            return Err(BiosignalError::OutOfRange { what: \"dt\", value: dt });\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "wrapped maps pi to minus pi",
+  "old": "    if a > PI { a - TAU } else { a }",
+  "new": "    if a >= PI { a - TAU } else { a }"
+ },
+ {
+  "label": "the millivolt range is 0 to 1.6",
+  "old": "    Some(z.iter().map(|v| (v - low) * 1.6 / (high - low) - 0.4).collect())",
+  "new": "    Some(z.iter().map(|v| (v - low) * 1.6 / (high - low)).collect())"
+ },
+ {
+  "label": "a constant record is rescaled",
+  "old": "    if !(high > low) || !low.is_finite() || !high.is_finite() {",
+  "new": "    if !low.is_finite() || !high.is_finite() {"
+ },
+ {
+  "label": "level crossing rounds to the nearest level",
+  "old": "        let levels = ((x - reference) / self.delta).trunc();",
+  "new": "        let levels = ((x - reference) / self.delta).round();"
+ },
+ {
+  "label": "the reference jumps to the sample",
+  "old": "        self.reference = Some(reference + levels * self.delta);",
+  "new": "        self.reference = Some(if levels == 0.0 { reference } else { x });"
+ },
+ {
+  "label": "down events are counted as ups",
+  "old": "            self.downs += u64::from(moved);\n            Ok(Crossings { up: 0, down: moved })",
+  "new": "            self.ups += u64::from(moved);\n            Ok(Crossings { up: 0, down: moved })"
+ },
+ {
+  "label": "the first sample emits events",
+  "old": "            self.reference = Some(x);\n            return Ok(Crossings::default());",
+  "new": "            self.reference = Some(0.0);\n            return self.sample(x);"
+ },
+ {
+  "label": "the detector does not leak",
+  "old": "        self.v = self.v * (-dt / self.tau).exp() + self.weight * f64::from(events);",
+  "new": "        self.v += self.weight * f64::from(events);"
+ },
+ {
+  "label": "the detector leaks with tau inverted",
+  "old": "        self.v = self.v * (-dt / self.tau).exp() + self.weight * f64::from(events);",
+  "new": "        self.v = self.v * (-dt * self.tau).exp() + self.weight * f64::from(events);"
+ },
+ {
+  "label": "the rate threshold uses w/theta without the one minus",
+  "old": "        -1.0 / (self.tau * (1.0 - self.weight / self.threshold).ln())",
+  "new": "        -1.0 / (self.tau * (self.weight / self.threshold).ln())"
+ },
+ {
+  "label": "the refractory period is ignored",
+  "old": "        if self.v >= self.threshold && self.blocked == 0.0 {",
+  "new": "        if self.v >= self.threshold {"
+ },
+ {
+  "label": "the detector keeps its charge after firing",
+  "old": "            self.v = 0.0;\n            self.blocked = self.refractory;",
+  "new": "            self.blocked = self.refractory;"
+ },
+ {
+  "label": "a weight at the threshold is accepted",
+  "old": "        if !(weight < threshold) {",
+  "new": "        if !(weight <= threshold) {"
+ },
+ {
+  "label": "the rhythm mean follows at the wrong rate",
+  "old": "            self.mean = Some(mean + self.rate * (rr - mean));",
+  "new": "            self.mean = Some(mean + 0.5 * self.rate * (rr - mean));"
+ },
+ {
+  "label": "a flagged beat updates the mean",
+  "old": "        if !anomalous {\n            self.mean = Some(mean + self.rate * (rr - mean));\n        }",
+  "new": "        self.mean = Some(mean + self.rate * (rr - mean));"
+ },
+ {
+  "label": "the tolerance is absolute, not a fraction of the mean",
+  "old": "let anomalous = (rr - mean).abs() > self.tolerance * mean;",
+  "new": "let anomalous = (rr - mean).abs() > self.tolerance;"
+ },
+ {
+  "label": "only long beats are flagged",
+  "old": "let anomalous = (rr - mean).abs() > self.tolerance * mean;",
+  "new": "let anomalous = (rr - mean) > self.tolerance * mean;"
+ },
+ {
+  "label": "a beat that is not after the last is accepted",
+  "old": "        if !(time > last) {\n            return Err(BiosignalError::OutOfRange { what: \"time\", value: time });\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "the EMG ignores the activation",
+  "old": "        Ok(activation * self.sigma * normal)",
+  "new": "        Ok(self.sigma * normal)"
+ },
+ {
+  "label": "the EMG ignores sigma",
+  "old": "        Ok(activation * self.sigma * normal)",
+  "new": "        Ok(activation * normal)"
+ },
+ {
+  "label": "the EMG's noise is uniform",
+  "old": "let normal = (-2.0 * u.ln()).sqrt() * (TAU * self.rng.next_f64()).cos();",
+  "new": "let normal = 2.0 * u - 1.0 + 0.0 * self.rng.next_f64();"
+ },
+ {
+  "label": "a negative activation is accepted",
+  "old": "        if !(activation >= 0.0) || !activation.is_finite() {",
+  "new": "        if !activation.is_finite() {"
+ },
+ {
+  "label": "the Gaussian mean absolute value uses pi/2",
+  "old": "    std * (2.0 / PI).sqrt()",
+  "new": "    std * (PI / 2.0).sqrt()"
+ },
+ {
+  "label": "the Gaussian event rate forgets the factor of two",
+  "old": "    2.0 * std / (PI.sqrt() * delta)",
+  "new": "    std / (PI.sqrt() * delta)"
+ }
+]

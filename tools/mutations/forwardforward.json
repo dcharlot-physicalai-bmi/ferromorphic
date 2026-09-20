@@ -1,0 +1,137 @@
+[
+ {
+  "label": "the input is not normalised",
+  "old": "        let unit = normalised(x)?;\n        Ok((0..self.n)",
+  "new": "        let unit = x.to_vec();\n        Ok((0..self.n)"
+ },
+ {
+  "label": "the update uses the raw input",
+  "old": "        let h = self.activity(x)?;\n        let unit = normalised(x)?;",
+  "new": "        let h = self.activity(x)?;\n        let unit = x.to_vec();"
+ },
+ {
+  "label": "the units are not rectified",
+  "old": ".sum::<f64>()).max(0.0)).collect())",
+  "new": ".sum::<f64>())).collect())"
+ },
+ {
+  "label": "goodness is the sum of activities, not squares",
+  "old": "        Ok(self.activity(x)?.iter().map(|h| h * h).sum())",
+  "new": "        Ok(self.activity(x)?.iter().map(|h| h.abs()).sum())"
+ },
+ {
+  "label": "the positive loss has the negative's sign",
+  "old": "        Ok(softplus(if positive { -margin } else { margin }))",
+  "new": "        Ok(softplus(if positive { margin } else { -margin }))"
+ },
+ {
+  "label": "the positive gradient has the negative's sign",
+  "old": "let d_goodness = if positive { -sigmoid(-margin) } else { sigmoid(margin) };",
+  "new": "let d_goodness = if positive { sigmoid(-margin) } else { sigmoid(margin) };"
+ },
+ {
+  "label": "the negative gradient uses the positive's sigmoid",
+  "old": "let d_goodness = if positive { -sigmoid(-margin) } else { sigmoid(margin) };",
+  "new": "let d_goodness = if positive { -sigmoid(-margin) } else { sigmoid(-margin) };"
+ },
+ {
+  "label": "the gradient forgets the 2 of d(h^2)",
+  "old": "let b: Vec<f64> = h.iter().map(|h| d_goodness * 2.0 * h).collect();",
+  "new": "let b: Vec<f64> = h.iter().map(|h| d_goodness * h).collect();"
+ },
+ {
+  "label": "the update's margin ignores the threshold",
+  "old": "let margin = h.iter().map(|h| h * h).sum::<f64>() - self.theta;",
+  "new": "let margin = h.iter().map(|h| h * h).sum::<f64>();"
+ },
+ {
+  "label": "the probability ignores the threshold",
+  "old": "        Ok(sigmoid(self.goodness(x)? - self.theta))",
+  "new": "        Ok(sigmoid(self.goodness(x)?))"
+ },
+ {
+  "label": "softplus overflows for large arguments",
+  "old": "    if x > 0.0 { x + (-x).exp().ln_1p() } else { x.exp().ln_1p() }",
+  "new": "    x.exp().ln_1p()"
+ },
+ {
+  "label": "the negative pass is trained as positive",
+  "old": "for (x, positive) in [(self.labelled(features, label)?, true), (self.labelled(features, wrong)?, false)] {",
+  "new": "for (x, positive) in [(self.labelled(features, label)?, true), (self.labelled(features, wrong)?, true)] {"
+ },
+ {
+  "label": "the negative pass uses the right label",
+  "old": "for (x, positive) in [(self.labelled(features, label)?, true), (self.labelled(features, wrong)?, false)] {",
+  "new": "for (x, positive) in [(self.labelled(features, label)?, true), (self.labelled(features, label)?, false)] {"
+ },
+ {
+  "label": "classify picks the lowest goodness",
+  "old": "            if total > best.1 {",
+  "new": "            if total < best.1 || best.1 == f64::NEG_INFINITY {"
+ },
+ {
+  "label": "classify reads only the first layer",
+  "old": "let total: f64 = self.goodness(&self.labelled(features, label)?)?.iter().sum();",
+  "new": "let total: f64 = self.goodness(&self.labelled(features, label)?)?[0];"
+ },
+ {
+  "label": "the label is written one slot late",
+  "old": "        x[label] = 1.0;\n        x.extend_from_slice(features);",
+  "new": "        x[(label + 1) % self.classes] = 1.0;\n        x.extend_from_slice(features);"
+ },
+ {
+  "label": "a label equal to the class count is accepted",
+  "old": "        if label >= self.classes {",
+  "new": "        if label > self.classes {"
+ },
+ {
+  "label": "training with the wrong label equal to the right one is accepted",
+  "old": "        if wrong == label {\n            return Err(ForwardError::BadLabel { label: wrong, classes: self.classes });\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "apply moves with the update",
+  "old": "        self.w.iter_mut().zip(&update.w).for_each(|(w, g)| *w -= rate * g);",
+  "new": "        self.w.iter_mut().zip(&update.w).for_each(|(w, g)| *w += rate * g);"
+ },
+ {
+  "label": "apply leaves the biases alone",
+  "old": "        self.b.iter_mut().zip(&update.b).for_each(|(b, g)| *b -= rate * g);",
+  "new": "        self.b.iter_mut().zip(&update.b).for_each(|(b, g)| *b -= 0.0 * rate * g);"
+ },
+ {
+  "label": "apply accepts a non-finite rate",
+  "old": "        if !rate.is_finite() {\n            return Err(ForwardError::NonFinite { what: \"rate\" });\n        }\n        if update.w.len()",
+  "new": "        if update.w.len()"
+ },
+ {
+  "label": "apply does not check the update's shape",
+  "old": "        if update.w.len() != self.w.len() || update.b.len() != self.b.len() {",
+  "new": "        if false {"
+ },
+ {
+  "label": "normalised accepts a zero vector",
+  "old": "    if !(norm > 0.0) {\n        return Err(ForwardError::ZeroInput);\n    }\n",
+  "new": ""
+ },
+ {
+  "label": "normalised accepts a non-finite vector",
+  "old": "    if !x.iter().all(|v| v.is_finite()) {\n        return Err(ForwardError::NonFinite { what: \"x\" });\n    }\n",
+  "new": ""
+ },
+ {
+  "label": "every layer reads the raw input's width from the first layer only",
+  "old": "            let h = layer.activity(&inputs[inputs.len() - 1])?;",
+  "new": "            let h = layer.activity(&inputs[inputs.len() - 1]).map(|h| h.iter().map(|v| v * 1.0).rev().collect::<Vec<f64>>())?;"
+ },
+ {
+  "label": "more labels than inputs is accepted",
+  "old": "        if sizes.len() < 2 || classes == 0 || classes >= sizes[0] {",
+  "new": "        if sizes.len() < 2 || classes == 0 {"
+ },
+ {
+  "label": "zero classes is accepted",
+  "old": "        if sizes.len() < 2 || classes == 0 || classes >= sizes[0] {",
+  "new": "        if sizes.len() < 2 || classes >= sizes[0] {"
+ }
+]

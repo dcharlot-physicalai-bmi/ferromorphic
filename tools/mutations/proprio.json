@@ -1,8 +1,8 @@
 [
  {
   "label": "spindle is linear in velocity",
-  "old": "velocity.signum() * velocity.abs().powf(self.exponent)",
-  "new": "velocity.signum() * velocity.abs()"
+  "old": "let dynamic = self.velocity_gain * velocity.signum() * velocity.abs().powf(self.exponent);",
+  "new": "let dynamic = self.velocity_gain * velocity.signum() * velocity.abs();"
  },
  {
   "label": "spindle dynamic response is even",
@@ -106,8 +106,8 @@
  },
  {
   "label": "delay bound unchecked",
-  "old": "if delay_steps > MAX_DELAY_STEPS {",
-  "new": "if false {"
+  "old": "        let gain = non_negative(\"gain\", gain)?;\n        let dt = positive(\"dt\", dt)?;\n        if delay_steps > MAX_DELAY_STEPS {",
+  "new": "        let gain = non_negative(\"gain\", gain)?;\n        let dt = positive(\"dt\", dt)?;\n        if false {"
  },
  {
   "label": "tendon low-pass is forward euler",
@@ -133,5 +133,205 @@
   "label": "tendon overshoot not scaled by K",
   "old": "Ok((self.k * (force + overshoot)).max(0.0))",
   "new": "Ok((self.k * force + overshoot).max(0.0))"
+ },
+ {
+  "label": "rate_under ignores the static gain",
+  "old": "Ok((self.baseline + drive.static_gain * self.length_gain * stretch + drive.dynamic_gain * dynamic).max(0.0))",
+  "new": "Ok((self.baseline + self.length_gain * stretch + drive.dynamic_gain * dynamic).max(0.0))"
+ },
+ {
+  "label": "rate_under ignores the dynamic gain",
+  "old": "Ok((self.baseline + drive.static_gain * self.length_gain * stretch + drive.dynamic_gain * dynamic).max(0.0))",
+  "new": "Ok((self.baseline + drive.static_gain * self.length_gain * stretch + dynamic).max(0.0))"
+ },
+ {
+  "label": "rate_under does not re-validate the drive",
+  "old": "        let drive = Fusimotor::new(drive.dynamic_gain, drive.static_gain)?;\n        let (stretch, velocity) = (finite(\"stretch\", stretch)?, finite(\"velocity\", velocity)?);\n        let dynamic = if",
+  "new": "        let (stretch, velocity) = (finite(\"stretch\", stretch)?, finite(\"velocity\", velocity)?);\n        let dynamic = if"
+ },
+ {
+  "label": "hill saturates at x/(2+x)",
+  "old": "Some(if x.is_finite() { x / (1.0 + x) } else { 1.0 })",
+  "new": "Some(if x.is_finite() { x / (2.0 + x) } else { 1.0 })"
+ },
+ {
+  "label": "hill does not handle an overflowing ratio",
+  "old": "Some(if x.is_finite() { x / (1.0 + x) } else { 1.0 })",
+  "new": "Some(x / (1.0 + x))"
+ },
+ {
+  "label": "hill accepts a negative rate",
+  "old": "if !(gamma_hz >= 0.0) || !gamma_hz.is_finite() || !(half_hz > 0.0)",
+  "new": "if !gamma_hz.is_finite() || !(half_hz > 0.0)"
+ },
+ {
+  "label": "hill accepts a zero power",
+  "old": "|| !(power > 0.0) || !power.is_finite() {",
+  "new": "|| !power.is_finite() {"
+ },
+ {
+  "label": "a gamma spike adds r regardless of headroom",
+  "old": "self.f += self.response * (1.0 - self.f);",
+  "new": "self.f += self.response;"
+ },
+ {
+  "label": "activation decays with tau inverted",
+  "old": "self.f *= (-dt / self.tau).exp();",
+  "new": "self.f *= (-dt * self.tau).exp();"
+ },
+ {
+  "label": "settled peak uses r in place of 1-r",
+  "old": "Some(self.response / (1.0 - (1.0 - self.response) * d))",
+  "new": "Some(self.response / (1.0 - self.response * d))"
+ },
+ {
+  "label": "activation accepts a response of one",
+  "old": "if !(response > 0.0) || !(response < 1.0) {",
+  "new": "if !(response > 0.0) || !(response <= 1.0) {"
+ },
+ {
+  "label": "occlusion is not symmetric",
+  "old": "a.max(b) + s * a.min(b)",
+  "new": "a + s * b"
+ },
+ {
+  "label": "equilibrium divides by the wrong stiffness ratio",
+  "old": "+ self.active_force(fd, fs)) / (1.0 + self.k_pr / self.k_sr))",
+  "new": "+ self.active_force(fd, fs)) / (1.0 + self.k_sr / self.k_pr))"
+ },
+ {
+  "label": "equilibrium forgets the active force",
+  "old": "Ok((self.k_pr * (length - self.l0_sr - self.l0_pr) + self.active_force(fd, fs)) / (1.0 + self.k_pr / self.k_sr))",
+  "new": "Ok((self.k_pr * (length - self.l0_sr - self.l0_pr)) / (1.0 + self.k_pr / self.k_sr))"
+ },
+ {
+  "label": "the damper is inverted with a, as the source's eq. 8 prints",
+  "old": "x.signum() * x.abs().powf(1.0 / self.a)",
+  "new": "x.signum() * x.abs().powf(self.a)"
+ },
+ {
+  "label": "the rate ignores the shortening coefficient",
+  "old": "let c = if carried >= 0.0 { self.c_lengthening } else { self.c_shortening };",
+  "new": "let c = self.c_lengthening;"
+ },
+ {
+  "label": "the constitutive law ignores the shortening coefficient",
+  "old": "let c = if v >= 0.0 { self.c_lengthening } else { self.c_shortening };",
+  "new": "let c = self.c_lengthening;"
+ },
+ {
+  "label": "the rate does not refuse a polar region inside R",
+  "old": "        if !(reach > 0.0) {\n            return Err(ProprioError::OutOfRange { what: \"polar length above R\"",
+  "new": "        if false {\n            return Err(ProprioError::OutOfRange { what: \"polar length above R\""
+ },
+ {
+  "label": "dynamic drive does not raise the damping",
+  "old": "self.beta0 + self.beta_dynamic * f_dynamic + self.beta_static * f_static",
+  "new": "self.beta0 + self.beta_static * f_static"
+ },
+ {
+  "label": "static drive does not change the damping",
+  "old": "self.beta0 + self.beta_dynamic * f_dynamic + self.beta_static * f_static",
+  "new": "self.beta0 + self.beta_dynamic * f_dynamic"
+ },
+ {
+  "label": "static drive exerts no active force",
+  "old": "self.force_dynamic * f_dynamic + self.force_static * f_static",
+  "new": "self.force_dynamic * f_dynamic"
+ },
+ {
+  "label": "the step is explicit",
+  "old": "Ok(t - t0 - dt * self.rate_at(t, length, velocity, fd, fs)?)",
+  "new": "Ok(t - t0 - dt * self.rate_at(t0, length, velocity, fd, fs)?)"
+ },
+ {
+  "label": "the step ignores dt",
+  "old": "Ok(t - t0 - dt * self.rate_at(t, length, velocity, fd, fs)?)",
+  "new": "Ok(t - t0 - 1e-3 * self.rate_at(t, length, velocity, fd, fs)?)"
+ },
+ {
+  "label": "the primary contribution adds the rest length",
+  "old": "(g * (self.tension / self.k_sr - (ln_sr - self.l0_sr))).max(0.0)",
+  "new": "(g * (self.tension / self.k_sr - (ln_sr + self.l0_sr))).max(0.0)"
+ },
+ {
+  "label": "the primary contribution can go negative",
+  "old": "(g * (self.tension / self.k_sr - (ln_sr - self.l0_sr))).max(0.0)",
+  "new": "g * (self.tension / self.k_sr - (ln_sr - self.l0_sr))"
+ },
+ {
+  "label": "a fibre whose damping goes negative under drive is accepted",
+  "old": "        positive(\"beta at full drive\", self.beta0 + self.beta_dynamic.min(0.0) + self.beta_static.min(0.0))?;\n",
+  "new": ""
+ },
+ {
+  "label": "activations above one are accepted",
+  "old": "if !(f >= 0.0) || !(f <= 1.0) {",
+  "new": "if !(f >= 0.0) {"
+ },
+ {
+  "label": "activations below zero are accepted",
+  "old": "if !(f >= 0.0) || !(f <= 1.0) {",
+  "new": "if !(f <= 1.0) {"
+ },
+ {
+  "label": "reflex stiffness ignores the static gain",
+  "old": "self.synaptic_gain * self.drive.static_gain * self.spindle.length_gain",
+  "new": "self.synaptic_gain * self.spindle.length_gain"
+ },
+ {
+  "label": "the critical synaptic gain ignores the viscosity",
+  "old": "critical_gain_discrete(m, self.dt).map(|kc| self.viscosity * kc / through)",
+  "new": "critical_gain_discrete(m, self.dt).map(|kc| kc / through)"
+ },
+ {
+  "label": "the critical synaptic gain uses one step more delay",
+  "old": "        let m = self.afferent.len().saturating_sub(1);\n        critical_gain_discrete",
+  "new": "        let m = self.afferent.len();\n        critical_gain_discrete"
+ },
+ {
+  "label": "the limb has no passive spring",
+  "old": "(load - self.stiffness * self.x - self.synaptic_gain * (delayed - rest))",
+  "new": "(load - self.synaptic_gain * (delayed - rest))"
+ },
+ {
+  "label": "the reflex acts on the whole rate, not the rate above rest",
+  "old": "(load - self.stiffness * self.x - self.synaptic_gain * (delayed - rest))",
+  "new": "(load - self.stiffness * self.x - self.synaptic_gain * delayed)"
+ },
+ {
+  "label": "the reflex reads the newest afferent rate, not the delayed one",
+  "old": "let delayed = self.afferent.front().copied().unwrap_or(rest);",
+  "new": "let delayed = self.afferent.back().copied().unwrap_or(rest);"
+ },
+ {
+  "label": "the spindle in the loop sees no velocity",
+  "old": "let velocity = (self.x - self.x_before) / self.dt;",
+  "new": "let velocity = 0.0 * (self.x - self.x_before) / self.dt;"
+ },
+ {
+  "label": "the spindle in the loop ignores its fusimotor drive",
+  "old": "let rate = self.spindle.rate_under(self.drive, self.x, velocity)?;",
+  "new": "let rate = self.spindle.rate_under(Fusimotor::NEUTRAL, self.x, velocity)?;"
+ },
+ {
+  "label": "the loop buffers one step too few",
+  "old": "afferent: core::iter::repeat_n(rest, delay_steps + 1).collect(), x: 0.0",
+  "new": "afferent: core::iter::repeat_n(rest, delay_steps.max(1)).collect(), x: 0.0"
+ },
+ {
+  "label": "settled displacement ignores the passive spring",
+  "old": "let k = self.stiffness + self.reflex_stiffness();",
+  "new": "let k = self.reflex_stiffness();"
+ },
+ {
+  "label": "the reflex accepts a delay past the buffer limit",
+  "old": "        let dt = positive(\"dt\", dt)?;\n        if delay_steps > MAX_DELAY_STEPS {\n            return Err(ProprioError::OutOfRange { what: \"delay_steps\", value: delay_steps as f64, low: 0.0, high: MAX_DELAY_STEPS as f64 });\n        }\n        let rest",
+  "new": "        let dt = positive(\"dt\", dt)?;\n        let rest"
+ },
+ {
+  "label": "a non-finite displacement is returned",
+  "old": "let next = finite(\"displacement\", next)?;",
+  "new": "let next = finite(\"displacement\", next).unwrap_or(next);"
  }
 ]

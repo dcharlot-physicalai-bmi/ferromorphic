@@ -9,7 +9,7 @@ hardware constraint models, analog device non-idealities, NIR, event-camera deco
 metrics, teaching tasks — and a joules ledger that charges for the memory traffic a synaptic
 operation needs.
 
-**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 60 modules, 1,704 tests.**
+**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 66 modules, 1,772 tests.**
 
 Run it in a browser without installing anything:
 **[energy.physicalai-bmi.org/neuromorphic](https://energy.physicalai-bmi.org/neuromorphic)** — the
@@ -78,13 +78,19 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 | `localise` | sound localisation by coincidence: the Jeffress delay-line array against the path-difference geometry, the half-spacing quantisation bound, the aliasing frequency and the coincidence probability under spike jitter |
 | `cerebellum` | the cerebellum as a machine: an adaptive filter that converges on the Wiener solution at `1 − βλ` an epoch and stops when its error is decorrelated from every input, and Albus's CMAC with its triangular generalisation |
 | `grid` | grid cells: the hexagonal firing map, path integration that is exact in phase space, the modular code — 9009 positions from 40 cells — decoded by the Chinese remainder theorem, and its error correction: two spare modules survive any corruption of any one, exhaustively |
-| `proprio` | proprioception: the power-law muscle spindle, the tendon organ and its two-rate overshoot, a rate-to-spike encoder that emits exactly the integral of its rate, and a delayed reflex loop against the gain `π/2τ` at which it rings |
+| `proprio` | proprioception: the power-law muscle spindle and the fusimotor gains that retune it (dynamic `γ_d`, static `γ_s`, and the synaptic gain of the reflex arc), an intrafusal fibre with its gamma drive, spike-driven fusimotor activation, the tendon organ and its two-rate overshoot, a rate-to-spike encoder that emits exactly the integral of its rate, and a stretch reflex whose stiffness is `g γ_s k_L` and whose clonus threshold is the delay's ceiling `π/2τ` on the PRODUCT of those gains |
 | `delays` | delays as a resource: the spatiotemporal pattern a set of synaptic delays is matched to, a delay-learning rule that contracts every arrival's deviation by exactly `1 − η`, the `(D+1)ⁿ − Dⁿ` patterns a neuron can stand for, and the buffer bits that costs |
 | `distance` | how different two spike trains are: the Victor–Purpura edit distance and the van Rossum distance (closed form against its own quadrature), vector strength against the jitter's characteristic function, the Fano factor of a clock, `f(1 − f)/(m + f)`, and the parameter-free ISI- and SPIKE-distances, integrated exactly and refereed by the quadrature of their definitions |
 | `field` | the Amari neural field of dynamic field theory: the kernel integral `W`, the narrow unstable bump below which activity dies and the wide stable one it settles at, both as roots of `W(a) + h = 0` and both found in the simulated field — on a line, and on a sheet, where the rim integral is `πσ²[1 − e^{−R²/σ²} I₀(R²/σ²)]` |
 | `resonance` | noise as a resource: the noise level at which a threshold unit best tells two sub-threshold values apart, `σ*² = (b² − a²)/(2 ln(b/a))`; the exact information in a noisy population's count, including suprathreshold resonance — 63 units carrying more than one bit only when noise is added; dither that makes a step linear |
 | `ttfs` | learning with spike TIMES: two neuron models whose first-spike time is a closed form (Mostafa's non-leaky integrator; the leaky cell with `τ_m = 2τ_s`), its exact gradient by the implicit function theorem, backpropagation through spike times checked against finite differences, and XOR learned with one spike per neuron |
-| `sim`, `net`, `spike`, `rng` | the event-driven simulator, sparse connectivity, spike trains, seeded PCG32 |
+| `eventprop` | `EventProp`: exact gradients for LIF networks with exponential synapses whose neurons fire any number of times and may be recurrent — an event-driven forward pass with spike times found to the last bit, an adjoint that jumps only at the spikes, checked against a closed-form spike time and its derivative and against finite differences of every weight |
+| `alignment` | learning without weight transport: feedback alignment and direct feedback alignment beside the backpropagation they replace — identical to it when the feedback IS the transpose, and measured aligning from the output downward |
+| `decolle` | deep continuous local learning: every spiking layer descends its own loss through a fixed random readout — three local factors, no gradient between layers or through time — with the update checked as the exact gradient of that loss |
+| `forwardforward` | Hinton's forward-forward algorithm: layer-local goodness on positive and negative data, the length normalisation that hides a layer's goodness from the next, labels written into the input |
+| `force` | FORCE learning: recursive least squares — shown identical to ridge regression at every step — taming a chaotic rate network into holding a sine on its own, with the measured limit where it stops working |
+| `biosignal` | the ECGSYN synthetic electrocardiogram with its published constants, a level-crossing encoder, a spiking R-peak detector and rhythm monitor that flags an ectopic beat, and the EMG envelope read straight off an event rate |
+| `sim`, `net`, `spike`, `rng` | the simulator, clocked and event-driven, with optional exact spike timing (several spikes a tick, counts independent of the tick); sparse connectivity, spike trains, seeded PCG32 |
 
 ## Use it
 
@@ -249,7 +255,7 @@ Every neuron model here has a test that runs it against an analytic solution.
 - **A sub-threshold current returns `None`, not a large number.** "Fires rarely" and "does not fire"
   are different statements and a rate-coded readout cannot recover the difference later.
 
-1,704 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
+1,772 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
 `#![forbid(unsafe_code)]`, and `cargo build --target wasm32-unknown-unknown` compiles the library
 unchanged. Three of the `examples/` are verification gates that exit non-zero when a closed form
 disagrees with the simulator.
@@ -295,11 +301,11 @@ be reproduced cannot be checked against anything, including itself.
 
 ## Status
 
-**0.15.0.** Sixty modules, every one audited by mutation: thirty-six by an adversarial
+**0.16.0.** Sixty-six modules, every one audited by mutation: thirty-six by an adversarial
 auditor in 0.5.0 and 0.6.0, the ten of the third wave by hand in 0.8.0 (156 mutations, 36
 survivors, every one now caught — see below), and everything since mutated as it was written. All
 290 mutations recorded before 0.10.0 were re-run against the finished code: 286 caught, 2
-equivalent by their stated arguments, none survived. The harness and every mutation list — 553 of
+equivalent by their stated arguments, none survived. The harness and every mutation list — 782 of
 them — are in `tools/`. The crate family is not built yet. Planned
 siblings, each following the same rule that a dependency lives outside the core:
 
@@ -493,6 +499,88 @@ and, through two layers, of the loss; and gradient descent on spike times solves
 models with at most one spike per neuron. 24 mutations: 23 caught, 1 equivalent by a stated
 argument.
 
+0.16.0 is the wave that closes the list this README has been carrying under "still missing". Six
+modules and one simulator change, 229 mutations, 24 survivors — every one now caught — and 1
+equivalent by a stated argument.
+
+`eventprop` is the one that matters most: EXACT gradients for spiking networks, with no surrogate
+anywhere. A spike is not differentiable, but a spike TIME is — it is the implicit solution of
+`V(t) = ϑ` — and Wunderlich and Pehle's adjoint turns that into a backward pass that visits only
+the spikes. `ttfs` had this for networks where every neuron fires once; this has it for neurons
+that fire any number of times, reset, and feed each other in a loop. The forward pass finds each
+crossing to the last bit by bisecting the interval before the potential's single maximum, and the
+backward pass carries `λ_V` and `λ_I` back through the same intervals, jumping only where the
+forward pass spiked. Checked against the closed-form spike time of the `τ_m = 2τ_s` cell and its
+derivative, and then against central finite differences of EVERY weight of a recurrent network
+whose six neurons each fire several times — with the perturbed runs required to produce the same
+spikes in the same order, which is the condition under which a finite difference of a spike time
+means anything at all.
+
+Three more ways to learn without backpropagation join the two already here. `alignment` is
+feedback alignment and its direct variant: the error crosses the network through a FIXED RANDOM
+matrix instead of the transpose of the forward weights, which is the wiring a chip can actually
+build. Two closed forms pin it — with `B = Wᵀ` it IS backpropagation entry for entry, and in a
+LINEAR network direct feedback through the collapsed product `W₂ᵀW₃ᵀ⋯` is backpropagation too —
+and then the alignment itself is measured: the layer nearest the output starts unrelated to the
+gradient and ends about 60° from it, while the layer below is still unaligned, so alignment
+arrives from the output downward. `decolle` gives every spiking layer its own loss through a fixed
+random readout: three factors available at the synapse, nothing stored over time, nothing from the
+layer above — and the update is checked as the exact gradient of that layer's own loss, with a
+test that scrambles every layer above and requires the update below to come back bit for bit
+identical. `forwardforward` is Hinton's two-pass algorithm, whose length normalisation is the
+subtle part: scaling a layer's weights by `c` multiplies its goodness by `c²` and leaves what it
+passes up untouched, so the layer above cannot read its predecessor's answer.
+
+`force` completes the set from the other end — the readout that is not trained by gradient descent
+at all. Recursive least squares is shown to BE ridge regression at every step, against a Cholesky
+solve that shares no code with it, and each update is shown to divide its own error by exactly
+`1 + rᵀPr`. A 300-unit chaotic network learns to hold a sine and then holds it with learning off,
+its chaos gone. The limit is measured and shipped as a test rather than left out: at `g = 2` the
+same network, seed and ridge do NOT learn it, and `a_network_that_is_too_chaotic_is_not_tamed`
+pins that.
+
+`biosignal` is the application these were missing: the ECGSYN model with the constants read out of
+the authors' own `ecgsyn.m`, a level-crossing encoder whose event count is the signal's total
+variation over `δ`, a one-integrator R-peak detector with a rate threshold in closed form, and a
+rhythm monitor that catches a premature beat and its compensatory pause. Two findings came out of
+building it. The detector fires on the R wave's UPSTROKE, a few milliseconds before the peak, and
+because every wave in this model scales with the beat's length, a premature beat is a SMALLER one
+whose upstroke is caught later in its own wave — so intervals between beats of different lengths
+carry a bias that the test states as a bound rather than hides in a tolerance. And `ecgsyn.m`
+itself takes `rem(θ − θᵢ, 2π)`, which does not bring the difference into `(−π, π]`: the T wave's
+tail is cut where the phase wraps. This module wraps it, and says so.
+
+The simulator gained exact spike timing in both modes (`Sim::with_exact_timing`), which is the
+0.13.0 repair carried into the network: a neuron may now fire more than once in a tick, every
+spike is posted, and the spike count stops depending on `dt`. One thing it does NOT change is when
+a spike ARRIVES — deliveries stay on the tick grid — and the module documentation says so rather
+than letting the name imply more. The event-driven catch-up had to change with it: the exact
+solvers keep the refractory clock in seconds, and a remainder of 4e-19 s is enough to make a
+neuron ignore a delivery the clocked run accepted, so the refractory part of a gap is now walked
+tick by tick and only the quiet remainder is jumped.
+
+The survivors were the usual education. Three modules' `apply` could leave the biases exactly
+where they were and every gradient test still passed. `decolle`'s network could hand back the
+trace from AFTER the step instead of the one that produced the potentials, and nothing noticed
+until a test asserted the identity `U = W P − ρ R + b` against the trace it returns. `force` could
+feed back the UNCORRECTED readout — the one detail that makes FORCE work — and still learn the
+sine. A detector that never emptied its integrator was invisible because the fixture's refractory
+period happened to equal its recharge time. And two mutations of the exact catch-up survived
+because every neuron in the fixtures was busy: the test that catches them drives one cell at just
+over half the voltage it needs, so whether it fires is decided by how much leaked away in the
+quiet.
+
+One more thing the audit found, and it was about the audit itself. Running every list against the
+finished code showed nine entries whose text no longer matched the source EXACTLY ONCE — seven of
+them stale since before this release, because a later edit had duplicated the line they anchor to
+(a second `Regime::Bistable` when the two-dimensional field arrived, a second `spikes.saturating_add`
+when the adaptive cell got its exact solver) or replaced it outright (`nef`'s spiking loop, rewritten
+in 0.13.0 to count spikes rather than test a boolean). The harness reports those as `NOT-APPLIED`
+and refuses, which is why they were visible at all — but they had been sitting in the record as
+though they were evidence. All nine now anchor to a unique site, and the four modules involved were
+re-audited in full rather than spot-checked, because an entry that has never applied has never
+caught anything.
+
 ### Re-running the audit
 
 The harness and every mutation it has run are in the repository: `tools/mutate.py` and one list per
@@ -500,7 +588,15 @@ module in `tools/mutations/`. `python3 tools/mutate.py nef` applies each recorde
 `src/nef.rs` in turn, runs that module's tests, restores the file and prints `caught`, `SURVIVED`,
 or — for the two mutations no test could distinguish, each with its stated reason — `equivalent`.
 It prints the number of tests that ran unmutated first, because a test that has vanished looks
-exactly like a test that passes. The lists for the third wave were nearly lost: they lived in a
+exactly like a test that passes.
+
+`tools/slim.py` is what makes that affordable. The harness rebuilds the crate once per mutation,
+and building all sixty-six modules takes about a hundred seconds; a copy holding only the module
+under audit and the modules it names through `crate::` builds in about six. `python3
+tools/slim.py . /tmp/slim_nef nef` writes that copy and `python3 tools/mutate.py --root
+/tmp/slim_nef nef` audits it, which is the difference between one module in an afternoon and nine
+at once. The copy is a build artefact; the lists in `tools/mutations/` are written against `src/`
+and remain the record. The lists for the third wave were nearly lost: they lived in a
 scratch directory that was cleaned, and were recovered from the session transcript. They are in
 the repository now so that cannot happen twice, and so that anyone can check the claim above
 instead of reading it.
