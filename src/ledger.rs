@@ -172,9 +172,9 @@ impl Prices {
     pub fn is_complete(&self) -> bool {
         self.e_syn_op.is_finite()
             && self.e_neuron_update.is_finite()
-            && self.e_syn_fetch.is_some()
-            && self.e_spike_out.is_some()
-            && self.e_read.is_some()
+            && priced(self.e_syn_fetch)
+            && priced(self.e_spike_out)
+            && priced(self.e_read)
     }
 
     /// The terms this table cannot price, by name, in the order a bill would list them.
@@ -184,16 +184,16 @@ impl Prices {
         if !self.e_syn_op.is_finite() {
             v.push("synaptic operation");
         }
-        if self.e_syn_fetch.is_none() {
+        if !priced(self.e_syn_fetch) {
             v.push("synapse memory fetch");
         }
         if !self.e_neuron_update.is_finite() {
             v.push("neuron update");
         }
-        if self.e_spike_out.is_none() {
+        if !priced(self.e_spike_out) {
             v.push("spike emission");
         }
-        if self.e_read.is_none() {
+        if !priced(self.e_read) {
             v.push("state readout");
         }
         v
@@ -463,9 +463,156 @@ fn finite(x: f64) -> Option<f64> {
     if x.is_finite() { Some(x) } else { None }
 }
 
+/// Whether an optional price is a usable number.
+///
+/// `Some(NaN)` is a price-shaped hole: [`Ledger::bill`] declines to charge it and lists the term as
+/// unpriced, so [`Prices::is_complete`] and [`Prices::unpriced`] have to agree with that. They used
+/// to ask only whether the `Option` was inhabited, which meant a table carrying a `NaN` called
+/// itself complete while a bill built from it refused — the two answering different questions under
+/// the same name.
+fn priced(x: Option<f64>) -> bool {
+    matches!(x, Some(e) if e.is_finite())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{CATALOGUE, Evidence, LOIHI_2018, Ledger, Prices, TRUENORTH_2014, weaker};
+
+    /// A table with every term priced, so that dropping any ONE of them is visible. Nothing in
+    /// this crate is complete, which is the finding — so the only way to test completeness is to
+    /// build a table that would be.
+    const COMPLETE: Prices = Prices {
+        e_syn_op: 2e-12,
+        e_syn_fetch: Some(3e-12),
+        e_neuron_update: 5e-12,
+        e_spike_out: Some(7e-12),
+        e_read: Some(11e-12),
+        source: "a table invented by this test so that completeness has something to be true of.",
+        evidence: Evidence::Derived,
+    };
+
+    /// Thirteen of this module's mutations survived its first recorded audit, and they were all in
+    /// the same three places: the evidence ladder's ORDER, what `is_complete` and `unpriced` say
+    /// about each individual term, and whether a bill's grade comes from the price it used. This
+    /// test covers the ladder.
+    #[test]
+    fn the_evidence_ladder_runs_from_unstated_to_metered_and_weaker_picks_the_lower() {
+        // The ordering IS the semantics: `weaker` is a comparison, so a ladder in the wrong order
+        // silently promotes a claim. Written out in full rather than derived from the enum.
+        let ladder = [
+            Evidence::Unstated,
+            Evidence::Projected,
+            Evidence::Derived,
+            Evidence::Simulated,
+            Evidence::Measured,
+            Evidence::Metered,
+        ];
+        for pair in ladder.windows(2) {
+            assert!(pair[0] < pair[1], "{:?} should be weaker than {:?}", pair[0], pair[1]);
+        }
+        assert_eq!(*ladder.iter().min().unwrap(), Evidence::Unstated);
+        assert_eq!(*ladder.iter().max().unwrap(), Evidence::Metered);
+        // `weaker` returns the lower of the two, whichever way round it is handed them.
+        for (i, a) in ladder.iter().enumerate() {
+            for (j, b) in ladder.iter().enumerate() {
+                let want = ladder[i.min(j)];
+                assert_eq!(weaker(*a, *b), want, "weaker({a:?}, {b:?})");
+            }
+        }
+        assert_eq!(weaker(Evidence::Metered, Evidence::Projected), Evidence::Projected);
+        assert_eq!(weaker(Evidence::Unstated, Evidence::Metered), Evidence::Unstated);
+    }
+
+    #[test]
+    fn completeness_and_the_unpriced_list_answer_for_each_term_separately() {
+        assert!(COMPLETE.is_complete());
+        assert_eq!(COMPLETE.unpriced(), Vec::<&str>::new());
+        // Drop each term in turn: every one of the five is load-bearing, and the name it reports
+        // is the name of the term that went.
+        let cases: [(Prices, &str); 5] = [
+            (Prices { e_syn_op: f64::NAN, ..COMPLETE }, "synaptic operation"),
+            (Prices { e_syn_fetch: None, ..COMPLETE }, "synapse memory fetch"),
+            (Prices { e_neuron_update: f64::NAN, ..COMPLETE }, "neuron update"),
+            (Prices { e_spike_out: None, ..COMPLETE }, "spike emission"),
+            (Prices { e_read: None, ..COMPLETE }, "state readout"),
+        ];
+        for (p, name) in cases {
+            assert!(!p.is_complete(), "a table without a {name} price called itself complete");
+            assert_eq!(p.unpriced(), vec![name], "the unpriced list should name exactly the {name}");
+        }
+        // The list is in bill order, and it names only what is missing.
+        let bare = Prices { e_syn_fetch: None, e_read: None, ..COMPLETE };
+        assert_eq!(bare.unpriced(), vec!["synapse memory fetch", "state readout"]);
+        assert_eq!(Prices::UNSTATED.unpriced().len(), 5, "the unstated table prices nothing at all");
+    }
+
+    #[test]
+    fn every_table_carries_the_grade_its_source_earns_and_a_bill_is_graded_by_what_it_used() {
+        // The exact grade of every table in the catalogue, not merely that one of them is
+        // simulated. A table that quietly moved up the ladder would otherwise pass.
+        assert_eq!(Prices::UNSTATED.evidence, Evidence::Unstated);
+        assert_eq!(TRUENORTH_2014.evidence, Evidence::Measured, "TrueNorth is measured silicon, not metered");
+        assert_eq!(LOIHI_2018.evidence, Evidence::Simulated, "Loihi's table is captioned pre-silicon");
+        assert_eq!(CATALOGUE.len(), 3);
+        assert_eq!(CATALOGUE[0].1.evidence, Evidence::Unstated, "the default must price nothing");
+        assert!(CATALOGUE[0].1.unpriced().len() == 5);
+        // A bill's grade is the grade of the prices it actually used — not the Metered the
+        // accumulator starts from.
+        let led = Ledger { syn_ops: 10, ..Ledger::default() };
+        assert_eq!(led.bill(&TRUENORTH_2014).evidence, Evidence::Measured);
+        assert_eq!(led.bill(&LOIHI_2018).evidence, Evidence::Simulated);
+        assert_eq!(led.bill(&COMPLETE).evidence, Evidence::Derived);
+        // And a bill that priced nothing claims nothing.
+        let nothing = Ledger::default();
+        assert_eq!(nothing.bill(&TRUENORTH_2014).evidence, Evidence::Unstated);
+    }
+
+    #[test]
+    fn a_price_that_is_not_a_number_is_not_a_price_and_every_term_reaches_the_total() {
+        // `Some(NaN)` is a price-shaped hole. Charging it would put a NaN in the total, which
+        // compares false against every threshold it is ever checked against.
+        let poisoned = Prices { e_syn_fetch: Some(f64::NAN), ..COMPLETE };
+        let led = Ledger { syn_ops: 10, syn_fetches: 10, ..Ledger::default() };
+        let bill = led.bill(&poisoned);
+        assert!(bill.total.is_none(), "a NaN price produced a total of {:?}", bill.total);
+        assert!(bill.unpriced.contains(&"synapse memory fetch"));
+        assert!(!poisoned.is_complete());
+        // Every one of the five terms is in the total: build a workload that uses all of them and
+        // check the total is the sum of the parts, each of which is a count times its price.
+        let led = Ledger {
+            syn_ops: 2,
+            syn_fetches: 3,
+            neuron_updates_idle: 5,
+            neuron_updates_driven: 7,
+            spikes_out: 11,
+            reads: 13,
+        };
+        let bill = led.bill(&COMPLETE);
+        assert_eq!(bill.synaptic, Some(2.0 * 2e-12));
+        assert_eq!(bill.fetch, Some(3.0 * 3e-12));
+        assert_eq!(bill.neurons, Some(12.0 * 5e-12), "idle and driven updates are both charged");
+        assert_eq!(bill.routing, Some(11.0 * 7e-12));
+        assert_eq!(bill.readout, Some(13.0 * 11e-12));
+        let parts = 2.0 * 2e-12 + 3.0 * 3e-12 + 12.0 * 5e-12 + 11.0 * 7e-12 + 13.0 * 11e-12;
+        assert!((bill.total.unwrap() - parts).abs() < 1e-30, "{:?} against {parts}", bill.total);
+    }
+
+    #[test]
+    fn an_understatement_with_nothing_underneath_it_has_no_ratio() {
+        // A workload that performed no synaptic operations has a synapse-only figure of exactly
+        // zero, and the ratio of anything to zero is not a number this should report.
+        let led = Ledger { syn_ops: 0, reads: 100, ..Ledger::default() };
+        assert_eq!(led.joules_synops_only(&COMPLETE), Some(0.0));
+        assert!(led.joules(&COMPLETE).is_some());
+        assert_eq!(led.understatement(&COMPLETE), None, "a ratio over zero is not a ratio");
+        // With work underneath it, the ratio is the full bill over the synapse-only one and is
+        // greater than one whenever anything else was charged.
+        let led = Ledger { syn_ops: 10, reads: 10, ..Ledger::default() };
+        let r = led.understatement(&COMPLETE).unwrap();
+        let want = (10.0 * 2e-12 + 10.0 * 11e-12) / (10.0 * 2e-12);
+        assert!((r - want).abs() < 1e-12, "{r} against {want}");
+        assert!(r > 1.0);
+    }
 
     /// The finding, asserted. If someone later fills in a fetch price without a source, this test
     /// is where the argument has to happen.

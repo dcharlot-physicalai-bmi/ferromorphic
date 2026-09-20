@@ -1,0 +1,188 @@
+[
+ {
+  "label": "the evidence ladder is ordered backwards",
+  "old": "    Unstated,\n    /// A roadmap number or design target for hardware that does not exist yet.\n    Projected,",
+  "new": "    Projected,\n    /// A roadmap number or design target for hardware that does not exist yet.\n    Unstated,"
+ },
+ {
+  "label": "metered is not the strongest grade",
+  "old": "    Measured,\n    /// Metered on physical silicon with the protocol stated: instrument, baseline, and a\n    /// reproduced control. The strongest grade, and the rarest.\n    Metered,",
+  "new": "    Metered,\n    /// Metered on physical silicon with the protocol stated: instrument, baseline, and a\n    /// reproduced control. The strongest grade, and the rarest.\n    Measured,"
+ },
+ {
+  "label": "weaker returns the stronger grade",
+  "old": "    if a <= b { a } else { b }",
+  "new": "    if a >= b { a } else { b }"
+ },
+ {
+  "label": "weaker always returns its first argument",
+  "old": "    if a <= b { a } else { b }",
+  "new": "    a"
+ },
+ {
+  "label": "a table is complete without a fetch price",
+  "old": "            && priced(self.e_syn_fetch)\n",
+  "new": ""
+ },
+ {
+  "label": "a table is complete without a readout price",
+  "old": "            && priced(self.e_read)",
+  "new": "            && true"
+ },
+ {
+  "label": "a table with a NaN synapse price calls itself complete",
+  "old": "        self.e_syn_op.is_finite()\n            && self.e_neuron_update.is_finite()",
+  "new": "        true\n            && self.e_neuron_update.is_finite()"
+ },
+ {
+  "label": "the unpriced list omits the synapse fetch",
+  "old": "        if !priced(self.e_syn_fetch) {\n            v.push(\"synapse memory fetch\");\n        }",
+  "new": ""
+ },
+ {
+  "label": "the unpriced list names a term that IS priced",
+  "old": "        if !priced(self.e_syn_fetch) {",
+  "new": "        if priced(self.e_syn_fetch) {"
+ },
+ {
+  "label": "the unstated table prices a synaptic operation",
+  "old": "        e_syn_op: f64::NAN,\n        e_syn_fetch: None,",
+  "new": "        e_syn_op: 1e-12,\n        e_syn_fetch: None,"
+ },
+ {
+  "label": "the unstated table claims a grade it has not earned",
+  "old": "        source: \"no device. Nothing here has been priced; ask a device model for its numbers.\",\n        evidence: Evidence::Unstated,",
+  "new": "        source: \"no device. Nothing here has been priced; ask a device model for its numbers.\",\n        evidence: Evidence::Measured,"
+ },
+ {
+  "label": "TrueNorth's per-event energy is transcribed wrongly",
+  "old": "pub const TRUENORTH_2014: Prices = Prices {\n    e_syn_op: 26e-12,",
+  "new": "pub const TRUENORTH_2014: Prices = Prices {\n    e_syn_op: 26e-11,"
+ },
+ {
+  "label": "TrueNorth's grade is raised to metered",
+  "old": "             readout terms were not separately published and are not guessed here.\",\n    evidence: Evidence::Measured,",
+  "new": "             readout terms were not separately published and are not guessed here.\",\n    evidence: Evidence::Metered,"
+ },
+ {
+  "label": "Loihi's pre-silicon figure is graded as measured",
+  "old": "             throughout 2024-2026. The fetch, routing and readout terms were not published at all.\",\n    evidence: Evidence::Simulated,",
+  "new": "             throughout 2024-2026. The fetch, routing and readout terms were not published at all.\",\n    evidence: Evidence::Measured,"
+ },
+ {
+  "label": "Loihi's per-operation energy is transcribed wrongly",
+  "old": "    e_syn_op: 23.6e-12,",
+  "new": "    e_syn_op: 236e-12,"
+ },
+ {
+  "label": "a device table gains an unsourced fetch price",
+  "old": "    e_syn_op: 23.6e-12,\n    e_syn_fetch: None,",
+  "new": "    e_syn_op: 23.6e-12,\n    e_syn_fetch: Some(50e-12),"
+ },
+ {
+  "label": "the catalogue's unstated default is replaced by a priced table",
+  "old": "    (\"unstated\", Prices::UNSTATED),",
+  "new": "    (\"unstated\", TRUENORTH_2014),"
+ },
+ {
+  "label": "the idle fraction counts driven updates",
+  "old": "        Some(self.neuron_updates_idle as f64 / n as f64)",
+  "new": "        Some(self.neuron_updates_driven as f64 / n as f64)"
+ },
+ {
+  "label": "the idle fraction divides by the idle count",
+  "old": "        Some(self.neuron_updates_idle as f64 / n as f64)",
+  "new": "        Some(self.neuron_updates_idle as f64 / self.neuron_updates_idle.max(1) as f64)"
+ },
+ {
+  "label": "a run that updated nothing reports an idle fraction",
+  "old": "        let n = self.neuron_updates();\n        if n == 0 {\n            return None;\n        }",
+  "new": "        let n = self.neuron_updates().max(1);"
+ },
+ {
+  "label": "total neuron updates counts only the driven ones",
+  "old": "        self.neuron_updates_idle + self.neuron_updates_driven",
+  "new": "        self.neuron_updates_driven"
+ },
+ {
+  "label": "a term with no work is charged anyway",
+  "old": "            if count == 0 {\n                return Some(0.0);\n            }",
+  "new": ""
+ },
+ {
+  "label": "an unpriced term does not refuse the total",
+  "old": "                _ => {\n                    unpriced.push(name);\n                    None\n                }",
+  "new": "                _ => {\n                    unpriced.push(name);\n                    Some(0.0)\n                }"
+ },
+ {
+  "label": "a non-finite price is charged as if it were a number",
+  "old": "                Some(e) if e.is_finite() => {",
+  "new": "                Some(e) => {"
+ },
+ {
+  "label": "the bill's grade is not weakened by the price it used",
+  "old": "                    grade = weaker(grade, p.evidence);",
+  "new": "                    grade = grade;"
+ },
+ {
+  "label": "a bill that priced nothing still claims a grade",
+  "old": "        if !any {\n            grade = Evidence::Unstated;\n        }",
+  "new": ""
+ },
+ {
+  "label": "the total omits the fetch term",
+  "old": "            (Some(a), Some(b), Some(c), Some(d), Some(e)) => Some(a + b + c + d + e),",
+  "new": "            (Some(a), Some(_b), Some(c), Some(d), Some(e)) => Some(a + c + d + e),"
+ },
+ {
+  "label": "the total omits the readout term",
+  "old": "            (Some(a), Some(b), Some(c), Some(d), Some(e)) => Some(a + b + c + d + e),",
+  "new": "            (Some(a), Some(b), Some(c), Some(d), Some(_e)) => Some(a + b + c + d),"
+ },
+ {
+  "label": "the synapse-only figure charges the fetch count too",
+  "old": "        Some(self.syn_ops as f64 * p.e_syn_op)",
+  "new": "        Some((self.syn_ops + self.syn_fetches) as f64 * p.e_syn_op)"
+ },
+ {
+  "label": "the synapse-only figure is returned for a NaN price",
+  "old": "        if !p.e_syn_op.is_finite() {\n            return None;\n        }",
+  "new": ""
+ },
+ {
+  "label": "the understatement ratio is inverted",
+  "old": "        Some(full / partial)",
+  "new": "        Some(partial / full)"
+ },
+ {
+  "label": "the understatement ratio divides by zero",
+  "old": "        if partial <= 0.0 {\n            return None;\n        }",
+  "new": ""
+ },
+ {
+  "label": "the understatement ratio compares the full bill with itself",
+  "old": "        let partial = self.joules_synops_only(p)?;",
+  "new": "        let partial = self.joules(p)?;"
+ },
+ {
+  "label": "a refused bill prints as a number",
+  "old": "            None => write!(f, \"REFUSED — no total ({})\", self.evidence)?,",
+  "new": "            None => write!(f, \"0 J ({})\", self.evidence)?,"
+ },
+ {
+  "label": "a bill does not print what it could not price",
+  "old": "        if !self.unpriced.is_empty() {\n            write!(f, \"; unpriced: {}\", self.unpriced.join(\", \"))?;\n        }",
+  "new": ""
+ },
+ {
+  "label": "finite accepts a NaN",
+  "old": "    if x.is_finite() { Some(x) } else { None }",
+  "new": "    Some(x)",
+  "equivalent": "belt-and-braces with the guard inside `charge`. `finite` exists to turn a bare `f64` price into the same `Option` shape the other prices already have, and `charge` then accepts a price only under `Some(e) if e.is_finite()` — so a `finite` that passed a NaN through would hand `charge` a `Some(NaN)` that it rejects for the same reason, naming the term unpriced and refusing the total exactly as before."
+ },
+ {
+  "label": "a price-shaped NaN counts as priced",
+  "old": "    matches!(x, Some(e) if e.is_finite())",
+  "new": "    x.is_some()"
+ }
+]

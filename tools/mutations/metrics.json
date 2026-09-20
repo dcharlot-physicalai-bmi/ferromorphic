@@ -1,0 +1,173 @@
+[
+ {
+  "label": "sparsity reports density",
+  "old": "        Some(self.zeros as f64 / self.total as f64)",
+  "new": "        Some((self.total - self.zeros) as f64 / self.total as f64)"
+ },
+ {
+  "label": "density reports sparsity",
+  "old": "        Some((self.total - self.zeros) as f64 / self.total as f64)",
+  "new": "        Some(self.zeros as f64 / self.total as f64)"
+ },
+ {
+  "label": "sparsity divides by the zero count",
+  "old": "        Some(self.zeros as f64 / self.total as f64)",
+  "new": "        Some(self.zeros as f64 / self.zeros.max(1) as f64)"
+ },
+ {
+  "label": "an empty census reports a sparsity",
+  "old": "        if self.total == 0 {\n            return None;\n        }\n        Some(self.zeros as f64 / self.total as f64)",
+  "new": "        Some(self.zeros as f64 / self.total as f64)"
+ },
+ {
+  "label": "the effective total ignores the accumulate count",
+  "old": "        self.effective_macs.checked_add(self.effective_acs)",
+  "new": "        Some(self.effective_macs)"
+ },
+ {
+  "label": "the effective total can overflow silently",
+  "old": "        self.effective_macs.checked_add(self.effective_acs)",
+  "new": "        Some(self.effective_macs.wrapping_add(self.effective_acs))"
+ },
+ {
+  "label": "the reduction is inverted",
+  "old": "        Some(self.dense as f64 / e as f64)",
+  "new": "        Some(e as f64 / self.dense as f64)"
+ },
+ {
+  "label": "a zero effective total still yields a reduction",
+  "old": "        let e = self.effective_total()?;\n        if e == 0 {\n            return None;\n        }\n        Some(self.dense as f64 / e as f64)",
+  "new": "        let e = self.effective_total()?;\n        Some(self.dense as f64 / e as f64)"
+ },
+ {
+  "label": "the accumulate fraction counts multiplies",
+  "old": "        Some(self.effective_acs as f64 / e as f64)",
+  "new": "        Some(self.effective_macs as f64 / e as f64)"
+ },
+ {
+  "label": "a zero effective total still yields an accumulate fraction",
+  "old": "        let e = self.effective_total()?;\n        if e == 0 {\n            return None;\n        }\n        Some(self.effective_acs as f64 / e as f64)",
+  "new": "        let e = self.effective_total()?;\n        Some(self.effective_acs as f64 / e as f64)"
+ },
+ {
+  "label": "accuracy counts misses",
+  "old": "    let hits = predicted.iter().zip(truth).filter(|(p, t)| p == t).count();",
+  "new": "    let hits = predicted.iter().zip(truth).filter(|(p, t)| p != t).count();"
+ },
+ {
+  "label": "accuracy divides by the prediction count from the other list",
+  "old": "    let hits = predicted.iter().zip(truth).filter(|(p, t)| p == t).count();\n    Ok(hits as f64 / truth.len() as f64)\n}",
+  "new": "    let hits = predicted.iter().zip(truth).filter(|(p, t)| p == t).count();\n    Ok(hits as f64 / predicted.len().max(1) as f64)\n}",
+  "equivalent": "the two lengths are checked equal three lines above and the empty case is refused, so `predicted.len().max(1)` and `truth.len()` are the same number on every path that reaches the division. Naming the divisor after the list the hits were counted against is the point, and no input can tell the two apart."
+ },
+ {
+  "label": "accuracy accepts mismatched lengths",
+  "old": "    if predicted.len() != truth.len() {\n        return Err(MetricError::LengthMismatch { a: predicted.len(), b: truth.len() });\n    }\n    if truth.is_empty() {\n        return Err(MetricError::Empty { what: \"test set\" });\n    }\n    let hits",
+  "new": "    if truth.is_empty() {\n        return Err(MetricError::Empty { what: \"test set\" });\n    }\n    let hits"
+ },
+ {
+  "label": "the squared error is not squared",
+  "old": "    let sum: f64 = predicted.iter().zip(truth).map(|(p, t)| (p - t) * (p - t)).sum();",
+  "new": "    let sum: f64 = predicted.iter().zip(truth).map(|(p, t)| p - t).sum();"
+ },
+ {
+  "label": "the mean squared error is a sum, not a mean",
+  "old": "    Ok(sum / truth.len() as f64)\n}",
+  "new": "    Ok(sum)\n}"
+ },
+ {
+  "label": "the squared error accepts a non-finite prediction",
+  "old": "    all_finite(predicted, \"prediction\")?;\n    all_finite(truth, \"target\")?;\n    let sum: f64 = predicted.iter().zip(truth).map(|(p, t)| (p - t) * (p - t)).sum();",
+  "new": "    let sum: f64 = predicted.iter().zip(truth).map(|(p, t)| (p - t) * (p - t)).sum();"
+ },
+ {
+  "label": "r-squared is not subtracted from one",
+  "old": "    Ok(1.0 - ss_res / ss_tot)",
+  "new": "    Ok(ss_res / ss_tot)"
+ },
+ {
+  "label": "r-squared divides the wrong way round",
+  "old": "    Ok(1.0 - ss_res / ss_tot)",
+  "new": "    Ok(1.0 - ss_tot / ss_res)"
+ },
+ {
+  "label": "r-squared centres the residual on the mean too",
+  "old": "    let ss_res: f64 = predicted.iter().zip(truth).map(|(p, t)| (p - t) * (p - t)).sum();",
+  "new": "    let ss_res: f64 = predicted.iter().map(|p| (p - mean) * (p - mean)).sum();"
+ },
+ {
+  "label": "r-squared reports a number for a constant target",
+  "old": "    if ss_tot == 0.0 {\n        return Err(MetricError::ZeroVariance);\n    }",
+  "new": ""
+ },
+ {
+  "label": "the target mean is taken over the predictions",
+  "old": "    let mean = truth.iter().sum::<f64>() / truth.len() as f64;",
+  "new": "    let mean = predicted.iter().sum::<f64>() / truth.len() as f64;"
+ },
+ {
+  "label": "connection sparsity reports density",
+  "old": "    Ok(zero as f64 / total as f64)\n}",
+  "new": "    Ok((total - zero) as f64 / total as f64)\n}"
+ },
+ {
+  "label": "more zeros than connections is accepted",
+  "old": "    if zero > total {\n        return Err(MetricError::TooManyConnections { counted: zero, declared: total });\n    }",
+  "new": ""
+ },
+ {
+  "label": "average precision ranks from the lowest score",
+  "old": "    order.sort_by(|&a, &b| scores[b].total_cmp(&scores[a]));",
+  "new": "    order.sort_by(|&a, &b| scores[a].total_cmp(&scores[b]));"
+ },
+ {
+  "label": "average precision divides by the rank, not the position",
+  "old": "            sum += hits as f64 / (rank as f64 + 1.0);",
+  "new": "            sum += hits as f64 / rank.max(1) as f64;"
+ },
+ {
+  "label": "average precision counts every item, not the hits",
+  "old": "            sum += hits as f64 / (rank as f64 + 1.0);",
+  "new": "            sum += 1.0 / (rank as f64 + 1.0);"
+ },
+ {
+  "label": "average precision normalises by the ranking length",
+  "old": "    Ok(sum / positives as f64)\n}",
+  "new": "    Ok(sum / scores.len() as f64)\n}"
+ },
+ {
+  "label": "a ranking with no positives gets an average precision",
+  "old": "    if positives == 0 {\n        return Err(MetricError::NoPositives { class: 0 });\n    }",
+  "new": ""
+ },
+ {
+  "label": "top-k counts scores at or above the true class",
+  "old": "        let above = row.iter().filter(|x| **x > mine).count();",
+  "new": "        let above = row.iter().filter(|x| **x >= mine).count();"
+ },
+ {
+  "label": "top-k admits one rank too many",
+  "old": "        if above < k {",
+  "new": "        if above <= k {"
+ },
+ {
+  "label": "top-k reads the wrong row of the score matrix",
+  "old": "        let row = &scores[s * classes..(s + 1) * classes];",
+  "new": "        let row = &scores[0..classes];"
+ },
+ {
+  "label": "top-k accepts a k larger than the class count",
+  "old": "    if k == 0 || k > classes {\n        return Err(MetricError::BadTopK { k, classes });\n    }",
+  "new": ""
+ },
+ {
+  "label": "top-k accepts a label past the class count",
+  "old": "        if label >= classes {\n            return Err(MetricError::ClassOutOfRange { index: s, label, classes });\n        }",
+  "new": ""
+ },
+ {
+  "label": "top-k accepts a score matrix of the wrong size",
+  "old": "    if scores.len() != want {\n        return Err(MetricError::LengthMismatch { a: scores.len(), b: want });\n    }",
+  "new": ""
+ }
+]

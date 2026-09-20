@@ -9,7 +9,7 @@ hardware constraint models, analog device non-idealities, NIR, event-camera deco
 metrics, teaching tasks — and a joules ledger that charges for the memory traffic a synaptic
 operation needs.
 
-**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 71 modules, 1,822 tests.**
+**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 71 modules, 1,829 tests.**
 
 Run it in a browser without installing anything:
 **[energy.physicalai-bmi.org/neuromorphic](https://energy.physicalai-bmi.org/neuromorphic)** — the
@@ -260,7 +260,7 @@ Every neuron model here has a test that runs it against an analytic solution.
 - **A sub-threshold current returns `None`, not a large number.** "Fires rarely" and "does not fire"
   are different statements and a rate-coded readout cannot recover the difference later.
 
-1,822 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
+1,829 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
 `#![forbid(unsafe_code)]`, and `cargo build --target wasm32-unknown-unknown` compiles the library
 unchanged. Three of the `examples/` are verification gates that exit non-zero when a closed form
 disagrees with the simulator.
@@ -311,12 +311,12 @@ auditor in 0.5.0 and 0.6.0, the ten of the third wave by hand in 0.8.0 (156 muta
 survivors, every one now caught — see below), and everything since mutated as it was written.
 
 **What of that is RE-RUNNABLE, which is a different question and the one that matters.** The
-repository holds 1,118 recorded mutations across 43 of the 71 modules. The other 28 were audited
+repository holds 1,189 recorded mutations across 45 of the 71 modules. The other 26 were audited
 by the adversarial auditor of 0.5.0 and 0.6.0, whose edits were never written down — so that audit
 cannot be re-run against today's code, and its verdict is a historical claim about the code as it
 stood then, not a property of the code as it stands now. Counting those modules under "audited by
 mutation" without saying this would be exactly the confusion the harness exists to prevent, and
-the twenty-eight are named below.
+the twenty-six are named below.
 
 Every one of the 999 mutations recorded before this release was re-run in full against 0.18.0:
 **985 caught, 14 equivalent by their stated arguments, none survived, none stale.** That is the
@@ -744,15 +744,36 @@ and restores on its next start, and the reason `tools/slim.py` exists to give it
 on, is exactly this. A mutation harness that edits the tree you are about to commit is one
 interruption away from shipping the bug it was hunting.
 
+`ledger` and `metrics` were the next two, and `ledger` is the one that mattered: THIRTEEN of its
+thirty-seven mutations survived. This is the module the crate is named for in argument — the one
+that refuses to price a workload it cannot price — and nothing tested the ORDER of its evidence
+ladder, nothing checked that a device table carried the grade its source earns, nothing asked
+whether each of the five terms individually reaches the total, and nothing held a bill's grade to
+the price it was built from. A ladder in the wrong order silently promotes a claim; a bill graded
+`Metered` because that is what its accumulator starts from is the exact failure the type exists to
+prevent.
+
+Writing those tests also found a disagreement inside the module. `Prices::is_complete` and
+`Prices::unpriced` asked only whether an optional price was INHABITED, while `Ledger::bill`
+charges one only under `Some(e) if e.is_finite()`. So a table carrying `Some(NaN)` called itself
+complete, listed nothing as unpriced, and then produced a bill that refused and named the term —
+two answers to the same question under different names. Both now go through one `priced` helper.
+
+`metrics` came back with three survivors, two of them worth the name: R-squared centres its total
+sum of squares on the TARGET's mean, and every existing test used predictions whose mean was the
+target's — a perfect fit, the mean itself, a symmetric error — so all of them passed with the
+centre taken from the wrong list. The new fixture has means of 2 and 4, where the two choices give
+−0.75 and 0.3.
+
 ### Re-running the audit
 
 The harness and every mutation THIS repository has recorded are in it: `tools/mutate.py` and one
 list per module in `tools/mutations/` — 43 modules of the 71. The 28 without a list are `attention`, `bayes`, `cochlea`, `coding`, `compress`, `continual`, `control`, `convert`, `device`, `eprop`, `exponential`, `fusion`, `hardware`, `hh`, `ledger`, `mapping`, `meanfield`, `metrics`, `nir`, `olfaction`, `plasticity`, `reservoir`, `spikeconv`, `surrogate`, `synapse`, `tasks`, `topology`, `vision`:
 audited in 0.5.0 and 0.6.0 by an adversarial auditor that did not record its edits. Writing their
 lists is outstanding work, and until it is done the claim anyone can check by running the harness
-is about those 43. `python3 tools/mutate.py nef` applies each recorded edit to
+is about those 45. `python3 tools/mutate.py nef` applies each recorded edit to
 `src/nef.rs` in turn, runs that module's tests, restores the file and prints `caught`, `SURVIVED`,
-or — for the sixteen mutations no test could distinguish, each with its stated reason —
+or — for the eighteen mutations no test could distinguish, each with its stated reason —
 `equivalent`.
 It prints the number of tests that ran unmutated first, because a test that has vanished looks
 exactly like a test that passes.

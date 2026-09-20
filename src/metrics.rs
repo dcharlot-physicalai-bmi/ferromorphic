@@ -2078,6 +2078,40 @@ mod tests {
     /// values pin both ends of the definition: the first says the residual sum is zero, the second
     /// says the residual sum equals the total sum. A tolerance here would let a swapped numerator
     /// and denominator through on symmetric data.
+    /// R-squared centres the total sum of squares on the TARGET's mean. Every existing test here
+    /// uses predictions whose mean is the target's — a perfect fit, the mean itself, or a
+    /// symmetric error — so all of them pass with the centre taken from the wrong list. These
+    /// predictions have a mean of 2 against the targets' 4, and the two choices give different
+    /// answers: 1 - 14/8 = -0.75 from the targets, 1 - 14/20 = 0.3 from the predictions.
+    #[test]
+    fn r_squared_centres_on_the_targets_not_on_the_predictions() {
+        let predicted = [1.0, 2.0, 3.0];
+        let truth = [2.0, 4.0, 6.0];
+        let mean_p = predicted.iter().sum::<f64>() / 3.0;
+        let mean_t = truth.iter().sum::<f64>() / 3.0;
+        assert!((mean_p - 2.0).abs() < 1e-15 && (mean_t - 4.0).abs() < 1e-15, "the fixture needs two different means");
+        let r2 = r_squared(&predicted, &truth).unwrap();
+        assert!((r2 - -0.75).abs() < 1e-12, "{r2}");
+        assert!((r2 - 0.3).abs() > 1e-6, "this is the answer you get centring on the predictions");
+    }
+
+    #[test]
+    fn top_k_refuses_a_score_matrix_that_is_not_samples_by_classes() {
+        // Three samples of four classes is twelve scores. Anything else is a caller error, and
+        // indexing it would either panic or silently read another sample's row.
+        let truth = [0usize, 1, 2];
+        let good = vec![0.0f64; 12];
+        assert!(top_k_accuracy(&good, 4, &truth, 2).is_ok());
+        for wrong in [11usize, 13, 0, 4] {
+            let scores = vec![0.0f64; wrong];
+            let err = top_k_accuracy(&scores, 4, &truth, 2).unwrap_err();
+            assert!(
+                matches!(err, MetricError::LengthMismatch { a, b } if a == wrong && b == 12),
+                "a matrix of {wrong} scores gave {err:?}"
+            );
+        }
+    }
+
     #[test]
     fn r_squared_is_exactly_one_for_a_perfect_fit_and_exactly_zero_for_the_mean() {
         let truth = [1.0, 2.0, 3.0, 4.0]; // mean 2.5, exact in binary
