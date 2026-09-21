@@ -366,8 +366,11 @@ pub struct Example {
 /// # Errors
 ///
 /// [`ContinualError::Empty`] when `n_inputs` is zero or `ticks` is below 2 (a one-tick window has
-/// no latency to report), and [`ContinualError::SilentChannel`] naming the first channel that
-/// carried no spike.
+/// no latency to report), [`ContinualError::SilentChannel`] naming the first channel that carried
+/// no spike, and [`ContinualError::Mismatch`] naming `"spike source"` for a spike whose source is
+/// at or past `n_inputs` — a sample wider than the feature vector it was asked for is refused
+/// rather than truncated, for the same reason a channel with no spike is refused rather than
+/// imputed.
 pub fn latency_features(
     sample: &Sample,
     n_inputs: u32,
@@ -385,6 +388,18 @@ pub fn latency_features(
         let i = sp.source as usize;
         if i < out.len() && out[i].is_nan() {
             out[i] = sp.t as f64 / span - 0.5;
+        } else if i >= out.len() {
+            // ⛔ A SPIKE FROM A CHANNEL THIS VECTOR DOES NOT HAVE IS REFUSED, NOT DROPPED. The
+            // loop below refuses the mirror-image case — a declared channel that carried no spike
+            // is a `SilentChannel` rather than an imputed number — and quietly discarding a spike
+            // the caller handed in is the same failure in the other direction: they get a feature
+            // vector that is missing a measurement and nothing says so. `n_inputs` is the width of
+            // the sample, not a window onto the first `n_inputs` channels of a wider one.
+            return Err(ContinualError::Mismatch {
+                what: "spike source",
+                expected: out.len(),
+                found: i + 1,
+            });
         }
     }
     for (i, v) in out.iter().enumerate() {
@@ -3746,4 +3761,624 @@ mod tests {
         let e = ContinualError::NoStationary { residual: 1e-3 };
         assert!(e.to_string().contains("did not settle"));
     }
+
+    // -----------------------------------------------------------------------------------------
+    // (f) The claims this module states and the suite above could not see.
+    //
+    // Every test in this section was written against a SURVIVING mutation: an edit that changed a
+    // documented claim and that no test then failed on. Each one names the shape of the hole it
+    // fills, because that sentence is the part of it worth reading.
+    // -----------------------------------------------------------------------------------------
+
+    /// A spike from a channel the caller did not declare is REFUSED rather than dropped.
+    ///
+    /// [`latency_features`] refuses the mirror-image case — a declared channel that carried no
+    /// spike is a [`ContinualError::SilentChannel`] rather than an imputed number — and until this
+    /// test a spike past the declared width was silently discarded instead, which is the same
+    /// failure in the other direction. No fixture could see it: every dataset in [`crate::tasks`]
+    /// declares its own channel count and [`Curriculum::permuted`] passes that same number, so no
+    /// sample in this module ever carried a source at or past `n_inputs`.
+    #[test]
+    fn a_spike_from_an_undeclared_channel_is_refused_rather_than_dropped() {
+        use crate::spike::{Spike, Train};
+        let s = Sample {
+            train: Train::from_spikes(vec![
+                Spike { t: 3, source: 0 },
+                Spike { t: 7, source: 1 },
+                Spike { t: 11, source: 2 },
+            ]),
+            label: 0,
+        };
+        // Three channels declared, three carried: a span of 50 ticks and the centring, exactly.
+        assert_eq!(
+            latency_features(&s, 3, 51).unwrap(),
+            vec![3.0 / 50.0 - 0.5, 7.0 / 50.0 - 0.5, 11.0 / 50.0 - 0.5]
+        );
+        // Two declared, three carried: the third is not a channel of this feature vector.
+        assert!(matches!(
+            latency_features(&s, 2, 51),
+            Err(ContinualError::Mismatch { what: "spike source", expected: 2, found: 3 })
+        ));
+    }
+
+    /// The three guards [`Curriculum::from_examples`] lists in its own `# Errors` section that no
+    /// fixture reached: an empty TEST split, a zero-width feature vector, and a label exactly AT
+    /// the class count.
+    ///
+    /// The existing refusal fixture hands in an empty TRAIN split, which returns from the first
+    /// guard and so answers for the two behind it; and its bad label is 5 against two classes,
+    /// three past the boundary, so a bound written `>` instead of `>=` still refuses it.
+    #[test]
+    fn from_examples_reaches_every_guard_it_documents() {
+        let train = vec![Example { x: vec![0.0, 1.0], label: 0 }];
+        let test = vec![Example { x: vec![1.0, 0.0], label: 1 }];
+        assert!(matches!(
+            Curriculum::from_examples("g", train.clone(), Vec::new(), 2, 1, 1),
+            Err(ContinualError::Empty { what: "test split" })
+        ));
+        // Both splits present, every vector the same length — and that length is zero.
+        let widthless = vec![Example { x: Vec::new(), label: 0 }];
+        assert!(matches!(
+            Curriculum::from_examples("g", widthless.clone(), widthless, 2, 1, 1),
+            Err(ContinualError::Empty { what: "n_features" })
+        ));
+        // AT the class count, not past it: label 2 names no output unit of a two-class readout.
+        assert!(matches!(
+            Curriculum::from_examples(
+                "g",
+                train.clone(),
+                vec![Example { x: vec![0.0, 0.0], label: 2 }],
+                2,
+                1,
+                1
+            ),
+            Err(ContinualError::Label { label: 2, n_classes: 2 })
+        ));
+        // And the same bound on the train side.
+        assert!(matches!(
+            Curriculum::from_examples(
+                "g",
+                vec![Example { x: vec![0.0, 0.0], label: 2 }],
+                test.clone(),
+                2,
+                1,
+                1
+            ),
+            Err(ContinualError::Label { label: 2, n_classes: 2 })
+        ));
+        // Not a blanket refusal: the same call with all three fixed builds a curriculum.
+        assert!(Curriculum::from_examples("g", train, test, 2, 1, 1).is_ok());
+    }
+
+    /// [`Task::name`] carries the task's position in the sequence, which is the only thing that
+    /// makes a row of an accuracy matrix attributable to a task. Nothing in this module reads a
+    /// name, so every task could have carried the same one and every number would be unchanged.
+    #[test]
+    fn every_task_name_carries_its_position_in_the_sequence() {
+        let c = course(3);
+        let names: Vec<&str> = c.tasks.iter().map(|t| t.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["latency_patterns/perm0", "latency_patterns/perm1", "latency_patterns/perm2"]
+        );
+        let built = Curriculum::from_examples(
+            "hand",
+            vec![Example { x: vec![0.0, 1.0], label: 0 }],
+            vec![Example { x: vec![1.0, 0.0], label: 1 }],
+            2,
+            2,
+            9,
+        )
+        .unwrap();
+        assert_eq!(built.tasks[0].name, "hand/perm0");
+        assert_eq!(built.tasks[1].name, "hand/perm1");
+    }
+
+    /// The test split is featureised from the dataset's TEST split.
+    ///
+    /// Every task in this module is learned to 1.000 on both splits, so a run scored on the
+    /// training data reports the same retention numbers and the same collapse; the two splits
+    /// separate only on their own contents and their own sizes.
+    #[test]
+    fn the_curriculum_featureises_the_test_split_from_the_test_split() {
+        let d = base();
+        let c = course(1);
+        // A hundred train and fifty test samples per class, five classes.
+        assert_eq!(c.tasks[0].train.len(), 5 * 100);
+        assert_eq!(c.tasks[0].test.len(), 5 * 50);
+        let first = &d.split(Split::Test)[0];
+        let mut want = vec![Example {
+            x: latency_features(first, d.n_inputs, d.ticks).unwrap(),
+            label: first.label,
+        }];
+        // `remove_sample_mean` works one example at a time, so a one-element slice gives the same
+        // bits as the whole split does.
+        remove_sample_mean(&mut want);
+        assert_eq!(c.tasks[0].test[0], want[0]);
+        // The two splits are disjoint, so this is not the same example arriving twice.
+        assert_ne!(c.tasks[0].test[0].x, c.tasks[0].train[0].x);
+    }
+
+    /// The cross-entropy is a MEAN over the examples, as its doc says in nats.
+    ///
+    /// [`Linear::loss`] is reached with exactly one example everywhere else in this suite, and a
+    /// sum of one term divided by one is that term: the normaliser was invisible.
+    #[test]
+    fn the_cross_entropy_is_a_mean_over_the_examples_and_not_a_sum() {
+        let mut m = Linear::new(2, 2).unwrap();
+        m.w = vec![0.5, -0.25, -1.0, 0.75];
+        m.b = vec![0.125, -0.5];
+        let a = Example { x: vec![0.6, -0.2], label: 0 };
+        let b = Example { x: vec![-0.4, 0.9], label: 1 };
+        let la = m.loss(std::slice::from_ref(&a)).unwrap();
+        let lb = m.loss(std::slice::from_ref(&b)).unwrap();
+        assert_ne!(la, lb, "the two examples must differ for a mean to differ from a sum");
+        // `acc` accumulates `-ln p` in the same order in both calls and a divisor of 2 is exact,
+        // so this is an equality rather than a tolerance.
+        assert_eq!(m.loss(&[a, b]).unwrap(), 0.5 * (la + lb));
+    }
+
+    /// Synaptic intelligence's two per-task quantities, at the boundary where they are both
+    /// finished: the path integral starts again from zero when a task begins, and the
+    /// displacement is measured from where that task started rather than from the origin.
+    ///
+    /// Neither is visible end to end. Every penalised run in this suite has two tasks, the path
+    /// integral of the second one is never read by a third, and the first task starts at the
+    /// origin — where a displacement from the origin and a displacement from the task start are
+    /// the same number.
+    #[test]
+    fn the_path_integral_and_the_displacement_are_both_measured_per_task() {
+        let mut m = Linear::new(1, 2).unwrap();
+        let one = [Example { x: vec![0.0], label: 0 }];
+        let mut cons = super::Consolidator::new(Consolidation::Si { c: 1.0, xi: 0.1 }, 4);
+
+        // Task one starts at the origin and takes one step of +0.5 against a gradient of −1.
+        cons.begin_task(&[0.0; 4]);
+        cons.observe_step(&[-1.0, 0.0, 0.0, 0.0], &[0.5, 0.0, 0.0, 0.0]);
+        assert_eq!(cons.path[0], 0.5);
+        m.w[0] = 0.5;
+        cons.end_task(&m, &one).unwrap();
+        let first = 0.5 / (0.5 * 0.5 + 0.1);
+        assert_eq!(cons.omega[0], first);
+        assert_eq!(cons.anchor, vec![0.5, 0.0, 0.0, 0.0]);
+
+        // Task two begins where task one ended.
+        cons.begin_task(&[0.5, 0.0, 0.0, 0.0]);
+        assert_eq!(cons.path, vec![0.0; 4], "the path integral carried task one into task two");
+        cons.observe_step(&[-2.0, 0.0, 0.0, 0.0], &[0.25, 0.0, 0.0, 0.0]);
+        assert_eq!(cons.path[0], 0.5);
+        m.w[0] = 0.75;
+        cons.end_task(&m, &one).unwrap();
+        // The displacement is 0.75 − 0.5, not 0.75, and the importances add.
+        let second = 0.5 / (0.25 * 0.25 + 0.1);
+        assert_eq!(cons.omega[0], first + second);
+        assert_eq!(cons.anchor, vec![0.75, 0.0, 0.0, 0.0]);
+        // And it paid no pass over the data, which is the trade it makes against EWC.
+        assert_eq!(cons.passes, 0);
+    }
+
+    /// Elastic weight consolidation SUMS importances across task boundaries against a single
+    /// anchor — the online form of Schwarz et al. (ICML 2018) that [`Consolidation::Ewc`] states
+    /// as its second deviation from Kirkpatrick et al.
+    ///
+    /// Every penalised EWC run in this suite has exactly two tasks, and with two tasks the only
+    /// penalised task reads one boundary's Fisher whether that boundary added to what was already
+    /// there or replaced it.
+    #[test]
+    fn elastic_importances_are_summed_across_task_boundaries() {
+        let m = Linear::new(2, 2).unwrap();
+        let a = [Example { x: vec![0.5, -0.25], label: 0 }];
+        let b = [Example { x: vec![0.0, 0.75], label: 1 }];
+        let fa = fisher_diagonal(&m, &a).unwrap();
+        let fb = fisher_diagonal(&m, &b).unwrap();
+        assert_ne!(fa, fb, "the two boundaries must differ for a sum to differ from a replacement");
+        let mut cons = super::Consolidator::new(Consolidation::Ewc { lambda: 1.0 }, 6);
+        cons.end_task(&m, &a).unwrap();
+        assert_eq!(cons.omega, fa);
+        // The model does not move between the two boundaries, so each Fisher is computable on its
+        // own and the accumulated one is their sum, entry for entry and in the same order.
+        cons.end_task(&m, &b).unwrap();
+        for k in 0..6 {
+            assert_eq!(cons.omega[k], fa[k] + fb[k], "parameter {k}");
+        }
+        // One forward pass per example per boundary, which is what EWC pays and SI does not.
+        assert_eq!(cons.passes, 2);
+    }
+
+    /// [`standard_normal`] is exactly the Box-Muller transform of its two draws, with the radius
+    /// taken from `1 - u` so that it lies in `(0, 1]` and its logarithm is finite.
+    ///
+    /// Drawing the radius from `[0, 1)` instead changes no moment of the distribution — the two
+    /// are the same law — and differs only on a draw of exactly `0.0`, which `Rng::next_f64`
+    /// produces with probability `2^-53`. A distributional test cannot wait that long, so the
+    /// mean, the variance and the one-sigma mass all passed; the transform itself is pinnable in
+    /// sixty-four draws.
+    #[test]
+    fn standard_normal_is_the_box_muller_transform_of_a_radius_drawn_from_one_minus_u() {
+        let mut rng = Rng::new(0xB0C5_0002);
+        for i in 0..64 {
+            let mut echo = rng; // `Rng` is `Copy`, so this starts at the same stream position.
+            let u1 = echo.next_f64();
+            let u2 = echo.next_f64();
+            let want = (-2.0 * (1.0 - u1).ln()).sqrt() * (core::f64::consts::TAU * u2).cos();
+            assert_eq!(standard_normal(&mut rng), want, "draw {i}");
+            // And it consumes exactly two draws, which is what keeps the stream position a
+            // function of how many samples have been taken.
+            assert_eq!(rng, echo, "draw {i}");
+        }
+    }
+
+    /// The generative replay density is fitted by moments, and both moments are checked here
+    /// against hand arithmetic — including the clamp, which no end-to-end run can reach.
+    ///
+    /// A class whose feature is constant produces a NEGATIVE variance out of the cancellation in
+    /// `E[x^2] - E[x]^2`: five copies of 0.7 measure -1.11e-16 in this implementation, and the
+    /// square root of that is `NaN` in every sample the generator would then draw. The retention
+    /// table never sees it, because no class of [`crate::tasks::LatencyPatterns`] has a constant
+    /// feature, and it never sees a spread that is a variance either, because a narrower Gaussian
+    /// still separates five well-spaced classes.
+    #[test]
+    fn the_class_density_is_the_population_mean_and_standard_deviation_of_its_examples() {
+        let mut store = super::ReplayStore::new(Replay::Generative { per_task: 2 }, 2);
+        let train = vec![
+            // Class 0: feature 0 is {1, 0, 1, 0} — mean 1/2, second moment 1/2, variance 1/4 —
+            // and feature 1 is {1/4, 1/4, -1/4, -1/4}, mean 0 and variance 1/16. Every step is
+            // exact in binary, so these are equalities and not tolerances.
+            Example { x: vec![1.0, 0.25], label: 0 },
+            Example { x: vec![0.0, 0.25], label: 0 },
+            Example { x: vec![1.0, -0.25], label: 0 },
+            Example { x: vec![0.0, -0.25], label: 0 },
+            // Class 1: constant, which is the case the clamp exists for.
+            Example { x: vec![0.7, 0.7], label: 1 },
+            Example { x: vec![0.7, 0.7], label: 1 },
+            Example { x: vec![0.7, 0.7], label: 1 },
+            Example { x: vec![0.7, 0.7], label: 1 },
+            Example { x: vec![0.7, 0.7], label: 1 },
+        ];
+        let mut rng = Rng::new(0x5EED_0007);
+        store.absorb(&train, 2, &mut rng);
+        assert_eq!(store.models.len(), 2);
+        assert_eq!(store.models[0].label, 0);
+        assert_eq!(store.models[0].mean, vec![0.5, 0.0]);
+        // sqrt(1/4) and sqrt(1/16): a spread is a standard deviation, not a variance.
+        assert_eq!(store.models[0].sd, vec![0.5, 0.25]);
+        assert_eq!(store.models[1].label, 1);
+        assert_eq!(store.models[1].sd, vec![0.0, 0.0], "a negative variance reached the sqrt");
+        // A density with no spread generates its own mean, exactly, rather than a `NaN`.
+        let mean1 = store.models[1].mean.clone();
+        let drawn = store.rehearsal(&mut rng);
+        assert_eq!(drawn.len(), 2 * 2);
+        for e in drawn.iter().filter(|e| e.label == 1) {
+            assert_eq!(e.x, mean1);
+        }
+    }
+
+    /// [`Homeostat::rate`] is the EXPONENT on the ratio, `(target / norm)^rate`, so 1.0 lands on
+    /// the target and 0.0 does nothing at all.
+    ///
+    /// Every homeostat fixture in this suite passes `rate: 1.0`, and an exponent of one is the
+    /// identity on its base; the only other value anywhere is the 0.5 in a test that compares a
+    /// run against itself.
+    #[test]
+    fn the_homeostat_rate_is_the_exponent_on_the_ratio_it_applies() {
+        let mut m = Linear::new(3, 2).unwrap();
+        // Row 0 is the 3-4-5 triangle with the bias as the 3: its norm is exactly 5. Row 1 is
+        // zero, has no direction to preserve, and is left alone.
+        m.w = vec![0.0, 4.0, 0.0, 0.0, 0.0, 0.0];
+        m.b = vec![3.0, 0.0];
+        let g = Homeostat { target_norm: 1.25, rate: 0.5 }.apply(&mut m).unwrap();
+        // (1.25 / 5)^0.5 = 0.25^0.5 = 0.5, which is exactly representable and exactly returned.
+        assert_eq!(g, vec![0.5, 1.0]);
+        assert_eq!(m.w, vec![0.0, 2.0, 0.0, 0.0, 0.0, 0.0]);
+        assert_eq!(m.b, vec![1.5, 0.0]);
+        // A rate of zero does nothing whatever the target is, which is the other end of the same
+        // statement.
+        let before = m.clone();
+        let g0 = Homeostat { target_norm: 100.0, rate: 0.0 }.apply(&mut m).unwrap();
+        assert_eq!(g0, vec![1.0, 1.0]);
+        assert_eq!(m, before);
+    }
+
+    /// [`evaluate`] scores the TEST split.
+    ///
+    /// Every task this module builds is learned to 1.000 on both splits, so an accuracy matrix
+    /// scored on the training data carries the same numbers; the two separate only on a model
+    /// that has not fitted the training set.
+    #[test]
+    fn evaluate_scores_the_test_split_and_not_the_training_split() {
+        // A zero-initialised readout gives every class the same logit and ties go to the lowest
+        // index, so it answers class 0 for every input and its accuracy on a split is exactly the
+        // fraction of that split labelled 0.
+        let c = Curriculum::from_examples(
+            "splits",
+            vec![
+                Example { x: vec![0.0, 1.0], label: 0 },
+                Example { x: vec![1.0, 0.0], label: 0 },
+            ],
+            vec![
+                Example { x: vec![0.0, 1.0], label: 1 },
+                Example { x: vec![1.0, 0.0], label: 0 },
+            ],
+            2,
+            1,
+            3,
+        )
+        .unwrap();
+        let m = Linear::new(2, 2).unwrap();
+        assert_eq!(m.accuracy(&c.tasks[0].train).unwrap(), 1.0);
+        assert_eq!(evaluate(&m, &c).unwrap(), vec![0.5]);
+    }
+
+    /// [`train`] reshuffles the presentation order at every epoch, so the schedule's seed reaches
+    /// the weights. The suite's one direct call to it reads only the step count, and a step count
+    /// is the same number whatever order the steps arrived in.
+    #[test]
+    fn the_plain_trainer_reorders_its_examples_and_the_seed_reaches_the_weights() {
+        let c = course(1);
+        let fit = |seed: u64| {
+            let mut m = Linear::new(8, 5).unwrap();
+            let steps =
+                train(&mut m, &c.tasks[0], &Schedule { seed, epochs: 2, ..Schedule::default() })
+                    .unwrap();
+            (steps, m)
+        };
+        let (steps_one, one) = fit(1);
+        let (steps_two, two) = fit(2);
+        let (_, again) = fit(1);
+        assert_eq!(steps_one, 2 * 500);
+        assert_eq!(steps_two, 2 * 500);
+        assert_eq!(one.w, again.w, "the same seed did not reproduce the run");
+        assert_ne!(one.w, two.w, "the ordering never reached the weights");
+    }
+
+    /// The two refusals [`train`] documents and no fixture reached: a task with nothing to train
+    /// on, and a label that names no output unit of the model being stepped.
+    #[test]
+    fn the_plain_trainer_refuses_an_empty_task_and_a_label_past_the_class_count() {
+        let c = course(1);
+        let mut m = Linear::new(8, 5).unwrap();
+        let mut empty = c.tasks[0].clone();
+        empty.train.clear();
+        assert!(matches!(
+            train(&mut m, &empty, &Schedule::default()),
+            Err(ContinualError::Empty { what: "task train split" })
+        ));
+        assert_eq!(m.w, vec![0.0; 40], "a task with no examples still moved the model");
+        let mut mislabelled = c.tasks[0].clone();
+        mislabelled.train[7].label = 5;
+        assert!(matches!(
+            train(&mut m, &mislabelled, &Schedule::default()),
+            Err(ContinualError::Label { label: 5, n_classes: 5 })
+        ));
+    }
+
+    /// `sgd_step` hands the consolidator the gradient of the TASK objective — weight decay
+    /// included, consolidation penalty excluded — because synaptic intelligence integrates that
+    /// gradient along the path, and a penalty folded into it would let the method certify its own
+    /// importance estimate.
+    ///
+    /// The routing is invisible from outside: the penalty reaches the step either way, and only
+    /// the path integral of a THIRD task would read the difference. Here the step is taken on its
+    /// own, so both vectors are visible at once.
+    #[test]
+    fn the_step_keeps_the_consolidation_penalty_out_of_the_gradient_it_reports() {
+        let mut m = Linear::new(1, 2).unwrap();
+        m.w = vec![0.25, -0.75];
+        let mut cons = super::Consolidator::new(Consolidation::Ewc { lambda: 2.0 }, 4);
+        cons.omega = vec![1.0, 0.5, 0.25, 0.125];
+        let sched = Schedule { epochs: 1, lr: 0.1, weight_decay: 0.01, seed: 0 };
+        let e = Example { x: vec![1.0], label: 0 };
+        let p = m.probabilities(&e.x).unwrap();
+        let before = m.clone();
+        let mut flat = [0.0f64; 4];
+        let mut data_grad = [0.0f64; 4];
+        let mut grad = [0.0f64; 4];
+        let mut delta = [0.0f64; 4];
+        super::sgd_step(
+            &mut m,
+            &e,
+            &sched,
+            &cons,
+            &mut flat,
+            &mut data_grad,
+            &mut grad,
+            &mut delta,
+        )
+        .unwrap();
+        // The data gradient by hand: residual times feature, plus the decay on the weight.
+        let (d0, d1) = (p[0] - 1.0, p[1]);
+        assert_eq!(
+            data_grad,
+            [d0 * 1.0 + 0.01 * before.w[0], d1 * 1.0 + 0.01 * before.w[1], d0, d1]
+        );
+        // The penalised gradient is that plus `lambda * omega * (theta - anchor)`, and the anchor
+        // is still the origin.
+        assert_eq!(grad[0], data_grad[0] + 2.0 * 1.0 * (before.w[0] - 0.0));
+        assert_eq!(grad[1], data_grad[1] + 2.0 * 0.5 * (before.w[1] - 0.0));
+        // And the step descends the penalised gradient, not the reported one.
+        assert_eq!(delta[0], -0.1 * grad[0]);
+        assert_eq!(m.w[0], before.w[0] + delta[0]);
+    }
+
+    /// The divergence guard is `is_finite`, not `is_nan`.
+    ///
+    /// An infinity survives the arithmetic that produced it and only becomes `NaN` one step
+    /// later, when it meets the softmax — so a guard watching only `NaN` still returns
+    /// [`ContinualError::Diverged`], one step late, naming a different parameter and a different
+    /// value. Both divergence tests in this suite read only the variant, so the late refusal
+    /// matched them exactly. Here the step is taken on its own and the value is visible.
+    #[test]
+    fn an_infinite_parameter_is_refused_at_the_step_that_produced_it() {
+        let mut m = Linear::new(1, 2).unwrap();
+        let cons = super::Consolidator::new(Consolidation::None, 4);
+        let sched = Schedule { epochs: 1, lr: 10.0, weight_decay: 0.0, seed: 0 };
+        // A finite feature whose gradient overflows once the learning rate multiplies it: the
+        // residual is exactly -0.5 on a zero-initialised readout, 0.5e308 is finite, and ten
+        // times that is not.
+        let e = Example { x: vec![1e308], label: 0 };
+        let mut flat = [0.0f64; 4];
+        let mut data_grad = [0.0f64; 4];
+        let mut grad = [0.0f64; 4];
+        let mut delta = [0.0f64; 4];
+        let err = super::sgd_step(
+            &mut m,
+            &e,
+            &sched,
+            &cons,
+            &mut flat,
+            &mut data_grad,
+            &mut grad,
+            &mut delta,
+        )
+        .unwrap_err();
+        match err {
+            ContinualError::Diverged { parameter, value } => {
+                assert_eq!(parameter, 0, "the guard fired on a later parameter");
+                assert!(value.is_infinite(), "the guard waited for a NaN: {value}");
+            }
+            other => panic!("wrong refusal: {other:?}"),
+        }
+        // And the model was not written back, so a caller that ignores the error still holds
+        // finite parameters.
+        assert_eq!(m.w, vec![0.0, 0.0]);
+        assert_eq!(m.b, vec![0.0, 0.0]);
+    }
+
+    /// The two rates are scaled by their own level-0 probability: flipping by `q0`, deepening by
+    /// `p0`. Every cascade this suite asserts a probability on is [`Cascade::fusi_2005`], where
+    /// `q0 == p0 == 1.0` and the two are the same number at every level.
+    #[test]
+    fn the_flip_rate_is_scaled_by_q0_and_the_deepening_rate_by_p0() {
+        let c = Cascade { depth: 3, q0: 0.25, p0: 0.75, x: 0.5 };
+        assert_eq!(c.flip_probability(0), Some(0.25));
+        assert_eq!(c.flip_probability(1), Some(0.125));
+        assert_eq!(c.flip_probability(2), Some(0.0625));
+        assert_eq!(c.flip_probability(3), None);
+        assert_eq!(c.deepen_probability(0), Some(0.75));
+        assert_eq!(c.deepen_probability(1), Some(0.375));
+        // The deepest level has nowhere deeper to go, which is not the same as "not a level".
+        assert_eq!(c.deepen_probability(2), Some(0.0));
+        assert_eq!(c.deepen_probability(3), None);
+    }
+
+    /// The reducible chain, which is the only thing that reaches `stationary_by_iteration`.
+    ///
+    /// Flux balance succeeds for every other cascade in this module, so the fallback ran in no
+    /// test at all — and the one `x == 0` fixture that exists calls only `transition_matrix`.
+    /// With `x == 0` every level past the first is absorbing: from `(+, 0)` a potentiating
+    /// stimulus deepens with certainty and a depressing one flips with certainty, so the level-0
+    /// mass halves every step and all of it lands on level 1, while levels 2 and up keep whatever
+    /// the start vector gave them. From the uniform start that limit is exactly
+    /// `[0, 1/3, 1/6, 0, 1/3, 1/6]` — a distribution, which is what a start vector that is not
+    /// normalised would not produce.
+    #[test]
+    fn the_reducible_chain_falls_back_to_a_normalised_limit_from_the_uniform_start() {
+        let c = Cascade { depth: 3, q0: 1.0, p0: 1.0, x: 0.0 };
+        let pi = c.stationary().unwrap();
+        assert_eq!(pi.len(), 6);
+        assert!(pi.iter().all(|&v| v >= 0.0), "{pi:?}");
+        // The iteration stops at an absolute residual of 1e-15 and the level-0 mass halves every
+        // step, so every entry is within that of its limit; 1e-14 is ten times the stopping
+        // residual and a thousandth of the smallest entry.
+        assert!((pi.iter().sum::<f64>() - 1.0).abs() < 1e-14, "sums to {}", pi.iter().sum::<f64>());
+        let third = 1.0 / 3.0;
+        let sixth = 1.0 / 6.0;
+        for (k, want) in [(0, 0.0), (1, third), (2, sixth), (3, 0.0), (4, third), (5, sixth)] {
+            assert!((pi[k] - want).abs() < 1e-14, "state {k}: {} against {want}", pi[k]);
+        }
+    }
+
+    /// [`CascadeEnsemble::new`] starts every synapse at `(+, 0)` — at the SHALLOWEST level, which
+    /// is the initial condition the exact chain deliberately does not use.
+    ///
+    /// The suite reads a fresh ensemble's `len`, its `is_empty` and its signal, and all three are
+    /// the same at any level: the polarity is what the signal is made of. The level shows up one
+    /// stimulus later, because [`Cascade::fusi_2005`] flips a level-0 synapse with probability
+    /// exactly 1.0 and `Rng::next_f64` lives in `[0, 1)`, so a single depressing stimulus flips
+    /// every synapse in the population. At level 1 it would flip half of them.
+    #[test]
+    fn a_fresh_ensemble_starts_at_the_shallowest_level_where_one_stimulus_flips_it() {
+        let c = Cascade::fusi_2005(4);
+        let mut e = CascadeEnsemble::new(c, 256, 0xFE51).unwrap();
+        assert_eq!(e.signal(), 1.0);
+        e.stimulate(false);
+        assert_eq!(e.signal(), -1.0, "a fresh synapse was not at the level that always flips");
+    }
+
+    /// The test-only elimination oracle projects its solution onto the polarity-symmetric
+    /// subspace, and that projection is load-bearing rather than tidy.
+    ///
+    /// `transition_matrix` gives the two stimulus signs equal probability and shares `q0`, `p0`
+    /// and `x` between them, so the chain's stationary distribution is EXACTLY symmetric under
+    /// polarity. The oracle's own solve is not: the antisymmetric direction is the slowest
+    /// eigenmode and it is precisely where `f64` cannot resolve stationarity. Without the
+    /// projection this implementation measures an asymmetry of 2.2e-16 at depth 2 and 2.9e-11 at
+    /// depth 23 — and the test that compares the oracle against the flux-balance recursion runs
+    /// only to depth 15, at 1e-12, where that error is four orders under the tolerance. An exact
+    /// equality between the two halves sees it at every depth.
+    #[test]
+    fn the_elimination_oracle_returns_an_exactly_polarity_symmetric_vector() {
+        for depth in [2usize, 3, 7, 10, 15, 18, 20, 23] {
+            let c = Cascade::fusi_2005(depth);
+            let n = 2 * depth;
+            let m = c.transition_matrix().unwrap();
+            let g = c.generator_matrix().unwrap();
+            let pi = super::stationary_direct(&g, &m, n).expect("irreducible");
+            for k in 0..depth {
+                assert_eq!(pi[k], pi[depth + k], "depth {depth} level {k}");
+            }
+        }
+        // And for parameterisations that are not fusi's, so the symmetry is a property of the
+        // equiprobable stimulus signs rather than of `q0 == p0 == 1` and `x == 1/2`.
+        for c in [
+            Cascade { depth: 12, q0: 0.3, p0: 0.8, x: 0.6 },
+            Cascade { depth: 9, q0: 0.9, p0: 0.2, x: 0.85 },
+        ] {
+            let n = 2 * c.depth;
+            let m = c.transition_matrix().unwrap();
+            let g = c.generator_matrix().unwrap();
+            let pi = super::stationary_direct(&g, &m, n).expect("irreducible");
+            for k in 0..c.depth {
+                assert_eq!(pi[k], pi[c.depth + k], "{c:?} level {k}");
+            }
+        }
+    }
+
+    /// The importance and the anchor are taken from the model the NEXT task starts from — after
+    /// the homeostat has rescaled it, not before.
+    ///
+    /// No test in this suite combined a homeostat with a consolidation method: every homeostat
+    /// fixture runs [`Consolidation::None`] and every consolidation fixture runs no homeostat, so
+    /// the order of the two statements at the task boundary was unobservable. Taking the anchor
+    /// first leaves the next task starting at a point the penalty is already pulling it away
+    /// from, and estimates the importance at a scale the learner never visits.
+    ///
+    /// It is measurable because the empirical Fisher is scale-dependent. Shrinking every class
+    /// row to a norm of 2 un-saturates the posteriors and multiplies the Fisher, so a `lambda` of
+    /// 150 — comfortable at this model's own scale, where it retains 0.812 — is then stiffer than
+    /// the learning rate can integrate and the run is refused. With the anchor taken first the
+    /// same run completes, and completes at the same retention of 0.532 for every target norm,
+    /// because nothing the homeostat did reached the importance at all.
+    #[test]
+    fn the_importance_is_estimated_after_the_homeostat_has_rescaled_the_model() {
+        let sched = Schedule::default();
+        let scaled_to = |target_norm: f64| {
+            run(
+                &course(2),
+                &Protocol {
+                    consolidation: Consolidation::Ewc { lambda: 150.0 },
+                    homeostasis: Some(Homeostat { target_norm, rate: 1.0 }),
+                    ..Protocol::plain(sched)
+                },
+            )
+        };
+        assert!(matches!(scaled_to(2.0), Err(ContinualError::Diverged { .. })));
+        // And where it does complete, what is retained depends on the target norm — which it
+        // cannot if the importance was estimated before the rescaling. Measured at 1.000 for a
+        // target of 4 and 0.436 for a target of 10.
+        assert_eq!(scaled_to(4.0).unwrap().retained(0), Some(1.0));
+        let wide = scaled_to(10.0).unwrap().retained(0).unwrap();
+        assert!(wide < 0.50, "retention at a target norm of 10: {wide}");
+    }
+
 }

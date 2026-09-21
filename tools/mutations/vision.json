@@ -22,7 +22,8 @@
  {
   "label": "the neighbourhood bound refuses a half-width one short of it",
   "old": "    if r + 1 > usize::from(geom.width.max(geom.height)) {",
-  "new": "    if r >= usize::from(geom.width.max(geom.height)) {"
+  "new": "    if r >= usize::from(geom.width.max(geom.height)) {",
+  "equivalent": "Equivalent: the two expressions are the same predicate on every input the type admits. For unsigned integers `r + 1 > M` is `r + 1 >= M + 1`, i.e. `r >= M`, provided `r + 1` does not overflow. Here `r = usize::from(radius)` with `radius: u16`, so `r <= 65535` and `r + 1 <= 65536`, and `M = usize::from(width.max(height))` is a widened `u16` as well; `usize` is at least 32 bits on every target this crate can be built for, since it links `std` (it implements `std::error::Error`). So both forms refuse exactly the radii `r >= max(width, height)` and accept exactly the radii below that, returning the same `Ok(r)` or the same `BadParameters` for every `(geom, radius)` pair. The label's premise -- that the mutant refuses a half-width one short of the bound -- is a mis-derivation; the two refuse the same smallest radius. Checked against the existing boundary test `a_neighbourhood_wider_than_the_sensor_is_refused_rather_than_overflowing`, which pins both sides of that radius and passes identically under either form."
  },
  {
   "label": "a neighbourhood wider than the sensor is accepted",
@@ -644,7 +645,8 @@
  {
   "label": "a directionless prototype is given a cosine factor of one",
   "old": "        let beta = if nc > 0.0 && ns > 0.0 { dot / (nc * ns) } else { 0.0 };",
-  "new": "        let beta = if nc > 0.0 && ns > 0.0 { dot / (nc * ns) } else { 1.0 };"
+  "new": "        let beta = if nc > 0.0 && ns > 0.0 { dot / (nc * ns) } else { 1.0 };",
+  "equivalent": "Equivalent: the branch is reachable but its value is not observable. `nc` and `ns` are square roots of sums of squares of finite entries, so neither is negative and neither is NaN -- `Hots::with_centers` refuses a non-finite prototype entry, and every later entry is `ci + alpha * (si - beta * ci)` with all three finite -- which leaves `nc == 0.0` or `ns == 0.0` as the only way into the `else`. (1) `ns == 0` cannot arise from `Hots::learn`: it calls `surface.update(e)` and then `surface.patch(e.x, e.y, radius, e.polarity, e.t_s)`, so the patch's centre entry is `decay.value(t - t) = exp(-0/tau) = 1.0` for the finite positive tau `TimeSurface::new` requires, and the patch's norm is therefore at least 1. (2) `nc == 0` means every entry of `self.centers[k]` is +/-0.0, and the only use of `beta` is `*ci += alpha * (si - beta * *ci)`, where `beta * *ci` is `0.0` for either constant -- so the update is `alpha * si` under both, entry for entry, bit for bit. `beta` is a local: it is not returned, stored or exposed. No sequence of calls to any public method of `Hots` can therefore produce a different `centers`, `counts` or return value. The existing test `the_hots_cosine_factor_is_exercised_off_the_ray` already drives this exact branch -- `Hots::with_centers(g, 1, 1e-3, vec![vec![0.0; 9]])` then `learn` -- and asserts the entry is exactly `alpha`, which is what both constants give."
  },
  {
   "label": "the cosine factor normalises by the prototype's norm alone",
@@ -765,7 +767,8 @@
  {
   "label": "the bin count wraps instead of saturating",
   "old": "        side.saturating_mul(side)",
-  "new": "        side * side"
+  "new": "        side * side",
+  "equivalent": "Equivalent on every target this test binary can run on. `side = 2 * usize::from(self.radius) + 1` with `radius: u16` is at most 131_071, and 131_071^2 = 17_179_607_041, which is about 2^34 -- thirty bits short of `usize::MAX` on a 64-bit target. `saturating_mul` therefore never saturates and returns exactly what `*` returns, for every `Hats` value that can be constructed. The saturation exists for a 32-bit `usize`, which the doc on `Hats::bins_per_cell` states in as many words (\"silently, in a release wasm32 build\"); `cargo test` builds and runs this suite for the host, which is 64-bit, and the harness runs `cargo test --release` on the same host. A test gated on `target_pointer_width = \"32\"` would compile to nothing here and so would not distinguish the mutant either. This is a judgement about the target, not about the arithmetic: on wasm32 the mutation is observable and wrong, and the saturation is why it is not."
  },
  {
   "label": "a zero cell side divides rather than refusing",
@@ -800,7 +803,8 @@
  {
   "label": "an overflowing bin count is wrapped rather than refused",
   "old": "        let bins = side.checked_mul(side).ok_or_else(too_long)?;",
-  "new": "        let bins = side * side;"
+  "new": "        let bins = side * side;",
+  "equivalent": "Equivalent on every target this test binary can run on, for the same reason as `the bin count wraps instead of saturating`: `side <= 131_071` and `side * side <= 17_179_607_041`, so `checked_mul` cannot return `None` on a 64-bit `usize` and the `?` never fires. Note what is NOT dead: the `too_long` refusal itself stays reachable on 64 bits through the chain the mutation does not touch -- `cx.checked_mul(cy).and_then(|c| c.checked_mul(planes)).and_then(|c| c.checked_mul(bins))` overflows for, say, a 65535x65535 sensor with `cell_px = 1` and a large `radius` (65535 * 65535 * 2 * 1.718e10 = 1.5e20 > 1.8e19) -- so this entry is about one unreachable path to a reachable error, not about an unreachable error."
  },
  {
   "label": "a zero HATS time constant is accepted",
@@ -1433,12 +1437,14 @@
  {
   "label": "the rotating bar stops one crossing short of the duration",
   "old": "    let sweeps = per_pixel as u64 + 1;",
-  "new": "    let sweeps = per_pixel as u64;"
+  "new": "    let sweeps = per_pixel as u64;",
+  "equivalent": "Equivalent under the closed form the function documents; the slot it gives up is margin, not reach. Write p = period, D = duration, n = floor(D/p) and u = -base/p for one pixel. The crossings the doc names are `t_k = base + k*p` with `0 <= t_k <= D`, i.e. k from `ceil(u)` to `floor(u + D/p)`, and there are at most `floor(u + D/p) - ceil(u) + 1 <= floor(D/p) + 1 = n + 1` of them, because `floor(a + b) <= floor(a) + ceil(b)` for all reals (equality when b is an integer, otherwise `floor(a+b) <= floor(a)+floor(b)+1 = floor(a)+ceil(b)`). The mutant starts at the same `k0 = ceil(u)` and has exactly `n + 1` slots, so it still reaches every admissible k; the slot it drops could only have held `k = ceil(u) + n + 1`, whose time is `t_ceil(u) + (n+1)*p >= (n+1)*p > D` and which the original's own `if t > duration { break }` discards. Measured: 3,591 randomly drawn parameter sets -- omega over eight decades (1e-2 to 1e6), theta0 up to 1e12, four sensor sizes, integer and half-integer centres, durations from 1e-6 s to 10 s -- emitted identical event sets under both (scratch/sweeps_probe.py). What I found and deliberately did not build a test on: the margin becomes observable only where `phi - theta0` has lost the pixel's own angle to rounding, |theta0| around 1e13 and up, so that `base + k0*p` -- a cancellation of two numbers of order |base| -- can land a few ulp below zero and consume a slot the `t >= 0.0` filter then discards. In 200,000 draws that happened 26 times at |theta0| <= 1e14 and 3,394 times at |theta0| <= 1e16. But in that regime the UNMUTATED generator is already outside its own closed form: in 17,779 of 300,000 draws (5.9%) the set it emits is not `{t_k in [0, D]}` evaluated in the same binary64, because the rounding is larger than the margin. A test built on one of the surviving points would pin the rounding of `atan2` and of one cancellation rather than the claim, and would stop distinguishing anything on a libm that rounds `atan2` differently. The module already treats this class of precision loss as a fact about the arithmetic rather than a defect -- see `a_time_surface_seeded_late_loses_precision_to_the_subtraction`, which is the same subtraction. The claim itself is now pinned for a well-conditioned fixture by the new `every_crossing_the_rotating_bars_closed_form_names_is_emitted_and_no_other`, which compares all 226 annulus pixels' emitted times, value for value, against `base + k*period` scanned two slots past each end."
  },
  {
   "label": "the rotating bar's first crossing is taken below zero rather than at or after it",
   "old": "            let k0 = (-base / period).ceil();",
-  "new": "            let k0 = (-base / period).floor();"
+  "new": "            let k0 = (-base / period).floor();",
+  "equivalent": "Equivalent under the closed form the function documents, by the same counting argument as `the rotating bar stops one crossing short of the duration` (see that entry for the algebra and the measurements). `floor(u)` differs from `ceil(u)` only when u is not an integer, and then it is `ceil(u) - 1`, so the mutant's first slot holds `t_ceil(u) - p`, which lies in [-p, 0) and is discarded by the `if t >= 0.0` filter. That leaves it `n + 1` useful slots out of `n + 2`, and `n + 1` is exactly the bound on how many crossings a pixel can have inside [0, D] -- so it still reaches every one of them. Emitted sets were identical across the same 3,591 drawn parameter sets. This mutation is even harder to make visible than its twin: it additionally needs u to fall just below an integer, and exactly one draw in 300,000 in the rounding-dominated regime both left the unmutated generator agreeing with its own closed form and made this mutant disagree."
  },
  {
   "label": "a pixel crossed exactly at time zero is dropped",

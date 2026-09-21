@@ -6638,4 +6638,890 @@ mod tests {
         assert!((fire(0.0).unwrap().score - s).abs() < 1e-12);
     }
 
+
+    /// **The shared `positive` boundary names a `NaN` as non-finite, and refuses an infinity
+    /// outright.**
+    ///
+    /// `positive` is `finite` followed by `x > 0.0`, and deleting the `finite` call is invisible to
+    /// every test above: [`a_degenerate_decay_constant_is_refused`] asserts `is_err()` and nothing
+    /// finer, and `NaN > 0.0` is false, so a `NaN` still comes back as *an* error — under the
+    /// variant that says "zero or negative", which is a different defect from the one that
+    /// happened. An **infinity** is where the two differ in kind rather than in wording:
+    /// `inf > 0.0` is true, so without the finiteness check an infinite time constant, speed or
+    /// window is accepted, and an infinite `tau` makes `exp(-d/tau)` exactly `1` at every elapsed
+    /// time — a surface that has forgotten nothing, plotted as if it had.
+    #[test]
+    fn the_positive_boundary_refuses_an_infinity_and_names_a_nan_as_non_finite() {
+        assert_eq!(
+            Decay::Exponential { tau_s: f64::INFINITY }.validate(),
+            Err(VisionError::NonFinite { what: "decay time constant tau", value: f64::INFINITY })
+        );
+        assert!(matches!(
+            Decay::Exponential { tau_s: f64::NAN }.validate(),
+            Err(VisionError::NonFinite { what: "decay time constant tau", value }) if value.is_nan()
+        ));
+        // What an accepted infinity would build: a surface whose every value is exactly 1.
+        assert_eq!(Decay::Exponential { tau_s: f64::INFINITY }.value(1.0), 1.0);
+        assert!(TimeSurface::new(geom(4, 4), Decay::Exponential { tau_s: f64::INFINITY }, false).is_err());
+        // A second entry point, so the check is pinned at `positive` rather than at one caller.
+        assert_eq!(
+            moving_edge(geom(8, 8), 0.0, f64::INFINITY, 0.0, 0.1, Polarity::On).err(),
+            Some(VisionError::NonFinite { what: "edge speed", value: f64::INFINITY })
+        );
+        // And the rejection is still by SIGN where the value is finite, naming that instead.
+        assert_eq!(
+            Decay::Exponential { tau_s: -1e-3 }.validate(),
+            Err(VisionError::NonPositive { what: "decay time constant tau", value: -1e-3 })
+        );
+    }
+
+    /// **The linear decay's window is strictly positive, exactly like the exponential's `tau`.**
+    ///
+    /// [`a_degenerate_decay_constant_is_refused`] covers `Exponential { tau_s: 0.0 }` and
+    /// `Exponential { tau_s: -1e-3 }`, but the only `Linear` it passes is a `NaN` — which the
+    /// finiteness half of `positive` refuses on its own. So the sign half of the `Linear` arm was
+    /// never reached, and weakening it to `finite` left a zero window accepted.
+    ///
+    /// A zero window is not a harmless parameter: `1 - 0/0` is `NaN`, the `v > 0.0` test reads that
+    /// as zero, and the surface is then identically zero *including at the event itself* — the
+    /// linear twin of the exp(-inf) surface the `tau` doc describes.
+    #[test]
+    fn the_linear_decays_window_must_be_strictly_positive_like_the_exponentials_tau() {
+        assert_eq!(
+            Decay::Linear { window_s: 0.0 }.validate(),
+            Err(VisionError::NonPositive { what: "decay window", value: 0.0 })
+        );
+        assert_eq!(
+            Decay::Linear { window_s: -1e-3 }.validate(),
+            Err(VisionError::NonPositive { what: "decay window", value: -1e-3 })
+        );
+        // The surface a zero window would carry: zero at the event, not one.
+        assert_eq!(Decay::Linear { window_s: 0.0 }.value(0.0), 0.0);
+        assert!(TimeSurface::new(geom(4, 4), Decay::Linear { window_s: 0.0 }, false).is_err());
+        assert!(matches!(
+            Decay::Linear { window_s: f64::NAN }.validate(),
+            Err(VisionError::NonFinite { what: "decay window", value }) if value.is_nan()
+        ));
+    }
+
+    /// **A time past the wire clock's range has no encoding and is refused, not saturated.**
+    ///
+    /// [`the_microsecond_boundary_round_trips_exactly`] covers the negative and `NaN` refusals and
+    /// five small timestamps, none of them within twenty orders of magnitude of the limit. Dropping
+    /// the range check is therefore invisible: a float-to-integer cast in Rust *saturates*, so the
+    /// mutant hands back `u64::MAX` — a wire timestamp of 584,942 years — for any time past it,
+    /// silently, with the same `Some` a good conversion has.
+    #[test]
+    fn a_time_past_the_wire_clocks_range_has_no_encoding_rather_than_a_saturated_one() {
+        let at = |t_s: f64| PixelEvent { t_s, x: 1, y: 2, polarity: Polarity::On };
+        // 1e13 s is 1e19 us, inside `u64::MAX = 1.8446744e19`, and 1e19 is exactly a binary64.
+        assert_eq!(at(1e13).to_aer().map(|a| a.t), Some(10_000_000_000_000_000_000));
+        // 1e14 s is 1e20 us, past it. The saturating cast would give 18446744073709551615.
+        assert_eq!(at(1e14).to_aer(), None);
+        assert_eq!(at(f64::MAX).to_aer(), None);
+    }
+
+    /// **A stream may hold simultaneous events; only a step backwards is refused.**
+    ///
+    /// [`require_time_ordered`]'s doc says "non-decreasing", and [`TimeSurface::update`] has an
+    /// explicit equal-times case ("a sensor emits a whole column at one instant") — but the free
+    /// function had no test of its own at all, so tightening its `<` to `<=` broke the documented
+    /// tolerance of simultaneity without failing anything. [`Hats::descriptor`] is its only caller
+    /// in this crate, and that is where the breakage would have surfaced, on a real sensor, as a
+    /// refusal to describe a frame.
+    #[test]
+    fn a_stream_may_hold_simultaneous_events_and_only_a_step_backwards_is_refused() {
+        let at = |t_s: f64, x: u16| PixelEvent { t_s, x, y: 0, polarity: Polarity::On };
+        assert_eq!(require_time_ordered(&[at(1.0, 0), at(1.0, 1), at(1.0, 2)]), Ok(()));
+        assert_eq!(require_time_ordered(&[at(0.0, 0), at(1.0, 1), at(1.0, 2), at(2.0, 3)]), Ok(()));
+        assert_eq!(
+            require_time_ordered(&[at(1.0, 0), at(0.5, 1)]),
+            Err(VisionError::OutOfOrder { t_s: 0.5, now_s: 1.0 })
+        );
+
+        // Through the consumer, with the arithmetic a simultaneous pair produces. One cell, one
+        // plane, nine bins: each event writes 1.0 into the centre bin (index 4), and the second
+        // event also sees the first at `dt = 0`, one pixel to its left — bin `(0 + 1) * 3 + 0 = 3`
+        // — weighted `exp(-0 / tau) = 1`. The cell's two events then divide both.
+        let g = geom(10, 10);
+        let h = Hats { cell_px: 10, radius: 1, tau_s: 1.0, window_s: 1.0, split_polarity: false };
+        let d = h.descriptor(g, &[at(1.0, 4), at(1.0, 5)]).expect("simultaneous events describe");
+        assert_eq!(d[4], 1.0, "each event's own centre contribution, over a divisor of two");
+        assert_eq!(d[3], 0.5, "the simultaneous neighbour at full weight, over a divisor of two");
+        assert_eq!(d.iter().filter(|v| **v != 0.0).count(), 2);
+    }
+
+    /// **The decayed accumulator validates its decay before it weights anything.**
+    ///
+    /// Every other consumer of [`Decay`] goes through [`TimeSurface::new`], whose own test covers
+    /// the refusal; [`accumulate_decay`] is the one that calls [`Decay::validate`] directly, and
+    /// deleting that call leaves no error and no panic. A zero `tau` gives `exp(-elapsed / 0)`,
+    /// which is `0` for every event but one and `1` at the reference time exactly — a sparse image
+    /// that looks like a recording of a nearly static scene, which is the shape of wrong answer
+    /// this module refuses at its boundaries rather than returns.
+    #[test]
+    fn the_decayed_accumulator_validates_its_decay_before_it_weights_anything() {
+        let g = geom(8, 8);
+        let ev = [PixelEvent { t_s: 0.0, x: 1, y: 1, polarity: Polarity::On }];
+        assert_eq!(
+            accumulate_decay(g, &ev, Decay::Exponential { tau_s: 0.0 }, 1.0),
+            Err(VisionError::NonPositive { what: "decay time constant tau", value: 0.0 })
+        );
+        assert_eq!(
+            accumulate_decay(g, &ev, Decay::Linear { window_s: -1.0 }, 1.0),
+            Err(VisionError::NonPositive { what: "decay window", value: -1.0 })
+        );
+        assert!(matches!(
+            accumulate_decay(g, &ev, Decay::Exponential { tau_s: f64::NAN }, 1.0),
+            Err(VisionError::NonFinite { what: "decay time constant tau", .. })
+        ));
+        // What the mutant would have accumulated instead, which is why the refusal belongs at the
+        // boundary: a zero `tau` weights every earlier event by exactly zero and the event at the
+        // reference time by `exp(-0 / 0)`, which is a `NaN` — one poisoned pixel in an image whose
+        // every other pixel is a plausible zero.
+        assert_eq!(Decay::Exponential { tau_s: 0.0 }.value(1.0), 0.0);
+        assert!(Decay::Exponential { tau_s: 0.0 }.value(0.0).is_nan());
+    }
+
+    /// **The frame statistics divide by the data present, not by the lattice claimed.**
+    ///
+    /// [`Frame::mean`]'s doc says "over `data` rather than over `width * height`", and
+    /// [`a_frame_whose_data_is_short_reports_none_rather_than_panicking`] builds exactly the frame
+    /// where those differ — three values on a 4x4 lattice — but asserts `mean()` only for the
+    /// *empty* frame, where both divisors give `None`. Everything else in the module produces a
+    /// consistent frame, so `data.len()` and `pixels()` are the same number in every other fixture.
+    #[test]
+    fn the_frame_statistics_divide_by_the_data_present_not_by_the_lattice_claimed() {
+        let short = Frame { width: 4, height: 4, data: vec![1.0, 2.0, 3.0] };
+        assert!(!short.is_consistent());
+        assert_eq!(short.geometry().pixels(), 16);
+        assert_eq!(short.sum(), 6.0);
+        // 6 / 3, not 6 / 16. Exact: both divisors are small integers and the quotient is exact.
+        assert_eq!(short.mean(), Some(2.0));
+        // Population variance over the same three values: ((1-2)^2 + 0 + (3-2)^2) / 3.
+        assert_eq!(short.variance(), Some(2.0 / 3.0));
+        assert_eq!(short.max(), Some(3.0));
+        assert_eq!(short.min(), Some(1.0));
+        // A consistent frame is the case where the two divisors agree, and it still holds there.
+        let full = Frame { width: 2, height: 2, data: vec![1.0, 2.0, 3.0, 4.0] };
+        assert!(full.is_consistent());
+        assert_eq!(full.mean(), Some(2.5));
+    }
+
+    /// **The second pass fits the points that survived rejection, not the ones that went in.**
+    ///
+    /// [`outlier_rejection_recovers_a_fit_that_a_single_hot_pixel_destroys`] does the paper's two
+    /// stages *beside* [`PlaneFlow`], by calling [`fit_plane`] twice and filtering in the test
+    /// itself, so the estimator's own second pass had no test at all: refitting on `pts` instead of
+    /// `kept` returns the first-pass plane and every outcome stays a `Fitted`, with a velocity that
+    /// is wrong by the outlier's pull and by nothing that shows.
+    ///
+    /// The neighbourhood here is the same 5x5 on `t = x / 400`, driven through the estimator as a
+    /// stream. The hot pixel is at `dx = +2` from the centre: an outlier *at* the centre would move
+    /// only the intercept `c`, because its centred coordinates are zero, and the flow would not
+    /// notice it at all.
+    #[test]
+    fn the_plane_fits_second_pass_uses_the_points_that_survived_rejection() {
+        let g = geom(32, 32);
+        // The clean support: t = x / 400, i.e. 400 px/s along +x, over x in 16..=20, y in 16..=20.
+        let mut stream: Vec<PixelEvent> = Vec::new();
+        for x in 16..=20u16 {
+            for y in 16..=20u16 {
+                stream.push(PixelEvent {
+                    t_s: f64::from(x) / 400.0,
+                    x,
+                    y,
+                    polarity: Polarity::On,
+                });
+            }
+        }
+        // A hot pixel re-firing 10 ms off the plane at (20, 18), then the event whose flow is read,
+        // at the neighbourhood's centre. Both are later than every clean event, which is what lets
+        // a causal stream carry an outlier at all.
+        stream.push(PixelEvent { t_s: 0.060, x: 20, y: 18, polarity: Polarity::On });
+        stream.push(PixelEvent { t_s: 0.065, x: 18, y: 18, polarity: Polarity::On });
+
+        let run = |reject_s: Option<f64>| -> f64 {
+            let mut pf = PlaneFlow::new(g, 2, 0.03, reject_s, 8).unwrap();
+            let outcomes = pf.run(&stream).unwrap();
+            match outcomes.last().expect("one outcome per event") {
+                FlowOutcome::Fitted(f) => f.speed,
+                other => panic!("the last event produced {other:?}"),
+            }
+        };
+
+        // Without the rejection pass the hot pixel pulls dt/dx from 1/400 to 0.0029 s/px, so the
+        // reported speed is 1 / 0.0029 = 344.83 px/s. The damage is asserted first, or the repair
+        // below would prove nothing.
+        let pulled = run(None);
+        assert!(
+            (pulled - 400.0).abs() / 400.0 > 0.10,
+            "the outlier only moved the fit to {pulled} px/s"
+        );
+
+        // With it, the two displaced points are the only residuals past 4 ms — the clean ones
+        // reach 2.0 ms against the pulled plane — so 23 of the 25 survive and the refit is the
+        // exact plane they lie on.
+        let repaired = run(Some(4e-3));
+        assert!(
+            (repaired - 400.0).abs() < 1e-6,
+            "the refit reported {repaired} px/s, not the 400 px/s its 23 inliers lie on"
+        );
+    }
+
+    /// **The learning rate counts the selected cluster's own selections, not the layer's total.**
+    ///
+    /// The paper writes `alpha = 0.01 / (1 + p_k / 20000)` with `p_k` the number of times cluster
+    /// `k` has been selected, and [`the_hots_learning_rate_is_the_papers_two_constants`] pins the
+    /// expression. What no test could see is *which count is substituted for `p_k`*: every `HOTS`
+    /// fixture in this module drives a layer with **one** cluster, and with one cluster the layer's
+    /// total and that cluster's own count are the same number.
+    ///
+    /// Two clusters here, and one of them is dragged to exactly [`Hots::ALPHA_DECAY`] selections
+    /// while the other is never chosen — so the rate the second one finally learns at is either
+    /// `alpha0` (its own count is zero) or `alpha0 / 2` (the layer's total is 20000), a factor of
+    /// two apart rather than a rounding apart.
+    #[test]
+    fn the_hots_learning_rate_counts_its_own_clusters_selections_not_the_layers() {
+        let g = geom(16, 16);
+        // `hot` is exactly the centre indicator, which is the patch an isolated event produces, so
+        // it wins every one of the first 20000 events. It is also parallel to that patch and of
+        // unit length, so `beta` is exactly 1 and its own update is exactly zero: it stays the
+        // nearest prototype, unchanged, for the whole run.
+        let mut hot = vec![0.0; 9];
+        hot[4] = 1.0;
+        // `cold` is nearer the patch that a SIMULTANEOUS neighbour one pixel up and to the left
+        // produces, and nothing else. It is not parallel to it, so its one update is visible.
+        let mut cold = vec![0.0; 9];
+        cold[0] = 1.0;
+        cold[4] = 0.5;
+        let mut h = Hots::with_centers(g, 1, 1e-3, vec![hot.clone(), cold.clone()]).unwrap();
+
+        let selections = Hots::ALPHA_DECAY as u64;
+        for n in 0..selections {
+            let k = h
+                .learn(PixelEvent { t_s: n as f64 * 1e-3, x: 8, y: 8, polarity: Polarity::On })
+                .unwrap();
+            assert_eq!(k, 0, "the centre-indicator prototype must win an isolated event");
+        }
+        assert_eq!(h.counts(), &[selections, 0]);
+        assert_eq!(h.centers()[0], hot, "a prototype parallel to the patch does not move");
+
+        // One event whose patch is `e0 + e4`: the neighbour is recorded with `assign`, which reads
+        // the surface without touching a count or a centre, so the layer's totals are undisturbed.
+        let t = selections as f64 * 1e-3;
+        h.assign(PixelEvent { t_s: t, x: 7, y: 7, polarity: Polarity::On }).unwrap();
+        let k = h.learn(PixelEvent { t_s: t, x: 8, y: 8, polarity: Polarity::On }).unwrap();
+        assert_eq!(k, 1, "the patch e0 + e4 is at distance 0.5 from `cold` and 1.0 from `hot`");
+        assert_eq!(h.counts(), &[selections, 1]);
+
+        // The paper's rule, written out here from its own two constants at `p_k = 0`.
+        let alpha = 0.01 / (1.0 + 0.0 / 20000.0);
+        let beta = 1.5 / (1.25f64.sqrt() * 2.0f64.sqrt());
+        let want0 = 1.0 + alpha * (1.0 - beta * 1.0);
+        let want4 = 0.5 + alpha * (1.0 - beta * 0.5);
+        assert!((h.centers()[1][0] - want0).abs() < 1e-18, "{}", h.centers()[1][0]);
+        assert!((h.centers()[1][4] - want4).abs() < 1e-18, "{}", h.centers()[1][4]);
+        // And the two readings are a factor of two apart, so the assertion above is not a
+        // tolerance question: at the layer's total the step would be half this one.
+        let halved = 0.5 + 0.005 * (1.0 - beta * 0.5);
+        assert!((want4 - halved).abs() > 1e-3, "the two readings differ by {}", want4 - halved);
+    }
+
+    /// **The two `N-CARS` numbers nothing read.**
+    ///
+    /// [`hats_refuses_what_it_cannot_describe`] checks `cell_px` and `bins_per_cell` (which is
+    /// `radius`), and the descriptor tests build their own [`Hats`] literals — so `tau_s` and
+    /// `window_s` of [`Hats::n_cars`] were read by no assertion anywhere, and the one call that
+    /// used the constructor handed it a stream that errored before either number was reached.
+    ///
+    /// They are pinned here **through the arithmetic**, not as field reads: a neighbour 0.05 s back
+    /// is weighted `exp(-0.05 / tau)`, which is 0.951 at the one-second `tau` this implementation
+    /// reads and 0.607 at a hundred-millisecond one; and a neighbour 0.45 s back is outside a
+    /// hundred-millisecond memory window and inside a one-second one.
+    ///
+    /// The type doc flags the `tau` reading as uncertain and asks a reader with the paper to check
+    /// it; this review did not locate an author-released reference implementation to check the
+    /// transcription against. What this test pins is that changing the transcription is a visible
+    /// change rather than a silent one.
+    #[test]
+    fn the_n_cars_settings_are_the_ones_this_implementation_reads_from_the_paper() {
+        let h = Hats::n_cars();
+        assert_eq!(h.cell_px, 10);
+        assert_eq!(h.radius, 3);
+        assert_eq!(h.tau_s, 1.0, "the N-CARS time constant this implementation reads");
+        assert_eq!(h.window_s, 0.1, "the N-CARS memory window this implementation reads");
+        assert!(h.split_polarity);
+
+        // One 10x10 cell, 7x7 = 49 bins per plane, two planes; the `On` plane is the second, so
+        // its base is 49 and its centre bin is 3 * 7 + 3 = 24.
+        let g = geom(10, 10);
+        let on = |t_s: f64, x: u16| PixelEvent { t_s, x, y: 4, polarity: Polarity::On };
+        let d = h.descriptor(g, &[on(0.0, 4), on(0.05, 5), on(0.5, 6)]).unwrap();
+        assert_eq!(d.len(), 98);
+        let (base, centre) = (49usize, 3 * 7 + 3);
+        // Three events in the cell, each contributing its own `exp(0) = 1` at the centre.
+        assert_eq!(d[base + centre], 1.0);
+        // The second event's neighbour is one pixel to its left and 0.05 s back: bin 3 * 7 + 2.
+        let want = (-0.05f64 / 1.0).exp() / 3.0;
+        assert!((d[base + centre - 1] - want).abs() < 1e-15, "{}", d[base + centre - 1]);
+        // The third event's neighbours are 0.45 s and 0.5 s back, outside a 0.1 s memory window.
+        // Two pixels to its left is bin 3 * 7 + 1, and it is exactly zero.
+        assert_eq!(d[base + centre - 2], 0.0, "an event 0.5 s back reached inside the window");
+        assert_eq!(d.iter().filter(|v| **v != 0.0).count(), 2);
+    }
+
+    /// **The averaging step divides each cell's own block, and a cell's block is `planes * bins`
+    /// long.**
+    ///
+    /// Every `HATS` fixture above tiles the sensor into exactly **one** cell, and for cell zero
+    /// `c * planes * bins` and `c * bins` are both zero — so the stride the averaging loop walks
+    /// was unpinned, and dropping `planes` from it makes cell one's divisor land half a block
+    /// early: it would divide cell zero's `On` plane by cell one's event count and leave cell one's
+    /// own `On` plane undivided.
+    ///
+    /// Two cells here, with different event counts, and `On` content in both.
+    #[test]
+    fn each_cells_averaging_divides_that_cells_own_two_planes() {
+        let g = geom(20, 10);
+        let h = Hats { cell_px: 10, radius: 1, tau_s: 1.0, window_s: 2.0, split_polarity: true };
+        let ev = |t_s: f64, x: u16, polarity: Polarity| PixelEvent { t_s, x, y: 5, polarity };
+        // Cell 0 (x < 10) holds one `On` event; cell 1 holds one `On` and two `Off`.
+        let d = h
+            .descriptor(g, &[
+                ev(0.0, 5, Polarity::On),
+                ev(0.25, 15, Polarity::On),
+                ev(0.5, 16, Polarity::Off),
+                ev(0.75, 17, Polarity::Off),
+            ])
+            .unwrap();
+        assert_eq!(d.len(), 2 * 2 * 9);
+        // Block base is `(cell * planes + plane) * bins`, `Off` is plane 0 and `On` is plane 1,
+        // and the centre of a 3x3 neighbourhood is bin 4.
+        let block = |cell: usize, plane: usize| (cell * 2 + plane) * 9;
+        assert_eq!(d[block(0, 1) + 4], 1.0, "cell 0's single On event, over a divisor of one");
+        assert_eq!(d[block(1, 1) + 4], 1.0 / 3.0, "cell 1's On plane, over cell 1's three events");
+        assert_eq!(d[block(1, 0) + 4], 2.0 / 3.0, "cell 1's two Off events, over three");
+        // The later `Off` event sees the earlier one, one pixel to its left, 0.25 s back.
+        assert_eq!(d[block(1, 0) + 3], (-0.25f64).exp() / 3.0);
+        assert_eq!(d[block(0, 0) + 4], 0.0, "cell 0 has no Off event");
+        assert_eq!(d.iter().filter(|v| **v != 0.0).count(), 4);
+    }
+
+    /// **The `eHarris` constructor's two unexercised refusals: a window too small to hold a
+    /// structure tensor, and a non-finite `Harris` constant.**
+    ///
+    /// Every detector built in this module is built with `radius = 2` or more and with
+    /// [`EHarris::K_HARRIS`], so `radius < 2` was never reached from below and `k` was never
+    /// anything but a finite constant. Both weakenings are silent rather than loud: at `radius = 1`
+    /// the `Sobel` interior of a 3x3 window is the single centre pixel, so the structure tensor is
+    /// a rank-one matrix whose determinant is exactly zero and whose score is therefore
+    /// `-k * trace^2` — negative, plausible, and blind to corners by construction. A `NaN` `k`
+    /// makes every score a `NaN`, and `NaN > threshold` is false, so the detector simply never
+    /// fires again.
+    #[test]
+    fn the_eharris_constructor_refuses_a_window_below_two_and_a_non_finite_constant() {
+        let g = geom(32, 32);
+        assert_eq!(
+            EHarris::new(g, 1, 1e-3, EHarris::K_HARRIS, 0.0).err(),
+            Some(VisionError::TooFew { what: "eHarris window radius", have: 1, need: 2 })
+        );
+        assert_eq!(
+            EHarris::new(g, 0, 1e-3, EHarris::K_HARRIS, 0.0).err(),
+            Some(VisionError::TooFew { what: "eHarris window radius", have: 0, need: 2 })
+        );
+        // Two is accepted, so the boundary is pinned from both sides rather than only from below.
+        assert!(EHarris::new(g, 2, 1e-3, EHarris::K_HARRIS, 0.0).is_ok());
+
+        assert!(matches!(
+            EHarris::new(g, 2, 1e-3, f64::NAN, 0.0),
+            Err(VisionError::NonFinite { what: "Harris constant k", .. })
+        ));
+        assert_eq!(
+            EHarris::new(g, 2, 1e-3, f64::INFINITY, 0.0).err(),
+            Some(VisionError::NonFinite { what: "Harris constant k", value: f64::INFINITY })
+        );
+        // The threshold's own check is beside it and stays reachable.
+        assert!(matches!(
+            EHarris::new(g, 2, 1e-3, EHarris::K_HARRIS, f64::NAN),
+            Err(VisionError::NonFinite { what: "eHarris threshold", .. })
+        ));
+        // What a radius-1 window would have scored: a rank-one structure tensor over a one-pixel
+        // interior, whose determinant is exactly zero whatever the pattern in it.
+        let d = EHarris::new(g, 2, 1e-3, EHarris::K_HARRIS, 0.0).unwrap();
+        let corner = d.score_of_patch(&patch_of(3, |i, j| i >= 1 && j >= 1), 3).unwrap();
+        assert!(corner < 0.0, "a 3x3 window scored {corner} on a corner, so it can see one");
+    }
+
+    /// **The `Harris` scorer's own two guards, neither of which any patch in this module reached.**
+    ///
+    /// [`patch_of`] builds squares of side 3, 5 and 7 from a boolean predicate, so `side < 3` and
+    /// a non-finite entry were both unreachable from every existing fixture. The first is not a
+    /// tidiness check: with the side guard dropped, `side = 2` makes both `Sobel` loops
+    /// (`1..side - 1`) empty, the structure tensor is all zeros, and the function returns a
+    /// confident `Ok(0.0)` — a score exactly on the sign boundary the whole detector is built on.
+    /// At `side = 0` the same expression underflows and the function indexes an empty slice.
+    #[test]
+    fn the_harris_scorer_refuses_a_patch_too_small_for_its_kernel_or_carrying_a_nan() {
+        let d = EHarris::new(geom(32, 32), 2, 1e-3, EHarris::K_HARRIS, 0.0).unwrap();
+        for (patch, side) in [
+            (vec![], 0usize),
+            (vec![1.0], 1),
+            (vec![1.0, 0.0, 0.0, 1.0], 2),
+        ] {
+            assert_eq!(
+                d.score_of_patch(&patch, side).err(),
+                Some(VisionError::BadParameters {
+                    why: "the patch length does not match a square of side at least 3",
+                }),
+                "side {side} was scored"
+            );
+        }
+        // Side 3 is the smallest the kernel fits, and it is accepted.
+        assert!(d.score_of_patch(&[0.0; 9], 3).is_ok());
+        // A non-finite entry is refused rather than propagated into the response, where it would
+        // read as "no corner here" at every threshold.
+        let mut poisoned = patch_of(5, |i, j| i >= 2 && j >= 2);
+        poisoned[7] = f64::NAN;
+        assert!(matches!(
+            d.score_of_patch(&poisoned, 5),
+            Err(VisionError::NonFinite { what: "patch entry", .. })
+        ));
+        poisoned[7] = f64::NEG_INFINITY;
+        assert_eq!(
+            d.score_of_patch(&poisoned, 5).err(),
+            Some(VisionError::NonFinite { what: "patch entry", value: f64::NEG_INFINITY })
+        );
+    }
+
+    /// **A circle that runs off the sensor is refused, and the refusal names the pixel the caller
+    /// asked about.**
+    ///
+    /// [`corner_detectors_fire_near_a_moving_vertex_and_rarely_on_a_straight_edge`] drives streams
+    /// whose border events come back as `Ok(None)` through [`EFast::push`], which maps *any*
+    /// [`VisionError::OutOfBounds`] to `None` — so the bounds test inside `circle_times` was
+    /// covered only in the sense that something, somewhere, refused. Delete it and a negative
+    /// circle coordinate becomes `(-1i64) as u16 = 65535`, which the surface refuses on its own:
+    /// the same `Err` variant, carrying row 65535 of a sixteen-row sensor, for a pixel no caller
+    /// named. The distinction the error exists to make — *which* pixel is off the lattice — is the
+    /// thing the mutation destroys, so it is the thing asserted.
+    #[test]
+    fn a_circle_running_off_the_sensor_is_refused_by_the_centre_the_caller_named() {
+        let g = geom(16, 16);
+        let d = EFast::new(g).unwrap();
+        // Each centre is itself ON the lattice; it is the radius-4 circle around it that is not.
+        for (x, y) in [(3u16, 2u16), (2, 3), (12, 13), (13, 12), (0, 0), (15, 15)] {
+            assert!(g.require(x, y).is_ok(), "({x}, {y}) is a real pixel");
+            assert_eq!(
+                d.arcs_at(x, y, Polarity::On),
+                Err(VisionError::OutOfBounds { x, y, width: 16, height: 16 }),
+                "the circle around ({x}, {y})"
+            );
+        }
+        // Four pixels in from every edge, the circle fits and the call succeeds.
+        assert_eq!(d.arcs_at(4, 4, Polarity::On), Ok((None, None)));
+        assert_eq!(d.arcs_at(11, 11, Polarity::On), Ok((None, None)));
+        // And a border event is still a `None` from `push`, not an error: a real recording always
+        // has border events.
+        let mut d = EFast::new(g).unwrap();
+        assert_eq!(d.push(PixelEvent { t_s: 0.0, x: 0, y: 0, polarity: Polarity::On }), Ok(None));
+    }
+
+    /// **The bilinear vote's four weights, and the stride the warped image is written with.**
+    ///
+    /// [`the_bilinear_vote_conserves_event_mass_inside_the_sensor`] asserts the *sum* of the four
+    /// weights and how many pixels they touch, and both are invariant under exchanging the two
+    /// off-diagonal weights — `fx(1-fy)` and `(1-fx)fy` sum to the same thing whichever corner
+    /// gets which. Every warp fixture in this module also runs on a **square** sensor, where
+    /// `py * width` and `py * height` are the same index, so the one hardcoded row-major write in
+    /// the module was unpinned.
+    ///
+    /// One event, a 16x8 sensor, and a warp landing at `(7.25, 4.5)`: the two off-diagonal weights
+    /// are then 0.125 and 0.375 rather than equal, and the row is 4 rather than 0. Every number
+    /// here is an exact binary64, so these are equalities and not tolerances.
+    #[test]
+    fn the_bilinear_vote_puts_each_weight_on_its_own_pixel_of_a_non_square_sensor() {
+        let g = geom(16, 8);
+        let evs = [PixelEvent { t_s: 0.1, x: 6, y: 3, polarity: Polarity::On }];
+        // warp(x, y, dt) = (x - vx dt, y - vy dt) with dt = 0.1: (6 + 1.25, 3 + 1.5).
+        let wi = warped_image(g, &evs, 0.0, Motion::Translation { vx: -12.5, vy: -15.0 }).unwrap();
+        assert_eq!(wi.placed, 1);
+        assert_eq!(wi.dropped, 0);
+        assert_eq!(wi.frame.sum(), 1.0);
+        // fx = 0.25, fy = 0.5, and the four corners are (7, 4), (8, 4), (7, 5), (8, 5).
+        assert_eq!(wi.frame.at(7, 4), Some(0.75 * 0.5), "the (0, 0) corner");
+        assert_eq!(wi.frame.at(8, 4), Some(0.25 * 0.5), "the (+1, 0) corner takes fx * (1 - fy)");
+        assert_eq!(wi.frame.at(7, 5), Some(0.75 * 0.5), "the (0, +1) corner takes (1 - fx) * fy");
+        assert_eq!(wi.frame.at(8, 5), Some(0.25 * 0.5), "the (+1, +1) corner");
+        // The two off-diagonal weights must be different numbers, or exchanging them is invisible.
+        assert!(wi.frame.at(8, 4) != wi.frame.at(7, 5));
+        // Nothing landed anywhere else — which is what a wrong stride would show as.
+        assert_eq!(wi.frame.data.iter().filter(|v| **v != 0.0).count(), 4);
+    }
+
+    /// **The sweep validates both of its bounds, and the search needs two grid points, not one.**
+    ///
+    /// [`a_sweep_refuses_what_it_cannot_sweep`] passes a `NaN` *reference time* and a zero
+    /// *bound*, and asserts the variant only — so dropping `finite` from the upper bound, or
+    /// admitting a one-point search grid, still produced an `Err` and still matched. Both mutants
+    /// fail further in and under the wrong name: a `NaN` bound reaches [`Motion::validate`] as a
+    /// `NaN` velocity ("translation vx"), and a one-point grid divides by `steps - 1 = 0`, which
+    /// makes every candidate velocity a `NaN` and arrives at the same place. A caller reading the
+    /// error would go looking at the motion family for a defect in the argument it passed.
+    #[test]
+    fn the_sweep_and_the_search_name_the_argument_that_was_wrong() {
+        let g = geom(8, 8);
+        let evs = [PixelEvent { t_s: 0.0, x: 4, y: 4, polarity: Polarity::On }];
+        let translate = |v: f64| Motion::Translation { vx: v, vy: 0.0 };
+        assert!(matches!(
+            sweep(g, &evs, 0.0, 0.0, f64::NAN, 4, Objective::Variance, translate),
+            Err(VisionError::NonFinite { what: "sweep upper bound", .. })
+        ));
+        assert_eq!(
+            sweep(g, &evs, 0.0, 0.0, f64::INFINITY, 4, Objective::Variance, translate).err(),
+            Some(VisionError::NonFinite { what: "sweep upper bound", value: f64::INFINITY })
+        );
+        assert!(matches!(
+            sweep(g, &evs, 0.0, f64::NAN, 1.0, 4, Objective::Variance, translate),
+            Err(VisionError::NonFinite { what: "sweep lower bound", .. })
+        ));
+        // A two-point sweep is the smallest that is a sweep, and it is accepted.
+        assert_eq!(sweep(g, &evs, 0.0, 0.0, 1.0, 2, Objective::Variance, translate).unwrap().len(), 2);
+
+        // The search grid: one point is not a grid, and it is refused by name rather than divided
+        // by zero.
+        assert_eq!(
+            search_translation(g, &evs, 0.0, 10.0, 1, 0, Objective::Variance).err(),
+            Some(VisionError::TooFew { what: "search grid", have: 1, need: 2 })
+        );
+        assert_eq!(
+            search_translation(g, &evs, 0.0, 10.0, 0, 0, Objective::Variance).err(),
+            Some(VisionError::TooFew { what: "search grid", have: 0, need: 2 })
+        );
+        assert!(search_translation(g, &evs, 0.0, 10.0, 2, 0, Objective::Variance).is_ok());
+    }
+
+    /// **The coarse grid covers the whole square `[-bound, bound]^2`, in both components
+    /// independently.**
+    ///
+    /// [`contrast_maximisation_recovers_two_components_from_a_corner`] runs the search with 24
+    /// refinement rounds, and the pattern search walks far enough to repair a grid that covers
+    /// only half the square or only its diagonal — it arrives within 5 px/s of truth either way,
+    /// which is all that test asserts. So the grid itself was untested.
+    ///
+    /// Here `refine` is **zero**, which makes the answer exactly a grid point, and the true
+    /// velocity `(180, -120)` is on the grid but is neither in the half-square `vx <= 0` nor on
+    /// the diagonal `vy = vx`. The assertion is an equality on both components.
+    #[test]
+    fn the_coarse_search_grid_covers_the_whole_square_and_not_only_its_diagonal() {
+        let g = geom(64, 64);
+        let (tvx, tvy) = (180.0, -120.0);
+        let evs = moving_corner(
+            g,
+            (10.0, 58.0),
+            (tvx, tvy),
+            (0.0, core::f64::consts::FRAC_PI_2),
+            40.0,
+            0.25,
+            Polarity::On,
+        )
+        .unwrap();
+        assert!(evs.len() > 1500, "the corner swept only {} pixels", evs.len());
+        // 13 points over +/-360 px/s is a spacing of 60, so truth is exactly on a grid point and
+        // "the search returns truth" is an equality rather than a tolerance.
+        let (m, score) = search_translation(g, &evs, 0.125, 360.0, 13, 0, Objective::Variance).unwrap();
+        assert_eq!(
+            m,
+            Motion::Translation { vx: tvx, vy: tvy },
+            "the coarse grid's best point, with no refinement, was {m:?}"
+        );
+        assert_eq!(score, contrast(g, &evs, 0.125, m, Objective::Variance).unwrap());
+    }
+
+    /// **A recording of zero length is refused, in every generator that takes a duration.**
+    ///
+    /// The four generators all call `positive(duration_s, "scene duration")`, and no test passed
+    /// any of them a zero: weakened to `finite`, a zero duration emits the single instant `t = 0`
+    /// — for [`moving_edge`] that is one whole column of the sensor, a perfectly plausible frame
+    /// of events describing a scene that did not move. A negative duration emits an empty vector,
+    /// which is the same answer a static scene gives and is indistinguishable from it.
+    #[test]
+    fn a_recording_of_zero_or_negative_length_is_refused_by_every_generator() {
+        let g = geom(16, 16);
+        let pi = core::f64::consts::PI;
+        for bad in [0.0, -1e-3] {
+            assert_eq!(
+                moving_edge(g, 0.0, 100.0, 3.0, bad, Polarity::On).err(),
+                Some(VisionError::NonPositive { what: "scene duration", value: bad })
+            );
+            assert_eq!(
+                moving_corner(g, (2.0, 2.0), (100.0, 50.0), (0.0, pi / 2.0), 8.0, bad, Polarity::On)
+                    .err(),
+                Some(VisionError::NonPositive { what: "scene duration", value: bad })
+            );
+            assert_eq!(
+                rotating_bar(g, (8.0, 8.0), 9.0, 0.0, 1.0, 6.0, bad, Polarity::On).err(),
+                Some(VisionError::NonPositive { what: "scene duration", value: bad })
+            );
+            assert_eq!(
+                looming_disc(g, (8.0, 8.0), 1.0, 100.0, bad, Polarity::On).err(),
+                Some(VisionError::NonPositive { what: "scene duration", value: bad })
+            );
+        }
+        // What a zero-duration edge would have produced: the whole column it crosses at t = 0.
+        let column = moving_edge(g, 0.0, 100.0, 3.0, 1e-9, Polarity::On).unwrap();
+        assert_eq!(column.len(), 16, "the instant t = 0 is a full column of events");
+    }
+
+    /// **The corner's arms point along `(cos, sin)` of their angles, not `(sin, cos)`.**
+    ///
+    /// [`the_moving_corner_generator_puts_every_event_on_an_arm`] uses the arm pair
+    /// `(0, pi/2)`, whose two direction vectors are `(1, 0)` and `(0, 1)` — and exchanging the
+    /// components of both maps that pair onto **itself**. The stimulus is identical, so the test
+    /// that checks every event against the closed form agrees with the mutant perfectly. Any arm
+    /// angle that is not a multiple of `pi/2` breaks the symmetry, and the pair here is also not
+    /// symmetric about the `45`-degree line, where the exchange is a reflection.
+    #[test]
+    fn the_corners_arms_run_along_the_cosine_and_sine_of_their_angles() {
+        let g = geom(48, 48);
+        let v0 = (8.0, 6.0);
+        let v = (120.0, 80.0);
+        let arms = (0.3, 1.9);
+        let (len, dur) = (24.0, 0.3);
+        let evs = moving_corner(g, v0, v, arms, len, dur, Polarity::On).unwrap();
+        assert!(evs.len() > 300, "only {} events", evs.len());
+        let mut on_arm = [0usize, 0usize];
+        for e in &evs {
+            // The vertex at this instant, and the event's offset from it.
+            let (px, py) = (
+                f64::from(e.x) - (v0.0 + v.0 * e.t_s),
+                f64::from(e.y) - (v0.1 + v.1 * e.t_s),
+            );
+            let mut matched = false;
+            for (k, a) in [arms.0, arms.1].into_iter().enumerate() {
+                // The arm's direction is (cos a, sin a): the angle is measured from +x, as every
+                // other angle in this module is.
+                let (dx, dy) = (a.cos(), a.sin());
+                let perp = (px * dy - py * dx).abs();
+                let along = px * dx + py * dy;
+                if perp < 1e-9 && (-1e-9..=len + 1e-9).contains(&along) {
+                    on_arm[k] += 1;
+                    matched = true;
+                }
+            }
+            assert!(matched, "an event at ({}, {}) t={} is on neither arm", e.x, e.y, e.t_s);
+        }
+        assert!(on_arm[0] > 50 && on_arm[1] > 50, "arm coverage {on_arm:?}");
+        // Neither arm is parallel to the velocity under either reading of `sin_cos`, so the
+        // generator is producing a stimulus in both cases rather than refusing in one of them.
+        for a in [arms.0, arms.1] {
+            for (dx, dy) in [(a.cos(), a.sin()), (a.sin(), a.cos())] {
+                assert!((v.0 * dy - v.1 * dx).abs() > 1.0, "arm {a} is nearly parallel");
+            }
+        }
+    }
+
+    /// **The event budget counts the crossing every annulus pixel gets for free.**
+    ///
+    /// A pixel is crossed `floor(duration / period) + 1` times at most — the `+ 1` is the crossing
+    /// that happens before the first full half-turn completes, and it is the only one there is
+    /// when the recording is shorter than a half-turn. [`rotating_bar_refuses_a_sweep_it_cannot_finish`]
+    /// drives the cap with a **large** `omega`, where `floor(duration / period)` is in the
+    /// millions and one crossing either way is a rounding; the case that can see the `+ 1` is the
+    /// opposite one, where `floor(duration / period)` is **zero** and dropping the term takes the
+    /// estimate from "one event per annulus pixel" to "none at all", which passes any cap.
+    ///
+    /// Ten million and four thousand pixels, each of which could fire once: past
+    /// [`MAX_ROTATING_BAR_EVENTS`], and refused. The sensor is large and the scan over it is the
+    /// cost of the test — 19 ms measured here — because the refusal has to be about the *count*,
+    /// and the count is what a large sensor has.
+    #[test]
+    fn the_rotating_bars_budget_counts_the_first_crossing_of_every_pixel() {
+        // 4000 x 2501 = 10,004,000 pixels, every one of them in the annulus, against a cap of
+        // 10,000,000.
+        let g = geom(4000, 2501);
+        assert_eq!(g.pixels(), 10_004_000);
+        assert!(g.pixels() > MAX_ROTATING_BAR_EVENTS);
+        // A period of one second and a recording of a microsecond: `floor(duration / period)` is
+        // zero, so the budget is exactly "one crossing per annulus pixel".
+        let bar = |duration: f64| {
+            rotating_bar(g, (0.5, 0.5), core::f64::consts::PI, 0.0, 0.5, 1e4, duration, Polarity::On)
+        };
+        assert_eq!(
+            bar(1e-6).err(),
+            Some(VisionError::BadParameters {
+                why: "the angular velocity and duration ask for more rotating-bar events than \
+                      MAX_ROTATING_BAR_EVENTS allows",
+            })
+        );
+        // And the same budget on a sensor one pixel under the cap is produced rather than refused,
+        // so the refusal above is the count and not the sensor.
+        let small = geom(4000, 2500);
+        assert_eq!(small.pixels(), 10_000_000);
+        assert!(
+            rotating_bar(small, (0.5, 0.5), core::f64::consts::PI, 0.0, 0.5, 1e4, 1e-6, Polarity::On)
+                .is_ok()
+        );
+    }
+
+    /// **The annulus is closed at both ends: a pixel exactly at `r_min` is on the bar.**
+    ///
+    /// Every rotating-bar fixture in this module centres the bar on a **half-integer** pixel
+    /// centre, where `r^2 = (i + 0.5)^2 + (j + 0.5)^2` always ends in `.5` and is never the square
+    /// of an integer radius — so no pixel ever sits exactly on `r_min` or `r_max`, and both
+    /// comparisons could face either way unnoticed. An integer centre puts four pixels exactly on
+    /// each boundary.
+    ///
+    /// The emitted pixel set is compared against the closed form `r_min <= r <= r_max`, which is
+    /// the inclusive range the generator's own annulus count uses; the two disagreeing is how a
+    /// pixel comes to be counted against the event budget and then never fired.
+    #[test]
+    fn the_rotating_bars_annulus_is_inclusive_at_both_of_its_radii() {
+        let g = geom(33, 33);
+        let centre = (16.0, 16.0);
+        let (r_min, r_max) = (4.0, 8.0);
+        // 1.43 half-turns, so every annulus pixel is crossed at least once whatever its angle.
+        let evs = rotating_bar(g, centre, 9.0, 0.3, r_min, r_max, 0.5, Polarity::On).unwrap();
+
+        let radius = |x: u16, y: u16| (f64::from(x) - centre.0).hypot(f64::from(y) - centre.1);
+        let mut want: Vec<(u16, u16)> = Vec::new();
+        let (mut on_inner, mut on_outer) = (0usize, 0usize);
+        for y in 0..33u16 {
+            for x in 0..33u16 {
+                let r = radius(x, y);
+                if (r_min..=r_max).contains(&r) {
+                    want.push((x, y));
+                }
+                if r == r_min {
+                    on_inner += 1;
+                }
+                if r == r_max {
+                    on_outer += 1;
+                }
+            }
+        }
+        // The fixture is not vacuous: four pixels sit exactly on each boundary.
+        assert_eq!(on_inner, 4, "no pixel is exactly at r_min, so the boundary is untested");
+        assert_eq!(on_outer, 4, "no pixel is exactly at r_max, so the boundary is untested");
+
+        let mut got: Vec<(u16, u16)> = evs.iter().map(|e| (e.x, e.y)).collect();
+        got.sort_unstable();
+        got.dedup();
+        want.sort_unstable();
+        assert_eq!(got, want, "the fired set is not the closed annulus r_min <= r <= r_max");
+        // Named explicitly, so the failure message says which boundary moved.
+        for (x, y) in [(20u16, 16u16), (12, 16), (16, 20), (16, 12)] {
+            assert!(evs.iter().any(|e| (e.x, e.y) == (x, y)), "({x}, {y}) is at exactly r_min");
+        }
+        for (x, y) in [(24u16, 16u16), (8, 16), (16, 24), (16, 8)] {
+            assert!(evs.iter().any(|e| (e.x, e.y) == (x, y)), "({x}, {y}) is at exactly r_max");
+        }
+    }
+
+    /// **The looming disc's radius is measured from the centre's column AND its row.**
+    ///
+    /// Every looming fixture in this module puts the centre on the diagonal — `(19.5, 19.5)`,
+    /// `(7.5, 7.5)` — where `cx` and `cy` are the same number and reading one in place of the
+    /// other changes nothing at all. Off the diagonal it is a different stimulus: the disc expands
+    /// about `(cx, cx)` instead, and every crossing time is wrong by the difference.
+    #[test]
+    fn the_looming_discs_radius_is_measured_from_both_centre_components() {
+        let g = geom(40, 40);
+        let centre = (12.0, 27.0);
+        let (r0, rate, dur) = (2.0, 150.0, 0.12);
+        let evs = looming_disc(g, centre, r0, rate, dur, Polarity::On).unwrap();
+        assert!(evs.len() > 400, "only {} events", evs.len());
+
+        // Every event satisfies r = r0 + rate * t with r measured from (cx, cy) ...
+        for e in &evs {
+            let r = (f64::from(e.x) - centre.0).hypot(f64::from(e.y) - centre.1);
+            assert!(
+                (r - (r0 + rate * e.t_s)).abs() < 1e-12,
+                "({}, {}) at t = {} is at r = {r}",
+                e.x,
+                e.y,
+                e.t_s
+            );
+        }
+        // ... and the fired set is exactly the pixels whose crossing time is inside the recording.
+        let mut want = 0usize;
+        for y in 0..40u16 {
+            for x in 0..40u16 {
+                let r = (f64::from(x) - centre.0).hypot(f64::from(y) - centre.1);
+                if (0.0..=dur).contains(&((r - r0) / rate)) {
+                    want += 1;
+                }
+            }
+        }
+        assert_eq!(evs.len(), want);
+        // The two components are 15 pixels apart, so the pixel directly below the centre and the
+        // pixel directly right of it fire at times that differ by the asymmetry the mutation
+        // erases: reading the column twice would put both on the same circle.
+        let time_at = |x: u16, y: u16| evs.iter().find(|e| e.x == x && e.y == y).map(|e| e.t_s);
+        let right = time_at(22, 27).expect("ten pixels right of the centre");
+        let below = time_at(12, 32).expect("five pixels below the centre");
+        assert!((right - (10.0 - r0) / rate).abs() < 1e-12);
+        assert!((below - (5.0 - r0) / rate).abs() < 1e-12);
+        assert!(right > below, "the nearer pixel must fire first");
+    }
+
+    /// **The rotating bar emits exactly the crossings its closed form names — every one of them,
+    /// and no others.**
+    ///
+    /// [`the_rotating_bar_generator_puts_every_event_on_the_bar`] checks that each emitted event is
+    /// *on* the bar and that no pixel fires more than twice in 1.43 half-turns; neither statement
+    /// can see a crossing that was never emitted, and "at least one pixel fired twice" is satisfied
+    /// by one pixel out of several hundred. The generator's loop is bounded by a slot count rather
+    /// than by the duration alone, so "did the loop have enough slots" is a question only a
+    /// per-pixel comparison against `t_k = base + k * period` can answer.
+    ///
+    /// The comparison is an exact equality, value for value: the test evaluates the same closed
+    /// form with the same three quantities in the same order, so every emitted time is bit-for-bit
+    /// the one the form names or the assertion fails.
+    #[test]
+    fn every_crossing_the_rotating_bars_closed_form_names_is_emitted_and_no_other() {
+        let g = geom(21, 21);
+        let centre = (10.0, 10.0);
+        let (omega, theta0) = (9.0, 0.3);
+        let (r_min, r_max, dur) = (3.0, 9.0, 0.5);
+        let evs = rotating_bar(g, centre, omega, theta0, r_min, r_max, dur, Polarity::On).unwrap();
+        assert!(evs.len() > 300, "only {} events", evs.len());
+
+        let period = core::f64::consts::PI / omega;
+        let mut checked = 0usize;
+        let mut total = 0usize;
+        for y in 0..21u16 {
+            for x in 0..21u16 {
+                let (dx, dy) = (f64::from(x) - centre.0, f64::from(y) - centre.1);
+                let r = dx.hypot(dy);
+                let mut got: Vec<f64> =
+                    evs.iter().filter(|e| e.x == x && e.y == y).map(|e| e.t_s).collect();
+                if !(r_min..=r_max).contains(&r) {
+                    assert!(got.is_empty(), "({x}, {y}) is off the annulus and fired {got:?}");
+                    continue;
+                }
+                let base = (dy.atan2(dx) - theta0) / omega;
+                // Every k the closed form admits, scanned two slots past each end so that a
+                // generator emitting too many would be caught as well as one emitting too few.
+                let lo = ((0.0 - base) / period).floor() - 2.0;
+                let hi = ((dur - base) / period).ceil() + 2.0;
+                let mut want: Vec<f64> = Vec::new();
+                let mut k = lo;
+                while k <= hi {
+                    let t = base + k * period;
+                    if (0.0..=dur).contains(&t) {
+                        want.push(t);
+                    }
+                    k += 1.0;
+                }
+                got.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                assert_eq!(got, want, "pixel ({x}, {y})");
+                assert!(!want.is_empty(), "an annulus pixel with no crossing in 1.43 half-turns");
+                checked += 1;
+                total += want.len();
+            }
+        }
+        assert_eq!(total, evs.len());
+        assert!(checked > 200, "only {checked} annulus pixels were compared");
+    }
 }
