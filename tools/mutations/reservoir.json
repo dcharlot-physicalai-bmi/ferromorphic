@@ -1,0 +1,874 @@
+[
+ {
+  "label": "a NaN entry passes the finiteness check",
+  "old": "    for (i, &x) in xs.iter().enumerate() {\n        if !x.is_finite() {",
+  "new": "    for (i, &x) in xs.iter().enumerate() {\n        if x.is_infinite() {"
+ },
+ {
+  "label": "a slice shorter than the required length is accepted",
+  "old": "    if got == want { Ok(()) } else { Err(ReservoirError::ShapeMismatch { what, got, want }) }",
+  "new": "    if got <= want { Ok(()) } else { Err(ReservoirError::ShapeMismatch { what, got, want }) }"
+ },
+ {
+  "label": "the uniform draw loses its negative half",
+  "old": "fn sym(rng: &mut Rng) -> f64 {\n    2.0 * rng.next_f64() - 1.0\n}",
+  "new": "fn sym(rng: &mut Rng) -> f64 {\n    rng.next_f64()\n}"
+ },
+ {
+  "label": "the Euclidean norm is the sum of squares with no square root",
+  "old": "    x.iter().map(|v| v * v).sum::<f64>().sqrt()",
+  "new": "    x.iter().map(|v| v * v).sum::<f64>()"
+ },
+ {
+  "label": "the Euclidean distance is left squared",
+  "old": "    a.iter().zip(b).map(|(p, q)| (p - q) * (p - q)).sum::<f64>().sqrt()",
+  "new": "    a.iter().zip(b).map(|(p, q)| (p - q) * (p - q)).sum::<f64>()"
+ },
+ {
+  "label": "the four-quarter estimator accepts two iterations",
+  "old": "    if max_iters < 8 {",
+  "new": "    if max_iters < 2 {"
+ },
+ {
+  "label": "the scale guard no longer fires for a matrix whose squares underflow",
+  "old": "    let rescaled = amax > 0.0 && (amax < 1e-150 || amax > 1e150 / n as f64);",
+  "new": "    let rescaled = amax > 0.0 && (amax > 1e150 / n as f64);"
+ },
+ {
+  "label": "the scale guard no longer fires for a matrix whose squares overflow",
+  "old": "    let rescaled = amax > 0.0 && (amax < 1e-150 || amax > 1e150 / n as f64);",
+  "new": "    let rescaled = amax > 0.0 && (amax < 1e-150);"
+ },
+ {
+  "label": "the scale guard shifts the matrix further out of range instead of into it",
+  "old": "        let shift = -(amax.log2().floor() as i32);",
+  "new": "        let shift = amax.log2().floor() as i32;"
+ },
+ {
+  "label": "the scale guard uses one power of two where a subnormal needs two",
+  "old": "        (f64::powi(2.0, shift / 2), f64::powi(2.0, shift - shift / 2))",
+  "new": "        (f64::powi(2.0, shift), 1.0)"
+ },
+ {
+  "label": "the iteration starts on e1 rather than on a random vector",
+  "old": "    for _ in 0..16 {\n        for v in &mut x {\n            *v = sym(&mut rng);\n        }",
+  "new": "    for _ in 0..0 {\n        for v in &mut x {\n            *v = sym(&mut rng);\n        }"
+ },
+ {
+  "label": "the iteration multiplies by the transpose of the matrix",
+  "old": "            let row = &work[i * n..i * n + n];\n            let mut s = 0.0;\n            for j in 0..n {\n                s += row[j] * x[j];\n            }\n            y[i] = s;",
+  "new": "            let row: Vec<f64> = (0..n).map(|j| work[j * n + i]).collect();\n            let mut s = 0.0;\n            for j in 0..n {\n                s += row[j] * x[j];\n            }\n            y[i] = s;"
+ },
+ {
+  "label": "the iterate that collapsed into the kernel is divided by zero instead of reported",
+  "old": "        let g = norm2(&y);\n        if g == 0.0 {",
+  "new": "        let g = norm2(&y);\n        if false {"
+ },
+ {
+  "label": "the growth factors are averaged arithmetically rather than geometrically",
+  "old": "        logs.push(g.ln());",
+  "new": "        logs.push(g);"
+ },
+ {
+  "label": "the iterate is never renormalised",
+  "old": "            x[i] = y[i] / g;",
+  "new": "            x[i] = y[i];"
+ },
+ {
+  "label": "the radius is read off the third quarter and the residual measured against the fourth",
+  "old": "    let late = mean(&logs[max_iters - q..]).exp();\n    let early = mean(&logs[max_iters - 2 * q..max_iters - q]).exp();",
+  "new": "    let early = mean(&logs[max_iters - q..]).exp();\n    let late = mean(&logs[max_iters - 2 * q..max_iters - q]).exp();"
+ },
+ {
+  "label": "the residual is relative to the earlier estimate rather than the later one",
+  "old": "    let residual = if late > 0.0 { (late - early).abs() / late } else { (late - early).abs() };",
+  "new": "    let residual = if late > 0.0 { (late - early).abs() / early } else { (late - early).abs() };"
+ },
+ {
+  "label": "the radius is not divided back out of the scale guard",
+  "old": "        radius: late / f1 / f2,",
+  "new": "        radius: late,"
+ },
+ {
+  "label": "the Rayleigh quotient is divided back by only one of the two scale factors",
+  "old": "        rayleigh: rayleigh / f1 / f2,",
+  "new": "        rayleigh: rayleigh / f1,"
+ },
+ {
+  "label": "the Rayleigh quotient sums the image instead of projecting it onto the iterate",
+  "old": "        rayleigh += x[i] * s;",
+  "new": "        rayleigh += s;"
+ },
+ {
+  "label": "every estimate claims to have converged",
+  "old": "        converged: residual < tol,",
+  "new": "        converged: true,"
+ },
+ {
+  "label": "the iteration count is reported as zero",
+  "old": "        iters: max_iters,",
+  "new": "        iters: 0,"
+ },
+ {
+  "label": "the pivot adds the accumulated row rather than subtracting it",
+  "old": "            d -= l[j * n + k] * l[j * n + k];",
+  "new": "            d += l[j * n + k] * l[j * n + k];"
+ },
+ {
+  "label": "the conditioning guard is absolute rather than relative to the matrix scale",
+  "old": "        if d <= guard * scale {",
+  "new": "        if d <= guard {"
+ },
+ {
+  "label": "a negative pivot is turned into a NaN rather than refused",
+  "old": "        if d <= guard * scale {",
+  "new": "        if d.is_nan() {"
+ },
+ {
+  "label": "the pivot ratio is inverted",
+  "old": "    Ok(Cholesky { n, l, pivot_ratio: dmax / dmin })",
+  "new": "    Ok(Cholesky { n, l, pivot_ratio: dmin / dmax })"
+ },
+ {
+  "label": "the diagonal factor is the pivot itself rather than its square root",
+  "old": "        let ljj = d.sqrt();",
+  "new": "        let ljj = d;"
+ },
+ {
+  "label": "the off-diagonal update subtracts row i against itself",
+  "old": "                t -= l[i * n + k] * l[j * n + k];",
+  "new": "                t -= l[i * n + k] * l[i * n + k];"
+ },
+ {
+  "label": "the off-diagonal factor is not divided by its pivot",
+  "old": "            l[i * n + j] = t / ljj;",
+  "new": "            l[i * n + j] = t;"
+ },
+ {
+  "label": "the factorisation reads the upper triangle of its input",
+  "old": "            let mut t = a[i * n + j];",
+  "new": "            let mut t = a[j * n + i];"
+ },
+ {
+  "label": "the forward substitution walks the factor's columns instead of its rows",
+  "old": "            for k in 0..i {\n                s -= self.l[i * n + k] * z[k];\n            }",
+  "new": "            for k in 0..i {\n                s -= self.l[k * n + i] * z[k];\n            }"
+ },
+ {
+  "label": "the back substitution reads the zeros above the diagonal",
+  "old": "            for k in i + 1..n {\n                s -= self.l[k * n + i] * z[k];\n            }",
+  "new": "            for k in i + 1..n {\n                s -= self.l[i * n + k] * z[k];\n            }"
+ },
+ {
+  "label": "the back substitution runs forwards",
+  "old": "        for i in (0..n).rev() {",
+  "new": "        for i in 0..n {"
+ },
+ {
+  "label": "the forward substitution does not divide by the diagonal",
+  "old": "        // L y = b\n        for i in 0..n {\n            let mut s = z[i];\n            for k in 0..i {\n                s -= self.l[i * n + k] * z[k];\n            }\n            z[i] = s / self.l[i * n + i];",
+  "new": "        // L y = b\n        for i in 0..n {\n            let mut s = z[i];\n            for k in 0..i {\n                s -= self.l[i * n + k] * z[k];\n            }\n            z[i] = s;"
+ },
+ {
+  "label": "the conditioning guard is loosened by eight orders of magnitude",
+  "old": "    pub const GUARD: f64 = 1e-12;",
+  "new": "    pub const GUARD: f64 = 1e-20;"
+ },
+ {
+  "label": "the accumulators are sized without the bias column",
+  "old": "        let p = features + usize::from(bias);\n        Ok(Self {",
+  "new": "        let p = features;\n        Ok(Self {"
+ },
+ {
+  "label": "the augmented width forgets the bias column",
+  "old": "    pub fn width(&self) -> usize {\n        self.features + usize::from(self.bias)",
+  "new": "    pub fn width(&self) -> usize {\n        self.features"
+ },
+ {
+  "label": "the cross-moment's shape is never checked",
+  "old": "        shape(self.cross.len(), p * self.targets, \"cross\")",
+  "new": "        Ok(())"
+ },
+ {
+  "label": "the bias column is a column of zeros",
+  "old": "        let at = |i: usize| if i < self.features { x[i] } else { 1.0 };",
+  "new": "        let at = |i: usize| if i < self.features { x[i] } else { 0.0 };"
+ },
+ {
+  "label": "the Gram matrix holds the last sample rather than the sum over samples",
+  "old": "                self.gram[i * p + j] += xi * at(j);",
+  "new": "                self.gram[i * p + j] = xi * at(j);"
+ },
+ {
+  "label": "the cross-moment holds the last sample rather than the sum over samples",
+  "old": "                self.cross[i * self.targets + t] += xi * y[t];",
+  "new": "                self.cross[i * self.targets + t] = xi * y[t];"
+ },
+ {
+  "label": "a refused sample is counted before the checks that refuse it",
+  "old": "    pub fn accumulate(&mut self, x: &[f64], y: &[f64]) -> Result<(), ReservoirError> {\n        shape(x.len(), self.features, \"sample\")?;",
+  "new": "    pub fn accumulate(&mut self, x: &[f64], y: &[f64]) -> Result<(), ReservoirError> {\n        self.samples += 1;\n        shape(x.len(), self.features, \"sample\")?;"
+ },
+ {
+  "label": "a non-finite sample is folded in rather than refused",
+  "old": "        finite(x, \"sample\")?;\n        finite(y, \"target\")?;",
+  "new": "        finite(y, \"target\")?;"
+ },
+ {
+  "label": "the ridge penalty is applied to the intercept as well",
+  "old": "        for i in 0..self.features {\n            m[i * p + i] += self.alpha;",
+  "new": "        for i in 0..p {\n            m[i * p + i] += self.alpha;"
+ },
+ {
+  "label": "the ridge penalty replaces the Gram diagonal rather than adding to it",
+  "old": "            m[i * p + i] += self.alpha;",
+  "new": "            m[i * p + i] = self.alpha;"
+ },
+ {
+  "label": "the right-hand side is read out of the cross-moment transposed",
+  "old": "                rhs[i] = self.cross[i * self.targets + t];",
+  "new": "                rhs[i] = self.cross[t * self.targets + i];"
+ },
+ {
+  "label": "the solved coefficients are written into the row backwards",
+  "old": "                w[t * p + i] = sol[i];",
+  "new": "                w[t * p + (p - 1 - i)] = sol[i];"
+ },
+ {
+  "label": "the batch fit swaps the feature and target counts",
+  "old": "        let mut r = Self::new(x[0].len(), y[0].len(), alpha, bias)?;",
+  "new": "        let mut r = Self::new(y[0].len(), x[0].len(), alpha, bias)?;"
+ },
+ {
+  "label": "a target list of a different length from the design is zipped silently",
+  "old": "        if x.is_empty() {\n            return Err(ReservoirError::Empty { what: \"design\" });\n        }\n        shape(y.len(), x.len(), \"targets\")?;\n        let mut r = Self::new",
+  "new": "        if x.is_empty() {\n            return Err(ReservoirError::Empty { what: \"design\" });\n        }\n        let mut r = Self::new"
+ },
+ {
+  "label": "the prediction's row stride forgets the bias column",
+  "old": "        let p = self.features + usize::from(self.bias);\n        shape(self.w.len(), self.targets * p, \"coefficients\")?;",
+  "new": "        let p = self.features;\n        shape(self.w.len(), self.targets * p, \"coefficients\")?;"
+ },
+ {
+  "label": "the coefficient vector's shape is never checked before it is sliced",
+  "old": "        shape(self.w.len(), self.targets * p, \"coefficients\")?;\n        let mut out = vec![0.0f64; self.targets];",
+  "new": "        let mut out = vec![0.0f64; self.targets];"
+ },
+ {
+  "label": "the intercept is fitted and then not added at prediction time",
+  "old": "            if self.bias {\n                s += row[self.features];\n            }",
+  "new": "            if false {\n                s += row[self.features];\n            }"
+ },
+ {
+  "label": "every feature is multiplied by the first component of the sample",
+  "old": "                s += row[i] * x[i];",
+  "new": "                s += row[i] * x[0];"
+ },
+ {
+  "label": "the reported error is the mean square rather than its root",
+  "old": "        Ok((acc / n as f64).sqrt())",
+  "new": "        Ok(acc / n as f64)"
+ },
+ {
+  "label": "the residual adds the target to the prediction instead of subtracting it",
+  "old": "                let e = p[t] - yi[t];",
+  "new": "                let e = p[t] + yi[t];"
+ },
+ {
+  "label": "the default spectral radius is above one",
+  "old": "            spectral_radius: 0.9,\n            density: 0.1,",
+  "new": "            spectral_radius: 1.5,\n            density: 0.1,"
+ },
+ {
+  "label": "the default reservoir is fully connected rather than 10% dense",
+  "old": "            density: 0.1,",
+  "new": "            density: 1.0,"
+ },
+ {
+  "label": "the leak rate is the ratio of the time constant to the tick",
+  "old": "        let a = dt / tau;",
+  "new": "        let a = tau / dt;"
+ },
+ {
+  "label": "a forward-Euler step of twice the time constant is accepted as a leak",
+  "old": "        if a > 1.0 {",
+  "new": "        if a > 2.0 {"
+ },
+ {
+  "label": "a zero tick length is accepted by the SI bridge",
+  "old": "    pub fn leak_from_tau(dt: f64, tau: f64) -> Result<f64, ReservoirError> {\n        for (what, v) in [(\"dt\", dt), (\"tau\", tau)] {\n            if !(v > 0.0) || !v.is_finite() {",
+  "new": "    pub fn leak_from_tau(dt: f64, tau: f64) -> Result<f64, ReservoirError> {\n        for (what, v) in [(\"dt\", dt), (\"tau\", tau)] {\n            if v < 0.0 {"
+ },
+ {
+  "label": "a zero or NaN density is accepted",
+  "old": "        if !(spec.density > 0.0) || spec.density > 1.0 {",
+  "new": "        if spec.density > 1.0 {"
+ },
+ {
+  "label": "a zero or NaN leak rate is accepted",
+  "old": "        if !(spec.leak > 0.0) || spec.leak > 1.0 {",
+  "new": "        if spec.leak > 1.0 {"
+ },
+ {
+  "label": "a zero or non-finite target radius is accepted by the constructor",
+  "old": "        if !(spec.spectral_radius > 0.0) || !spec.spectral_radius.is_finite() {",
+  "new": "        if spec.spectral_radius < 0.0 {"
+ },
+ {
+  "label": "an infinite input or bias scaling is accepted",
+  "old": "            if !v.is_finite() {\n                return Err(ReservoirError::NonFinite { what, index: 0 });",
+  "new": "            if v.is_nan() {\n                return Err(ReservoirError::NonFinite { what, index: 0 });"
+ },
+ {
+  "label": "the recurrent matrix is drawn only where the sparsity mask lands, so the stream depends on the density",
+  "old": "            let keep = rng.next_f64() < spec.density;\n            let value = sym(&mut rng);\n            if keep {\n                *v = value;\n            }",
+  "new": "            if rng.next_f64() < spec.density {\n                *v = sym(&mut rng);\n            }"
+ },
+ {
+  "label": "the input weights ignore the input scaling",
+  "old": "            *v = spec.input_scaling * sym(&mut rng);",
+  "new": "            *v = sym(&mut rng);"
+ },
+ {
+  "label": "the biases ignore the bias scaling",
+  "old": "            *v = spec.bias_scaling * sym(&mut rng);",
+  "new": "            *v = sym(&mut rng);"
+ },
+ {
+  "label": "a fresh reservoir starts at the corner of the state box rather than at zero",
+  "old": "            x: vec![0.0; n],",
+  "new": "            x: vec![1.0; n],"
+ },
+ {
+  "label": "the matrix is never scaled to the requested radius",
+  "old": "        esn.radius = esn.rescale(spec.spectral_radius)?;",
+  "new": "        esn.radius = spec.spectral_radius;"
+ },
+ {
+  "label": "the scaling factor is inverted",
+  "old": "        let k = target / s.radius;",
+  "new": "        let k = s.radius / target;"
+ },
+ {
+  "label": "the scaling is added to every weight rather than multiplied in",
+  "old": "        for v in &mut self.w {\n            *v *= k;\n        }",
+  "new": "        for v in &mut self.w {\n            *v += k;\n        }"
+ },
+ {
+  "label": "a degenerate matrix is scaled rather than refused",
+  "old": "        if !(s.radius > 0.0) {",
+  "new": "        if s.radius < 0.0 {"
+ },
+ {
+  "label": "the realised radius is verified from the same start it was scaled from",
+  "old": "        let after = power_iteration(&self.w, n, Self::ITERS, 1e-10, Self::VERIFY_SEED)?;",
+  "new": "        let after = power_iteration(&self.w, n, Self::ITERS, 1e-10, Self::SCALE_SEED)?;"
+ },
+ {
+  "label": "a rescale leaves the stored radius describing the old matrix",
+  "old": "        self.radius = after.radius;\n        Ok(after.radius)",
+  "new": "        Ok(after.radius)"
+ },
+ {
+  "label": "the target radius is handed back in place of the measured one",
+  "old": "        Ok(after.radius)\n    }",
+  "new": "        Ok(target)\n    }"
+ },
+ {
+  "label": "the scaling passes are given eight iterations rather than four hundred",
+  "old": "    pub const ITERS: usize = 400;",
+  "new": "    pub const ITERS: usize = 8;"
+ },
+ {
+  "label": "the state update drops the per-unit bias",
+  "old": "            let mut s = self.bias[i];",
+  "new": "            let mut s = 0.0;"
+ },
+ {
+  "label": "the recurrent sum reads the state being written rather than the state at the start of the step",
+  "old": "                s += row[j] * self.x[j];",
+  "new": "                s += row[j] * next[j];"
+ },
+ {
+  "label": "the leak rate weights the two terms the wrong way round",
+  "old": "            next[i] = (1.0 - self.leak) * self.x[i] + self.leak * s.tanh();",
+  "new": "            next[i] = self.leak * self.x[i] + (1.0 - self.leak) * s.tanh();"
+ },
+ {
+  "label": "the update is not a convex combination, so the state can leave the box",
+  "old": "            next[i] = (1.0 - self.leak) * self.x[i] + self.leak * s.tanh();",
+  "new": "            next[i] = (1.0 - self.leak) * self.x[i] + s.tanh();"
+ },
+ {
+  "label": "the reservoir is linear because the squashing function is gone",
+  "old": "            next[i] = (1.0 - self.leak) * self.x[i] + self.leak * s.tanh();",
+  "new": "            next[i] = (1.0 - self.leak) * self.x[i] + self.leak * s;"
+ },
+ {
+  "label": "the input weight block is offset by the unit index rather than by unit times channels",
+  "old": "            let rin = &self.w_in[i * self.n_in..i * self.n_in + self.n_in];",
+  "new": "            let rin = &self.w_in[i..i + self.n_in];"
+ },
+ {
+  "label": "a non-finite input is stepped into the state",
+  "old": "        finite(u, \"input\")?;\n        let n = self.units;",
+  "new": "        let n = self.units;"
+ },
+ {
+  "label": "the washout keeps one state too few",
+  "old": "            if k >= washout {",
+  "new": "            if k > washout {"
+ },
+ {
+  "label": "a washout at the length of the input is accepted and returns nothing",
+  "old": "        if washout >= inputs.len() {",
+  "new": "        if washout > inputs.len() {"
+ },
+ {
+  "label": "the collected state is the one before the step rather than after it",
+  "old": "        for (k, u) in inputs.iter().enumerate() {\n            self.step(u)?;\n            if k >= washout {\n                out.push(self.x.clone());\n            }\n        }",
+  "new": "        for (k, u) in inputs.iter().enumerate() {\n            if k >= washout {\n                out.push(self.x.clone());\n            }\n            self.step(u)?;\n        }"
+ },
+ {
+  "label": "a state outside the unit box is accepted",
+  "old": "            if !(-1.0..=1.0).contains(&v) {",
+  "new": "            if !(-2.0..=2.0).contains(&v) {"
+ },
+ {
+  "label": "both copies of the echo-state check start from the same state",
+  "old": "    a.set_state(x0)?;\n    b.set_state(y0)?;",
+  "new": "    a.set_state(x0)?;\n    b.set_state(x0)?;"
+ },
+ {
+  "label": "the peak distance is the last distance rather than the largest",
+  "old": "        peak = peak.max(dist(a.state(), b.state()));",
+  "new": "        peak = dist(a.state(), b.state());"
+ },
+ {
+  "label": "the echo ratio is inverted",
+  "old": "        ratio: if start > 0.0 { end / start } else { 0.0 },",
+  "new": "        ratio: if start > 0.0 { start / end } else { 0.0 },"
+ },
+ {
+  "label": "forgetting is judged on the transient peak rather than on the final distance",
+  "old": "        forgets: end <= tol,",
+  "new": "        forgets: peak <= tol,"
+ },
+ {
+  "label": "separation is normalised by the number of units",
+  "old": "    Ok(dist(a, b))",
+  "new": "    Ok(dist(a, b) / a.len() as f64)"
+ },
+ {
+  "label": "the two states are compared in the wrong order, so the shape error names the wrong lengths",
+  "old": "    shape(b.len(), a.len(), \"second state\")?;",
+  "new": "    shape(a.len(), b.len(), \"second state\")?;"
+ },
+ {
+  "label": "the centroid distance is averaged over the off-diagonal pairs instead of all of them",
+  "old": "    cd /= (k * k) as f64;",
+  "new": "    cd /= (k * (k - 1)) as f64;"
+ },
+ {
+  "label": "the centroid distance is averaged over the classes rather than over the pairs of classes",
+  "old": "    cd /= (k * k) as f64;",
+  "new": "    cd /= k as f64;"
+ },
+ {
+  "label": "the within-class spread is a sum over members rather than their mean",
+  "old": "        cv += acc / counts[i] as f64;",
+  "new": "        cv += acc;"
+ },
+ {
+  "label": "the within-class spread is not averaged over the classes",
+  "old": "    cv /= k as f64;\n\n    Ok(SeparationReport {",
+  "new": "    Ok(SeparationReport {"
+ },
+ {
+  "label": "the separation statistic drops the unit offset that keeps it finite",
+  "old": "        ratio: cd / (cv + 1.0),",
+  "new": "        ratio: cd / cv,"
+ },
+ {
+  "label": "a class centroid is the last member of the class rather than the sum of its members",
+  "old": "            centroids[idx][j] += s[j];",
+  "new": "            centroids[idx][j] = s[j];"
+ },
+ {
+  "label": "the class centroids are never divided by their member counts",
+  "old": "    for i in 0..k {\n        let n = counts[i] as f64;\n        for j in 0..d {\n            centroids[i][j] /= n;\n        }\n    }",
+  "new": "    for i in 0..k {\n        let n = counts[i] as f64;\n        let _ = n;\n    }"
+ },
+ {
+  "label": "the label lookup is off by one class",
+  "old": "        let idx = labels.partition_point(|&l| l < c);\n        counts[idx] += 1;",
+  "new": "        let idx = labels.partition_point(|&l| l <= c);\n        counts[idx] += 1;"
+ },
+ {
+  "label": "the class member counts are set rather than accumulated",
+  "old": "        counts[idx] += 1;",
+  "new": "        counts[idx] = 1;"
+ },
+ {
+  "label": "repeated labels each count as their own class",
+  "old": "    labels.sort_unstable();\n    labels.dedup();",
+  "new": "    labels.sort_unstable();"
+ },
+ {
+  "label": "the label count and the state count are compared in the wrong order",
+  "old": "    shape(classes.len(), states.len(), \"class labels\")?;",
+  "new": "    shape(states.len(), classes.len(), \"class labels\")?;"
+ },
+ {
+  "label": "the approximation residual is measured without an intercept",
+  "old": "    let r = Ridge::fit(states, targets, alpha, true)?;",
+  "new": "    let r = Ridge::fit(states, targets, alpha, false)?;"
+ },
+ {
+  "label": "the memory curve credits the reservoir with the input it is being fed at that instant",
+  "old": "        targets.push((1..=max_delay).map(|k| u[t - k]).collect());",
+  "new": "        targets.push((0..max_delay).map(|k| u[t - k]).collect());"
+ },
+ {
+  "label": "the total capacity is the largest delay's share rather than the sum over delays",
+  "old": "    let total = per_delay.iter().sum();",
+  "new": "    let total = per_delay.iter().fold(0.0f64, |m, v| m.max(*v));"
+ },
+ {
+  "label": "the reported unit count is one past the reservoir's",
+  "old": "    Ok(MemoryCapacity { total, per_delay, units: esn.units, samples: states.len() })",
+  "new": "    Ok(MemoryCapacity { total, per_delay, units: esn.units + 1, samples: states.len() })"
+ },
+ {
+  "label": "the reported sample count is zero",
+  "old": "    Ok(MemoryCapacity { total, per_delay, units: esn.units, samples: states.len() })",
+  "new": "    Ok(MemoryCapacity { total, per_delay, units: esn.units, samples: 0 })"
+ },
+ {
+  "label": "the run is short by the delay budget, so fewer samples are collected than were asked for",
+  "old": "    let total_steps = washout + max_delay + samples;",
+  "new": "    let total_steps = washout + samples;"
+ },
+ {
+  "label": "the correlation's denominator is the sum of the two variances rather than their product",
+  "old": "    let r = sab / (saa * sbb).sqrt();",
+  "new": "    let r = sab / (saa + sbb).sqrt();"
+ },
+ {
+  "label": "the capacity per delay is the correlation rather than its square",
+  "old": "    (r * r).min(1.0)",
+  "new": "    r.abs().min(1.0)"
+ },
+ {
+  "label": "a prediction that never moves is credited with the whole of the target's variance",
+  "old": "    if saa <= 0.0 || sbb <= 0.0 {\n        return 0.0;\n    }",
+  "new": "    if saa <= 0.0 || sbb <= 0.0 {\n        return 1.0;\n    }"
+ },
+ {
+  "label": "the correlation is computed with the prediction and the target exchanged",
+  "old": "        per_delay.push(r2(&p, &q));",
+  "new": "        per_delay.push(r2(&q, &p));",
+  "equivalent": "r2 is symmetric in its two arguments and symmetric bit for bit, not merely in exact arithmetic. Exchanging them exchanges ma with mb, da with db, and saa with sbb; sab = sum(da*db) is unchanged because f64 multiplication is commutative and each product is correctly rounded, and the accumulation order over the samples is the same. The denominator (saa*sbb).sqrt() becomes (sbb*saa).sqrt(), again the same product and the same rounding, so r and therefore (r*r).min(1.0) are the identical f64. No test could distinguish this because no observable differs."
+ },
+ {
+  "label": "the delay ceiling is a tenth of the documented million ticks",
+  "old": "    pub const MAX_DELAY_TICKS: u32 = 1_000_000;",
+  "new": "    pub const MAX_DELAY_TICKS: u32 = 100_000;"
+ },
+ {
+  "label": "the column is twelve sites long instead of fifteen",
+  "old": "            nx: 15,",
+  "new": "            nx: 12,"
+ },
+ {
+  "label": "the inhibitory fraction is a quarter rather than a fifth",
+  "old": "            inhibitory_fraction: 0.2,",
+  "new": "            inhibitory_fraction: 0.25,"
+ },
+ {
+  "label": "lambda is transcribed as one site",
+  "old": "            lambda: 2.0,",
+  "new": "            lambda: 1.0,"
+ },
+ {
+  "label": "the excitatory to excitatory C is transcribed a factor of ten low",
+  "old": "            c_ee: 0.3,",
+  "new": "            c_ee: 0.03,"
+ },
+ {
+  "label": "the C table's one real asymmetry runs the wrong way",
+  "old": "            c_ei: 0.2,\n            c_ie: 0.4,",
+  "new": "            c_ei: 0.4,\n            c_ie: 0.2,"
+ },
+ {
+  "label": "the inhibitory to inhibitory C is the inhibitory to excitatory row's value",
+  "old": "            c_ii: 0.1,",
+  "new": "            c_ii: 0.4,"
+ },
+ {
+  "label": "the excitatory weight is ten times the documented one",
+  "old": "            w_ee: 1.6e-3,",
+  "new": "            w_ee: 1.6e-2,"
+ },
+ {
+  "label": "the inhibitory weight is a tenth of the documented one",
+  "old": "            w_ie: -2.4e-3,",
+  "new": "            w_ie: -2.4e-4,"
+ },
+ {
+  "label": "the excitatory to excitatory delay is the other pairs' 0.8 ms",
+  "old": "            delay_ee: 1.5e-3,",
+  "new": "            delay_ee: 0.8e-3,"
+ },
+ {
+  "label": "the other pairs' delay is the excitatory to excitatory 1.5 ms",
+  "old": "            delay_other: 0.8e-3,",
+  "new": "            delay_other: 1.5e-3,"
+ },
+ {
+  "label": "the column is built from a different seed",
+  "old": "            seed: 0x11D,",
+  "new": "            seed: 0x11E,"
+ },
+ {
+  "label": "the neuron count ignores the third lattice axis",
+  "old": "        self.nx * self.ny * self.nz",
+  "new": "        self.nx * self.ny"
+ },
+ {
+  "label": "the C table is transposed between the two cell types",
+  "old": "            (Cell::Excitatory, Cell::Inhibitory) => self.c_ei,\n            (Cell::Inhibitory, Cell::Excitatory) => self.c_ie,",
+  "new": "            (Cell::Excitatory, Cell::Inhibitory) => self.c_ie,\n            (Cell::Inhibitory, Cell::Excitatory) => self.c_ei,"
+ },
+ {
+  "label": "the weight table is transposed between the two cell types",
+  "old": "            (Cell::Excitatory, Cell::Inhibitory) => self.w_ei,\n            (Cell::Inhibitory, Cell::Excitatory) => self.w_ie,",
+  "new": "            (Cell::Excitatory, Cell::Inhibitory) => self.w_ie,\n            (Cell::Inhibitory, Cell::Excitatory) => self.w_ei,"
+ },
+ {
+  "label": "an inhibitory fraction outside zero to one is accepted",
+  "old": "        if !(0.0..=1.0).contains(&spec.inhibitory_fraction) {",
+  "new": "        if false {"
+ },
+ {
+  "label": "a zero or NaN lambda or tick length is accepted",
+  "old": "        for (what, v) in [(\"lambda\", spec.lambda), (\"dt\", spec.dt)] {\n            if !(v > 0.0) || !v.is_finite() {",
+  "new": "        for (what, v) in [(\"lambda\", spec.lambda), (\"dt\", spec.dt)] {\n            if v < 0.0 {"
+ },
+ {
+  "label": "a connection probability outside zero to one is accepted",
+  "old": "            if !(0.0..=1.0).contains(&v) {\n                return Err(ReservoirError::OutOfRange { what, value: v, low: 0.0, high: 1.0 });",
+  "new": "            if false {\n                return Err(ReservoirError::OutOfRange { what, value: v, low: 0.0, high: 1.0 });"
+ },
+ {
+  "label": "a zero or NaN excitatory weight is accepted",
+  "old": "        for (what, v) in [(\"w_ee\", spec.w_ee), (\"w_ei\", spec.w_ei)] {\n            if !(v > 0.0) || !v.is_finite() {",
+  "new": "        for (what, v) in [(\"w_ee\", spec.w_ee), (\"w_ei\", spec.w_ei)] {\n            if v < 0.0 {"
+ },
+ {
+  "label": "a positive inhibitory weight is accepted, so Dale's principle is not enforced at the boundary",
+  "old": "        for (what, v) in [(\"w_ie\", spec.w_ie), (\"w_ii\", spec.w_ii)] {\n            if !(v < 0.0) || !v.is_finite() {",
+  "new": "        for (what, v) in [(\"w_ie\", spec.w_ie), (\"w_ii\", spec.w_ii)] {\n            if false {"
+ },
+ {
+  "label": "a negative transmission delay is accepted",
+  "old": "        for (what, v) in [(\"delay_ee\", spec.delay_ee), (\"delay_other\", spec.delay_other)] {\n            if !(v >= 0.0) || !v.is_finite() {",
+  "new": "        for (what, v) in [(\"delay_ee\", spec.delay_ee), (\"delay_other\", spec.delay_other)] {\n            if false {"
+ },
+ {
+  "label": "the lattice's y and z coordinates are exchanged",
+  "old": "            let y = rem / spec.nz;\n            let z = rem % spec.nz;",
+  "new": "            let y = rem % spec.nz;\n            let z = rem / spec.nz;"
+ },
+ {
+  "label": "the lattice's x coordinate divides by the z extent alone",
+  "old": "            let x = i / (spec.ny * spec.nz);",
+  "new": "            let x = i / spec.nz;"
+ },
+ {
+  "label": "the inhibitory count rounds up rather than to nearest",
+  "old": "        let n_inh = (spec.inhibitory_fraction * n as f64).round() as usize;",
+  "new": "        let n_inh = (spec.inhibitory_fraction * n as f64).ceil() as usize;"
+ },
+ {
+  "label": "the partial Fisher-Yates swaps against the whole array rather than the tail",
+  "old": "            let j = i + rng.below((n - i) as u32) as usize;",
+  "new": "            let j = rng.below(n as u32) as usize;"
+ },
+ {
+  "label": "the inhibitory subset is taken from the tail the shuffle never touched",
+  "old": "        for &idx in &order[..n_inh] {",
+  "new": "        for &idx in &order[n_inh..] {"
+ },
+ {
+  "label": "the delay is truncated to a tick rather than rounded",
+  "old": "            let t = (seconds / spec.dt).round();",
+  "new": "            let t = (seconds / spec.dt).floor();"
+ },
+ {
+  "label": "the delay is rounded up to a tick rather than to nearest",
+  "old": "            let t = (seconds / spec.dt).round();",
+  "new": "            let t = (seconds / spec.dt).ceil();"
+ },
+ {
+  "label": "a delay of exactly the ceiling is refused",
+  "old": "            if !t.is_finite() || t > f64::from(Self::MAX_DELAY_TICKS) {",
+  "new": "            if !t.is_finite() || t >= f64::from(Self::MAX_DELAY_TICKS) {"
+ },
+ {
+  "label": "an explicitly zero delay is refused along with the ones that rounded to zero",
+  "old": "            if seconds > 0.0 && t == 0.0 {",
+  "new": "            if t == 0.0 {"
+ },
+ {
+  "label": "a positive delay that rounds away to nothing is accepted",
+  "old": "            if seconds > 0.0 && t == 0.0 {",
+  "new": "            if false {"
+ },
+ {
+  "label": "the connection kernel divides by lambda rather than by its square",
+  "old": "        let l2 = spec.lambda * spec.lambda;\n        for a in 0..n {",
+  "new": "        let l2 = spec.lambda;\n        for a in 0..n {"
+ },
+ {
+  "label": "the draw reads the connection table with the pre and post types exchanged",
+  "old": "                let p = spec.c_for(kinds[a], kinds[c]) * (-sq_dist(&positions[a], &positions[c]) / l2).exp();",
+  "new": "                let p = spec.c_for(kinds[c], kinds[a]) * (-sq_dist(&positions[a], &positions[c]) / l2).exp();"
+ },
+ {
+  "label": "the connection kernel grows with distance instead of falling",
+  "old": "                let p = spec.c_for(kinds[a], kinds[c]) * (-sq_dist(&positions[a], &positions[c]) / l2).exp();",
+  "new": "                let p = spec.c_for(kinds[a], kinds[c]) * (sq_dist(&positions[a], &positions[c]) / l2).exp();"
+ },
+ {
+  "label": "the connection probability does not depend on distance at all",
+  "old": "                let p = spec.c_for(kinds[a], kinds[c]) * (-sq_dist(&positions[a], &positions[c]) / l2).exp();",
+  "new": "                let p = spec.c_for(kinds[a], kinds[c]);"
+ },
+ {
+  "label": "a neuron may connect to itself",
+  "old": "                if a == c {\n                    continue;\n                }",
+  "new": "                if false {\n                    continue;\n                }"
+ },
+ {
+  "label": "the connection draw is inverted, so the improbable pairs are the ones that connect",
+  "old": "                let hit = rng.next_f64() < p;",
+  "new": "                let hit = rng.next_f64() > p;"
+ },
+ {
+  "label": "the longer excitatory delay is given to every pair with an excitatory end",
+  "old": "                    let d = if kinds[a] == Cell::Excitatory && kinds[c] == Cell::Excitatory {",
+  "new": "                    let d = if kinds[a] == Cell::Excitatory || kinds[c] == Cell::Excitatory {"
+ },
+ {
+  "label": "the synapse is built in the opposite direction from the one that was drawn",
+  "old": "                    b.connect(a as u32, c as u32, w, d)?;",
+  "new": "                    b.connect(c as u32, a as u32, w, d)?;"
+ },
+ {
+  "label": "the weight is read from the table with the pre and post types exchanged",
+  "old": "                    let w = spec.w_for(kinds[a], kinds[c]);",
+  "new": "                    let w = spec.w_for(kinds[c], kinds[a]);"
+ },
+ {
+  "label": "the inhibitory count counts the excitatory cells",
+  "old": "        self.kinds.iter().filter(|&&k| k == Cell::Inhibitory).count()",
+  "new": "        self.kinds.iter().filter(|&&k| k != Cell::Inhibitory).count()"
+ },
+ {
+  "label": "a self-connection is given the probability of a zero-distance pair",
+  "old": "        if a == b {\n            return 0.0;\n        }\n        let l2 = self.spec.lambda * self.spec.lambda;",
+  "new": "        let l2 = self.spec.lambda * self.spec.lambda;"
+ },
+ {
+  "label": "the reported probability divides by lambda rather than by its square",
+  "old": "        let l2 = self.spec.lambda * self.spec.lambda;\n        self.spec.c_for(self.kinds[a], self.kinds[b])",
+  "new": "        let l2 = self.spec.lambda;\n        self.spec.c_for(self.kinds[a], self.kinds[b])"
+ },
+ {
+  "label": "the expected synapse count sums over unordered pairs",
+  "old": "        for a in 0..n {\n            for b in 0..n {\n                s += self.connection_probability(a, b);",
+  "new": "        for a in 0..n {\n            for b in 0..a {\n                s += self.connection_probability(a, b);"
+ },
+ {
+  "label": "the synapse count's standard deviation drops the Bernoulli factor",
+  "old": "                s += p * (1.0 - p);",
+  "new": "                s += p;"
+ },
+ {
+  "label": "input is injected into the inhibitory cells",
+  "old": "            .filter(|&i| self.kinds[i as usize] == Cell::Excitatory)",
+  "new": "            .filter(|&i| self.kinds[i as usize] != Cell::Excitatory)"
+ },
+ {
+  "label": "a tick length close to the one the delays were baked at is accepted",
+  "old": "        if dt != self.spec.dt {",
+  "new": "        if (dt - self.spec.dt).abs() > 1e-12 {"
+ },
+ {
+  "label": "the excitatory and inhibitory cells are given each other's membranes",
+  "old": "            .map(|k| if *k == Cell::Excitatory { excitatory } else { inhibitory })",
+  "new": "            .map(|k| if *k == Cell::Excitatory { inhibitory } else { excitatory })"
+ },
+ {
+  "label": "the readout filter is built with the tick length and the time constant exchanged",
+  "old": "        let mut filter = SpikeFilter::new(n, tau, dt)?;",
+  "new": "        let mut filter = SpikeFilter::new(n, dt, tau)?;"
+ },
+ {
+  "label": "the liquid state is recorded before the tick's spikes are folded into it",
+  "old": "            filter.step(&fired);\n            out.push(filter.state().to_vec());",
+  "new": "            out.push(filter.state().to_vec());\n            filter.step(&fired);"
+ },
+ {
+  "label": "the liquid is run event-driven rather than clocked",
+  "old": "        let mut sim = self.to_sim(excitatory, inhibitory, dt, Mode::Clocked)?;",
+  "new": "        let mut sim = self.to_sim(excitatory, inhibitory, dt, Mode::EventDriven)?;",
+  "equivalent": "the crate's seventh invariant is that the two simulation modes produce the same spike train, tick for tick, and `sim::the_two_modes_produce_the_same_spike_train` is the gate on it; `Lif::EXACT_OVER_GAPS` is true, which is exactly the condition `Sim::new` requires before it will accept `Mode::EventDriven`, so this liquid is legal in both. `respond` observes the simulation only through the `fired` ids it feeds to the filter, and never through the ledger, where the two modes do differ (`neuron_updates_idle`). Same ids in the same order gives the same trace, bit for bit, so no assertion on a returned state can tell the two runs apart."
+ },
+ {
+  "label": "the lattice metric drops the z axis",
+  "old": "    dx * dx + dy * dy + dz * dz",
+  "new": "    dx * dx + dy * dy"
+ },
+ {
+  "label": "the lattice metric takes the y separation against the x coordinate",
+  "old": "    let dy = a[1] - b[1];",
+  "new": "    let dy = a[1] - b[0];"
+ },
+ {
+  "label": "the cached decay is exp(-tau/dt) rather than exp(-dt/tau)",
+  "old": "        Ok(Self { tau, dt, trace: vec![0.0; n], decay: (-dt / tau).exp() })",
+  "new": "        Ok(Self { tau, dt, trace: vec![0.0; n], decay: (-tau / dt).exp() })"
+ },
+ {
+  "label": "the spike's own tick is decayed, because the trace is added before the decay",
+  "old": "        for v in &mut self.trace {\n            *v *= self.decay;\n        }\n        for &i in fired {\n            if let Some(v) = self.trace.get_mut(i as usize) {\n                *v += 1.0;\n            }\n        }",
+  "new": "        for &i in fired {\n            if let Some(v) = self.trace.get_mut(i as usize) {\n                *v += 1.0;\n            }\n        }\n        for v in &mut self.trace {\n            *v *= self.decay;\n        }"
+ },
+ {
+  "label": "a second spike overwrites the trace rather than adding to it",
+  "old": "                *v += 1.0;",
+  "new": "                *v = 1.0;"
+ },
+ {
+  "label": "a spike id past the end of the trace panics instead of being ignored",
+  "old": "            if let Some(v) = self.trace.get_mut(i as usize) {\n                *v += 1.0;\n            }",
+  "new": "            self.trace[i as usize] += 1.0;"
+ },
+ {
+  "label": "a refused retune has already written the new time constant",
+  "old": "    pub fn retune(&mut self, tau: f64, dt: f64) -> Result<(), ReservoirError> {\n        for (what, v) in [(\"tau\", tau), (\"dt\", dt)] {",
+  "new": "    pub fn retune(&mut self, tau: f64, dt: f64) -> Result<(), ReservoirError> {\n        self.tau = tau;\n        for (what, v) in [(\"tau\", tau), (\"dt\", dt)] {"
+ },
+ {
+  "label": "a retune moves the time constant and leaves the cached decay behind",
+  "old": "        self.tau = tau;\n        self.dt = dt;\n        self.decay = (-dt / tau).exp();\n        Ok(())",
+  "new": "        self.tau = tau;\n        self.dt = dt;\n        Ok(())"
+ },
+ {
+  "label": "the cached decay always reports itself current",
+  "old": "        self.decay == (-self.dt / self.tau).exp()",
+  "new": "        true"
+ }
+]

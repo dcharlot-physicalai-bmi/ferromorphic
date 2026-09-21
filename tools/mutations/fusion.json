@@ -1,0 +1,1287 @@
+[
+ {
+  "label": "a non-finite parameter is accepted at the boundary",
+  "old": "    if x.is_finite() { Ok(x) } else { Err(FusionError::NonFinite { what }) }",
+  "new": "    let _ = what;\n    Ok(x)"
+ },
+ {
+  "label": "a positive check accepts zero",
+  "old": "    if x > 0.0 { Ok(x) } else { Err(FusionError::NotPositive { what, value: x }) }",
+  "new": "    if x >= 0.0 { Ok(x) } else { Err(FusionError::NotPositive { what, value: x }) }"
+ },
+ {
+  "label": "a positive check does not first reject an infinity",
+  "old": "fn positive(what: &'static str, x: f64) -> Result<f64, FusionError> {\n    let x = finite(what, x)?;",
+  "new": "fn positive(what: &'static str, x: f64) -> Result<f64, FusionError> {"
+ },
+ {
+  "label": "a non-negative check accepts a negative value",
+  "old": "    if x >= 0.0 { Ok(x) } else { Err(FusionError::Negative { what, value: x }) }",
+  "new": "    let _ = what;\n    Ok(x)"
+ },
+ {
+  "label": "a non-negative check does not first reject an infinity",
+  "old": "fn non_negative(what: &'static str, x: f64) -> Result<f64, FusionError> {\n    let x = finite(what, x)?;",
+  "new": "fn non_negative(what: &'static str, x: f64) -> Result<f64, FusionError> {"
+ },
+ {
+  "label": "a probability is allowed to exceed one",
+  "old": "    if (0.0..=1.0).contains(&x) {",
+  "new": "    if (0.0..=100.0).contains(&x) {"
+ },
+ {
+  "label": "the normal draw loses the factor of two in its radius",
+  "old": "    (-2.0 * u1.ln()).sqrt() * (core::f64::consts::TAU * u2).cos()",
+  "new": "    (-u1.ln()).sqrt() * (core::f64::consts::TAU * u2).cos()"
+ },
+ {
+  "label": "the normal draw forgets to take the square root of its radius",
+  "old": "    (-2.0 * u1.ln()).sqrt() * (core::f64::consts::TAU * u2).cos()",
+  "new": "    (-2.0 * u1.ln()) * (core::f64::consts::TAU * u2).cos()"
+ },
+ {
+  "label": "the normal draw's radius has the wrong sign under the logarithm",
+  "old": "    (-2.0 * u1.ln()).sqrt() * (core::f64::consts::TAU * u2).cos()",
+  "new": "    (2.0 * u1.ln()).sqrt() * (core::f64::consts::TAU * u2).cos()"
+ },
+ {
+  "label": "the normal draw takes the sine rather than the cosine of its angle",
+  "old": "    (-2.0 * u1.ln()).sqrt() * (core::f64::consts::TAU * u2).cos()",
+  "new": "    (-2.0 * u1.ln()).sqrt() * (core::f64::consts::TAU * u2).sin()",
+  "equivalent": "sin(2*pi*u) and cos(2*pi*u) have exactly the same distribution for u uniform on [0, 1), because\n2*pi*u is uniform on the circle and the circle is invariant under the quarter turn that carries\ncos to sin. Box-Muller's two outputs, R*cos(theta) and R*sin(theta), are both standard normal by\nconstruction — that is the whole content of the transform — so this edit swaps which of the pair\nis returned and changes no moment of the result. Every consumer in this module is statistical\n(a Monte Carlo variance to 3%, a kurtosis to 0.12, a classifier accuracy bound), and no test\npins the stream itself: `the_same_seed_gives_the_same_recording` compares two runs of the\nGENERATOR, which never calls `gaussian`. A test COULD pin the returned sequence against a golden\nvector, but no test could tell the two apart by a moment or by a downstream accuracy."
+ },
+ {
+  "label": "the normal draw does not guard the logarithm against a zero uniform",
+  "old": "    let u1 = 1.0 - rng.next_f64();\n    let u2 = rng.next_f64();",
+  "new": "    let u1 = rng.next_f64();\n    let u2 = rng.next_f64();"
+ },
+ {
+  "label": "the exponential inter-arrival gap multiplies by the rate instead of dividing",
+  "old": "        t += -(1.0 - rng.next_f64()).ln() / rate;",
+  "new": "        t += -(1.0 - rng.next_f64()).ln() * rate;"
+ },
+ {
+  "label": "the inter-arrival gap is negative, so the arrival train runs backwards",
+  "old": "        t += -(1.0 - rng.next_f64()).ln() / rate;",
+  "new": "        t += (1.0 - rng.next_f64()).ln() / rate;"
+ },
+ {
+  "label": "the inter-arrival gap is the uniform itself rather than its negative logarithm",
+  "old": "        t += -(1.0 - rng.next_f64()).ln() / rate;",
+  "new": "        t += (1.0 - rng.next_f64()) / rate;"
+ },
+ {
+  "label": "the Poisson draw is not capped at all",
+  "old": "        if out.len() >= cap {\n            return Err(FusionError::EventCap { cap });\n        }",
+  "new": "        if false {\n            return Err(FusionError::EventCap { cap });\n        }"
+ },
+ {
+  "label": "the median is taken without sorting",
+  "old": "    let mut s = v.to_vec();\n    s.sort_by(f64::total_cmp);",
+  "new": "    let mut s = v.to_vec();\n    s.reverse();"
+ },
+ {
+  "label": "the median of an even sample is the midrange rather than the middle pair",
+  "old": "    Some(if n % 2 == 1 { s[n / 2] } else { 0.5 * (s[n / 2 - 1] + s[n / 2]) })",
+  "new": "    Some(if n % 2 == 1 { s[n / 2] } else { 0.5 * (s[0] + s[n - 1]) })"
+ },
+ {
+  "label": "the median of an even sample takes only its upper middle value",
+  "old": "    Some(if n % 2 == 1 { s[n / 2] } else { 0.5 * (s[n / 2 - 1] + s[n / 2]) })",
+  "new": "    Some(if n % 2 == 1 { s[n / 2] } else { s[n / 2] })"
+ },
+ {
+  "label": "the odd-length median is a quartile rather than the middle value",
+  "old": "    Some(if n % 2 == 1 { s[n / 2] } else { 0.5 * (s[n / 2 - 1] + s[n / 2]) })",
+  "new": "    Some(if n % 2 == 1 { s[n / 4] } else { 0.5 * (s[n / 2 - 1] + s[n / 2]) })"
+ },
+ {
+  "label": "a reported time divides by the tick length instead of multiplying",
+  "old": "    pub fn reported_s(&self, tick: u64) -> f64 {\n        tick as f64 * self.dt_s\n    }",
+  "new": "    pub fn reported_s(&self, tick: u64) -> f64 {\n        tick as f64 / self.dt_s\n    }"
+ },
+ {
+  "label": "a clock's offset is added on the way to common time rather than removed",
+  "old": "        (self.reported_s(tick) - self.offset_s) / (1.0 + self.drift)",
+  "new": "        (self.reported_s(tick) + self.offset_s) / (1.0 + self.drift)"
+ },
+ {
+  "label": "a drifting clock is shifted but not rescaled",
+  "old": "        (self.reported_s(tick) - self.offset_s) / (1.0 + self.drift)",
+  "new": "        (self.reported_s(tick) - self.offset_s)"
+ },
+ {
+  "label": "the drift divisor is applied as a multiplier",
+  "old": "        (self.reported_s(tick) - self.offset_s) / (1.0 + self.drift)",
+  "new": "        (self.reported_s(tick) - self.offset_s) * (1.0 + self.drift)"
+ },
+ {
+  "label": "the drift is not offset from one, so an undrifted clock divides by zero",
+  "old": "        (self.reported_s(tick) - self.offset_s) / (1.0 + self.drift)",
+  "new": "        (self.reported_s(tick) - self.offset_s) / self.drift"
+ },
+ {
+  "label": "every clock takes the identity shortcut, offset or not",
+  "old": "        if self.offset_s == 0.0 && self.drift == 0.0 {\n            return self.reported_s(tick);\n        }",
+  "new": "        if self.offset_s == 0.0 || self.drift == 0.0 {\n            return self.reported_s(tick);\n        }"
+ },
+ {
+  "label": "a clock that runs backwards is accepted",
+  "old": "        positive(\"1 + drift\", 1.0 + drift)?;",
+  "new": "        non_negative(\"1 + drift\", 1.0 + drift)?;"
+ },
+ {
+  "label": "the reference clock is built with a drift",
+  "old": "        Ok(Self { dt_s: positive(\"dt_s\", dt_s)?, offset_s: 0.0, drift: 0.0 })",
+  "new": "        Ok(Self { dt_s: positive(\"dt_s\", dt_s)?, offset_s: 0.0, drift: 1e-4 })"
+ },
+ {
+  "label": "the sort invariant is not checked at all",
+  "old": "            if events[i].t < events[i - 1].t {\n                return Err(FusionError::Unsorted { index: i });\n            }",
+  "new": "            if events[i].t < events[i - 1].t && i == 0 {\n                return Err(FusionError::Unsorted { index: i });\n            }"
+ },
+ {
+  "label": "the sort check skips the first pair of events",
+  "old": "        for i in 1..events.len() {",
+  "new": "        for i in 2..events.len() {"
+ },
+ {
+  "label": "an unsorted stream names the event before the one that went backwards",
+  "old": "                return Err(FusionError::Unsorted { index: i });",
+  "new": "                return Err(FusionError::Unsorted { index: i - 1 });"
+ },
+ {
+  "label": "a sub-stream always starts at the beginning, so the two halves overlap",
+  "old": "            events: self.events[from..to].to_vec(),",
+  "new": "            events: self.events[..to].to_vec(),"
+ },
+ {
+  "label": "a stream's reported times are read on the common timeline it does not yet have",
+  "old": "        self.events.iter().map(|e| self.clock.reported_s(e.t)).collect()",
+  "new": "        self.events.iter().map(|e| self.clock.to_common_s(e.t)).collect()"
+ },
+ {
+  "label": "a coarse bin wider than the search window is accepted",
+  "old": "        if bin_s > search_half_s {",
+  "new": "        if false {"
+ },
+ {
+  "label": "a refinement window wider than the search window is accepted",
+  "old": "        if refine_half_s > search_half_s {",
+  "new": "        if false {"
+ },
+ {
+  "label": "the default minimum pair count is zero, so a median of one pair is an estimate",
+  "old": "        Ok(Self { search_half_s, bin_s, refine_half_s, min_pairs: 16, max_pairs: 20_000_000 })",
+  "new": "        Ok(Self { search_half_s, bin_s, refine_half_s, min_pairs: 0, max_pairs: 20_000_000 })"
+ },
+ {
+  "label": "the default pair cap is twenty rather than twenty million",
+  "old": "        Ok(Self { search_half_s, bin_s, refine_half_s, min_pairs: 16, max_pairs: 20_000_000 })",
+  "new": "        Ok(Self { search_half_s, bin_s, refine_half_s, min_pairs: 16, max_pairs: 20 })"
+ },
+ {
+  "label": "the pairwise difference is a minus b rather than b minus a",
+  "old": "            for &tb in &b[lo..hi] {\n                out.push((i, tb - ta));\n            }",
+  "new": "            for &tb in &b[lo..hi] {\n                out.push((i, ta - tb));\n            }"
+ },
+ {
+  "label": "every difference is attributed to the same anchor event",
+  "old": "            for &tb in &b[lo..hi] {\n                out.push((i, tb - ta));\n            }",
+  "new": "            for &tb in &b[lo..hi] {\n                out.push((0, tb - ta));\n            }"
+ },
+ {
+  "label": "the sweep's left edge is the right edge, so the window is one-sided",
+  "old": "            while lo < b.len() && b[lo] < ta - self.search_half_s {",
+  "new": "            while lo < b.len() && b[lo] < ta + self.search_half_s {"
+ },
+ {
+  "label": "the sweep's right edge ignores the search half-width",
+  "old": "            while hi < b.len() && b[hi] <= ta + self.search_half_s {",
+  "new": "            while hi < b.len() && b[hi] <= ta {"
+ },
+ {
+  "label": "the pair sweep is not capped",
+  "old": "            if out.len() + (hi - lo) > self.max_pairs {\n                return Err(FusionError::TooManyPairs { cap: self.max_pairs });\n            }",
+  "new": "            if false {\n                return Err(FusionError::TooManyPairs { cap: self.max_pairs });\n            }"
+ },
+ {
+  "label": "the sweep's upper cursor is not pulled up to the lower one after a gap",
+  "old": "            if hi < lo {\n                hi = lo;\n            }\n            while hi < b.len() && b[hi] <= ta + self.search_half_s {",
+  "new": "            if false {\n                hi = lo;\n            }\n            while hi < b.len() && b[hi] <= ta + self.search_half_s {",
+  "equivalent": "The fix-up cannot change where `hi` lands, because the loop that follows it always walks `hi` up\nto the same index. `b` is sorted and `lo` has just been advanced to the first index with\nb[lo] >= ta - search_half_s, so every index j < lo has b[j] < ta - search_half_s <= ta +\nsearch_half_s and therefore SATISFIES the loop's own condition `b[hi] <= ta + search_half_s`. The\nloop is monotone and only stops at the first index with b[hi] > ta + search_half_s (or at\nb.len()), which is at or after `lo` either way: starting it at `lo` and starting it at an older,\nsmaller `hi` reach the same index, differing only in how many iterations they take. `lo` and `hi`\nare read afterwards only as the slice `b[lo..hi]` and as the count `hi - lo`, both of which are\ntherefore the same. The fix-up is defensive code, not a correction, and no test could tell."
+ },
+ {
+  "label": "the histogram covers half the search window it claims to",
+  "old": "        let bins = ((2.0 * self.search_half_s / self.bin_s).ceil() as usize).max(1);",
+  "new": "        let bins = ((self.search_half_s / self.bin_s).ceil() as usize).max(1);"
+ },
+ {
+  "label": "the histogram index subtracts the search half-width instead of adding it",
+  "old": "            let k = ((d + self.search_half_s) / self.bin_s).floor();",
+  "new": "            let k = ((d - self.search_half_s) / self.bin_s).floor();"
+ },
+ {
+  "label": "the histogram index is not divided by the bin width",
+  "old": "            let k = ((d + self.search_half_s) / self.bin_s).floor();",
+  "new": "            let k = (d + self.search_half_s).floor();"
+ },
+ {
+  "label": "a histogram bin records presence rather than a count",
+  "old": "                hist[k as usize] += 1;",
+  "new": "                hist[k as usize] = 1;"
+ },
+ {
+  "label": "out-of-range differences are folded into the histogram rather than dropped",
+  "old": "            if k >= 0.0 && (k as usize) < bins {",
+  "new": "            if true {"
+ },
+ {
+  "label": "the coarse estimate is a bin edge rather than a bin centre",
+  "old": "        let coarse_s = -self.search_half_s + (peak.0 as f64 + 0.5) * self.bin_s;",
+  "new": "        let coarse_s = -self.search_half_s + peak.0 as f64 * self.bin_s;"
+ },
+ {
+  "label": "the coarse estimate is measured from the top of the search window",
+  "old": "        let coarse_s = -self.search_half_s + (peak.0 as f64 + 0.5) * self.bin_s;",
+  "new": "        let coarse_s = self.search_half_s + (peak.0 as f64 + 0.5) * self.bin_s;"
+ },
+ {
+  "label": "the tallest histogram bin is the shortest one",
+  "old": "            if c > best.1 { (i, c) } else { best }",
+  "new": "            if c < best.1 { (i, c) } else { best }"
+ },
+ {
+  "label": "the refinement window is not centred on the coarse peak",
+  "old": "            diffs.iter().copied().filter(|d| (d - coarse_s).abs() <= self.refine_half_s).collect();",
+  "new": "            diffs.iter().copied().filter(|d| d.abs() <= self.refine_half_s).collect();"
+ },
+ {
+  "label": "the refinement window is the whole search window",
+  "old": "            diffs.iter().copied().filter(|d| (d - coarse_s).abs() <= self.refine_half_s).collect();",
+  "new": "            diffs.iter().copied().filter(|d| (d - coarse_s).abs() <= self.search_half_s).collect();"
+ },
+ {
+  "label": "the second median is taken about the histogram bin again rather than about the first median",
+  "old": "            indexed.into_iter().filter(|(_, d)| (d - first).abs() <= self.refine_half_s).collect();",
+  "new": "            indexed.into_iter().filter(|(_, d)| (d - coarse_s).abs() <= self.refine_half_s).collect();"
+ },
+ {
+  "label": "the spread is the median signed deviation rather than the median absolute one",
+  "old": "        let dev: Vec<f64> = vals.iter().map(|d| (d - offset_s).abs()).collect();",
+  "new": "        let dev: Vec<f64> = vals.iter().map(|d| d - offset_s).collect();"
+ },
+ {
+  "label": "the spread is measured about zero rather than about the estimate",
+  "old": "        let dev: Vec<f64> = vals.iter().map(|d| (d - offset_s).abs()).collect();",
+  "new": "        let dev: Vec<f64> = vals.iter().map(|d| d.abs()).collect();"
+ },
+ {
+  "label": "every difference counts as a new independent event",
+  "old": "            if last != Some(*i) {\n                events += 1;\n                last = Some(*i);\n            }",
+  "new": "            if last != Some(*i) {\n                events += 1;\n            }"
+ },
+ {
+  "label": "the independent event count and the pair count are reported the other way round",
+  "old": "        Ok(OffsetFit { offset_s, coarse_s, pairs: vals.len(), mad_s, events })",
+  "new": "        Ok(OffsetFit { offset_s, coarse_s, pairs: events, mad_s, events: vals.len() })"
+ },
+ {
+  "label": "too few pairs in the refinement window is a number rather than a refusal",
+  "old": "        if near.len() < self.min_pairs {\n            return Err(FusionError::TooFewPairs { found: near.len(), needed: self.min_pairs });\n        }",
+  "new": "        if false {\n            return Err(FusionError::TooFewPairs { found: near.len(), needed: self.min_pairs });\n        }"
+ },
+ {
+  "label": "too few differences in the whole search window is a number rather than a refusal",
+  "old": "        if diffs.len() < self.min_pairs {\n            return Err(FusionError::TooFewPairs { found: diffs.len(), needed: self.min_pairs });\n        }",
+  "new": "        if false {\n            return Err(FusionError::TooFewPairs { found: diffs.len(), needed: self.min_pairs });\n        }"
+ },
+ {
+  "label": "the standard error drops the factor of two that stands in for the density",
+  "old": "        if self.events == 0 { None } else { Some(2.0 * self.mad_s / (self.events as f64).sqrt()) }",
+  "new": "        if self.events == 0 { None } else { Some(self.mad_s / (self.events as f64).sqrt()) }"
+ },
+ {
+  "label": "the standard error divides by the pair count rather than the event count",
+  "old": "        if self.events == 0 { None } else { Some(2.0 * self.mad_s / (self.events as f64).sqrt()) }",
+  "new": "        if self.events == 0 { None } else { Some(2.0 * self.mad_s / (self.pairs as f64).sqrt()) }"
+ },
+ {
+  "label": "the standard error divides by n rather than by its square root",
+  "old": "        if self.events == 0 { None } else { Some(2.0 * self.mad_s / (self.events as f64).sqrt()) }",
+  "new": "        if self.events == 0 { None } else { Some(2.0 * self.mad_s / (self.events as f64)) }"
+ },
+ {
+  "label": "the standard error multiplies by the square root of n rather than dividing",
+  "old": "        if self.events == 0 { None } else { Some(2.0 * self.mad_s / (self.events as f64).sqrt()) }",
+  "new": "        if self.events == 0 { None } else { Some(2.0 * self.mad_s * (self.events as f64).sqrt()) }"
+ },
+ {
+  "label": "the two half-records are measured in the wrong order",
+  "old": "        let f1 = self.estimate(&first, b)?;\n        let f2 = self.estimate(&second, b)?;",
+  "new": "        let f1 = self.estimate(&second, b)?;\n        let f2 = self.estimate(&first, b)?;"
+ },
+ {
+  "label": "the record is split at its last event rather than at its middle",
+  "old": "        let mid = a.len() / 2;",
+  "new": "        let mid = a.len() - 1;"
+ },
+ {
+  "label": "the first half's centroid is averaged over the whole record",
+  "old": "        let c1 = first.reported_s().iter().sum::<f64>() / first.len() as f64;",
+  "new": "        let c1 = first.reported_s().iter().sum::<f64>() / a.len() as f64;"
+ },
+ {
+  "label": "the second half's centroid is its total rather than its mean",
+  "old": "        let c2 = second.reported_s().iter().sum::<f64>() / second.len() as f64;",
+  "new": "        let c2 = second.reported_s().iter().sum::<f64>();"
+ },
+ {
+  "label": "the lever arm is measured backwards",
+  "old": "        let span_s = c2 - c1;",
+  "new": "        let span_s = c1 - c2;"
+ },
+ {
+  "label": "a degenerate record with no lever arm divides by it anyway",
+  "old": "        if !(span_s > 0.0) {\n            return Err(FusionError::NoLeverArm { span_s });\n        }",
+  "new": "        if false {\n            return Err(FusionError::NoLeverArm { span_s });\n        }"
+ },
+ {
+  "label": "the drift's numerator is the first half minus the second",
+  "old": "        let drift = (f2.offset_s - f1.offset_s) / span_s;",
+  "new": "        let drift = (f1.offset_s - f2.offset_s) / span_s;"
+ },
+ {
+  "label": "the drift is a difference of offsets and is never divided by the lever arm",
+  "old": "        let drift = (f2.offset_s - f1.offset_s) / span_s;",
+  "new": "        let drift = f2.offset_s - f1.offset_s;"
+ },
+ {
+  "label": "the offset is not extrapolated back to common time zero",
+  "old": "            offset_s: f1.offset_s - drift * c1,",
+  "new": "            offset_s: f1.offset_s,"
+ },
+ {
+  "label": "the extrapolation back to time zero runs forwards",
+  "old": "            offset_s: f1.offset_s - drift * c1,",
+  "new": "            offset_s: f1.offset_s + drift * c1,"
+ },
+ {
+  "label": "the offset is extrapolated from the second half's centroid",
+  "old": "            offset_s: f1.offset_s - drift * c1,",
+  "new": "            offset_s: f1.offset_s - drift * c2,"
+ },
+ {
+  "label": "merging nothing is an empty recording rather than a refusal",
+  "old": "        if streams.is_empty() {\n            return Err(FusionError::NoModalities);\n        }",
+  "new": "        if false {\n            return Err(FusionError::NoModalities);\n        }"
+ },
+ {
+  "label": "alignment reads each stream's own reported frame and ignores its clock",
+  "old": "                let t_s = finite(\"aligned time\", s.clock.to_common_s(e.t))?;",
+  "new": "                let t_s = finite(\"aligned time\", s.clock.reported_s(e.t))?;"
+ },
+ {
+  "label": "the aligned timeline is sorted latest first",
+  "old": "            x.t_s\n                .total_cmp(&y.t_s)",
+  "new": "            y.t_s\n                .total_cmp(&x.t_s)"
+ },
+ {
+  "label": "every aligned event is attributed to modality zero",
+  "old": "                    modality: s.modality,\n                    address: e.address,",
+  "new": "                    modality: 0,\n                    address: e.address,"
+ },
+ {
+  "label": "the address is discarded on the way onto the common timeline",
+  "old": "                    address: e.address,\n                    polarity: e.polarity,",
+  "new": "                    address: 0,\n                    polarity: e.polarity,"
+ },
+ {
+  "label": "the polarity the sensor reported is overwritten with a constant",
+  "old": "                    polarity: e.polarity,",
+  "new": "                    polarity: Polarity::On,"
+ },
+ {
+  "label": "one modality's times are every other modality's times",
+  "old": "        self.events.iter().filter(|e| e.modality == modality).map(|e| e.t_s).collect()",
+  "new": "        self.events.iter().filter(|e| e.modality != modality).map(|e| e.t_s).collect()"
+ },
+ {
+  "label": "a measured rate is a count and not a rate",
+  "old": "        Some(n as f64 / (t1 - t0))",
+  "new": "        Some(n as f64)"
+ },
+ {
+  "label": "the observation window is closed on the right and open on the left",
+  "old": "        let n = self.events.iter().filter(|e| e.modality == modality && e.t_s >= t0 && e.t_s < t1).count();",
+  "new": "        let n = self.events.iter().filter(|e| e.modality == modality && e.t_s > t0 && e.t_s <= t1).count();"
+ },
+ {
+  "label": "a window with no length is a rate rather than a refusal",
+  "old": "        if !(t1 > t0) {\n            return None;\n        }",
+  "new": "        if t1 < t0 {\n            return None;\n        }"
+ },
+ {
+  "label": "the nearest cross pair reports a minus b rather than b minus a",
+  "old": "            let d = b[idx] - ta;",
+  "new": "            let d = ta - b[idx];"
+ },
+ {
+  "label": "the cross-pair window is exclusive at its endpoints",
+  "old": "            if d.abs() <= half_window_s && best.is_none_or(|bd| d.abs() < bd.abs()) {",
+  "new": "            if d.abs() < half_window_s && best.is_none_or(|bd| d.abs() < bd.abs()) {"
+ },
+ {
+  "label": "the cross-pair search keeps the farthest partner rather than the nearest",
+  "old": "            if d.abs() <= half_window_s && best.is_none_or(|bd| d.abs() < bd.abs()) {",
+  "new": "            if d.abs() <= half_window_s && best.is_none_or(|bd| d.abs() > bd.abs()) {"
+ },
+ {
+  "label": "the cross-pair search keeps the signed minimum rather than the nearest",
+  "old": "            if d.abs() <= half_window_s && best.is_none_or(|bd| d.abs() < bd.abs()) {",
+  "new": "            if d.abs() <= half_window_s && best.is_none_or(|bd| d < bd) {"
+ },
+ {
+  "label": "the cross-pair search never looks before the insertion point",
+  "old": "        for idx in [k.checked_sub(1), (k < b.len()).then_some(k)].into_iter().flatten() {",
+  "new": "        for idx in [None, (k < b.len()).then_some(k)].into_iter().flatten() {"
+ },
+ {
+  "label": "the cross-pair search never looks after the insertion point",
+  "old": "        for idx in [k.checked_sub(1), (k < b.len()).then_some(k)].into_iter().flatten() {",
+  "new": "        for idx in [k.checked_sub(1), None].into_iter().flatten() {"
+ },
+ {
+  "label": "the expected partner count uses the window's half-width",
+  "old": "    Ok(2.0 * w * r)",
+  "new": "    Ok(w * r)"
+ },
+ {
+  "label": "the expected partner count is the window rather than the window times the rate",
+  "old": "    Ok(2.0 * w * r)",
+  "new": "    Ok(2.0 * w)"
+ },
+ {
+  "label": "the chance binding probability is the Poisson zero term rather than its complement",
+  "old": "        p *= 1.0 - (-2.0 * w * r).exp();",
+  "new": "        p *= (-2.0 * w * r).exp();"
+ },
+ {
+  "label": "the chance binding probability uses the window's half-width in its exponent",
+  "old": "        p *= 1.0 - (-2.0 * w * r).exp();",
+  "new": "        p *= 1.0 - (-w * r).exp();"
+ },
+ {
+  "label": "the chance binding probability sums its factors rather than multiplying them",
+  "old": "        p *= 1.0 - (-2.0 * w * r).exp();",
+  "new": "        p += 1.0 - (-2.0 * w * r).exp();"
+ },
+ {
+  "label": "the chance binding probability's product starts at zero",
+  "old": "    let mut p = 1.0;\n    for &r in partner_rates_hz {",
+  "new": "    let mut p = 0.0;\n    for &r in partner_rates_hz {"
+ },
+ {
+  "label": "binding against no partner rate at all reports certainty",
+  "old": "    if partner_rates_hz.is_empty() {\n        return Err(FusionError::Empty { what: \"partner rates\" });\n    }",
+  "new": "    if false {\n        return Err(FusionError::Empty { what: \"partner rates\" });\n    }"
+ },
+ {
+  "label": "the binding rate is the partner count rather than the bound count",
+  "old": "            Some(self.bound as f64 / self.anchors_considered as f64)",
+  "new": "            Some(self.partner_events as f64 / self.anchors_considered as f64)"
+ },
+ {
+  "label": "the mean partner count is per bound anchor rather than per anchor considered",
+  "old": "            Some(self.partner_events as f64 / self.anchors_considered as f64)",
+  "new": "            Some(self.partner_events as f64 / self.bound as f64)"
+ },
+ {
+  "label": "an empty sweep reports a binding rate of nothing over nothing",
+  "old": "    pub fn binding_rate(&self) -> Option<f64> {\n        if self.anchors_considered == 0 {",
+  "new": "    pub fn binding_rate(&self) -> Option<f64> {\n        if false {"
+ },
+ {
+  "label": "an empty sweep reports a mean partner count of nothing over nothing",
+  "old": "    pub fn mean_partners(&self) -> Option<f64> {\n        if self.anchors_considered == 0 {",
+  "new": "    pub fn mean_partners(&self) -> Option<f64> {\n        if false {"
+ },
+ {
+  "label": "binding an anchor to no partner at all is accepted",
+  "old": "        if partners.is_empty() {\n            return Err(FusionError::Empty { what: \"partner modalities\" });\n        }",
+  "new": "        if false {\n            return Err(FusionError::Empty { what: \"partner modalities\" });\n        }"
+ },
+ {
+  "label": "an observation interval shorter than the window is swept anyway",
+  "old": "        if !(t1 - t0 > 2.0 * w) {",
+  "new": "        if false {"
+ },
+ {
+  "label": "the interval must only be longer than one half-window, not two",
+  "old": "        if !(t1 - t0 > 2.0 * w) {",
+  "new": "        if !(t1 - t0 > w) {"
+ },
+ {
+  "label": "the detector's window is half the half-width it was given",
+  "old": "        let w = self.half_window_s;",
+  "new": "        let w = 0.5 * self.half_window_s;"
+ },
+ {
+  "label": "anchors whose window runs off the end of the interval are counted anyway",
+  "old": "            if e.modality != self.anchor || e.t_s < t0 + w || e.t_s > t1 - w {",
+  "new": "            if e.modality != self.anchor || e.t_s < t0 || e.t_s > t1 {"
+ },
+ {
+  "label": "the interior is widened by a window rather than narrowed by one",
+  "old": "            if e.modality != self.anchor || e.t_s < t0 + w || e.t_s > t1 - w {",
+  "new": "            if e.modality != self.anchor || e.t_s < t0 - w || e.t_s > t1 + w {"
+ },
+ {
+  "label": "every modality but the anchor supplies the anchors",
+  "old": "            if e.modality != self.anchor || e.t_s < t0 + w || e.t_s > t1 - w {",
+  "new": "            if e.modality == self.anchor || e.t_s < t0 + w || e.t_s > t1 - w {"
+ },
+ {
+  "label": "the anchor count is set rather than accumulated",
+  "old": "            report.anchors_considered += 1;",
+  "new": "            report.anchors_considered = 1;"
+ },
+ {
+  "label": "the partner window excludes its left endpoint",
+  "old": "                let lo = times.partition_point(|&x| x < e.t_s - w);",
+  "new": "                let lo = times.partition_point(|&x| x <= e.t_s - w);"
+ },
+ {
+  "label": "the partner window excludes its right endpoint",
+  "old": "                let hi = times.partition_point(|&x| x <= e.t_s + w);",
+  "new": "                let hi = times.partition_point(|&x| x < e.t_s + w);"
+ },
+ {
+  "label": "the partner window's right edge is measured from the left edge",
+  "old": "                let hi = times.partition_point(|&x| x <= e.t_s + w);",
+  "new": "                let hi = times.partition_point(|&x| x <= e.t_s - w);"
+ },
+ {
+  "label": "the partner event tally is set rather than accumulated",
+  "old": "                report.partner_events += n as u64;",
+  "new": "                report.partner_events = n as u64;"
+ },
+ {
+  "label": "an anchor with an absent partner is still bound",
+  "old": "                if n == 0 {\n                    all = false;\n                }",
+  "new": "                if false {\n                    all = false;\n                }"
+ },
+ {
+  "label": "binding to several partners is a disjunction rather than a conjunction",
+  "old": "            let mut all = true;\n            for times in &partner_times {\n                let lo = times.partition_point(|&x| x < e.t_s - w);\n                let hi = times.partition_point(|&x| x <= e.t_s + w);\n                let n = hi - lo;\n                report.partner_events += n as u64;\n                if n == 0 {\n                    all = false;\n                }\n            }",
+  "new": "            let mut all = false;\n            for times in &partner_times {\n                let lo = times.partition_point(|&x| x < e.t_s - w);\n                let hi = times.partition_point(|&x| x <= e.t_s + w);\n                let n = hi - lo;\n                report.partner_events += n as u64;\n                if n > 0 {\n                    all = true;\n                }\n            }"
+ },
+ {
+  "label": "the bound count is set rather than accumulated",
+  "old": "            if all {\n                report.bound += 1;\n            }",
+  "new": "            if all {\n                report.bound = 1;\n            }"
+ },
+ {
+  "label": "a zero-variance channel with infinite precision is accepted",
+  "old": "        for &v in &variances {\n            positive(\"variance\", v)?;\n        }",
+  "new": "        for &v in &variances {\n            non_negative(\"variance\", v)?;\n        }"
+ },
+ {
+  "label": "the measured variance divides by n rather than by n minus one",
+  "old": "            let var = r.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / (n - 1.0);",
+  "new": "            let var = r.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / n;"
+ },
+ {
+  "label": "the measured variance is the mean residual rather than the mean square",
+  "old": "            let var = r.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / (n - 1.0);",
+  "new": "            let var = r.iter().map(|x| (x - mean)).sum::<f64>() / (n - 1.0);"
+ },
+ {
+  "label": "the residual mean is itself divided by n minus one",
+  "old": "            let mean = r.iter().sum::<f64>() / n;",
+  "new": "            let mean = r.iter().sum::<f64>() / (n - 1.0);"
+ },
+ {
+  "label": "a single residual is enough to measure a variance from",
+  "old": "            if r.len() < 2 {",
+  "new": "            if r.len() < 1 {"
+ },
+ {
+  "label": "the precision sum is a sum of variances rather than of their reciprocals",
+  "old": "            .map(|(v, _)| 1.0 / v)",
+  "new": "            .map(|(v, _)| *v)"
+ },
+ {
+  "label": "unavailable modalities still contribute their precision",
+  "old": "            .filter(|&(_, &ok)| ok)",
+  "new": "            .filter(|&(_, &ok)| ok || true)"
+ },
+ {
+  "label": "a gate with nothing available reports an infinite fused variance",
+  "old": "        if s > 0.0 { Some(s) } else { None }",
+  "new": "        Some(s)"
+ },
+ {
+  "label": "the weights are proportional to the variance rather than to its reciprocal",
+  "old": "                .map(|(v, &ok)| if ok { (1.0 / v) / total } else { 0.0 })",
+  "new": "                .map(|(v, &ok)| if ok { v / total } else { 0.0 })"
+ },
+ {
+  "label": "a dropped modality still carries a weight",
+  "old": "                .map(|(v, &ok)| if ok { (1.0 / v) / total } else { 0.0 })",
+  "new": "                .map(|(v, &ok)| { let _ = ok; (1.0 / v) / total })"
+ },
+ {
+  "label": "the weights are not normalised by the total precision",
+  "old": "                .map(|(v, &ok)| if ok { (1.0 / v) / total } else { 0.0 })",
+  "new": "                .map(|(v, &ok)| if ok { 1.0 / v } else { 0.0 })"
+ },
+ {
+  "label": "the fused variance is the precision sum itself",
+  "old": "        self.total_precision().map(|p| 1.0 / p)",
+  "new": "        self.total_precision()"
+ },
+ {
+  "label": "the dominant sense is the least precise one",
+  "old": "            if ok && best.is_none_or(|(_, bv)| 1.0 / v > bv) {",
+  "new": "            if ok && best.is_none_or(|(_, bv)| 1.0 / v < bv) {"
+ },
+ {
+  "label": "a dropped sense can still be the dominant one",
+  "old": "            if ok && best.is_none_or(|(_, bv)| 1.0 / v > bv) {",
+  "new": "            if (ok || true) && best.is_none_or(|(_, bv)| 1.0 / v > bv) {"
+ },
+ {
+  "label": "the fused estimate sums weight and value rather than multiplying them",
+  "old": "        Ok(Some(w.iter().zip(estimates).map(|(wi, xi)| wi * xi).sum()))",
+  "new": "        Ok(Some(w.iter().zip(estimates).map(|(wi, xi)| wi + xi).sum()))"
+ },
+ {
+  "label": "the fused estimate is the unweighted sum of the estimates",
+  "old": "        Ok(Some(w.iter().zip(estimates).map(|(wi, xi)| wi * xi).sum()))",
+  "new": "        Ok(Some(w.iter().zip(estimates).map(|(_wi, xi)| *xi).sum()))"
+ },
+ {
+  "label": "a fusion of the wrong number of estimates is not refused",
+  "old": "        if estimates.len() != self.variances.len() {\n            return Err(FusionError::LengthMismatch {\n                a: estimates.len(),\n                b: self.variances.len(),\n            });\n        }",
+  "new": "        if false {\n            return Err(FusionError::LengthMismatch {\n                a: estimates.len(),\n                b: self.variances.len(),\n            });\n        }"
+ },
+ {
+  "label": "a non-finite estimate reaches the fusion",
+  "old": "        for &x in estimates {\n            finite(\"estimate\", x)?;\n        }",
+  "new": "        for &x in estimates {\n            let _ = x;\n        }"
+ },
+ {
+  "label": "losing an already-absent modality is reported as free destruction",
+  "old": "        if !self.available[modality] {\n            return Ok(Some(1.0));\n        }",
+  "new": "        if !self.available[modality] {\n            return Ok(Some(0.0));\n        }"
+ },
+ {
+  "label": "dropping a modality adds its precision instead of removing it",
+  "old": "        let after = before - 1.0 / self.variances[modality];",
+  "new": "        let after = before + 1.0 / self.variances[modality];"
+ },
+ {
+  "label": "dropping a modality removes its variance rather than its precision",
+  "old": "        let after = before - 1.0 / self.variances[modality];",
+  "new": "        let after = before - self.variances[modality];"
+ },
+ {
+  "label": "losing the last sense is a finite degradation figure",
+  "old": "        if after <= 0.0 {\n            return Ok(None);\n        }",
+  "new": "        if after < 0.0 {\n            return Ok(None);\n        }"
+ },
+ {
+  "label": "the degradation ratio is inverted",
+  "old": "        Ok(Some(before / after))",
+  "new": "        Ok(Some(after / before))"
+ },
+ {
+  "label": "a modality index one past the end is accepted by the dropout switch",
+  "old": "        if modality >= self.available.len() {",
+  "new": "        if modality > self.available.len() {"
+ },
+ {
+  "label": "the dropout switch marks the opposite of what it was told",
+  "old": "        self.available[modality] = ok;",
+  "new": "        self.available[modality] = !ok;"
+ },
+ {
+  "label": "only a matrix empty on both sides is refused",
+  "old": "        if n_pre == 0 || n_post == 0 {",
+  "new": "        if n_pre == 0 && n_post == 0 {"
+ },
+ {
+  "label": "the weight matrix is sized by the sum of the two address counts",
+  "old": "            w: vec![w0; n_pre * n_post],",
+  "new": "            w: vec![w0; n_pre + n_post],"
+ },
+ {
+  "label": "the presynaptic side is drawn from the postsynaptic modality",
+  "old": "            .filter(|e| e.modality == self.pre_modality)",
+  "new": "            .filter(|e| e.modality == self.post_modality)"
+ },
+ {
+  "label": "the association's lag is presynaptic minus postsynaptic",
+  "old": "                self.w[k] = self.rule.apply_pair(self.w[k], tq - tp)?;",
+  "new": "                self.w[k] = self.rule.apply_pair(self.w[k], tp - tq)?;"
+ },
+ {
+  "label": "each pair overwrites the cell rather than accumulating into it",
+  "old": "                self.w[k] = self.rule.apply_pair(self.w[k], tq - tp)?;",
+  "new": "                self.w[k] = self.rule.apply_pair(0.0, tq - tp)?;"
+ },
+ {
+  "label": "the correspondence matrix is written transposed",
+  "old": "                let k = ap as usize * self.n_post + aq as usize;",
+  "new": "                let k = aq as usize * self.n_pre + ap as usize;"
+ },
+ {
+  "label": "the pair count is set rather than accumulated",
+  "old": "                pairs += 1;",
+  "new": "                pairs = 1;"
+ },
+ {
+  "label": "a presynaptic address past the matrix is folded into it",
+  "old": "            if ap as usize >= self.n_pre {\n                continue;\n            }",
+  "new": "            if false {\n                continue;\n            }"
+ },
+ {
+  "label": "a postsynaptic address past the matrix is folded into it",
+  "old": "                if aq as usize >= self.n_post {\n                    continue;\n                }",
+  "new": "                if false {\n                    continue;\n                }"
+ },
+ {
+  "label": "the association window's left edge is on the wrong side of the anchor",
+  "old": "            while lo < post.len() && post[lo].0 < tp - self.max_lag_s {",
+  "new": "            while lo < post.len() && post[lo].0 < tp + self.max_lag_s {"
+ },
+ {
+  "label": "the association window is ten times the lag it declares",
+  "old": "            while hi < post.len() && post[hi].0 <= tp + self.max_lag_s {",
+  "new": "            while hi < post.len() && post[hi].0 <= tp + 10.0 * self.max_lag_s {"
+ },
+ {
+  "label": "the association sweep's upper cursor is not pulled up to the lower one after a gap",
+  "old": "            if hi < lo {\n                hi = lo;\n            }\n            while hi < post.len() && post[hi].0 <= tp + self.max_lag_s {",
+  "new": "            if false {\n                hi = lo;\n            }\n            while hi < post.len() && post[hi].0 <= tp + self.max_lag_s {",
+  "equivalent": "The same argument as the offset sweep's fix-up. `post` is in non-decreasing time order because it\nis filtered out of an `Aligned`, which is sorted; `lo` has just been advanced to the first index\nwith post[lo].0 >= tp - max_lag_s, so every index j < lo has post[j].0 < tp - max_lag_s <= tp +\nmax_lag_s and passes the following loop's condition. That loop is monotone and stops at the first\nindex past tp + max_lag_s, which is at or after `lo` whether it started from `lo` or from an older\nsmaller `hi`. The only later reads are `post[lo..hi]` and the pair count, both unchanged. No test\ncould tell, because there is nothing to tell."
+ },
+ {
+  "label": "a learned weight is read out of the transposed cell",
+  "old": "        Some(self.w[pre * self.n_post + post])",
+  "new": "        Some(self.w[post * self.n_pre + pre])"
+ },
+ {
+  "label": "an out-of-range address is refused only when both sides are out of range",
+  "old": "        if pre >= self.n_pre || post >= self.n_post {\n            return None;\n        }",
+  "new": "        if pre >= self.n_pre && post >= self.n_post {\n            return None;\n        }"
+ },
+ {
+  "label": "a row of the correspondence matrix runs into the next one",
+  "old": "        let row = &self.w[pre * self.n_post..(pre + 1) * self.n_post];",
+  "new": "        let row = &self.w[pre * self.n_post..(pre + 2) * self.n_post];"
+ },
+ {
+  "label": "a tied row names address zero rather than refusing",
+  "old": "        if tied { None } else { Some(best.0) }",
+  "new": "        Some(best.0)"
+ },
+ {
+  "label": "the arg-max compares the first cell with itself and calls every row tied",
+  "old": "        for (j, &x) in row.iter().enumerate().skip(1) {",
+  "new": "        for (j, &x) in row.iter().enumerate().skip(0) {"
+ },
+ {
+  "label": "a later equal weight clears the tie instead of recording it",
+  "old": "            } else if x == best.1 {\n                tied = true;\n            }",
+  "new": "            } else if x == best.1 {\n                tied = false;\n            }"
+ },
+ {
+  "label": "the best partner is the row's minimum",
+  "old": "            if x > best.1 {\n                best = (j, x);",
+  "new": "            if x < best.1 {\n                best = (j, x);"
+ },
+ {
+  "label": "a training set with no rows is fitted",
+  "old": "        if x.is_empty() {\n            return Err(FusionError::Empty { what: \"training set\" });\n        }",
+  "new": "        if false {\n            return Err(FusionError::Empty { what: \"training set\" });\n        }"
+ },
+ {
+  "label": "a label count that differs from the row count is not refused",
+  "old": "        if x.len() != y.len() {\n            return Err(FusionError::LengthMismatch { a: x.len(), b: y.len() });\n        }",
+  "new": "        if false {\n            return Err(FusionError::LengthMismatch { a: x.len(), b: y.len() });\n        }"
+ },
+ {
+  "label": "a zero-width feature vector is fitted",
+  "old": "        if d == 0 {\n            return Err(FusionError::Empty { what: \"feature vector\" });\n        }",
+  "new": "        if false {\n            return Err(FusionError::Empty { what: \"feature vector\" });\n        }"
+ },
+ {
+  "label": "a row of a different width is not refused",
+  "old": "            if row.len() != d {\n                return Err(FusionError::RaggedFeatures { index: i });\n            }",
+  "new": "            if row.len() != d && d == 0 {\n                return Err(FusionError::RaggedFeatures { index: i });\n            }"
+ },
+ {
+  "label": "a non-finite training feature is fitted",
+  "old": "            for &v in row {\n                finite(\"feature\", v)?;\n            }",
+  "new": "            for &v in row {\n                let _ = v;\n            }"
+ },
+ {
+  "label": "the standardising scale is the variance rather than the standard deviation",
+  "old": "            let sd = (*s / n).sqrt();",
+  "new": "            let sd = *s / n;"
+ },
+ {
+  "label": "the standardising scale is the sum of squares rather than the mean square",
+  "old": "            let sd = (*s / n).sqrt();",
+  "new": "            let sd = s.sqrt();"
+ },
+ {
+  "label": "a constant feature divides by a zero scale",
+  "old": "            *s = if sd > 0.0 { sd } else { 1.0 };",
+  "new": "            *s = sd;"
+ },
+ {
+  "label": "a squared deviation is accumulated as a plain one",
+  "old": "                let e = row[j] - mean[j];\n                scale[j] += e * e;",
+  "new": "                let e = row[j] - mean[j];\n                scale[j] += e;"
+ },
+ {
+  "label": "the feature mean is a total rather than a mean",
+  "old": "        for m in &mut mean {\n            *m /= n;\n        }",
+  "new": "        for m in &mut mean {\n            *m /= 1.0;\n        }"
+ },
+ {
+  "label": "the per-class count is set rather than accumulated",
+  "old": "            acc[c].2 += 1;",
+  "new": "            acc[c].2 = 1;"
+ },
+ {
+  "label": "a class centroid is its last member rather than the sum of them",
+  "old": "                acc[c].1[j] += (row[j] - mean[j]) / scale[j];",
+  "new": "                acc[c].1[j] = (row[j] - mean[j]) / scale[j];"
+ },
+ {
+  "label": "the class accumulator standardises by multiplying rather than dividing",
+  "old": "                acc[c].1[j] += (row[j] - mean[j]) / scale[j];",
+  "new": "                acc[c].1[j] += (row[j] - mean[j]) * scale[j];"
+ },
+ {
+  "label": "a single-class training set is fitted rather than refused",
+  "old": "        if acc.len() < 2 {\n            return Err(FusionError::SingleClass { label: acc[0].0 });\n        }",
+  "new": "        if acc.len() < 1 {\n            return Err(FusionError::SingleClass { label: acc[0].0 });\n        }"
+ },
+ {
+  "label": "the class order is whatever order the labels arrived in, descending",
+  "old": "        acc.sort_by_key(|e| e.0);",
+  "new": "        acc.sort_by_key(|e| std::cmp::Reverse(e.0));"
+ },
+ {
+  "label": "a class centroid is a sum and not a mean",
+  "old": "            .map(|(_, sum, cnt)| sum.iter().map(|v| v / *cnt as f64).collect())",
+  "new": "            .map(|(_, sum, cnt)| { let _ = cnt; sum.to_vec() })"
+ },
+ {
+  "label": "a scored feature is multiplied by its scale rather than divided",
+  "old": "                z[j] = (finite(\"feature\", x[j])? - self.mean[j]) / self.scale[j];",
+  "new": "                z[j] = (finite(\"feature\", x[j])? - self.mean[j]) * self.scale[j];"
+ },
+ {
+  "label": "a scored feature is not centred on the training mean",
+  "old": "                z[j] = (finite(\"feature\", x[j])? - self.mean[j]) / self.scale[j];",
+  "new": "                z[j] = finite(\"feature\", x[j])? / self.scale[j];"
+ },
+ {
+  "label": "the score is the squared distance rather than its negative, so the farthest class wins",
+  "old": "                -(0..d)\n                    .filter(|&j| mask[j])",
+  "new": "                (0..d)\n                    .filter(|&j| mask[j])"
+ },
+ {
+  "label": "masked-out features still contribute their centroid to the distance",
+  "old": "                -(0..d)\n                    .filter(|&j| mask[j])",
+  "new": "                -(0..d)\n                    .filter(|&j| mask[j] || true)"
+ },
+ {
+  "label": "the distance is the sum of deviations rather than of their squares",
+  "old": "                    .map(|j| (z[j] - c[j]) * (z[j] - c[j]))",
+  "new": "                    .map(|j| z[j] - c[j])"
+ },
+ {
+  "label": "a mask that leaves nothing is scored rather than refused",
+  "old": "        if !mask.iter().any(|&b| b) {\n            return Err(FusionError::AllFeaturesDropped);\n        }",
+  "new": "        if false {\n            return Err(FusionError::AllFeaturesDropped);\n        }"
+ },
+ {
+  "label": "a row of the wrong width is scored rather than refused",
+  "old": "        if x.len() != d {\n            return Err(FusionError::LengthMismatch { a: x.len(), b: d });\n        }",
+  "new": "        if false {\n            return Err(FusionError::LengthMismatch { a: x.len(), b: d });\n        }"
+ },
+ {
+  "label": "a mask of the wrong width is scored rather than refused",
+  "old": "        if mask.len() != d {\n            return Err(FusionError::LengthMismatch { a: mask.len(), b: d });\n        }",
+  "new": "        if false {\n            return Err(FusionError::LengthMismatch { a: mask.len(), b: d });\n        }"
+ },
+ {
+  "label": "a tied prediction resolves to the highest label rather than the lowest",
+  "old": "        let s = self.score(x, mask)?;\n        let mut best = 0usize;\n        for i in 1..s.len() {\n            if s[i] > s[best] {",
+  "new": "        let s = self.score(x, mask)?;\n        let mut best = 0usize;\n        for i in 1..s.len() {\n            if s[i] >= s[best] {"
+ },
+ {
+  "label": "the branch scores are not centred before they are scaled",
+  "old": "    s.iter().map(|v| v - mean).collect()",
+  "new": "    s.iter().copied().collect()"
+ },
+ {
+  "label": "centring adds the mean rather than removing it",
+  "old": "    s.iter().map(|v| v - mean).collect()",
+  "new": "    s.iter().map(|v| v + mean).collect()"
+ },
+ {
+  "label": "the centring mean is a total rather than a mean",
+  "old": "    let mean = s.iter().sum::<f64>() / s.len() as f64;",
+  "new": "    let mean = s.iter().sum::<f64>();"
+ },
+ {
+  "label": "every per-modality feature is recorded as a joint one",
+  "old": "            x.push(v);\n            group.push(Some(m));",
+  "new": "            x.push(v);\n            group.push(None);"
+ },
+ {
+  "label": "every cross-modal feature is recorded as belonging to modality zero",
+  "old": "    for &v in &t.cross_modal {\n        x.push(v);\n        group.push(None);\n    }",
+  "new": "    for &v in &t.cross_modal {\n        x.push(v);\n        group.push(Some(0));\n    }"
+ },
+ {
+  "label": "the early-fusion vector lists its cross-modal block before the per-modality ones",
+  "old": "    let mut x = Vec::new();\n    let mut group = Vec::new();\n    for (m, block) in t.per_modality.iter().enumerate() {\n        for &v in block {\n            x.push(v);\n            group.push(Some(m));\n        }\n    }\n    for &v in &t.cross_modal {\n        x.push(v);\n        group.push(None);\n    }\n    (x, group)",
+  "new": "    let mut x = Vec::new();\n    let mut group = Vec::new();\n    for &v in &t.cross_modal {\n        x.push(v);\n        group.push(None);\n    }\n    for (m, block) in t.per_modality.iter().enumerate() {\n        for &v in block {\n            x.push(v);\n            group.push(Some(m));\n        }\n    }\n    (x, group)"
+ },
+ {
+  "label": "an empty trial list is laid out rather than refused",
+  "old": "    if trials.is_empty() {\n        return Err(FusionError::Empty { what: \"trials\" });\n    }",
+  "new": "    if false {\n        return Err(FusionError::Empty { what: \"trials\" });\n    }"
+ },
+ {
+  "label": "the early-fusion mask keeps exactly the modalities that were dropped",
+  "old": "                Some(m) => !dropped.contains(m),",
+  "new": "                Some(m) => dropped.contains(m),"
+ },
+ {
+  "label": "a dropped stream leaves the joint features standing",
+  "old": "                None => dropped.is_empty(),",
+  "new": "                None => true,"
+ },
+ {
+  "label": "the joint features are never used, dropout or not",
+  "old": "                None => dropped.is_empty(),",
+  "new": "                None => false,"
+ },
+ {
+  "label": "late fusion has no branches when the trials carry no per-modality blocks",
+  "old": "        if m == 0 {\n            return Err(FusionError::NoModalities);\n        }",
+  "new": "        if false {\n            return Err(FusionError::NoModalities);\n        }"
+ },
+ {
+  "label": "a branch's reliability is one minus the accuracy it measured",
+  "old": "            let acc = metrics::accuracy(&pred, &truth)?;\n            reliability.push(acc);",
+  "new": "            let acc = metrics::accuracy(&pred, &truth)?;\n            reliability.push(1.0 - acc);"
+ },
+ {
+  "label": "the vote weight is the branch's accuracy rather than its log-odds",
+  "old": "            weight.push((p / (1.0 - p)).ln());",
+  "new": "            weight.push(p);"
+ },
+ {
+  "label": "the vote weight's odds ratio is inverted",
+  "old": "            weight.push((p / (1.0 - p)).ln());",
+  "new": "            weight.push(((1.0 - p) / p).ln());"
+ },
+ {
+  "label": "the vote weight drops its logarithm",
+  "old": "            weight.push((p / (1.0 - p)).ln());",
+  "new": "            weight.push(p / (1.0 - p));"
+ },
+ {
+  "label": "a perfect in-sample branch is not clamped away from an infinite weight",
+  "old": "            let p = acc.clamp(guard, 1.0 - guard);",
+  "new": "            let p = acc;"
+ },
+ {
+  "label": "the branch scale is measured on the last training trial rather than over all of them",
+  "old": "                energy += s.iter().map(|v| v * v).sum::<f64>();",
+  "new": "                energy = s.iter().map(|v| v * v).sum::<f64>();"
+ },
+ {
+  "label": "the branch scale is the mean square rather than its root",
+  "old": "            let rms = (energy / x.len() as f64).sqrt();",
+  "new": "            let rms = energy / x.len() as f64;"
+ },
+ {
+  "label": "the branch scale is the total energy rather than the mean",
+  "old": "            let rms = (energy / x.len() as f64).sqrt();",
+  "new": "            let rms = energy.sqrt();",
+  "equivalent": "Every branch is fitted on the same trials, so `x.len()` is the same number n for every b. The edit\ntherefore multiplies EVERY scale[b] by the same sqrt(n) — it is one common factor, not a per-branch\none. The vote is `total[k] += weight[b] * v / scale[b]`, so each class total is divided by that\nsame sqrt(n), and the arg-max over k is unchanged for every trial. `LateFusion::predict` returns\nthe identical class on every input, so `accuracy`, `reliability` and every downstream bound are\nbit-identical. `scale` is not public and `vote_weights` reports `weight`, not `scale`, so no test\ncould read the factor directly either. The mutation that is NOT equivalent, because the square is\na per-branch nonlinearity, is the mean-square entry above it."
+ },
+ {
+  "label": "the per-branch scale is dropped, so a branch with more features shouts louder",
+  "old": "            scale.push(if rms > 0.0 { rms } else { 1.0 });",
+  "new": "            scale.push(1.0);"
+ },
+ {
+  "label": "the vote is the last branch's rather than the sum over branches",
+  "old": "                total[k] += self.weight[b] * v / self.scale[b];",
+  "new": "                total[k] = self.weight[b] * v / self.scale[b];"
+ },
+ {
+  "label": "the branch scale multiplies the vote rather than dividing it",
+  "old": "                total[k] += self.weight[b] * v / self.scale[b];",
+  "new": "                total[k] += self.weight[b] * v * self.scale[b];"
+ },
+ {
+  "label": "the vote ignores the branch's weight",
+  "old": "                total[k] += self.weight[b] * v / self.scale[b];",
+  "new": "                total[k] += v / self.scale[b];"
+ },
+ {
+  "label": "the branches that vote are exactly the ones that were dropped",
+  "old": "            if dropped.contains(&b) {\n                continue;\n            }",
+  "new": "            if !dropped.contains(&b) {\n                continue;\n            }"
+ },
+ {
+  "label": "a vote with no branch left is a class rather than a refusal",
+  "old": "        if !voted {\n            return Err(FusionError::AllFeaturesDropped);\n        }",
+  "new": "        if false {\n            return Err(FusionError::AllFeaturesDropped);\n        }"
+ },
+ {
+  "label": "a dropped index past the end of the branch list is ignored",
+  "old": "            if d >= self.branches.len() {",
+  "new": "            if d >= self.branches.len() + 100 {"
+ },
+ {
+  "label": "a sensor's jitter is not counted against its own clock zero",
+  "old": "            if shift - m.jitter_s < 0.0 {",
+  "new": "            if false {"
+ },
+ {
+  "label": "an event's reported time does not scale with the sensor's drift",
+  "old": "                let t_rep = t * (1.0 + m.drift) + m.lag_s + m.clock_offset_s + j;",
+  "new": "                let t_rep = t + m.lag_s + m.clock_offset_s + j;"
+ },
+ {
+  "label": "the transport lag never reaches the reported time",
+  "old": "                let t_rep = t * (1.0 + m.drift) + m.lag_s + m.clock_offset_s + j;",
+  "new": "                let t_rep = t * (1.0 + m.drift) + m.clock_offset_s + j;"
+ },
+ {
+  "label": "the clock epoch offset never reaches the reported time",
+  "old": "                let t_rep = t * (1.0 + m.drift) + m.lag_s + m.clock_offset_s + j;",
+  "new": "                let t_rep = t * (1.0 + m.drift) + m.lag_s + j;"
+ },
+ {
+  "label": "the sensor adds no detection jitter at all",
+  "old": "                let t_rep = t * (1.0 + m.drift) + m.lag_s + m.clock_offset_s + j;",
+  "new": "                let t_rep = t * (1.0 + m.drift) + m.lag_s + m.clock_offset_s;"
+ },
+ {
+  "label": "the jitter is drawn one-sided rather than symmetric about the true time",
+  "old": "                let j = (2.0 * rng.next_f64() - 1.0) * m.jitter_s;",
+  "new": "                let j = rng.next_f64() * m.jitter_s;"
+ },
+ {
+  "label": "dropout keeps exactly the events it should discard",
+  "old": "                let keep = rng.next_f64() >= m.dropout;",
+  "new": "                let keep = rng.next_f64() < m.dropout;"
+ },
+ {
+  "label": "dropout is ignored and every source event is emitted",
+  "old": "                let keep = rng.next_f64() >= m.dropout;",
+  "new": "                let keep = rng.next_f64() >= 0.0;"
+ },
+ {
+  "label": "the emitted count is set rather than accumulated",
+  "old": "                n += 1;",
+  "new": "                n = 1;"
+ },
+ {
+  "label": "the emitted count is the source count, dropout or no dropout",
+  "old": "            emitted.push(n);",
+  "new": "            emitted.push(source_times_s.len());"
+ },
+ {
+  "label": "every source event fires on address zero",
+  "old": "            source_times_s.iter().map(|_| rng.below(self.addresses)).collect();",
+  "new": "            source_times_s.iter().map(|_| rng.below(1)).collect();"
+ },
+ {
+  "label": "a modality's events are handed to the stream unsorted",
+  "old": "            events.sort_unstable();",
+  "new": "            events.reverse();"
+ },
+ {
+  "label": "an event time is truncated onto a tick rather than rounded",
+  "old": "    let ticks = (t_s / dt_s).round();",
+  "new": "    let ticks = (t_s / dt_s).floor();"
+ },
+ {
+  "label": "a tick index multiplies by the tick length instead of dividing",
+  "old": "    let ticks = (t_s / dt_s).round();",
+  "new": "    let ticks = (t_s * dt_s).round();"
+ },
+ {
+  "label": "a NaN reported time slips past the tick-overflow guard",
+  "old": "    if !(ticks >= 0.0) || ticks > 9.0e18 {",
+  "new": "    if ticks < 0.0 || ticks > 9.0e18 {"
+ },
+ {
+  "label": "the asynchrony of the default task is a tenth of what it says",
+  "old": "            async_s: 40e-3,\n            jitter_s: 1.5e-3,",
+  "new": "            async_s: 4e-3,\n            jitter_s: 1.5e-3,"
+ },
+ {
+  "label": "the default jitter is wide enough to swallow the asynchrony",
+  "old": "            jitter_s: 1.5e-3,\n            onset_span_s: 0.2,",
+  "new": "            jitter_s: 19e-3,\n            onset_span_s: 0.2,"
+ },
+ {
+  "label": "the default task has no nuisance onset spread to hide the label behind",
+  "old": "            onset_span_s: 0.2,\n            background_hz: 1.0,",
+  "new": "            onset_span_s: 0.0,\n            background_hz: 1.0,"
+ },
+ {
+  "label": "the default task has no clutter, so early fusion saturates at one",
+  "old": "            background_hz: 1.0,\n            match_half_window_s: 55e-3,",
+  "new": "            background_hz: 0.0,\n            match_half_window_s: 55e-3,"
+ },
+ {
+  "label": "the default match window is narrower than the asynchrony it has to find",
+  "old": "            background_hz: 1.0,\n            match_half_window_s: 55e-3,",
+  "new": "            background_hz: 1.0,\n            match_half_window_s: 35e-3,"
+ },
+ {
+  "label": "the default trial is too short to contain its own onset spread",
+  "old": "            trials: 400,\n            trial_s: 0.4,",
+  "new": "            trials: 400,\n            trial_s: 0.04,"
+ },
+ {
+  "label": "the default trial count is a tenth of what it says",
+  "old": "            trials: 400,\n            trial_s: 0.4,",
+  "new": "            trials: 40,\n            trial_s: 0.4,"
+ },
+ {
+  "label": "the jitter is checked against twice the asynchrony rather than half of it",
+  "old": "        positive(\"async_s / 2 - jitter_s\", 0.5 * self.async_s - self.jitter_s)?;",
+  "new": "        positive(\"async_s / 2 - jitter_s\", 2.0 * self.async_s - self.jitter_s)?;"
+ },
+ {
+  "label": "a match window narrower than the asynchrony is accepted",
+  "old": "        positive(\"match_half_window_s - async_s\", self.match_half_window_s - self.async_s)?;",
+  "new": "        non_negative(\"match_half_window_s - async_s\", self.match_half_window_s - self.async_s)?;"
+ },
+ {
+  "label": "a task of zero trials is generated rather than refused",
+  "old": "        if self.trials == 0 {\n            return Err(FusionError::Empty { what: \"trials\" });\n        }\n        positive(\"trial_s\", self.trial_s)?;\n        positive(\"async_s\", self.async_s)?;",
+  "new": "        if false {\n            return Err(FusionError::Empty { what: \"trials\" });\n        }\n        positive(\"trial_s\", self.trial_s)?;\n        positive(\"async_s\", self.async_s)?;"
+ },
+ {
+  "label": "the asynchrony's sign is not randomised, so the signed interval carries the label",
+  "old": "            let sign = if rng.next_u32() & 1 == 1 { 1.0 } else { -1.0 };",
+  "new": "            let sign = 1.0;"
+ },
+ {
+  "label": "bound and unbound trials are separated the same way",
+  "old": "            let gap = if label == 1 { 0.0 } else { self.async_s };",
+  "new": "            let gap = self.async_s;"
+ },
+ {
+  "label": "the label and the asynchrony are the other way round",
+  "old": "            let gap = if label == 1 { 0.0 } else { self.async_s };",
+  "new": "            let gap = if label == 1 { self.async_s } else { 0.0 };",
+  "equivalent": "Both the training set and the test set come from this same generator, so this edit relabels the\ntwo classes consistently on every trial it produces: the trial that used to be drawn with gap 0\nand label 1 is now drawn with gap 0 and label 0, and vice versa. Neither the feature vector for a\ngiven draw of the random stream nor the partition of trials into two groups changes; only the u32\nattached to each group does. `NearestCentroid` accumulates a centroid per label and predicts the\nnearest, so swapping the two labels swaps the two centroids and swaps every prediction with it,\nand `metrics::accuracy` compares prediction against truth — both swapped — giving the identical\nnumber. The bounds on `ea`, `la`, `blind`, `reliability()` and the early/late gap are therefore\nbit-for-bit unchanged, and the one assertion that is not a pure accuracy, the count of trials\npredicted class 1, is bounded symmetrically at one fifth and four fifths of the test set."
+ },
+ {
+  "label": "the pair's centre is fixed rather than spread through the trial",
+  "old": "            let centre =\n                0.5 * (self.trial_s - self.onset_span_s) + rng.next_f64() * self.onset_span_s;",
+  "new": "            let centre = 0.5 * (self.trial_s - self.onset_span_s);"
+ },
+ {
+  "label": "both modalities are displaced the same way, so they never separate",
+  "old": "            let ta = centre - 0.5 * sign * gap + ja;\n            let tb = centre + 0.5 * sign * gap + jb;",
+  "new": "            let ta = centre - 0.5 * sign * gap + ja;\n            let tb = centre - 0.5 * sign * gap + jb;"
+ },
+ {
+  "label": "the asynchrony is applied whole to each side rather than split between them",
+  "old": "            let ta = centre - 0.5 * sign * gap + ja;\n            let tb = centre + 0.5 * sign * gap + jb;",
+  "new": "            let ta = centre - sign * gap + ja;\n            let tb = centre + sign * gap + jb;"
+ },
+ {
+  "label": "the two modalities receive the same event",
+  "old": "            a.push(ta);\n            b.push(tb);",
+  "new": "            a.push(ta);\n            b.push(ta);"
+ },
+ {
+  "label": "the two streams are sorted latest-first before the binary search reads them",
+  "old": "            a.sort_by(f64::total_cmp);\n            b.sort_by(f64::total_cmp);",
+  "new": "            a.sort_by(|p, q| q.total_cmp(p));\n            b.sort_by(|p, q| q.total_cmp(p));"
+ },
+ {
+  "label": "the cross-modal block carries the signed interval twice and never its magnitude",
+  "old": "                // The signed interval is kept alongside the absolute one precisely because it is\n                // uninformative here: a feature block hand-picked for the task would make the\n                // early/late comparison a comparison of feature engineering.\n                cross_modal: vec![\n                    d.unwrap_or(0.0),\n                    d.map_or(self.match_half_window_s, f64::abs),\n                ],",
+  "new": "                // The signed interval is kept alongside the absolute one precisely because it is\n                // uninformative here: a feature block hand-picked for the task would make the\n                // early/late comparison a comparison of feature engineering.\n                cross_modal: vec![\n                    d.unwrap_or(0.0),\n                    d.unwrap_or(self.match_half_window_s),\n                ],"
+ },
+ {
+  "label": "the background draw is capped at a single event",
+  "old": "        let cap = ((10.0 * self.background_hz * self.trial_s) as usize).max(1024);",
+  "new": "        let cap = 1;"
+ },
+ {
+  "label": "the first modality's background is drawn at ten times the rate it declares",
+  "old": "            let mut a = poisson_times(rng, self.background_hz, 0.0, self.trial_s, cap)?;",
+  "new": "            let mut a = poisson_times(rng, 10.0 * self.background_hz, 0.0, self.trial_s, cap)?;"
+ },
+ {
+  "label": "the per-modality block carries no event count",
+  "old": "    vec![n, mean, first]",
+  "new": "    vec![0.0, mean, first]"
+ },
+ {
+  "label": "the per-modality block's mean event time is a total",
+  "old": "    let mean = if times.is_empty() { trial_s * 0.5 } else { times.iter().sum::<f64>() / n };",
+  "new": "    let mean = if times.is_empty() { trial_s * 0.5 } else { times.iter().sum::<f64>() };"
+ },
+ {
+  "label": "the per-modality block reports the last event time as the first",
+  "old": "    let first = times.first().copied().unwrap_or(trial_s);",
+  "new": "    let first = times.last().copied().unwrap_or(trial_s);"
+ },
+ {
+  "label": "the two classes of the redundant task are separated by one hertz",
+  "old": "            rate_lo_hz: 20.0,\n            rate_hi_hz: 40.0,",
+  "new": "            rate_lo_hz: 20.0,\n            rate_hi_hz: 21.0,"
+ },
+ {
+  "label": "the redundant task's trial is a tenth of the length it says",
+  "old": "            trials: 1200,\n            trial_s: 0.4,",
+  "new": "            trials: 1200,\n            trial_s: 0.04,"
+ },
+ {
+  "label": "the redundant task's match window is zero",
+  "old": "            rate_hi_hz: 40.0,\n            match_half_window_s: 25e-3,",
+  "new": "            rate_hi_hz: 40.0,\n            match_half_window_s: 0.0,"
+ },
+ {
+  "label": "two classes that are not separated at all are accepted",
+  "old": "        positive(\"rate_hi_hz - rate_lo_hz\", self.rate_hi_hz - self.rate_lo_hz)?;",
+  "new": "        non_negative(\"rate_hi_hz - rate_lo_hz\", self.rate_hi_hz - self.rate_lo_hz)?;"
+ },
+ {
+  "label": "the second modality of the redundant task carries no label",
+  "old": "            let b = poisson_times(rng, rate, 0.0, self.trial_s, cap)?;",
+  "new": "            let b = poisson_times(rng, self.rate_lo_hz, 0.0, self.trial_s, cap)?;"
+ },
+ {
+  "label": "the redundant task's rate is the low one whatever the label",
+  "old": "            let rate = if label == 1 { self.rate_hi_hz } else { self.rate_lo_hz };",
+  "new": "            let rate = self.rate_lo_hz;"
+ }
+]

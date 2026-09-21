@@ -1,0 +1,1411 @@
+[
+ {
+  "label": "Boltzmann's constant is transcribed a decade too large",
+  "old": "pub const BOLTZMANN_J_PER_K: f64 = 1.380649e-23;",
+  "new": "pub const BOLTZMANN_J_PER_K: f64 = 1.380649e-22;"
+ },
+ {
+  "label": "the elementary charge is transcribed a decade too large",
+  "old": "pub const ELEMENTARY_CHARGE_C: f64 = 1.602176634e-19;",
+  "new": "pub const ELEMENTARY_CHARGE_C: f64 = 1.602176634e-18;"
+ },
+ {
+  "label": "the electronvolt Boltzmann constant inverts its ratio",
+  "old": "pub const BOLTZMANN_EV_PER_K: f64 = BOLTZMANN_J_PER_K / ELEMENTARY_CHARGE_C;",
+  "new": "pub const BOLTZMANN_EV_PER_K: f64 = ELEMENTARY_CHARGE_C / BOLTZMANN_J_PER_K;"
+ },
+ {
+  "label": "the fault stream and the variability stream share a salt",
+  "old": "const SALT_FAULT: u64 = 0xFA17_C0DE_51AB_0001;",
+  "new": "const SALT_FAULT: u64 = SALT_D2D;"
+ },
+ {
+  "label": "every cell draws from the same per-cell stream",
+  "old": "const PHI64: u64 = 0x9E37_79B9_7F4A_7C15;",
+  "new": "const PHI64: u64 = 0;"
+ },
+ {
+  "label": "the per-cell stream ignores the array's seed",
+  "old": "fn cell_stream(seed: u64, salt: u64, index: usize) -> Rng {\n    Rng::new(seed ^ salt.wrapping_add((index as u64).wrapping_mul(PHI64)))",
+  "new": "fn cell_stream(seed: u64, salt: u64, index: usize) -> Rng {\n    let _ = seed;\n    Rng::new(salt.wrapping_add((index as u64).wrapping_mul(PHI64)))"
+ },
+ {
+  "label": "the Box-Muller radius drops its factor of two",
+  "old": "    (-2.0 * u1.ln()).sqrt() * (core::f64::consts::TAU * u2).cos()",
+  "new": "    (-u1.ln()).sqrt() * (core::f64::consts::TAU * u2).cos()"
+ },
+ {
+  "label": "the Box-Muller transform drops its phase and returns a Rayleigh radius",
+  "old": "    (-2.0 * u1.ln()).sqrt() * (core::f64::consts::TAU * u2).cos()\n}",
+  "new": "    let _ = u2;\n    (-2.0 * u1.ln()).sqrt()\n}"
+ },
+ {
+  "label": "both Box-Muller uniforms are the same draw",
+  "old": "    let u1 = 1.0 - rng.next_f64();\n    let u2 = rng.next_f64();",
+  "new": "    let u1 = 1.0 - rng.next_f64();\n    let u2 = 1.0 - u1;"
+ },
+ {
+  "label": "the logarithm's argument can be exactly zero",
+  "old": "    let u1 = 1.0 - rng.next_f64();",
+  "new": "    let u1 = rng.next_f64();"
+ },
+ {
+  "label": "the Box-Muller transform takes the sine output instead of the cosine",
+  "old": "(core::f64::consts::TAU * u2).cos()",
+  "new": "(core::f64::consts::TAU * u2).sin()",
+  "equivalent": "the Box-Muller pair is (R cos θ, R sin θ) with θ uniform on [0, 2π) and R = sqrt(-2 ln u1); both coordinates are standard normal and this function returns one of them, so the mutant's output has exactly the distribution the doc claims. Every test that reads this generator is either statistical — the quantile test, the spread and correlation closed forms — or compares the library's own stream against `normal()` called the same number of times, which moves with the mutation. The stream consumption is unchanged at two uniforms per draw, so no generator-state assertion can see it either. The defect this line COULD carry — a cached second sample, which would make the stream position depend on how many draws came before — is the one the doc argues against, and it is not this edit."
+ },
+ {
+  "label": "the programmable span is the negative of itself",
+  "old": "    pub fn span(&self) -> f64 {\n        self.g_on - self.g_off",
+  "new": "    pub fn span(&self) -> f64 {\n        self.g_off - self.g_on"
+ },
+ {
+  "label": "the window's midpoint is half the on-state alone",
+  "old": "        0.5 * (self.g_off + self.g_on)",
+  "new": "        0.5 * self.g_on"
+ },
+ {
+  "label": "the window's midpoint is the geometric rather than the arithmetic mean",
+  "old": "    pub fn mid(&self) -> f64 {\n        0.5 * (self.g_off + self.g_on)",
+  "new": "    pub fn mid(&self) -> f64 {\n        (self.g_off * self.g_on).sqrt()"
+ },
+ {
+  "label": "a zero off-conductance reports an infinite on/off ratio",
+  "old": "        if self.g_off > 0.0 { Some(self.g_on / self.g_off) } else { None }",
+  "new": "        if self.g_off >= 0.0 { Some(self.g_on / self.g_off) } else { None }"
+ },
+ {
+  "label": "the on/off ratio is inverted",
+  "old": "        if self.g_off > 0.0 { Some(self.g_on / self.g_off) } else { None }",
+  "new": "        if self.g_off > 0.0 { Some(self.g_off / self.g_on) } else { None }"
+ },
+ {
+  "label": "the signal fraction is the dead-weight fraction",
+  "old": "        1.0 - self.g_off / self.g_on",
+  "new": "        self.g_off / self.g_on"
+ },
+ {
+  "label": "the signal fraction inverts its ratio",
+  "old": "        1.0 - self.g_off / self.g_on",
+  "new": "        1.0 - self.g_on / self.g_off"
+ },
+ {
+  "label": "a negative off-conductance is accepted as a window",
+  "old": "            || self.g_off < 0.0\n            || !(self.g_on > self.g_off)",
+  "new": "            || !(self.g_on > self.g_off)"
+ },
+ {
+  "label": "a degenerate window with g_on equal to g_off is accepted",
+  "old": "            || !(self.g_on > self.g_off)\n        {",
+  "new": "            || self.g_on < self.g_off\n        {"
+ },
+ {
+  "label": "an infinite on-conductance passes window validation",
+  "old": "        if !self.g_off.is_finite()\n            || !self.g_on.is_finite()\n            || self.g_off < 0.0",
+  "new": "        if self.g_off.is_nan()\n            || self.g_on.is_nan()\n            || self.g_off < 0.0"
+ },
+ {
+  "label": "the window clamp has no ceiling",
+  "old": "        if g < self.g_off {\n            self.g_off\n        } else if g > self.g_on {\n            self.g_on\n        } else {\n            g\n        }",
+  "new": "        if g < self.g_off {\n            self.g_off\n        } else {\n            g\n        }"
+ },
+ {
+  "label": "the window clamp has no floor",
+  "old": "        if g < self.g_off {\n            self.g_off\n        } else if g > self.g_on {\n            self.g_on\n        } else {\n            g\n        }\n    }",
+  "new": "        if g > self.g_on {\n            self.g_on\n        } else {\n            g\n        }\n    }"
+ },
+ {
+  "label": "the window clamp returns the wrong rail",
+  "old": "        if g < self.g_off {\n            self.g_off\n        } else if g > self.g_on {",
+  "new": "        if g < self.g_off {\n            self.g_on\n        } else if g > self.g_on {"
+ },
+ {
+  "label": "the window's membership test excludes its own floor",
+  "old": "        g >= self.g_off && g <= self.g_on",
+  "new": "        g > self.g_off && g <= self.g_on"
+ },
+ {
+  "label": "every conductance is reported as inside the window",
+  "old": "    pub fn contains(&self, g: f64) -> bool {\n        g >= self.g_off && g <= self.g_on",
+  "new": "    pub fn contains(&self, g: f64) -> bool {\n        let _ = g;\n        true"
+ },
+ {
+  "label": "a NaN conductance is reported as inside the window",
+  "old": "        g >= self.g_off && g <= self.g_on\n    }\n}",
+  "new": "        !(g < self.g_off) && !(g > self.g_on)\n    }\n}"
+ },
+ {
+  "label": "a single-ended cell is billed as two devices",
+  "old": "            Self::SingleEnded => 1,\n            Self::Differential | Self::BalancedDifferential => 2,",
+  "new": "            Self::SingleEnded => 2,\n            Self::Differential | Self::BalancedDifferential => 2,"
+ },
+ {
+  "label": "a differential pair is billed as one device",
+  "old": "            Self::SingleEnded => 1,\n            Self::Differential | Self::BalancedDifferential => 2,",
+  "new": "            Self::SingleEnded => 1,\n            Self::Differential | Self::BalancedDifferential => 1,"
+ },
+ {
+  "label": "a single-ended array claims it can hold negative weights",
+  "old": "            Self::SingleEnded => 0.0,\n            _ => -self.max_weight(window, beta),",
+  "new": "            _ => -self.max_weight(window, beta),\n            #[allow(unreachable_patterns)]\n            Self::SingleEnded => 0.0,"
+ },
+ {
+  "label": "a differential pair claims it cannot hold negative weights",
+  "old": "            Self::SingleEnded => 0.0,\n            _ => -self.max_weight(window, beta),",
+  "new": "            Self::SingleEnded => 0.0,\n            _ => 0.0,"
+ },
+ {
+  "label": "the weight range multiplies by beta instead of dividing",
+  "old": "    pub fn max_weight(&self, window: &Window, beta: f64) -> f64 {\n        window.span() / beta",
+  "new": "    pub fn max_weight(&self, window: &Window, beta: f64) -> f64 {\n        window.span() * beta"
+ },
+ {
+  "label": "the balanced pair goes back to claiming half the weight range",
+  "old": "    pub fn max_weight(&self, window: &Window, beta: f64) -> f64 {\n        window.span() / beta\n    }",
+  "new": "    pub fn max_weight(&self, window: &Window, beta: f64) -> f64 {\n        match self {\n            Self::BalancedDifferential => 0.5 * window.span() / beta,\n            _ => window.span() / beta,\n        }\n    }"
+ },
+ {
+  "label": "a single-ended cell's idle current is the on-state rather than the floor",
+  "old": "            Self::SingleEnded => window.g_off,\n            Self::Differential => 2.0 * window.g_off,",
+  "new": "            Self::SingleEnded => window.g_on,\n            Self::Differential => 2.0 * window.g_off,"
+ },
+ {
+  "label": "the one-at-minimum pair's common mode counts only one device",
+  "old": "            Self::Differential => 2.0 * window.g_off,",
+  "new": "            Self::Differential => window.g_off,"
+ },
+ {
+  "label": "the balanced pair's common mode is the one-at-minimum pair's",
+  "old": "            Self::BalancedDifferential => window.g_off + window.g_on,",
+  "new": "            Self::BalancedDifferential => 2.0 * window.g_off,"
+ },
+ {
+  "label": "a single-ended cell is programmed without the window's floor",
+  "old": "            Self::SingleEnded => (window.g_off + w * beta, window.g_off),",
+  "new": "            Self::SingleEnded => (w * beta, window.g_off),"
+ },
+ {
+  "label": "the one-at-minimum scheme writes the sign to the wrong device",
+  "old": "                if w >= 0.0 {\n                    (window.g_off + w * beta, window.g_off)\n                } else {\n                    (window.g_off, window.g_off - w * beta)\n                }",
+  "new": "                if w >= 0.0 {\n                    (window.g_off, window.g_off - w * beta)\n                } else {\n                    (window.g_off + w * beta, window.g_off)\n                }"
+ },
+ {
+  "label": "the one-at-minimum scheme's negative branch has the wrong sign",
+  "old": "                    (window.g_off, window.g_off - w * beta)",
+  "new": "                    (window.g_off, window.g_off + w * beta)"
+ },
+ {
+  "label": "the balanced pair splits the weight over one device instead of two",
+  "old": "                let h = 0.5 * w * beta;",
+  "new": "                let h = w * beta;"
+ },
+ {
+  "label": "the balanced pair's two devices are swapped",
+  "old": "                (mid + h, mid - h)",
+  "new": "                (mid - h, mid + h)"
+ },
+ {
+  "label": "the balanced pair parks a zero weight on the on-state rail",
+  "old": "                let mid = window.mid();\n                let h = 0.5 * w * beta;",
+  "new": "                let mid = window.g_on;\n                let h = 0.5 * w * beta;"
+ },
+ {
+  "label": "the mapping's last-place rounding is not brought back inside the window",
+  "old": "        (window.clamp(g_plus), window.clamp(g_minus))",
+  "new": "        (g_plus, g_minus)"
+ },
+ {
+  "label": "a single-ended read subtracts the stored reference instead of the nominal one",
+  "old": "            Self::SingleEnded => (g_plus - window.g_off) / beta,",
+  "new": "            Self::SingleEnded => (g_plus - g_minus) / beta,"
+ },
+ {
+  "label": "a differential read ignores its second device",
+  "old": "            Self::Differential | Self::BalancedDifferential => (g_plus - g_minus) / beta,",
+  "new": "            Self::Differential | Self::BalancedDifferential => (g_plus - window.g_off) / beta,"
+ },
+ {
+  "label": "the read multiplies by beta instead of dividing",
+  "old": "            Self::Differential | Self::BalancedDifferential => (g_plus - g_minus) / beta,",
+  "new": "            Self::Differential | Self::BalancedDifferential => (g_plus - g_minus) * beta,"
+ },
+ {
+  "label": "a negative programming sigma is accepted",
+  "old": "            if v < 0.0 {\n                return Err(DeviceError::Negative { what, value: v });\n            }\n        }\n        Ok(())\n    }\n}\n\n/// Power-law conductance drift after programming.",
+  "new": "            if v < -1.0 {\n                return Err(DeviceError::Negative { what, value: v });\n            }\n        }\n        Ok(())\n    }\n}\n\n/// Power-law conductance drift after programming."
+ },
+ {
+  "label": "a NaN programming sigma is accepted",
+  "old": "            (\"sigma_floor_s\", self.sigma_floor_s),\n        ] {\n            if !v.is_finite() {",
+  "new": "            (\"sigma_floor_s\", self.sigma_floor_s),\n        ] {\n            if false {"
+ },
+ {
+  "label": "the absolute noise floor is left out of the variability census",
+  "old": "            (\"sigma_c2c_rel\", self.sigma_c2c_rel),\n            (\"sigma_floor_s\", self.sigma_floor_s),",
+  "new": "            (\"sigma_c2c_rel\", self.sigma_c2c_rel),\n            (\"sigma_c2c_rel\", self.sigma_c2c_rel),"
+ },
+ {
+  "label": "a uniform drift model is not uniform",
+  "old": "        Self::new(nu, nu, t0_s, source, evidence)",
+  "new": "        Self::new(nu, 0.0, t0_s, source, evidence)"
+ },
+ {
+  "label": "a zero reference time is accepted",
+  "old": "        if !(self.t0_s > 0.0) {\n            return Err(DeviceError::NotPositive { what: \"t0_s\", value: self.t0_s });",
+  "new": "        if false {\n            return Err(DeviceError::NotPositive { what: \"t0_s\", value: self.t0_s });"
+ },
+ {
+  "label": "the off-rail exponent is left out of the drift census",
+  "old": "        for (what, v) in [(\"nu_at_off\", self.nu_at_off), (\"nu_at_on\", self.nu_at_on)] {",
+  "new": "        for (what, v) in [(\"nu_at_on\", self.nu_at_on), (\"nu_at_on\", self.nu_at_on)] {"
+ },
+ {
+  "label": "the on-rail exponent is left out of the drift census",
+  "old": "        for (what, v) in [(\"nu_at_off\", self.nu_at_off), (\"nu_at_on\", self.nu_at_on)] {\n            if !v.is_finite() {",
+  "new": "        for (what, v) in [(\"nu_at_off\", self.nu_at_off), (\"nu_at_off\", self.nu_at_off)] {\n            if !v.is_finite() {"
+ },
+ {
+  "label": "a degenerate window falls back to the on-rail exponent",
+  "old": "        if !(span > 0.0) {\n            return self.nu_at_off;\n        }",
+  "new": "        if !(span > 0.0) {\n            return self.nu_at_on;\n        }"
+ },
+ {
+  "label": "the drift exponent is not held flat outside the window",
+  "old": "        let f = ((g - window.g_off) / span).clamp(0.0, 1.0);",
+  "new": "        let f = (g - window.g_off) / span;"
+ },
+ {
+  "label": "the drift exponent's clamp has no ceiling, so a cell above the window grows with time",
+  "old": "        let f = ((g - window.g_off) / span).clamp(0.0, 1.0);",
+  "new": "        let f = ((g - window.g_off) / span).max(0.0);"
+ },
+ {
+  "label": "the drift exponent's clamp has no floor",
+  "old": "        let f = ((g - window.g_off) / span).clamp(0.0, 1.0);",
+  "new": "        let f = ((g - window.g_off) / span).min(1.0);"
+ },
+ {
+  "label": "the drift exponent's two rails are swapped",
+  "old": "        self.nu_at_off + f * (self.nu_at_on - self.nu_at_off)",
+  "new": "        self.nu_at_on + f * (self.nu_at_off - self.nu_at_on)"
+ },
+ {
+  "label": "the drift exponent's interpolation drops its baseline",
+  "old": "        self.nu_at_off + f * (self.nu_at_on - self.nu_at_off)",
+  "new": "        self.nu_at_off + f * self.nu_at_on"
+ },
+ {
+  "label": "the drift law is extrapolated below its reference time",
+  "old": "        if !(t_s > self.t0_s) {\n            return 1.0;\n        }",
+  "new": "        if false {\n            return 1.0;\n        }"
+ },
+ {
+  "label": "the drift exponent's sign is flipped, so conductance grows with time",
+  "old": "        (t_s / self.t0_s).powf(-self.exponent_at(g, window))",
+  "new": "        (t_s / self.t0_s).powf(self.exponent_at(g, window))"
+ },
+ {
+  "label": "the drift law's time ratio is inverted",
+  "old": "        (t_s / self.t0_s).powf(-self.exponent_at(g, window))",
+  "new": "        (self.t0_s / t_s).powf(-self.exponent_at(g, window))"
+ },
+ {
+  "label": "every cell drifts with the off-rail exponent rather than its own",
+  "old": "    pub fn apply(&self, g: f64, window: &Window, t_s: f64) -> f64 {\n        g * self.factor(g, window, t_s)",
+  "new": "    pub fn apply(&self, g: f64, window: &Window, t_s: f64) -> f64 {\n        g * self.factor(window.g_off, window, t_s)"
+ },
+ {
+  "label": "drift is additive rather than multiplicative",
+  "old": "    pub fn apply(&self, g: f64, window: &Window, t_s: f64) -> f64 {\n        g * self.factor(g, window, t_s)",
+  "new": "    pub fn apply(&self, g: f64, window: &Window, t_s: f64) -> f64 {\n        g + self.factor(g, window, t_s)"
+ },
+ {
+  "label": "drift is clamped into the window, hiding the retention failure it exists to show",
+  "old": "        g * self.factor(g, window, t_s)\n    }\n}",
+  "new": "        window.clamp(g * self.factor(g, window, t_s))\n    }\n}"
+ },
+ {
+  "label": "a negative activation energy is accepted",
+  "old": "        if self.ea_ev < 0.0 {\n            return Err(DeviceError::Negative { what: \"ea_ev\", value: self.ea_ev });",
+  "new": "        if self.ea_ev < -1.0 {\n            return Err(DeviceError::Negative { what: \"ea_ev\", value: self.ea_ev });"
+ },
+ {
+  "label": "a non-positive pre-exponential time constant is accepted",
+  "old": "        if !(self.tau0_s > 0.0) {\n            return Err(DeviceError::NotPositive { what: \"tau0_s\", value: self.tau0_s });",
+  "new": "        if false {\n            return Err(DeviceError::NotPositive { what: \"tau0_s\", value: self.tau0_s });"
+ },
+ {
+  "label": "the Arrhenius exponent has the wrong sign, so heat lengthens the lifetime",
+  "old": "        let tau = self.tau0_s * (self.ea_ev / (BOLTZMANN_EV_PER_K * temp_k)).exp();",
+  "new": "        let tau = self.tau0_s * (-self.ea_ev / (BOLTZMANN_EV_PER_K * temp_k)).exp();"
+ },
+ {
+  "label": "the pre-exponential time constant is added rather than multiplied",
+  "old": "        let tau = self.tau0_s * (self.ea_ev / (BOLTZMANN_EV_PER_K * temp_k)).exp();",
+  "new": "        let tau = self.tau0_s + (self.ea_ev / (BOLTZMANN_EV_PER_K * temp_k)).exp();"
+ },
+ {
+  "label": "the Arrhenius exponent uses joules per kelvin against an energy in electronvolts",
+  "old": "        let tau = self.tau0_s * (self.ea_ev / (BOLTZMANN_EV_PER_K * temp_k)).exp();",
+  "new": "        let tau = self.tau0_s * (self.ea_ev / (BOLTZMANN_J_PER_K * temp_k)).exp();"
+ },
+ {
+  "label": "an overflowed lifetime is handed back as a very long one",
+  "old": "        if !tau.is_finite() {\n            return Err(DeviceError::NonFinite { what: \"tau_s\", value: tau });",
+  "new": "        if tau.is_nan() {\n            return Err(DeviceError::NonFinite { what: \"tau_s\", value: tau });"
+ },
+ {
+  "label": "the acceleration factor divides by Boltzmann's constant the wrong way round",
+  "old": "        let k = self.ea_ev / BOLTZMANN_EV_PER_K;",
+  "new": "        let k = self.ea_ev * BOLTZMANN_EV_PER_K;"
+ },
+ {
+  "label": "the acceleration factor uses temperatures rather than their reciprocals",
+  "old": "        let af = (k * (1.0 / t_use_k - 1.0 / t_stress_k)).exp();",
+  "new": "        let af = (k * (t_use_k - t_stress_k)).exp();"
+ },
+ {
+  "label": "the acceleration factor's two temperatures are swapped",
+  "old": "        let af = (k * (1.0 / t_use_k - 1.0 / t_stress_k)).exp();",
+  "new": "        let af = (k * (1.0 / t_stress_k - 1.0 / t_use_k)).exp();"
+ },
+ {
+  "label": "an overflowed acceleration factor is handed back as a large one",
+  "old": "        if !af.is_finite() {\n            return Err(DeviceError::NonFinite { what: \"acceleration\", value: af });\n        }",
+  "new": "        if af.is_nan() {\n            return Err(DeviceError::NonFinite { what: \"acceleration\", value: af });\n        }"
+ },
+ {
+  "label": "the stress temperature is not checked",
+  "old": "        check_temperature(t_use_k)?;\n        check_temperature(t_stress_k)?;",
+  "new": "        check_temperature(t_use_k)?;"
+ },
+ {
+  "label": "the remaining fraction grows with time instead of decaying",
+  "old": "        Ok((-t_s / self.tau_s(temp_k)?).exp())",
+  "new": "        Ok((t_s / self.tau_s(temp_k)?).exp())"
+ },
+ {
+  "label": "the remaining fraction divides time by the activation energy rather than the lifetime",
+  "old": "        Ok((-t_s / self.tau_s(temp_k)?).exp())",
+  "new": "        Ok((-t_s * self.tau_s(temp_k)?).exp())"
+ },
+ {
+  "label": "a negative ageing time is accepted by the retention model",
+  "old": "        if t_s < 0.0 {\n            return Err(DeviceError::Negative { what: \"t_s\", value: t_s });\n        }\n        Ok((-t_s",
+  "new": "        if t_s < -1.0 {\n            return Err(DeviceError::Negative { what: \"t_s\", value: t_s });\n        }\n        Ok((-t_s"
+ },
+ {
+  "label": "absolute zero is accepted as a temperature",
+  "old": "    if !(temp_k > 0.0) {\n        return Err(DeviceError::NotPositive { what: \"temp_k\", value: temp_k });",
+  "new": "    if !(temp_k >= 0.0) {\n        return Err(DeviceError::NotPositive { what: \"temp_k\", value: temp_k });"
+ },
+ {
+  "label": "a non-finite temperature is reported as non-positive rather than as non-finite",
+  "old": "    if !temp_k.is_finite() {\n        return Err(DeviceError::NonFinite { what: \"temp_k\", value: temp_k });\n    }",
+  "new": "    if false {\n        return Err(DeviceError::NonFinite { what: \"temp_k\", value: temp_k });\n    }"
+ },
+ {
+  "label": "a healthy cell is reported as stuck",
+  "old": "        !matches!(self, Self::Healthy)",
+  "new": "        matches!(self, Self::Healthy)"
+ },
+ {
+  "label": "a fault rate above one is accepted",
+  "old": "            if !v.is_finite() || !(0.0..=1.0).contains(&v) {",
+  "new": "            if !v.is_finite() || !(0.0..=2.0).contains(&v) {"
+ },
+ {
+  "label": "the stuck-on split is left out of the fault census",
+  "old": "        for (what, v) in [(\"rate\", self.rate), (\"p_at_on\", self.p_at_on)] {",
+  "new": "        for (what, v) in [(\"rate\", self.rate), (\"rate\", self.rate)] {"
+ },
+ {
+  "label": "the fault draw consumes a second uniform only when it fires",
+  "old": "        let u = rng.next_f64();\n        let v = rng.next_f64();\n        if u < self.rate {\n            if v < self.p_at_on { Fault::StuckOn } else { Fault::StuckOff }",
+  "new": "        let u = rng.next_f64();\n        if u < self.rate {\n            let v = rng.next_f64();\n            if v < self.p_at_on { Fault::StuckOn } else { Fault::StuckOff }"
+ },
+ {
+  "label": "the fault rate is inverted, so a zero rate breaks every cell",
+  "old": "        if u < self.rate {\n            if v < self.p_at_on { Fault::StuckOn } else { Fault::StuckOff }",
+  "new": "        if u > self.rate {\n            if v < self.p_at_on { Fault::StuckOn } else { Fault::StuckOff }"
+ },
+ {
+  "label": "the stuck-on and stuck-off rails are swapped",
+  "old": "            if v < self.p_at_on { Fault::StuckOn } else { Fault::StuckOff }",
+  "new": "            if v < self.p_at_on { Fault::StuckOff } else { Fault::StuckOn }"
+ },
+ {
+  "label": "a negative read temperature is accepted by the noise model",
+  "old": "    pub fn validate(&self) -> Result<(), DeviceError> {\n        check_temperature(self.temp_k)?;",
+  "new": "    pub fn validate(&self) -> Result<(), DeviceError> {"
+ },
+ {
+  "label": "a zero read bandwidth is accepted",
+  "old": "        if !(self.bandwidth_hz > 0.0) {\n            return Err(DeviceError::NotPositive { what: \"bandwidth_hz\", value: self.bandwidth_hz });\n        }",
+  "new": "        if false {\n            return Err(DeviceError::NotPositive { what: \"bandwidth_hz\", value: self.bandwidth_hz });\n        }"
+ },
+ {
+  "label": "a negative relative read noise is accepted",
+  "old": "        if self.sigma_rel < 0.0 {\n            return Err(DeviceError::Negative { what: \"sigma_rel\", value: self.sigma_rel });",
+  "new": "        if self.sigma_rel < -1.0 {\n            return Err(DeviceError::Negative { what: \"sigma_rel\", value: self.sigma_rel });"
+ },
+ {
+  "label": "an unsound noise model hands back a NaN sigma instead of refusing",
+  "old": "    pub fn sigma_current(&self, g: f64, v_read: f64) -> Option<f64> {\n        self.validate().ok()?;",
+  "new": "    pub fn sigma_current(&self, g: f64, v_read: f64) -> Option<f64> {"
+ },
+ {
+  "label": "the Johnson-Nyquist term loses half its factor of four",
+  "old": "        let thermal = 4.0 * BOLTZMANN_J_PER_K * self.temp_k * g * self.bandwidth_hz;",
+  "new": "        let thermal = 2.0 * BOLTZMANN_J_PER_K * self.temp_k * g * self.bandwidth_hz;"
+ },
+ {
+  "label": "the thermal noise ignores the read bandwidth",
+  "old": "        let thermal = 4.0 * BOLTZMANN_J_PER_K * self.temp_k * g * self.bandwidth_hz;",
+  "new": "        let thermal = 4.0 * BOLTZMANN_J_PER_K * self.temp_k * g;"
+ },
+ {
+  "label": "the thermal noise ignores the cell's conductance",
+  "old": "        let thermal = 4.0 * BOLTZMANN_J_PER_K * self.temp_k * g * self.bandwidth_hz;",
+  "new": "        let thermal = 4.0 * BOLTZMANN_J_PER_K * self.temp_k * self.bandwidth_hz;"
+ },
+ {
+  "label": "the relative read noise is a fraction of the conductance rather than of the current",
+  "old": "        let relative = self.sigma_rel * g * v_read;",
+  "new": "        let relative = self.sigma_rel * g;"
+ },
+ {
+  "label": "the two noise terms add in amplitude rather than in power",
+  "old": "        Some((thermal + relative * relative).sqrt())",
+  "new": "        Some((thermal + relative).sqrt())"
+ },
+ {
+  "label": "the noise is reported as a power rather than as a one-sigma current",
+  "old": "        Some((thermal + relative * relative).sqrt())",
+  "new": "        Some(thermal + relative * relative)"
+ },
+ {
+  "label": "a negative conductance is given a noise power",
+  "old": "        if !g.is_finite() || !v_read.is_finite() || g < 0.0 {",
+  "new": "        if !g.is_finite() || !v_read.is_finite() {"
+ },
+ {
+  "label": "a read at zero volts is given a conductance uncertainty",
+  "old": "    pub fn sigma_conductance(&self, g: f64, v_read: f64) -> Option<f64> {\n        if !(v_read > 0.0) {",
+  "new": "    pub fn sigma_conductance(&self, g: f64, v_read: f64) -> Option<f64> {\n        if !(v_read >= 0.0) {"
+ },
+ {
+  "label": "the current noise is multiplied by the read voltage rather than divided",
+  "old": "        self.sigma_current(g, v_read).map(|s| s / v_read)",
+  "new": "        self.sigma_current(g, v_read).map(|s| s * v_read)"
+ },
+ {
+  "label": "a read is offset by one sigma rather than drawn",
+  "old": "        let sigma = self.sigma_conductance(g, v_read)?;\n        Some(g + sigma * normal(rng))",
+  "new": "        let sigma = self.sigma_conductance(g, v_read)?;\n        let _ = rng;\n        Some(g + sigma)"
+ },
+ {
+  "label": "a refused read still consumes a draw",
+  "old": "        let sigma = self.sigma_conductance(g, v_read)?;\n        Some(g + sigma * normal(rng))",
+  "new": "        let z = normal(rng);\n        let sigma = self.sigma_conductance(g, v_read)?;\n        Some(g + sigma * z)"
+ },
+ {
+  "label": "read noise is relative rather than additive, so a zero conductance reads back exactly",
+  "old": "        Some(g + sigma * normal(rng))",
+  "new": "        Some(g * (1.0 + sigma * normal(rng)))"
+ },
+ {
+  "label": "an invalid window is given a level count",
+  "old": "        window.validate().ok()?;\n        if !(separation > 0.0) || !separation.is_finite() {",
+  "new": "        if !(separation > 0.0) || !separation.is_finite() {"
+ },
+ {
+  "label": "a zero separation demand is accepted",
+  "old": "        if !(separation > 0.0) || !separation.is_finite() {\n            return None;\n        }",
+  "new": "        if false {\n            return None;\n        }"
+ },
+ {
+  "label": "the distinguishable count is evaluated at the quietest end of the window",
+  "old": "        let sigma = self.sigma_conductance(window.g_on, v_read)?;",
+  "new": "        let sigma = self.sigma_conductance(window.g_off, v_read)?;"
+ },
+ {
+  "label": "the distinguishable count drops the fencepost",
+  "old": "        let n = window.span() / (separation * sigma) + 1.0;",
+  "new": "        let n = window.span() / (separation * sigma);"
+ },
+ {
+  "label": "the distinguishable count counts one post too many",
+  "old": "        let n = window.span() / (separation * sigma) + 1.0;",
+  "new": "        let n = window.span() / (separation * sigma) + 2.0;"
+ },
+ {
+  "label": "the distinguishable count divides the separation out instead of multiplying it in",
+  "old": "        let n = window.span() / (separation * sigma) + 1.0;",
+  "new": "        let n = window.span() * separation / sigma + 1.0;"
+ },
+ {
+  "label": "an unbounded level count is reported as no analog information at all",
+  "old": "        if !n.is_finite() || n > f64::from(u32::MAX) {\n            return None;\n        }\n        if n < 2.0 {\n            return Some(1);\n        }",
+  "new": "        if n < 2.0 || !n.is_finite() {\n            return Some(1);\n        }\n        if n > f64::from(u32::MAX) {\n            return None;\n        }"
+ },
+ {
+  "label": "a level count above u32::MAX is handed back saturated",
+  "old": "        if !n.is_finite() || n > f64::from(u32::MAX) {",
+  "new": "        if !n.is_finite() || n > 4.0 * f64::from(u32::MAX) {"
+ },
+ {
+  "label": "the distinguishable count rounds up rather than down",
+  "old": "        Some(n.floor() as u32)",
+  "new": "        Some(n.ceil() as u32)"
+ },
+ {
+  "label": "a zero sigma is not treated as an unbounded count",
+  "old": "        if !(sigma > 0.0) {\n            return None;\n        }\n",
+  "new": "",
+  "equivalent": "`sigma` reaches this line only from `sigma_conductance`, which has already refused a model that does not validate, a non-positive `v_read`, a negative or non-finite `g`, and a non-finite `v_read`. What is left is `sqrt(4 k_B T g B + (s_rel g v)^2) / v` with every factor finite and non-negative, so sigma lies in [0, +inf] and is never NaN. sigma == 0 gives `n = span / 0 + 1 = +inf`, which the `!n.is_finite()` branch two lines below already returns `None` for; sigma == +inf gives `n = 0 + 1 = 1`, which the `n < 2.0` branch already returns `Some(1)` for, and that branch is where the guard would have sent it anyway since `+inf > 0.0` is true. The guard therefore changes no reachable answer. The defect it LOOKS like it prevents — an unbounded count reported as `Some(1)` — lives in the ORDER of the two branches below it, and that mutation is the entry above this one, which is caught."
+ },
+ {
+  "label": "a one-level grid is accepted as a quantiser",
+  "old": "        if self.n < 2 {\n            return Err(DeviceError::BadLevels { levels: self.n });",
+  "new": "        if self.n < 1 {\n            return Err(DeviceError::BadLevels { levels: self.n });"
+ },
+ {
+  "label": "the level spacing counts posts instead of gaps",
+  "old": "        window.span() / f64::from(self.n.max(2) - 1)",
+  "new": "        window.span() / f64::from(self.n.max(2))"
+ },
+ {
+  "label": "the level spacing is measured from zero rather than across the window",
+  "old": "    pub fn step(&self, window: &Window) -> f64 {\n        window.span() / f64::from(self.n.max(2) - 1)",
+  "new": "    pub fn step(&self, window: &Window) -> f64 {\n        window.g_on / f64::from(self.n.max(2) - 1)"
+ },
+ {
+  "label": "effective bits are rounded down, reporting a device as worse than it is",
+  "old": "        f64::from(self.n).log2()",
+  "new": "        f64::from(self.n).log2().floor()"
+ },
+ {
+  "label": "effective bits are the level count itself",
+  "old": "    pub fn bits(&self) -> f64 {\n        f64::from(self.n).log2()",
+  "new": "    pub fn bits(&self) -> f64 {\n        f64::from(self.n)"
+ },
+ {
+  "label": "a conductance is snapped down rather than to the nearest level",
+  "old": "        let k = ((g - window.g_off) / step)\n            .round()",
+  "new": "        let k = ((g - window.g_off) / step)\n            .floor()"
+ },
+ {
+  "label": "the level grid is anchored at the on-state rail",
+  "old": "        let k = ((g - window.g_off) / step)",
+  "new": "        let k = ((g - window.g_on) / step)"
+ },
+ {
+  "label": "the level grid is written above the window's ceiling",
+  "old": "        window.clamp(window.g_off + k * step)\n    }\n}",
+  "new": "        window.g_off + k * step\n    }\n}"
+ },
+ {
+  "label": "the snap's level index is not held below the top level",
+  "old": "            .clamp(0.0, f64::from(self.n.max(2) - 1));",
+  "new": "            .max(0.0);"
+ },
+ {
+  "label": "an infinite wire resistance is accepted",
+  "old": "        if !r_segment_ohm.is_finite() {\n            return Err(DeviceError::NonFinite { what: \"r_segment_ohm\", value: r_segment_ohm });\n        }",
+  "new": "        if r_segment_ohm.is_nan() {\n            return Err(DeviceError::NonFinite { what: \"r_segment_ohm\", value: r_segment_ohm });\n        }"
+ },
+ {
+  "label": "a negative wire resistance is accepted",
+  "old": "        if r_segment_ohm < 0.0 {\n            return Err(DeviceError::Negative { what: \"r_segment_ohm\", value: r_segment_ohm });",
+  "new": "        if r_segment_ohm < -1.0 {\n            return Err(DeviceError::Negative { what: \"r_segment_ohm\", value: r_segment_ohm });"
+ },
+ {
+  "label": "the ideal interconnect has a resistance",
+  "old": "            r_segment_ohm: 0.0,\n            source: \"no wire resistance:",
+  "new": "            r_segment_ohm: 1e-12,\n            source: \"no wire resistance:"
+ },
+ {
+  "label": "the reference wire model claims a grade",
+  "old": "                     a fabricated array\",\n            evidence: Evidence::Unstated,",
+  "new": "                     a fabricated array\",\n            evidence: Evidence::Derived,"
+ },
+ {
+  "label": "the amorphous drift exponent is transcribed a decade too small",
+  "old": "    nu_at_off: 0.1,\n    nu_at_on: 0.02,",
+  "new": "    nu_at_off: 0.01,\n    nu_at_on: 0.02,"
+ },
+ {
+  "label": "the crystalline drift exponent is transcribed a decade too large",
+  "old": "    nu_at_off: 0.1,\n    nu_at_on: 0.02,\n    t0_s: 1.0,",
+  "new": "    nu_at_off: 0.1,\n    nu_at_on: 0.2,\n    t0_s: 1.0,"
+ },
+ {
+  "label": "the drift law's reference time is transcribed as a millisecond",
+  "old": "    nu_at_on: 0.02,\n    t0_s: 1.0,",
+  "new": "    nu_at_on: 0.02,\n    t0_s: 1e-3,"
+ },
+ {
+  "label": "a transcribed drift exponent is graded as measured",
+  "old": "             module's rule. The exponent is a distribution, not a constant.\",\n    evidence: Evidence::Projected,",
+  "new": "             module's rule. The exponent is a distribution, not a constant.\",\n    evidence: Evidence::Measured,"
+ },
+ {
+  "label": "the placeholder device-to-device spread is a tenth of what its own string says",
+  "old": "    sigma_d2d_rel: 0.10,\n    sigma_c2c_rel: 0.05,",
+  "new": "    sigma_d2d_rel: 0.01,\n    sigma_c2c_rel: 0.05,"
+ },
+ {
+  "label": "the placeholder cycle-to-cycle spread is given the device-to-device value",
+  "old": "    sigma_d2d_rel: 0.10,\n    sigma_c2c_rel: 0.05,\n    sigma_floor_s: 0.0,",
+  "new": "    sigma_d2d_rel: 0.10,\n    sigma_c2c_rel: 0.10,\n    sigma_floor_s: 0.0,"
+ },
+ {
+  "label": "the placeholder spread gains an absolute floor its string denies",
+  "old": "    sigma_c2c_rel: 0.05,\n    sigma_floor_s: 0.0,",
+  "new": "    sigma_c2c_rel: 0.05,\n    sigma_floor_s: 1e-6,"
+ },
+ {
+  "label": "the placeholder stuck-at rate is a tenth of what its own string says",
+  "old": "    rate: 0.10,\n    p_at_on: 0.5,",
+  "new": "    rate: 0.01,\n    p_at_on: 0.5,"
+ },
+ {
+  "label": "the neutral stuck-on split is replaced by a number nobody read out of a table",
+  "old": "    rate: 0.10,\n    p_at_on: 0.5,\n    source: \"PLACEHOLDER",
+  "new": "    rate: 0.10,\n    p_at_on: 0.9,\n    source: \"PLACEHOLDER"
+ },
+ {
+  "label": "the placeholder fault model's string stops saying the split is this crate's convention",
+  "old": "split is this crate's convention. Replace with your array's measured map.\",",
+  "new": "split is from the cited work. Replace with your array's measured map.\","
+ },
+ {
+  "label": "a placeholder fault rate is graded as measured",
+  "old": "             split is this crate's convention. Replace with your array's measured map.\",\n    evidence: Evidence::Projected,",
+  "new": "             split is this crate's convention. Replace with your array's measured map.\",\n    evidence: Evidence::Measured,"
+ },
+ {
+  "label": "the Johnson-Nyquist reference is evaluated at the ice point rather than at 300 K",
+  "old": "    temp_k: 300.0,\n    bandwidth_hz: 1e6,",
+  "new": "    temp_k: 273.15,\n    bandwidth_hz: 1e6,"
+ },
+ {
+  "label": "the thermal reference's bandwidth is transcribed as a gigahertz",
+  "old": "    temp_k: 300.0,\n    bandwidth_hz: 1e6,\n    sigma_rel: 0.0,",
+  "new": "    temp_k: 300.0,\n    bandwidth_hz: 1e9,\n    sigma_rel: 0.0,"
+ },
+ {
+  "label": "the thermal reference quietly models non-thermal noise its string disclaims",
+  "old": "    bandwidth_hz: 1e6,\n    sigma_rel: 0.0,",
+  "new": "    bandwidth_hz: 1e6,\n    sigma_rel: 0.01,"
+ },
+ {
+  "label": "the derived thermal floor is downgraded to a transcribed figure",
+  "old": "             non-thermal noise is modelled; a real array's read noise is larger.\",\n    evidence: Evidence::Derived,",
+  "new": "             non-thermal noise is modelled; a real array's read noise is larger.\",\n    evidence: Evidence::Projected,"
+ },
+ {
+  "label": "the ideal reference window is no longer the unit window",
+  "old": "                g_off: 0.0,\n                g_on: 1.0,",
+  "new": "                g_off: 0.0,\n                g_on: 2.0,"
+ },
+ {
+  "label": "the ideal device's siemens per unit weight is not one",
+  "old": "            mapping: Mapping::Differential,\n            beta: 1.0,",
+  "new": "            mapping: Mapping::Differential,\n            beta: 2.0,"
+ },
+ {
+  "label": "the ideal device cannot represent a negative weight",
+  "old": "            mapping: Mapping::Differential,\n            beta: 1.0,\n            d2d_seed: 0,",
+  "new": "            mapping: Mapping::SingleEnded,\n            beta: 1.0,\n            d2d_seed: 0,"
+ },
+ {
+  "label": "the ideal device switches a non-ideality on",
+  "old": "            variability: None,\n            levels: None,",
+  "new": "            variability: None,\n            levels: Some(Levels { n: 256, source: \"ideal\", evidence: Evidence::Unstated }),"
+ },
+ {
+  "label": "the window is left out of the model's validation census",
+  "old": "    pub fn validate(&self) -> Result<(), DeviceError> {\n        self.window.validate()?;",
+  "new": "    pub fn validate(&self) -> Result<(), DeviceError> {"
+ },
+ {
+  "label": "a non-positive beta is accepted",
+  "old": "        if !(self.beta > 0.0) {\n            return Err(DeviceError::NotPositive { what: \"beta\", value: self.beta });",
+  "new": "        if false {\n            return Err(DeviceError::NotPositive { what: \"beta\", value: self.beta });"
+ },
+ {
+  "label": "the variability model is left out of the validation census",
+  "old": "        if let Some(v) = &self.variability {\n            v.validate()?;\n        }",
+  "new": "        if let Some(v) = &self.variability {\n            let _ = v;\n        }"
+ },
+ {
+  "label": "the level grid is left out of the validation census",
+  "old": "        if let Some(l) = &self.levels {\n            l.validate()?;\n        }",
+  "new": "        if let Some(l) = &self.levels {\n            let _ = l;\n        }"
+ },
+ {
+  "label": "the retention model is left out of the validation census",
+  "old": "        if let Some(r) = &self.retention {\n            r.validate()?;\n        }",
+  "new": "        if let Some(r) = &self.retention {\n            let _ = r;\n        }"
+ },
+ {
+  "label": "the read-noise model is left out of the validation census",
+  "old": "        if let Some(n) = &self.read_noise {\n            n.validate()?;\n        }",
+  "new": "        if let Some(n) = &self.read_noise {\n            let _ = n;\n        }"
+ },
+ {
+  "label": "the model's largest weight is its smallest",
+  "old": "    pub fn max_weight(&self) -> f64 {\n        self.mapping.max_weight(&self.window, self.beta)",
+  "new": "    pub fn max_weight(&self) -> f64 {\n        self.mapping.min_weight(&self.window, self.beta)"
+ },
+ {
+  "label": "the model's smallest weight is its largest",
+  "old": "    pub fn min_weight(&self) -> f64 {\n        self.mapping.min_weight(&self.window, self.beta)",
+  "new": "    pub fn min_weight(&self) -> f64 {\n        self.mapping.max_weight(&self.window, self.beta)"
+ },
+ {
+  "label": "read noise is missing from the list a result is reported beside",
+  "old": "        if self.read_noise.is_some() {\n            v.push(\"read noise\");\n        }",
+  "new": "        if false {\n            v.push(\"read noise\");\n        }"
+ },
+ {
+  "label": "the enabled list reports the mechanisms that are switched off",
+  "old": "        if self.levels.is_some() {\n            v.push(\"finite conductance states\");",
+  "new": "        if self.levels.is_none() {\n            v.push(\"finite conductance states\");"
+ },
+ {
+  "label": "the window's grade is left out of the evidence fold",
+  "old": "        let mut g = self.window.evidence;",
+  "new": "        let mut g = Evidence::Metered;"
+ },
+ {
+  "label": "the drift model's grade is left out of the evidence fold",
+  "old": "        if let Some(d) = &self.drift {\n            g = weaker(g, d.evidence);\n        }",
+  "new": "        if let Some(d) = &self.drift {\n            let _ = d;\n        }"
+ },
+ {
+  "label": "the stuck-at model's grade is left out of the evidence fold",
+  "old": "        if let Some(s) = &self.stuck {\n            g = weaker(g, s.evidence);\n        }",
+  "new": "        if let Some(s) = &self.stuck {\n            let _ = s;\n        }"
+ },
+ {
+  "label": "the variability model's grade is left out of the evidence fold",
+  "old": "        if let Some(v) = &self.variability {\n            g = weaker(g, v.evidence);\n        }",
+  "new": "        if let Some(v) = &self.variability {\n            g = weaker(g, g);\n            let _ = v;\n        }"
+ },
+ {
+  "label": "a model that does not validate is programmed anyway",
+  "old": "    pub fn apply(&self, w: &[f64], rng: &mut Rng) -> Result<Programmed, DeviceError> {\n        self.validate()?;",
+  "new": "    pub fn apply(&self, w: &[f64], rng: &mut Rng) -> Result<Programmed, DeviceError> {"
+ },
+ {
+  "label": "an empty weight slice is programmed rather than refused",
+  "old": "        if w.is_empty() {\n            return Err(DeviceError::Empty);\n        }",
+  "new": "        if false {\n            return Err(DeviceError::Empty);\n        }"
+ },
+ {
+  "label": "a NaN weight is programmed rather than refused by index",
+  "old": "            if !v.is_finite() {\n                return Err(DeviceError::NonFiniteWeight { index: i, value: v });\n            }",
+  "new": "            if false {\n                return Err(DeviceError::NonFiniteWeight { index: i, value: v });\n            }"
+ },
+ {
+  "label": "a weight above the window's range is accepted",
+  "old": "            if v < lo || v > hi {",
+  "new": "            if v < lo {"
+ },
+ {
+  "label": "the representable range is exclusive at both ends",
+  "old": "            if v < lo || v > hi {",
+  "new": "            if v <= lo || v >= hi {"
+ },
+ {
+  "label": "the range check reads the bounds the wrong way round",
+  "old": "        let lo = self.min_weight();\n        let hi = self.max_weight();",
+  "new": "        let lo = self.max_weight();\n        let hi = self.min_weight();"
+ },
+ {
+  "label": "a differential pair's second device is never programmed",
+  "old": "        let two = self.mapping.devices_per_weight() == 2;\n        let n = w.len();",
+  "new": "        let two = self.mapping.devices_per_weight() == 1;\n        let n = w.len();"
+ },
+ {
+  "label": "only half of each differential pair is written to the level grid",
+  "old": "                gp = levels.snap(gp, &self.window);\n                if two {\n                    gm = levels.snap(gm, &self.window);\n                }",
+  "new": "                gp = levels.snap(gp, &self.window);"
+ },
+ {
+  "label": "programming is a write-verify loop: the grid is applied after the write error",
+  "old": "            if let Some(levels) = &self.levels {\n                gp = levels.snap(gp, &self.window);\n                if two {\n                    gm = levels.snap(gm, &self.window);\n                }\n            }\n\n            if let Some(var) = &self.variability {\n                let mut d2d = cell_stream(self.d2d_seed, SALT_D2D, i);\n                let zd_p = normal(&mut d2d);\n                let zd_m = normal(&mut d2d);\n                let zc_p = normal(rng);\n                let zf_p = normal(rng);\n                let zc_m = normal(rng);\n                let zf_m = normal(rng);\n                let perturb = |g: f64, zd: f64, zc: f64, zf: f64| {\n                    g * (1.0 + var.sigma_d2d_rel * zd + var.sigma_c2c_rel * zc)\n                        + var.sigma_floor_s * zf\n                };\n                let raw_p = perturb(gp, zd_p, zc_p, zf_p);\n                gp = self.window.clamp(raw_p);\n                if gp != raw_p {\n                    clamped += 1;\n                }\n                if two {\n                    let raw_m = perturb(gm, zd_m, zc_m, zf_m);\n                    gm = self.window.clamp(raw_m);\n                    if gm != raw_m {\n                        clamped += 1;\n                    }\n                }\n            }\n",
+  "new": "            if let Some(var) = &self.variability {\n                let mut d2d = cell_stream(self.d2d_seed, SALT_D2D, i);\n                let zd_p = normal(&mut d2d);\n                let zd_m = normal(&mut d2d);\n                let zc_p = normal(rng);\n                let zf_p = normal(rng);\n                let zc_m = normal(rng);\n                let zf_m = normal(rng);\n                let perturb = |g: f64, zd: f64, zc: f64, zf: f64| {\n                    g * (1.0 + var.sigma_d2d_rel * zd + var.sigma_c2c_rel * zc)\n                        + var.sigma_floor_s * zf\n                };\n                let raw_p = perturb(gp, zd_p, zc_p, zf_p);\n                gp = self.window.clamp(raw_p);\n                if gp != raw_p {\n                    clamped += 1;\n                }\n                if two {\n                    let raw_m = perturb(gm, zd_m, zc_m, zf_m);\n                    gm = self.window.clamp(raw_m);\n                    if gm != raw_m {\n                        clamped += 1;\n                    }\n                }\n            }\n\n            if let Some(levels) = &self.levels {\n                gp = levels.snap(gp, &self.window);\n                if two {\n                    gm = levels.snap(gm, &self.window);\n                }\n            }\n"
+ },
+ {
+  "label": "the level grid is never applied to any cell",
+  "old": "            if let Some(levels) = &self.levels {\n                gp = levels.snap(gp, &self.window);\n                if two {\n                    gm = levels.snap(gm, &self.window);\n                }\n            }\n",
+  "new": "            if let Some(levels) = &self.levels {\n                let _ = levels;\n            }\n"
+ },
+ {
+  "label": "the two devices of a pair share one device-to-device draw",
+  "old": "                let zd_p = normal(&mut d2d);\n                let zd_m = normal(&mut d2d);",
+  "new": "                let zd_p = normal(&mut d2d);\n                let zd_m = zd_p;"
+ },
+ {
+  "label": "the device-to-device offsets ignore the array's seed",
+  "old": "                let mut d2d = cell_stream(self.d2d_seed, SALT_D2D, i);",
+  "new": "                let mut d2d = cell_stream(0, SALT_D2D, i);"
+ },
+ {
+  "label": "cycle-to-cycle spread is drawn from the frozen per-cell stream",
+  "old": "                let zc_p = normal(rng);\n                let zf_p = normal(rng);\n                let zc_m = normal(rng);\n                let zf_m = normal(rng);",
+  "new": "                let zc_p = normal(&mut d2d);\n                let zf_p = normal(rng);\n                let zc_m = normal(&mut d2d);\n                let zf_m = normal(rng);"
+ },
+ {
+  "label": "the absolute noise floor is dropped from the programming perturbation",
+  "old": "                    g * (1.0 + var.sigma_d2d_rel * zd + var.sigma_c2c_rel * zc)\n                        + var.sigma_floor_s * zf",
+  "new": "                    let _ = zf;\n                    g * (1.0 + var.sigma_d2d_rel * zd + var.sigma_c2c_rel * zc)"
+ },
+ {
+  "label": "the absolute noise floor scales with the target conductance",
+  "old": "                        + var.sigma_floor_s * zf",
+  "new": "                        + g * var.sigma_floor_s * zf"
+ },
+ {
+  "label": "the relative programming spread is applied as an absolute offset",
+  "old": "                    g * (1.0 + var.sigma_d2d_rel * zd + var.sigma_c2c_rel * zc)",
+  "new": "                    g + (var.sigma_d2d_rel * zd + var.sigma_c2c_rel * zc)"
+ },
+ {
+  "label": "cycle-to-cycle spread is dropped from the programming perturbation",
+  "old": "                    g * (1.0 + var.sigma_d2d_rel * zd + var.sigma_c2c_rel * zc)\n                        + var.sigma_floor_s * zf\n                };",
+  "new": "                    let _ = zc;\n                    g * (1.0 + var.sigma_d2d_rel * zd) + var.sigma_floor_s * zf\n                };"
+ },
+ {
+  "label": "a programmed conductance is not brought back inside the window",
+  "old": "                let raw_p = perturb(gp, zd_p, zc_p, zf_p);\n                gp = self.window.clamp(raw_p);",
+  "new": "                let raw_p = perturb(gp, zd_p, zc_p, zf_p);\n                gp = raw_p;"
+ },
+ {
+  "label": "the clamp counter is assigned rather than accumulated",
+  "old": "                if gp != raw_p {\n                    clamped += 1;\n                }",
+  "new": "                if gp != raw_p {\n                    clamped = 1;\n                }"
+ },
+ {
+  "label": "the minus device of a pair is never counted as clamped",
+  "old": "                    if gm != raw_m {\n                        clamped += 1;\n                    }",
+  "new": "                    if gm != raw_m {\n                        let _ = gm;\n                    }"
+ },
+ {
+  "label": "a single-ended array breaks a reference that is not a device",
+  "old": "                    (a, if two { b } else { Fault::Healthy })",
+  "new": "                    (a, b)"
+ },
+ {
+  "label": "both devices of a pair get the same fault",
+  "old": "                    let a = model.draw(&mut s);\n                    let b = model.draw(&mut s);",
+  "new": "                    let a = model.draw(&mut s);\n                    let b = a;"
+ },
+ {
+  "label": "the fault map is drawn from the variability stream",
+  "old": "                    let mut s = cell_stream(self.d2d_seed, SALT_FAULT, i);",
+  "new": "                    let mut s = cell_stream(self.d2d_seed, SALT_D2D, i);"
+ },
+ {
+  "label": "the two devices of a pair are pinned by each other's faults",
+  "old": "            gp = self.pin(gp, fp);\n            gm = self.pin(gm, fm);",
+  "new": "            gp = self.pin(gp, fm);\n            gm = self.pin(gm, fp);"
+ },
+ {
+  "label": "a stuck-on cell is pinned to the off rail",
+  "old": "            Fault::StuckOn => self.window.g_on,",
+  "new": "            Fault::StuckOn => self.window.g_off,"
+ },
+ {
+  "label": "a healthy cell is pinned to the off rail",
+  "old": "            Fault::Healthy => g,",
+  "new": "            Fault::Healthy => self.window.g_off,"
+ },
+ {
+  "label": "the programmed array forgets what was asked for",
+  "old": "            target: w.to_vec(),",
+  "new": "            target: vec![0.0; n],"
+ },
+ {
+  "label": "a freshly programmed array reports an age",
+  "old": "            clamped,\n            age_s: 0.0,",
+  "new": "            clamped,\n            age_s: 1.0,"
+ },
+ {
+  "label": "the array's length counts devices rather than weights",
+  "old": "    pub fn len(&self) -> usize {\n        self.target.len()",
+  "new": "    pub fn len(&self) -> usize {\n        self.g_plus.len() + self.g_minus.len()"
+ },
+ {
+  "label": "the noiseless read swaps the two devices of every pair",
+  "old": "            .map(|(&p, &m)| self.model.mapping.read(p, m, &self.model.window, self.model.beta))",
+  "new": "            .map(|(&p, &m)| self.model.mapping.read(m, p, &self.model.window, self.model.beta))"
+ },
+ {
+  "label": "the stuck-device count drops the minus half of every pair",
+  "old": "        self.fault_plus.iter().filter(|f| f.is_stuck()).count()\n            + self.fault_minus.iter().filter(|f| f.is_stuck()).count()",
+  "new": "        self.fault_plus.iter().filter(|f| f.is_stuck()).count()"
+ },
+ {
+  "label": "the stuck-device count counts the healthy devices",
+  "old": "        self.fault_plus.iter().filter(|f| f.is_stuck()).count()",
+  "new": "        self.fault_plus.iter().filter(|f| !f.is_stuck()).count()"
+ },
+ {
+  "label": "the error statistics are not averaged over the array",
+  "old": "        let n = held.len().max(1) as f64;",
+  "new": "        let n = 1.0f64;"
+ },
+ {
+  "label": "the root-mean-square error is a mean absolute error under a square root",
+  "old": "            sum_sq += e * e;",
+  "new": "            sum_sq += e.abs();"
+ },
+ {
+  "label": "the root-mean-square error is a mean square error",
+  "old": "            rms: (sum_sq / n).sqrt(),",
+  "new": "            rms: sum_sq / n,"
+ },
+ {
+  "label": "the mean signed error takes the magnitude first, hiding the bias's direction",
+  "old": "            mean_signed: sum / n,",
+  "new": "            mean_signed: sum.abs() / n,"
+ },
+ {
+  "label": "the bias and the magnitude are swapped in the statistics struct",
+  "old": "            mean_signed: sum / n,\n            rms: (sum_sq / n).sqrt(),",
+  "new": "            mean_signed: (sum_sq / n).sqrt(),\n            rms: sum / n,"
+ },
+ {
+  "label": "the largest error is the largest signed error",
+  "old": "            max_abs = max_abs.max(e.abs());",
+  "new": "            max_abs = max_abs.max(e);"
+ },
+ {
+  "label": "ageing accepts a negative time",
+  "old": "        if t_s < 0.0 {\n            return Err(DeviceError::Negative { what: \"t_s\", value: t_s });\n        }\n        check_temperature(temp_k)?;",
+  "new": "        if t_s < -1.0 {\n            return Err(DeviceError::Negative { what: \"t_s\", value: t_s });\n        }\n        check_temperature(temp_k)?;"
+ },
+ {
+  "label": "ageing accepts a temperature at absolute zero",
+  "old": "        check_temperature(temp_k)?;\n        let win = self.model.window;",
+  "new": "        let win = self.model.window;"
+ },
+ {
+  "label": "the retention fraction is evaluated with the time and the temperature swapped",
+  "old": "            Some(r) => r.remaining_fraction(t_s, temp_k)?,",
+  "new": "            Some(r) => r.remaining_fraction(temp_k, t_s)?,"
+ },
+ {
+  "label": "retention relaxes a cell toward zero rather than toward its off state",
+  "old": "            let relaxed = win.g_off + (g - win.g_off) * keep;",
+  "new": "            let relaxed = g * keep;"
+ },
+ {
+  "label": "retention and drift compose in the reverse order",
+  "old": "            let relaxed = win.g_off + (g - win.g_off) * keep;\n            match &self.model.drift {\n                Some(d) => d.apply(relaxed, &win, t_s),\n                None => relaxed,\n            }",
+  "new": "            let drifted = match &self.model.drift {\n                Some(d) => d.apply(g, &win, t_s),\n                None => g,\n            };\n            win.g_off + (drifted - win.g_off) * keep"
+ },
+ {
+  "label": "a stuck device ages like a healthy one",
+  "old": "            if f.is_stuck() {\n                return g;\n            }",
+  "new": "            if false {\n                return g;\n            }"
+ },
+ {
+  "label": "a single-ended array's nominal reference ages like a device",
+  "old": "        let g_minus = if two {\n            self.g_minus\n                .iter()\n                .zip(&self.fault_minus)\n                .map(|(&g, &f)| age_one(g, f))\n                .collect()\n        } else {\n            self.g_minus.clone()\n        };",
+  "new": "        let g_minus = self\n            .g_minus\n            .iter()\n            .zip(&self.fault_minus)\n            .map(|(&g, &f)| age_one(g, f))\n            .collect();"
+ },
+ {
+  "label": "an aged array forgets the temperature it was aged at",
+  "old": "            age_s: t_s,\n            aged_at_k: Some(temp_k),",
+  "new": "            age_s: t_s,\n            aged_at_k: None,"
+ },
+ {
+  "label": "a read at zero volts is accepted",
+  "old": "        if !(v_read > 0.0) {\n            return Err(DeviceError::NotPositive { what: \"v_read\", value: v_read });\n        }",
+  "new": "        if false {\n            return Err(DeviceError::NotPositive { what: \"v_read\", value: v_read });\n        }"
+ },
+ {
+  "label": "a read does not re-check the model a caller may have replaced",
+  "old": "        self.model.validate()?;\n        let Some(noise) = &self.model.read_noise else {",
+  "new": "        let Some(noise) = &self.model.read_noise else {"
+ },
+ {
+  "label": "a noiseless read returns zeros rather than the held weights",
+  "old": "            return Ok(self.weights());\n        };",
+  "new": "            return Ok(vec![0.0; self.len()]);\n        };"
+ },
+ {
+  "label": "a single-ended read draws noise on the nominal reference",
+  "old": "            let nm = if two { noise.sample(rng, m, v_read).unwrap_or(m) } else { m };",
+  "new": "            let nm = noise.sample(rng, m, v_read).unwrap_or(m);"
+ },
+ {
+  "label": "a noisy read reports the noiseless conductances",
+  "old": "            out.push(self.model.mapping.read(np, nm, &win, self.model.beta));",
+  "new": "            out.push(self.model.mapping.read(p, m, &win, self.model.beta));"
+ },
+ {
+  "label": "the crossbar view takes the wrong half of every pair",
+  "old": "        let g = if positive { self.g_plus.clone() } else { self.g_minus.clone() };",
+  "new": "        let g = if positive { self.g_minus.clone() } else { self.g_plus.clone() };"
+ },
+ {
+  "label": "the relative error is normalised by the signed rather than the largest ideal current",
+  "old": "        let scale = ideal.iter().fold(0.0f64, |a, b| a.max(b.abs()));",
+  "new": "        let scale = ideal.iter().fold(0.0f64, |a, b| a.max(*b));"
+ },
+ {
+  "label": "an array with no ideal current is given a relative error",
+  "old": "        if !(scale > 0.0) {\n            return None;\n        }",
+  "new": "        if false {\n            return None;\n        }"
+ },
+ {
+  "label": "the relative error sums the column errors instead of taking the worst",
+  "old": "                .fold(0.0f64, |a, (&s, &i)| a.max((s - i).abs()))",
+  "new": "                .fold(0.0f64, |a, (&s, &i)| a + (s - i).abs())"
+ },
+ {
+  "label": "the relative error multiplies by its scale instead of dividing",
+  "old": "                / scale,\n        )",
+  "new": "                * scale,\n        )"
+ },
+ {
+  "label": "an empty ideal current vector is not refused up front",
+  "old": " || ideal.is_empty() {",
+  "new": " {",
+  "equivalent": "the only way to reach the rest of the function with an empty `ideal` is for `self.column_currents` to be empty too, since the length equality is checked on the same line. `[].iter().fold(0.0, max)` is then `0.0`, and the very next guard — `!(scale > 0.0)` — returns `None` for it. The two branches return the same `None` for the same inputs, so no test can separate them. The guard is written for the reader, not for an answer: it says the empty case is refused by intent rather than by the accident that a fold over nothing is zero. The `scale` guard itself IS load-bearing and its deletion is the entry two above this one, which is caught."
+ },
+ {
+  "label": "a crossbar with a zero dimension is accepted",
+  "old": "        if rows == 0 || cols == 0 {",
+  "new": "        if rows == 0 && cols == 0 {"
+ },
+ {
+  "label": "a conductance slice of the wrong length is accepted",
+  "old": "        if g.len() != rows * cols {\n            return Err(DeviceError::BadShape { rows, cols, len: g.len() });\n        }",
+  "new": "        if false {\n            return Err(DeviceError::BadShape { rows, cols, len: g.len() });\n        }"
+ },
+ {
+  "label": "a negative conductance is accepted into a crossbar",
+  "old": "            if v < 0.0 {\n                return Err(DeviceError::Negative { what: \"conductance\", value: v });\n            }",
+  "new": "            if false {\n                return Err(DeviceError::Negative { what: \"conductance\", value: v });\n            }"
+ },
+ {
+  "label": "a struct-literal wire model is not validated when a crossbar is built",
+  "old": "        Wires::new(wires.r_segment_ohm, wires.source, wires.evidence)?;",
+  "new": ""
+ },
+ {
+  "label": "the crossbar's row and column counts are swapped",
+  "old": "    pub fn rows(&self) -> usize {\n        self.rows",
+  "new": "    pub fn rows(&self) -> usize {\n        self.cols"
+ },
+ {
+  "label": "the crossbar reports no provenance for its wire model",
+  "old": "    pub fn weakest_evidence(&self) -> Evidence {\n        self.wires.evidence",
+  "new": "    pub fn weakest_evidence(&self) -> Evidence {\n        Evidence::Unstated"
+ },
+ {
+  "label": "the crossbar is indexed column-major",
+  "old": "        if row < self.rows && col < self.cols { Some(self.g[row * self.cols + col]) } else { None }",
+  "new": "        if row < self.rows && col < self.cols { Some(self.g[col * self.cols + row]) } else { None }"
+ },
+ {
+  "label": "the crossbar's row bound is off by one",
+  "old": "        if row < self.rows && col < self.cols { Some(self.g[row * self.cols + col]) } else { None }",
+  "new": "        if row <= self.rows && col < self.cols { Some(self.g[row * self.cols + col]) } else { None }"
+ },
+ {
+  "label": "a drive vector of the wrong length is accepted",
+  "old": "        if v_in.len() != self.rows {\n            return Err(DeviceError::BadDrive { rows: self.rows, len: v_in.len() });\n        }",
+  "new": "        if false {\n            return Err(DeviceError::BadDrive { rows: self.rows, len: v_in.len() });\n        }"
+ },
+ {
+  "label": "a non-finite drive voltage is accepted",
+  "old": "            if !v.is_finite() {\n                return Err(DeviceError::NonFinite { what: \"v_in\", value: v });\n            }",
+  "new": "            if false {\n                return Err(DeviceError::NonFinite { what: \"v_in\", value: v });\n            }"
+ },
+ {
+  "label": "the ideal column current is an assignment rather than an accumulation",
+  "old": "                out[j] += self.g[i * self.cols + j] * v_in[i];",
+  "new": "                out[j] = self.g[i * self.cols + j] * v_in[i];"
+ },
+ {
+  "label": "the ideal column current reads the conductance matrix transposed",
+  "old": "                out[j] += self.g[i * self.cols + j] * v_in[i];",
+  "new": "                out[j] += self.g[j * self.cols + i] * v_in[i];"
+ },
+ {
+  "label": "a non-positive tolerance is accepted by the solve",
+  "old": "        if !tol.is_finite() || !(tol > 0.0) {\n            return Err(DeviceError::NotPositive { what: \"tol\", value: tol });\n        }",
+  "new": "        if false {\n            return Err(DeviceError::NotPositive { what: \"tol\", value: tol });\n        }"
+ },
+ {
+  "label": "a zero sweep budget is reported as a failure to converge rather than as a bad argument",
+  "old": "        if max_sweeps == 0 {\n            return Err(DeviceError::NotPositive { what: \"max_sweeps\", value: 0.0 });\n        }",
+  "new": "        if false {\n            return Err(DeviceError::NotPositive { what: \"max_sweeps\", value: 0.0 });\n        }"
+ },
+ {
+  "label": "the ideal-wire case is solved by the iteration that divides by the wire resistance",
+  "old": "        if self.wires.r_segment_ohm == 0.0 {",
+  "new": "        if false {"
+ },
+ {
+  "label": "the ideal-wire case reports no voltage across any cell",
+  "old": "                    cell_voltage[i * m + j] = v_in[i];\n                }\n            }\n            return Ok(Solution {",
+  "new": "                    cell_voltage[i * m + j] = 0.0;\n                }\n            }\n            return Ok(Solution {"
+ },
+ {
+  "label": "the closed-form branch claims it iterated",
+  "old": "                column_currents: ideal,\n                cell_voltage,\n                sweeps: 0,",
+  "new": "                column_currents: ideal,\n                cell_voltage,\n                sweeps: 1,"
+ },
+ {
+  "label": "the closed-form branch claims a residual",
+  "old": "                sweeps: 0,\n                residual_a: 0.0,",
+  "new": "                sweeps: 0,\n                residual_a: 1.0,"
+ },
+ {
+  "label": "the wire conductance is the wire resistance",
+  "old": "        let gw = 1.0 / self.wires.r_segment_ohm;",
+  "new": "        let gw = self.wires.r_segment_ohm;"
+ },
+ {
+  "label": "the residual floor is the whole wire current rather than its rounding noise",
+  "old": "        let noise_floor = 8.0 * f64::EPSILON * gw * v_max;",
+  "new": "        let noise_floor = 8.0 * gw * v_max;"
+ },
+ {
+  "label": "the residual floor ignores how stiff the array is",
+  "old": "        let noise_floor = 8.0 * f64::EPSILON * gw * v_max;",
+  "new": "        let noise_floor = 8.0 * f64::EPSILON * v_max;"
+ },
+ {
+  "label": "the drive voltage is not written onto the word-line nodes before the first sweep",
+  "old": "        for i in 0..n {\n            for j in 0..m {\n                a[i * m + j] = v_in[i];\n            }\n        }",
+  "new": "        for i in 0..n {\n            for j in 0..m {\n                a[i * m + j] = 0.0;\n            }\n        }",
+  "equivalent": "this initial guess is never read. The first thing the sweep loop does is the word-line pass, whose tridiagonal system is built entirely from `self.g`, `gw`, `v_in` and the bit-line voltages `b` — `rhs[j] = g * b[i*m + j] + (j == 0 ? gw * v_in[i] : 0)` — and it then writes every entry of `a` from `sol`. `a` is not touched between this loop and that write, and `residual` is called only after both passes. So every element of `a` is overwritten before it is used, on the very first sweep, and the mutant's node voltages, sweep count, currents and residual are bit-for-bit the originals. Line relaxation IS sensitive to its starting point in general; this implementation happens to solve the word lines first, which makes this particular seeding dead. The version of this line that is NOT dead is `b`'s zero initialisation, which the word-line pass reads on sweep one."
+ },
+ {
+  "label": "the word line's west neighbour is coupled with the wrong sign",
+  "old": "                    sub[j] = if j > 0 { -gw } else { 0.0 };",
+  "new": "                    sub[j] = if j > 0 { gw } else { 0.0 };"
+ },
+ {
+  "label": "the word line is coupled to its east neighbour at the open end instead",
+  "old": "                    sup[j] = if j + 1 < m { -gw } else { 0.0 };",
+  "new": "                    sup[j] = if j + 1 < m { 0.0 } else { -gw };"
+ },
+ {
+  "label": "the word line is terminated at both ends rather than open at the east",
+  "old": "                    diag[j] = gw + if j + 1 < m { gw } else { 0.0 } + g;",
+  "new": "                    diag[j] = gw + gw + g;"
+ },
+ {
+  "label": "the word line's diagonal forgets the cell it carries",
+  "old": "                    diag[j] = gw + if j + 1 < m { gw } else { 0.0 } + g;",
+  "new": "                    diag[j] = gw + if j + 1 < m { gw } else { 0.0 };"
+ },
+ {
+  "label": "the word line is never driven",
+  "old": "                    rhs[j] = g * b[i * m + j] + if j == 0 { gw * v_in[i] } else { 0.0 };",
+  "new": "                    rhs[j] = g * b[i * m + j];"
+ },
+ {
+  "label": "the word line is driven at its far end rather than from the west edge",
+  "old": "                    rhs[j] = g * b[i * m + j] + if j == 0 { gw * v_in[i] } else { 0.0 };",
+  "new": "                    rhs[j] = g * b[i * m + j] + if j + 1 == m { gw * v_in[i] } else { 0.0 };"
+ },
+ {
+  "label": "the word-line solution is written back transposed",
+  "old": "                for j in 0..m {\n                    a[i * m + j] = sol[j];\n                }",
+  "new": "                for j in 0..m {\n                    a[j * m + i] = sol[j];\n                }"
+ },
+ {
+  "label": "the bit line is grounded at the north end rather than the south",
+  "old": "                    diag[i] = gw + if i > 0 { gw } else { 0.0 } + g;",
+  "new": "                    diag[i] = gw + if i + 1 < n { gw } else { 0.0 } + g;"
+ },
+ {
+  "label": "the bit line's north neighbour is not coupled at all",
+  "old": "                    sub[i] = if i > 0 { -gw } else { 0.0 };",
+  "new": "                    sub[i] = 0.0;"
+ },
+ {
+  "label": "the bit line is injected with the cell's own drop rather than the word-line voltage",
+  "old": "                    rhs[i] = g * a[i * m + j];",
+  "new": "                    rhs[i] = g * (a[i * m + j] - b[i * m + j]);"
+ },
+ {
+  "label": "the bit-line solution is written back transposed",
+  "old": "                for i in 0..n {\n                    b[i * m + j] = sol[i];\n                }",
+  "new": "                for i in 0..n {\n                    b[i + j * n] = sol[i];\n                }"
+ },
+ {
+  "label": "the tolerance is measured against the ideal current the wires do not deliver",
+  "old": "                scale = scale.max((gw * b[(n - 1) * m + j]).abs());",
+  "new": "                scale = scale.max(ideal[j].abs());"
+ },
+ {
+  "label": "the convergence target takes the smaller of the tolerance and the arithmetic's floor",
+  "old": "            target = (tol * scale).max(noise_floor).max(f64::MIN_POSITIVE);",
+  "new": "            target = (tol * scale).min(noise_floor).max(f64::MIN_POSITIVE);"
+ },
+ {
+  "label": "the convergence target has no floor at the arithmetic's own noise",
+  "old": "            target = (tol * scale).max(noise_floor).max(f64::MIN_POSITIVE);",
+  "new": "            target = (tol * scale).max(f64::MIN_POSITIVE);"
+ },
+ {
+  "label": "the solve declares itself converged without measuring anything",
+  "old": "            residual = self.residual(&a, &b, v_in, gw);\n            if residual <= target {",
+  "new": "            residual = 0.0;\n            if residual <= target {"
+ },
+ {
+  "label": "the solve returns its first iterate",
+  "old": "            residual = self.residual(&a, &b, v_in, gw);\n            if residual <= target {",
+  "new": "            residual = self.residual(&a, &b, v_in, gw);\n            if true {"
+ },
+ {
+  "label": "the column current is sensed at the open north end of the bit line",
+  "old": "                    column_currents[j] = gw * b[(n - 1) * m + j];",
+  "new": "                    column_currents[j] = gw * b[j];"
+ },
+ {
+  "label": "the column current forgets the wire conductance that carries it",
+  "old": "                    column_currents[j] = gw * b[(n - 1) * m + j];",
+  "new": "                    column_currents[j] = b[(n - 1) * m + j];"
+ },
+ {
+  "label": "the voltage across a cell is the sum of its two node voltages",
+  "old": "                    cell_voltage[k] = a[k] - b[k];",
+  "new": "                    cell_voltage[k] = a[k] + b[k];"
+ },
+ {
+  "label": "the voltage across a cell ignores the bit line's rise above ground",
+  "old": "                    cell_voltage[k] = a[k] - b[k];",
+  "new": "                    cell_voltage[k] = a[k];"
+ },
+ {
+  "label": "the word line's west boundary reaches into the previous row",
+  "old": "                let west = if j == 0 { v_in[i] } else { a[k - 1] };",
+  "new": "                let west = a[k - 1];"
+ },
+ {
+  "label": "the bit line's south boundary is not held at ground",
+  "old": "                let south = if i + 1 < n { b[k + m] } else { 0.0 };",
+  "new": "                let south = if i + 1 < n { b[k + m] } else { b[k] };"
+ },
+ {
+  "label": "the cell current enters the word-line residual with the wrong sign",
+  "old": "                let mut r = gw * (west - a[k]) - g * (a[k] - b[k]);",
+  "new": "                let mut r = gw * (west - a[k]) + g * (a[k] - b[k]);"
+ },
+ {
+  "label": "the cell current enters the bit-line residual with the wrong sign",
+  "old": "                let mut s = gw * (south - b[k]) + g * (a[k] - b[k]);",
+  "new": "                let mut s = gw * (south - b[k]) - g * (a[k] - b[k]);"
+ },
+ {
+  "label": "the word-line residual drops its east neighbour",
+  "old": "                if j + 1 < m {\n                    r += gw * (a[k + 1] - a[k]);\n                }",
+  "new": "                if false {\n                    r += gw * (a[k + 1] - a[k]);\n                }"
+ },
+ {
+  "label": "the bit-line residual reaches north from the northernmost node",
+  "old": "                if i > 0 {\n                    s += gw * (b[k - m] - b[k]);\n                }",
+  "new": "                if i + 1 < n {\n                    s += gw * (b[k - m] - b[k]);\n                }"
+ },
+ {
+  "label": "a NaN bit-line residual is dropped by the fold",
+  "old": "                if !r.is_finite() || !s.is_finite() {",
+  "new": "                if !r.is_finite() {"
+ },
+ {
+  "label": "the residual fold drops every bit-line node",
+  "old": "                worst = worst.max(r.abs()).max(s.abs());",
+  "new": "                worst = worst.max(r.abs());"
+ },
+ {
+  "label": "the residual fold drops every word-line node",
+  "old": "                worst = worst.max(r.abs()).max(s.abs());",
+  "new": "                worst = worst.max(s.abs());"
+ },
+ {
+  "label": "the worst residual is the last one rather than the largest",
+  "old": "                worst = worst.max(r.abs()).max(s.abs());",
+  "new": "                worst = r.abs().max(s.abs());"
+ },
+ {
+  "label": "an empty tridiagonal system is reported as solved",
+  "old": "    if n == 0 {\n        return false;\n    }",
+  "new": "    if n == 0 {\n        return true;\n    }"
+ },
+ {
+  "label": "an infinite leading pivot is accepted",
+  "old": "    if !diag[0].is_finite() || diag[0] == 0.0 {\n        return false;\n    }",
+  "new": "    if diag[0] == 0.0 {\n        return false;\n    }"
+ },
+ {
+  "label": "a zero leading pivot is accepted",
+  "old": "    if !diag[0].is_finite() || diag[0] == 0.0 {",
+  "new": "    if !diag[0].is_finite() {"
+ },
+ {
+  "label": "the forward sweep does not normalise its first row",
+  "old": "    c[0] = sup[0] / diag[0];\n    out[0] = rhs[0] / diag[0];",
+  "new": "    c[0] = sup[0];\n    out[0] = rhs[0];"
+ },
+ {
+  "label": "the forward sweep does not eliminate the sub-diagonal",
+  "old": "        let m = diag[k] - sub[k] * c[k - 1];",
+  "new": "        let m = diag[k] + sub[k] * c[k - 1];"
+ },
+ {
+  "label": "the forward sweep's pivot forgets the previous row entirely",
+  "old": "        let m = diag[k] - sub[k] * c[k - 1];",
+  "new": "        let m = diag[k];"
+ },
+ {
+  "label": "an infinite interior pivot is accepted",
+  "old": "        if !m.is_finite() || m == 0.0 {\n            return false;\n        }",
+  "new": "        if m == 0.0 {\n            return false;\n        }"
+ },
+ {
+  "label": "an interior pivot that cancels to zero is accepted",
+  "old": "        if !m.is_finite() || m == 0.0 {",
+  "new": "        if !m.is_finite() {"
+ },
+ {
+  "label": "the forward sweep does not carry the previous right-hand side",
+  "old": "        out[k] = (rhs[k] - sub[k] * out[k - 1]) / m;",
+  "new": "        out[k] = (rhs[k] + sub[k] * out[k - 1]) / m;"
+ },
+ {
+  "label": "the back substitution adds where it should subtract",
+  "old": "        out[k] -= c[k] * out[k + 1];",
+  "new": "        out[k] += c[k] * out[k + 1];"
+ },
+ {
+  "label": "the back substitution reads the wrong super-diagonal coefficient",
+  "old": "        out[k] -= c[k] * out[k + 1];",
+  "new": "        out[k] -= c[k + 1] * out[k + 1];"
+ },
+ {
+  "label": "a non-finite solution is reported as solved",
+  "old": "    out[..n].iter().all(|v| v.is_finite())",
+  "new": "    true"
+ },
+ {
+  "label": "a bad-shape message reports the sum of the dimensions rather than their product",
+  "old": "                \"a {rows}x{cols} crossbar needs {} conductances, got {len}\",\n                rows * cols",
+  "new": "                \"a {rows}x{cols} crossbar needs {} conductances, got {len}\",\n                rows + cols"
+ }
+]

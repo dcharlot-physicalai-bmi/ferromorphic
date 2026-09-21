@@ -4189,4 +4189,538 @@ mod tests {
         assert!(!r.contains(r.min_ticks - 1));
         assert!(!r.contains(r.max_ticks + 1));
     }
+
+    // ---------------------------------------------------------------------------------------
+    // (h) What the first mutation audit of this module could not see.
+    //
+    // ⛔ Thirteen edits survived the suite as it stood. Every one of them is a place where a
+    // number, a boundary or a field was written down and then never read back: the two census
+    // methods could not distinguish ten graded fields from nine, no network ever sat exactly ON a
+    // cap, no test read a `Headroom::used` on either of the two constraints that compute one, and
+    // four transcribed constants reached no assertion at all.
+    // ---------------------------------------------------------------------------------------
+
+    /// What a fixture's provenance says once a test has emptied one of its fields.
+    const FIXTURE_GAP: &str = "A fixture gap: this test emptied the field so that the record's \
+                               two census methods have something to notice.";
+
+    /// A fixture record with all ten graded fields stated, so a sweep can knock exactly one of
+    /// them down at a time.
+    ///
+    /// Every part in [`PARTS`] is missing at least one field — that is the honest state of the
+    /// literature and it is also why no real record can isolate a single field's contribution to
+    /// [`Part::weakest_evidence`].
+    fn fully_stated_part() -> Part {
+        const WHY: &str = "A fixture figure, not a claim about any silicon: this record exists so \
+                           that a test can degrade one graded field at a time.";
+        Part {
+            name: "Fully stated",
+            vendor: "test fixture",
+            citation: "A fixture, not a part. Not in PARTS and not a claim about any silicon.",
+            year: Spec::known(2026, WHY, Evidence::Measured),
+            neurons_per_core: Spec::known(16, WHY, Evidence::Measured),
+            cores_per_chip: Spec::known(4, WHY, Evidence::Measured),
+            synapses_per_core: Spec::known(256, WHY, Evidence::Measured),
+            max_fan_in: Spec::known(8, WHY, Evidence::Measured),
+            weight_bits: Spec::known(8, WHY, Evidence::Measured),
+            delay_ticks: Spec::known(
+                DelayRange { min_ticks: 1, max_ticks: 7 },
+                WHY,
+                Evidence::Measured,
+            ),
+            on_chip_learning: Spec::known(false, WHY, Evidence::Measured),
+            process: Spec::known("fixture 1 nm", WHY, Evidence::Measured),
+            neurons_per_chip_stated: Spec::known(64, WHY, Evidence::Measured),
+            note: WHY,
+        }
+    }
+
+    /// Change one named field's [`Evidence`] grade in place, leaving its value alone.
+    type Regrade = fn(&mut Part, Evidence);
+
+    /// Empty one named field in place, so that both census methods have to notice the gap.
+    type Unlocate = fn(&mut Part);
+
+    /// The ten fields [`Part::weakest_evidence`] and [`Part::stated_fields`] both claim to read,
+    /// each with a way to regrade it and a way to empty it.
+    ///
+    /// Named, so a failure in the sweep below says which field stopped being read rather than
+    /// only that one did.
+    const GRADED_FIELD_SETTERS: [(&str, Regrade, Unlocate); 10] = [
+        ("year", |p, e| p.year.evidence = e, |p| p.year = Spec::unlocated(FIXTURE_GAP)),
+        (
+            "neurons_per_core",
+            |p, e| p.neurons_per_core.evidence = e,
+            |p| p.neurons_per_core = Spec::unlocated(FIXTURE_GAP),
+        ),
+        (
+            "cores_per_chip",
+            |p, e| p.cores_per_chip.evidence = e,
+            |p| p.cores_per_chip = Spec::unlocated(FIXTURE_GAP),
+        ),
+        (
+            "synapses_per_core",
+            |p, e| p.synapses_per_core.evidence = e,
+            |p| p.synapses_per_core = Spec::unlocated(FIXTURE_GAP),
+        ),
+        (
+            "max_fan_in",
+            |p, e| p.max_fan_in.evidence = e,
+            |p| p.max_fan_in = Spec::unlocated(FIXTURE_GAP),
+        ),
+        (
+            "weight_bits",
+            |p, e| p.weight_bits.evidence = e,
+            |p| p.weight_bits = Spec::unlocated(FIXTURE_GAP),
+        ),
+        (
+            "delay_ticks",
+            |p, e| p.delay_ticks.evidence = e,
+            |p| p.delay_ticks = Spec::unlocated(FIXTURE_GAP),
+        ),
+        (
+            "on_chip_learning",
+            |p, e| p.on_chip_learning.evidence = e,
+            |p| p.on_chip_learning = Spec::unlocated(FIXTURE_GAP),
+        ),
+        ("process", |p, e| p.process.evidence = e, |p| p.process = Spec::unlocated(FIXTURE_GAP)),
+        (
+            "neurons_per_chip_stated",
+            |p, e| p.neurons_per_chip_stated.evidence = e,
+            |p| p.neurons_per_chip_stated = Spec::unlocated(FIXTURE_GAP),
+        ),
+    ];
+
+    /// [`Part::weakest_evidence`] reads all ten graded fields, and the value it starts the
+    /// minimum from is an identity rather than a floor.
+    ///
+    /// ⛔ The suite could not see either fact, for the same reason twice: every record in
+    /// [`PARTS`] is missing at least one field, so `weakest_evidence()` is `Unstated` for all
+    /// sixteen of them. That makes the method indistinguishable from one that returns `Unstated`
+    /// unconditionally, and `a_records_weakest_grade_is_unstated_exactly_when_a_field_is_empty`
+    /// compares it against `stated_fields() < 10`, a condition that is likewise true for all
+    /// sixteen. The same census also hid a narrower hole: the only three records at nine of ten
+    /// are missing `delay_ticks`, and every record missing `process` is missing several other
+    /// fields too, so deleting `process` from the list of grades read moved no minimum anywhere in
+    /// the table.
+    ///
+    /// The fixture is the smallest thing that separates them — ten stated fields, so the minimum
+    /// has somewhere to move from.
+    #[test]
+    fn the_weakest_grade_reads_every_one_of_the_ten_fields_and_starts_above_all_of_them() {
+        let base = fully_stated_part();
+        assert_eq!(base.stated_fields(), 10, "the fixture states all ten graded fields");
+        assert_eq!(
+            base.weakest_evidence(),
+            Evidence::Measured,
+            "ten Measured fields make a Measured record, not an Unstated one"
+        );
+
+        // The seed is the identity of a minimum, not a ceiling clamped onto the answer: a record
+        // graded above Measured in every field comes back at that grade. These are fixture grades
+        // and not a claim about any silicon — the module doc says Metered is used by nothing in
+        // this table, and this record is not in it.
+        let mut strongest = base;
+        for (_, regrade, _) in GRADED_FIELD_SETTERS {
+            regrade(&mut strongest, Evidence::Metered);
+        }
+        assert_eq!(
+            strongest.weakest_evidence(),
+            Evidence::Metered,
+            "the starting value must not cap the answer it is only there to be replaced by"
+        );
+
+        // One field at a time. Each of the ten has to be able to drag the whole record down,
+        // which is the whole content of "the weakest grade ANYWHERE in this record".
+        for (name, regrade, unlocate) in GRADED_FIELD_SETTERS {
+            let mut degraded = base;
+            regrade(&mut degraded, Evidence::Projected);
+            assert_eq!(
+                degraded.weakest_evidence(),
+                Evidence::Projected,
+                "{name}: a Projected grade in this field never reached weakest_evidence()"
+            );
+            assert_eq!(degraded.stated_fields(), 10, "{name}: regrading does not empty a field");
+
+            // And the two censuses read the SAME ten fields: emptying one has to move both, or a
+            // record can carry a gap that only one of them reports.
+            let mut emptied = base;
+            unlocate(&mut emptied);
+            assert_eq!(
+                emptied.weakest_evidence(),
+                Evidence::Unstated,
+                "{name}: an empty field did not reach weakest_evidence()"
+            );
+            assert_eq!(
+                emptied.stated_fields(),
+                9,
+                "{name}: an empty field did not reach stated_fields()"
+            );
+        }
+        assert_eq!(GRADED_FIELD_SETTERS.len(), 10, "ten graded fields, as both methods claim");
+    }
+
+    /// The two weight widths in this table that nothing quantises, pinned against the documents
+    /// their own provenance names.
+    ///
+    /// ⛔ [`Quantiser::for_part`] is exercised on `AKD1000`, `ODIN`, `TrueNorth` and the six parts
+    /// that refuse for want of a width, so `LOIHI.weight_bits` and `SPINNAKER.weight_bits` were
+    /// transcribed constants that no assertion in the module reached. Each is one substitution
+    /// away from a plausible wrong number, and the wrong number is the same one a careless reader
+    /// would reach for: Loihi's 9 bits including sign reads as a byte, and `SpiNNaker`'s 16-bit
+    /// `sPyNNaker` synapse format reads as the 32-bit word of the `ARM` core that processes it —
+    /// which is the misreading that record's own string is written to head off.
+    ///
+    /// The width is carried through to the quantiser it exists for, because one bit is a factor of
+    /// two in the code range and that is where a caller would feel it.
+    #[test]
+    fn the_weight_widths_no_test_quantised_are_the_ones_their_documents_state() {
+        assert_eq!(
+            LOIHI.weight_bits.value,
+            Some(9),
+            "Davies et al. 2018 configures weight precision from 1 to 9 bits INCLUDING SIGN; 8 \
+             would be a byte nobody published"
+        );
+        assert!(
+            LOIHI.weight_bits.source.contains("from 1 to 9 bits including sign"),
+            "{}",
+            LOIHI.weight_bits.source
+        );
+        let loihi = Quantiser::for_part(&LOIHI, &[1.0, -0.5]).expect("Loihi states a width");
+        assert_eq!(loihi.bits, 9);
+        assert_eq!(loihi.max_code, 255, "9 bits including sign leaves 2^8 - 1 codes each side");
+
+        assert_eq!(
+            SPINNAKER.weight_bits.value,
+            Some(16),
+            "the sPyNNaker synapse format is 16-bit fixed point; 32 is the word width of the core \
+             that processes it, which is the error this record's own string names"
+        );
+        assert!(
+            SPINNAKER.weight_bits.source.contains("16-bit fixed-point weights"),
+            "{}",
+            SPINNAKER.weight_bits.source
+        );
+        assert!(
+            SPINNAKER.weight_bits.source.contains("the cores are 32-bit ARMs"),
+            "the string has to keep naming the misreading it exists to prevent: {}",
+            SPINNAKER.weight_bits.source
+        );
+        let spin = Quantiser::for_part(&SPINNAKER, &[1.0, -0.5]).expect("SpiNNaker states a width");
+        assert_eq!(spin.bits, 16);
+        assert_eq!(spin.max_code, 32_767);
+        // And recording the ARM word there would not merely be wrong, it would make the part
+        // unquantisable: 32 bits is outside this quantiser's 2..=31, signed codes and all.
+        assert_eq!(Quantiser::symmetric(32, 1.0), Err(HardwareError::BadBits { bits: 32 }));
+    }
+
+    /// `Xylo Audio 2`'s 64,000 synapses are the numerator of the mean its own fan-in field
+    /// refuses to record, so the two have to be checked against each other.
+    ///
+    /// ⛔ Nothing read `XYLO_AUDIO_2.synapses_per_core.value`. The only network [`fits`] puts on
+    /// this part is 100 neurons carrying 500 synapses, two orders of magnitude inside the cap, so
+    /// a cap ten times too small was still a pass reported with headroom. The record's distinctive
+    /// claim — "64,000/1,000 = 64 is a MEAN, not a maximum" — is arithmetic over two fields of
+    /// this same record, and it is true for exactly one value of the numerator.
+    #[test]
+    fn xylos_synapse_count_is_the_numerator_of_its_own_mean_fan_in_caveat() {
+        let syn = XYLO_AUDIO_2.synapses_per_core.value.expect("Xylo states a synapse count");
+        let neu = XYLO_AUDIO_2.neurons_per_core.value.expect("Xylo states a neuron count");
+        assert_eq!(syn, 64_000, "SynSense documents up to 64,000 synaptic connections");
+        assert_eq!(neu, 1000);
+        // Recomputed from the fields rather than read back off the string. Both are exact
+        // integers, so this is equality and not a tolerance.
+        assert_eq!(syn / u64::from(neu), 64, "the mean fan-in this record refuses to record");
+        assert!(
+            XYLO_AUDIO_2.max_fan_in.source.contains("64,000/1,000 = 64 is a MEAN"),
+            "{}",
+            XYLO_AUDIO_2.max_fan_in.source
+        );
+        assert!(
+            XYLO_AUDIO_2.max_fan_in.value.is_none(),
+            "a mean in a maximum's field would let fits() pass a network it should refuse"
+        );
+
+        // One core, so the chip total is that same figure and fits() grades a network against it.
+        assert_eq!(XYLO_AUDIO_2.cores_per_chip.value, Some(1));
+        assert_eq!(XYLO_AUDIO_2.synapses_per_chip(), Some(64_000));
+
+        // And the cap is where the arithmetic puts it: 1,000 neurons at the mean fan-in fill the
+        // store exactly, and the report says 100.0% rather than passing with room to spare.
+        let full = uniform_net(1000, 64, 1);
+        assert_eq!(full.n_syn, 64_000);
+        let fit = fits(&full, &XYLO_AUDIO_2);
+        assert_eq!(fit.verdict, Some(true), "{fit}");
+        let h = fit
+            .headroom
+            .iter()
+            .find(|h| h.constraint == "synapses per chip")
+            .expect("Xylo states a synapse capacity, so it is checked");
+        assert_eq!((h.used, h.cap), (64_000, 64_000));
+        assert_eq!(h.spare(), 0, "full, and full is not over");
+    }
+
+    /// `Speck`'s nine cores are a **depth** limit, the only one in this table, and [`fits`] cannot
+    /// see it.
+    ///
+    /// ⛔ `SPECK.cores_per_chip` reaches no assertion through the fitting path: the part states no
+    /// neurons per core, so [`core_count`] refuses and `"cores per chip"` lands in
+    /// [`Fit::unchecked`] instead of being compared against anything. The one checkable structure
+    /// this record carries therefore has to be pinned on the record itself — against the prose
+    /// beside it, which spells the count as an English word precisely so that a slip in the
+    /// numeral is visible against something.
+    #[test]
+    fn specks_core_count_is_the_layer_depth_its_own_prose_spells_out() {
+        let cores = SPECK.cores_per_chip.value.expect("Speck states a core count");
+        assert_eq!(cores, 9, "nine event-driven convolutional cores, mapping one per layer");
+
+        // The numeral and the word are two statements of one fact, written in two notations so
+        // that they can be checked against each other.
+        let spelled = [
+            "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+            "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen",
+        ];
+        let word = spelled.get(cores as usize).copied().unwrap_or("a count past this test's table");
+        assert!(
+            SPECK
+                .cores_per_chip
+                .source
+                .contains(&format!("{word} event-driven convolutional SNN cores")),
+            "the numeral and the prose state different counts: {}",
+            SPECK.cores_per_chip.source
+        );
+        assert!(
+            SPECK.cores_per_chip.source.contains("deeper than nine layers does not fit"),
+            "the depth claim is the reason this field is here: {}",
+            SPECK.cores_per_chip.source
+        );
+
+        // And this is why the number has to be pinned here rather than through a network: a depth
+        // constraint is not a count of anything fits() is handed.
+        let net = uniform_net(40, 3, 1);
+        let fit = fits(&net, &SPECK);
+        assert_eq!(fit.verdict, None, "{fit}");
+        assert!(fit.unchecked.contains(&"cores per chip"), "{fit}");
+        assert!(fit.cores.is_none(), "{fit}");
+    }
+
+    /// A neuron sitting exactly ON `TrueNorth`'s 256-row crossbar column maps, and the headroom
+    /// entry says 256 of 256 rather than 0 of 256.
+    ///
+    /// ⛔ Two holes closed by one network. No fixture in this module ever gave a neuron an
+    /// in-degree **equal** to a cap — the numbers are 257 against 256, 300 against 256 and against
+    /// 64, and 6 and 2 against the tiny fixture's 3 — so `d > cap` and `d >= cap` agreed on every
+    /// network the suite builds, and [`Part::max_fan_in`]'s "sources one neuron CAN have" was
+    /// never tested at the one place the word "can" does any work. And no test had ever read a
+    /// [`Headroom::used`] on the fan-in constraint, so the field could report a constant zero and
+    /// stay green. Exactly at the wall is the network where both are visible at once, and it is
+    /// also where `utilisation()` is exactly 1.0 and `spare()` is exactly 0.
+    #[test]
+    fn a_neuron_exactly_at_the_crossbar_column_maps_and_its_headroom_says_so() {
+        let cap = TRUENORTH.max_fan_in.value.expect("TrueNorth states the wall");
+        assert_eq!(cap, 256, "one column of a 256-row crossbar");
+
+        let mut b = NetBuilder::new(300);
+        for pre in 0..cap {
+            b.connect(pre, 299, 1e-3, 1).expect("in range");
+        }
+        let at_the_wall = b.build();
+        assert_eq!(at_the_wall.in_degrees()[299], cap as usize);
+
+        let fit = fits(&at_the_wall, &TRUENORTH);
+        assert_eq!(fit.verdict, Some(true), "256 sources fit a 256-row column: {fit}");
+        assert!(fit.binds.is_empty(), "{fit}");
+        let h = fit
+            .headroom
+            .iter()
+            .find(|h| h.constraint == "maximum fan-in per neuron")
+            .expect("a satisfied fan-in constraint is reported with its headroom");
+        assert_eq!(h.used, 256, "the deepest in-degree in the network, not zero");
+        assert_eq!(h.cap, 256);
+        assert_eq!(h.spare(), 0);
+        assert_eq!(h.utilisation(), Some(1.0), "256/256 is exactly one, not approximately one");
+        assert!(fit.to_string().contains("256 of 256"), "{fit}");
+
+        // One more source and the same shape of network is refused, so the boundary is where the
+        // crossbar puts it and not one row to either side.
+        let mut past = NetBuilder::new(300);
+        for pre in 0..=cap {
+            past.connect(pre, 299, 1e-3, 1).expect("in range");
+        }
+        let over = past.build();
+        match fits(&over, &TRUENORTH).binding().expect("binds") {
+            Bind::FanIn { neuron, fan_in, cap: wall, offenders } => {
+                assert_eq!((*neuron, *fan_in, *wall, *offenders), (299, 257, 256, 1));
+            }
+            other => panic!("expected a fan-in bind, got {other:?}"),
+        }
+    }
+
+    /// A synapse whose delay is exactly `SpiNNaker`'s sixteenth tick is deliverable, and the
+    /// headroom entry reports the longest delay in the network rather than zero.
+    ///
+    /// ⛔ The same two holes as the fan-in pair, at the other end of [`fits`].
+    /// `a_delay_range_is_inclusive_at_both_ends` proves [`DelayRange::contains`] inclusive, but
+    /// [`fits`] re-implements the comparison against `range.max_ticks` and no network in this
+    /// module ever carried a delay equal to a ceiling: the fixtures use 0, 1, 3, 9 and 40 against
+    /// 16, and 0, 3 and 9 against the tiny fixture's 5. And [`Headroom::used`] on the delay
+    /// constraint was read by nothing, so the running maximum could be a constant.
+    ///
+    /// The longest delay here is on the FIRST synapse scanned and the shortest is on the last, so
+    /// a running value that kept the latest delay rather than the largest reads 2 and not 16.
+    #[test]
+    fn a_delay_exactly_at_the_ceiling_is_deliverable_and_its_headroom_reports_it() {
+        let range = SPINNAKER.delay_ticks.value.expect("SpiNNaker states a range");
+        assert_eq!((range.min_ticks, range.max_ticks), (1, 16));
+
+        let mut b = NetBuilder::new(8);
+        for (pre, d) in [(0u32, range.max_ticks), (1, 7), (2, range.min_ticks), (3, 2)] {
+            b.connect(pre, pre + 1, 1e-3, d).expect("in range");
+        }
+        let net = b.build();
+
+        let fit = fits(&net, &SPINNAKER);
+        assert_eq!(fit.verdict, Some(true), "16 is inside a range whose ceiling is 16: {fit}");
+        assert!(fit.binds.is_empty(), "{fit}");
+        assert_eq!(fit.headroom.len(), 1, "the delay range is SpiNNaker's one structure: {fit}");
+        let h = &fit.headroom[0];
+        assert_eq!(h.constraint, "longest synaptic delay");
+        assert_eq!(h.used, 16, "the longest delay in the network, not the last one and not zero");
+        assert_eq!(h.cap, 16);
+        assert_eq!(h.spare(), 0);
+        assert_eq!(h.utilisation(), Some(1.0), "16/16 is exactly one");
+        assert!(fit.to_string().contains("16 of 16"), "{fit}");
+
+        // One tick further and the same network is refused, so the ceiling is a ceiling and the
+        // comparison is not a tick out in either direction.
+        let mut b2 = NetBuilder::new(8);
+        b2.connect(0, 1, 1e-3, range.max_ticks + 1).expect("in range");
+        let over = b2.build();
+        match fits(&over, &SPINNAKER).binding().expect("binds") {
+            Bind::DelayTooLong { delay, cap, offenders, .. } => {
+                assert_eq!((*delay, *cap, *offenders), (17, 16, 1));
+            }
+            other => panic!("expected a delay ceiling bind, got {other:?}"),
+        }
+    }
+
+    /// [`Fit::scales_out`] is `false` when nothing binds, because there is nothing to relieve.
+    ///
+    /// ⛔ `.all()` is vacuously true on an empty list, so the emptiness guard is the whole of this
+    /// promise — and every test that called `scales_out()` had first built a network that violates
+    /// something, which is exactly the case the guard does not cover. Asked of a network that
+    /// fits, the unguarded form answers "buy more chips", which is advice to spend money on a
+    /// machine that is already big enough, given about a network that already maps.
+    #[test]
+    fn a_network_that_violates_nothing_does_not_advise_buying_more_chips() {
+        let net = uniform_net(100, 5, 1);
+
+        let passes = fits(&net, &XYLO_AUDIO_2);
+        assert_eq!(passes.verdict, Some(true));
+        assert!(passes.binds.is_empty());
+        assert!(passes.binding().is_none());
+        assert!(!passes.scales_out(), "nothing binds, so nothing is relieved: {passes}");
+
+        // And the honest no-verdict case, where nothing was checkable in the first place.
+        let unknowable = fits(&net, &INNATERA_T1);
+        assert_eq!(unknowable.verdict, None);
+        assert!(unknowable.binds.is_empty());
+        assert!(
+            !unknowable.scales_out(),
+            "a part with no public limits does not get a purchasing recommendation: {unknowable}"
+        );
+
+        // Asked of a Fit built by hand, since Fit's fields are pub and a caller can make one: an
+        // empty binds list is false and one relievable bind in the same record is true, so what
+        // the guard reads is the emptiness and not some property of the method.
+        let empty = Fit {
+            part: "fixture",
+            verdict: Some(true),
+            binds: Vec::new(),
+            headroom: Vec::new(),
+            unchecked: Vec::new(),
+            cores: None,
+            chips_lower_bound: None,
+        };
+        assert!(!empty.scales_out());
+        let one = Fit { binds: vec![Bind::Neurons { needed: 2, cap: 1 }], ..empty.clone() };
+        assert!(one.scales_out(), "one relievable bind IS what more chips fix");
+    }
+
+    /// First-fit-**decreasing**, and the direction is load-bearing.
+    ///
+    /// ⛔ `the_greedy_packing_never_beats_the_lower_bound` asserts `greedy >= lower_bound` always
+    /// and `greedy == lower_bound` wherever `exact` holds — and `exact` is precisely the condition
+    /// under which any `neurons_per_core` neurons fit one core together, so under it EVERY order
+    /// attains the bound. Both assertions therefore hold for an ascending sort, and twelve seeds
+    /// of random irregular networks never happened to build one where the two orders differ.
+    ///
+    /// This one differs by construction. Six in-degrees — 4, 4, 3, 3, 2, 2 — into cores of six
+    /// synapses: descending packs 4+2, 4+2 and 3+3 into three cores, which is the bound, while
+    /// ascending fills its first core with 2+2 and its second with 3+3 and then has nowhere to put
+    /// either 4, spending four cores on eighteen synapses that need three.
+    #[test]
+    fn first_fit_decreasing_packs_the_largest_in_degrees_first() {
+        const WHY: &str = "A fixture figure, chosen so that the two packing orders differ.";
+        let mut part = bare_part("Packing order");
+        part.neurons_per_core = Spec::known(6, WHY, Evidence::Measured);
+        part.synapses_per_core = Spec::known(6, WHY, Evidence::Measured);
+        part.cores_per_chip = Spec::known(8, WHY, Evidence::Measured);
+
+        let degrees = [4usize, 4, 3, 3, 2, 2];
+        let mut b = NetBuilder::new(degrees.len());
+        for (post, &d) in degrees.iter().enumerate() {
+            for pre in 0..d {
+                b.connect(pre as u32, post as u32, 1e-3, 1).expect("in range");
+            }
+        }
+        let net = b.build();
+        assert_eq!(net.in_degrees(), degrees.to_vec(), "the fixture's shape is the whole point");
+        assert_eq!(net.n_syn, 18);
+
+        let c = core_count(&net, &part).expect("the fixture states both capacities");
+        assert!(!c.exact, "4 * 6 > 6, so the neuron bound is not provably tight here");
+        assert_eq!(c.by_neurons, 1, "six neurons fit one core's neuron cap");
+        assert_eq!(c.by_synapses, Some(3), "eighteen synapses at six per core");
+        assert_eq!(c.lower_bound, 3);
+        assert_eq!(
+            c.greedy,
+            Some(3),
+            "first-fit-DECREASING attains the bound here; ascending needs a fourth core"
+        );
+        // The neuron cap is not what separates the two orders: no core in either packing holds
+        // more than three of the six neurons, so this is the synapse cap and the order alone.
+        assert!(c.greedy.expect("a packing exists") <= degrees.len());
+    }
+
+    /// Quantising an empty slice is refused, in both rounding modes.
+    ///
+    /// ⛔ [`HardwareError::NoWeights`] was raised only through `max_abs_of`, on the
+    /// [`Quantiser::from_weights`] path, so every test that saw it had already gone looking for a
+    /// scale in the weights. A quantiser built by [`Quantiser::symmetric`] carries a scale of its
+    /// own and can be handed `&[]` directly — and without the guard the accumulation loop never
+    /// runs, `sum_error / 0.0` and `(sum_sq / 0.0).sqrt()` are both `NaN`, and the call succeeds
+    /// with a bias and an RMS error of `NaN` beside a `max_abs_error` of 0 and no codes. This
+    /// implementation measures exactly that when the guard is removed: `mean_error` and
+    /// `rms_error` come back `NaN` and `clipped` comes back 0, which reads as a flawless round
+    /// trip of nothing.
+    #[test]
+    fn quantising_an_empty_slice_is_refused_rather_than_answered_with_a_nan_round_trip() {
+        let q = Quantiser::symmetric(8, 1.0).expect("a usable scale");
+        assert_eq!(q.quantise_nearest(&[]), Err(HardwareError::NoWeights));
+        let mut rng = Rng::new(7);
+        assert_eq!(q.quantise_stochastic(&[], &mut rng), Err(HardwareError::NoWeights));
+
+        // The same refusal on the scale-finding path, so the two guards are reached by different
+        // callers and neither is a duplicate of the other.
+        assert_eq!(Quantiser::from_weights(8, &[]), Err(HardwareError::NoWeights));
+
+        // One weight is enough to succeed, so what is refused above is the emptiness and not the
+        // call — and the statistics it reports are finite numbers rather than NaN.
+        let one = q.quantise_nearest(&[0.5]).expect("one weight is quantisable");
+        assert_eq!(one.codes.len(), 1);
+        assert!(one.mean_error.is_finite(), "mean_error {}", one.mean_error);
+        assert!(one.rms_error.is_finite(), "rms_error {}", one.rms_error);
+        assert_eq!(one.clipped, 0);
+    }
 }

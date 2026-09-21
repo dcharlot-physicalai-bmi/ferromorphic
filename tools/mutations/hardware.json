@@ -1,0 +1,706 @@
+[
+ {
+  "label": "a located figure is graded as if nothing was found",
+  "old": "        Self { value: Some(value), source, evidence }",
+  "new": "        Self { value: Some(value), source, evidence: Evidence::Unstated }"
+ },
+ {
+  "label": "a spec reports itself known exactly when it is empty",
+  "old": "        self.value.is_some()",
+  "new": "        self.value.is_none()"
+ },
+ {
+  "label": "the delay range excludes its own longest deliverable delay",
+  "old": "        (self.min_ticks..=self.max_ticks).contains(&ticks)",
+  "new": "        (self.min_ticks..self.max_ticks).contains(&ticks)"
+ },
+ {
+  "label": "the chip total loses to the product of two ceilings",
+  "old": "        if let Some(total) = self.neurons_per_chip_stated.value {\n            return Some(total);\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "neurons per chip adds the two per-chip figures instead of multiplying them",
+  "old": "        let per_core = u64::from(self.neurons_per_core.value?);\n        let cores = u64::from(self.cores_per_chip.value?);\n        per_core.checked_mul(cores)",
+  "new": "        let per_core = u64::from(self.neurons_per_core.value?);\n        let cores = u64::from(self.cores_per_chip.value?);\n        per_core.checked_add(cores)"
+ },
+ {
+  "label": "synapses per chip multiplies the neuron count by the core count",
+  "old": "        let per_core = self.synapses_per_core.value?;",
+  "new": "        let per_core = u64::from(self.neurons_per_core.value?);"
+ },
+ {
+  "label": "the weakest grade starts at the weakest grade there is",
+  "old": "        let mut worst = Evidence::Metered;",
+  "new": "        let mut worst = Evidence::Unstated;"
+ },
+ {
+  "label": "the record carries its strongest grade rather than its weakest",
+  "old": "            if g < worst {",
+  "new": "            if g > worst {"
+ },
+ {
+  "label": "the weakest grade cannot see an unstated process node",
+  "old": "            self.process.evidence,\n            self.neurons_per_chip_stated.evidence,\n        ];",
+  "new": "            self.neurons_per_chip_stated.evidence,\n        ];"
+ },
+ {
+  "label": "the completeness count credits every part with a process node",
+  "old": "            + usize::from(self.process.is_known())",
+  "new": "            + usize::from(true)"
+ },
+ {
+  "label": "the table lists TrueNorth twice and drops BrainScaleS-2",
+  "old": "    BRAINSCALES_2,\n    XYLO_AUDIO_2,",
+  "new": "    TRUENORTH,\n    XYLO_AUDIO_2,"
+ },
+ {
+  "label": "an empty chip total stops saying what was looked for",
+  "old": "    \"Not separately published; the published quantities for this part are per-core. \\",
+  "new": "    \"The chip total for this part. \\"
+ },
+ {
+  "label": "the part lookup matches any name the record's own name prefixes",
+  "old": "    PARTS.iter().find(|p| p.name == name)",
+  "new": "    PARTS.iter().find(|p| name.starts_with(p.name))"
+ },
+ {
+  "label": "Loihi's neurons per core are transcribed as 2,048",
+  "old": "        1024,\n        \"Davies et al., IEEE Micro 38(1), 2018: up to 1,024 neurons",
+  "new": "        2048,\n        \"Davies et al., IEEE Micro 38(1), 2018: up to 1,024 neurons"
+ },
+ {
+  "label": "Loihi's per-core synapse store is rounded to a decimal million",
+  "old": "        1_048_576,\n        \"DERIVED by this review: 128 KB of synaptic SRAM",
+  "new": "        1_000_000,\n        \"DERIVED by this review: 128 KB of synaptic SRAM"
+ },
+ {
+  "label": "Loihi's weight precision is transcribed as 8 bits",
+  "old": "        9,\n        \"Davies et al., 2018: weight precision configurable from 1 to 9 bits",
+  "new": "        8,\n        \"Davies et al., 2018: weight precision configurable from 1 to 9 bits"
+ },
+ {
+  "label": "Loihi is given a fan-in cap the shared synapse memory does not have",
+  "old": "    max_fan_in: Spec::unlocated(\n        \"This review did not locate a published per-neuron fan-in cap for Loihi, and suspects \\\n         there is not one to locate: synapses live in memory shared across a core's neurons, so \\\n         fan-in trades against neuron count instead of having its own limit. Treat the core's \\\n         synapse budget as the binding constraint.\",\n    ),",
+  "new": "    max_fan_in: Spec::known(\n        1024,\n        \"This review did not locate a published per-neuron fan-in cap for Loihi, and suspects \\\n         there is not one to locate: synapses live in memory shared across a core's neurons, so \\\n         fan-in trades against neuron count instead of having its own limit. Treat the core's \\\n         synapse budget as the binding constraint.\",\n        Evidence::Measured,\n    ),"
+ },
+ {
+  "label": "Loihi's note stops saying its headline energy is pre-silicon",
+  "old": "    note: \"The part the field benchmarks against, and the part whose headline energy figure is a \\\n           pre-silicon simulation.",
+  "new": "    note: \"The part the field benchmarks against, and the part whose headline energy figure is a \\\n           circuit simulation."
+ },
+ {
+  "label": "Loihi 2's neurons per core are rounded to 8,000",
+  "old": "        8192,\n        \"DERIVED by this review: Intel's vendor brief",
+  "new": "        8000,\n        \"DERIVED by this review: Intel's vendor brief"
+ },
+ {
+  "label": "Loihi 2's per-core synapse figure loses a factor of ten",
+  "old": "        937_500,",
+  "new": "        93_750,"
+ },
+ {
+  "label": "Loihi 2's 32-bit graded-spike payload is recorded as a weight width",
+  "old": "    weight_bits: Spec::unlocated(\n        \"This review did not locate a stated weight bit-width for Loihi 2 in any document it read. \\\n         Loihi 2's graded spike carries a 32-bit payload; that is a MESSAGE width, not a weight \\\n         width, and this field is left empty rather than filled with it.\",\n    ),",
+  "new": "    weight_bits: Spec::known(\n        32,\n        \"This review did not locate a stated weight bit-width for Loihi 2 in any document it read. \\\n         Loihi 2's graded spike carries a 32-bit payload; that is a MESSAGE width, not a weight \\\n         width, and this field is left empty rather than filled with it.\",\n        Evidence::Measured,\n    ),"
+ },
+ {
+  "label": "TrueNorth's neurons per core are transcribed as 128",
+  "old": "        256,\n        \"Merolla et al., Science 345(6197), 2014: 256 neurons per neurosynaptic core.\",",
+  "new": "        128,\n        \"Merolla et al., Science 345(6197), 2014: 256 neurons per neurosynaptic core.\","
+ },
+ {
+  "label": "TrueNorth's crossbar is recorded as 256 by 128",
+  "old": "        65536,\n        \"Merolla et al., Science 345(6197), 2014: a full 256x256 binary crossbar",
+  "new": "        32768,\n        \"Merolla et al., Science 345(6197), 2014: a full 256x256 binary crossbar"
+ },
+ {
+  "label": "TrueNorth's crossbar column is recorded as 512 rows",
+  "old": "        256,\n        \"STRUCTURAL: one column of the core's 256-row crossbar.",
+  "new": "        512,\n        \"STRUCTURAL: one column of the core's 256-row crossbar."
+ },
+ {
+  "label": "TrueNorth's one-bit crossbar is recorded as the four magnitudes it indirects to",
+  "old": "        1,\n        \"The crossbar stores ONE BIT per synapse:",
+  "new": "        4,\n        \"The crossbar stores ONE BIT per synapse:"
+ },
+ {
+  "label": "the record says the paper prints 268 million",
+  "old": "         input axons by 256 neurons. The paper's abstract reports 256 MILLION configurable \\",
+  "new": "         input axons by 256 neurons. The paper's abstract reports 268 MILLION configurable \\"
+ },
+ {
+  "label": "the record claims the paper prints this review's arithmetic",
+  "old": "         cores x 65,536. The decimal rendering 268 M is this review's arithmetic and is NOT a \\\n         figure the paper prints;",
+  "new": "         cores x 65,536. The decimal rendering 268 M is this review's arithmetic and is the \\\n         figure the paper prints;"
+ },
+ {
+  "label": "TrueNorth's publication year is graded as an instrument reading",
+  "old": "    year: Spec::known(2014, \"Science publication year for the fabricated 28 nm part.\", Evidence::Measured),",
+  "new": "    year: Spec::known(2014, \"Science publication year for the fabricated 28 nm part.\", Evidence::Metered),"
+ },
+ {
+  "label": "NorthPole's empty delay field says not located rather than not applicable",
+  "old": "    delay_ticks: Spec::unlocated(\"NOT APPLICABLE: there is no spike and therefore no delay.\"),",
+  "new": "    delay_ticks: Spec::unlocated(\"This review did not locate a delay range for NorthPole.\"),"
+ },
+ {
+  "label": "Akida's headline device total gains a factor of ten",
+  "old": "        1_200_000,",
+  "new": "        12_000_000,"
+ },
+ {
+  "label": "Akida's model-dependent capacity claim is graded as a vendor measurement",
+  "old": "         recorded here rather than divided into a per-core figure.\",\n        Evidence::Projected,",
+  "new": "         recorded here rather than divided into a per-core figure.\",\n        Evidence::Measured,"
+ },
+ {
+  "label": "AKD1500's inferred weight width is graded as arithmetic",
+  "old": "         depends on the parts of AKD1000 this device drops, including its embedded host processor.\",\n        Evidence::Projected,",
+  "new": "         depends on the parts of AKD1000 this device drops, including its embedded host processor.\",\n        Evidence::Derived,"
+ },
+ {
+  "label": "AKD1500 carries AKD1000's on-chip learning across on the strength of shared IP",
+  "old": "    on_chip_learning: Spec::unlocated(\n        \"This review did not locate a statement for AKD1500 specifically, and does not carry \\\n         AKD1000's across on the strength of shared IP.\",\n    ),",
+  "new": "    on_chip_learning: Spec::known(\n        true,\n        \"This review did not locate a statement for AKD1500 specifically, and does not carry \\\n         AKD1000's across on the strength of shared IP.\",\n        Evidence::Projected,\n    ),"
+ },
+ {
+  "label": "SpiNNaker's 1 ms neuron budget goes back into the capacity field",
+  "old": "    neurons_per_core: Spec::unlocated(\n        \"There is NO structural per-core neuron cap, and this empty field is the finding rather \\\n         than a gap. The figure everyone quotes - the design target of ~1,000 neurons per core at \\\n         ~1,000 inputs each in biological real time with a 1 ms timestep, Furber et al., Proc. \\\n         IEEE 102(5), 2014 - is a THROUGHPUT BUDGET and not a capacity: the part accepts more \\\n         neurons and misses its deadline instead of refusing. This field is the wrong SHAPE for \\\n         that number, because Part::neurons_per_chip would multiply it by the core count and \\\n         fits() would then report headroom against a rate.\",\n    ),",
+  "new": "    neurons_per_core: Spec::known(\n        1000,\n        \"There is NO structural per-core neuron cap, and this empty field is the finding rather \\\n         than a gap. The figure everyone quotes - the design target of ~1,000 neurons per core at \\\n         ~1,000 inputs each in biological real time with a 1 ms timestep, Furber et al., Proc. \\\n         IEEE 102(5), 2014 - is a THROUGHPUT BUDGET and not a capacity: the part accepts more \\\n         neurons and misses its deadline instead of refusing. This field is the wrong SHAPE for \\\n         that number, because Part::neurons_per_chip would multiply it by the core count and \\\n         fits() would then report headroom against a rate.\",\n        Evidence::Measured,\n    ),"
+ },
+ {
+  "label": "SpiNNaker's 1 ms synapse budget goes back into the capacity field",
+  "old": "    synapses_per_core: Spec::unlocated(\n        \"There is NO structural per-core synapse capacity in the sense this field means. The 10^6 \\\n         this review previously recorded here is 1,000 neurons x 1,000 inputs - the same 1 ms \\\n         throughput budget seen from the synapse side, a rate rather than a store. The hard \\\n         resources are the chip's 128 MB of die-stacked SDRAM holding synapse rows and each core's \\\n         96 KB of tightly-coupled memory, and this review did not locate a synapses-per-core \\\n         figure derived from those rather than from the deadline. The field is the wrong SHAPE for \\\n         a budget: core_count() would pack against it and fits() would report headroom.\",\n    ),",
+  "new": "    synapses_per_core: Spec::known(\n        1_000_000,\n        \"There is NO structural per-core synapse capacity in the sense this field means. The 10^6 \\\n         this review previously recorded here is 1,000 neurons x 1,000 inputs - the same 1 ms \\\n         throughput budget seen from the synapse side, a rate rather than a store. The hard \\\n         resources are the chip's 128 MB of die-stacked SDRAM holding synapse rows and each core's \\\n         96 KB of tightly-coupled memory, and this review did not locate a synapses-per-core \\\n         figure derived from those rather than from the deadline. The field is the wrong SHAPE for \\\n         a budget: core_count() would pack against it and fits() would report headroom.\",\n        Evidence::Measured,\n    ),"
+ },
+ {
+  "label": "SpiNNaker's software weight format is recorded as the ARM word width",
+  "old": "        16,\n        \"Located in the documentation of sPyNNaker",
+  "new": "        32,\n        \"Located in the documentation of sPyNNaker"
+ },
+ {
+  "label": "SpiNNaker delivers same-tick spikes after all",
+  "old": "        DelayRange { min_ticks: 1, max_ticks: 16 },",
+  "new": "        DelayRange { min_ticks: 0, max_ticks: 16 },"
+ },
+ {
+  "label": "SpiNNaker's delay ceiling is the 62 ticks reported for another part's SDK",
+  "old": "        DelayRange { min_ticks: 1, max_ticks: 16 },",
+  "new": "        DelayRange { min_ticks: 1, max_ticks: 62 },"
+ },
+ {
+  "label": "Xylo's neuron count gains a factor of ten",
+  "old": "        1000,\n        \"SynSense Xylo documentation: up to 1,000 LIF neurons",
+  "new": "        10000,\n        \"SynSense Xylo documentation: up to 1,000 LIF neurons"
+ },
+ {
+  "label": "Xylo's synapse count loses a factor of ten",
+  "old": "        64000,",
+  "new": "        6400,"
+ },
+ {
+  "label": "Xylo's mean fan-in of 64 is recorded in the maximum's field",
+  "old": "    max_fan_in: Spec::unlocated(\n        \"This review did not locate a per-neuron fan-in cap. 64,000/1,000 = 64 is a MEAN, not a \\\n         maximum, and a mean in a maximum's field would let fits() pass a network it should refuse.\",\n    ),",
+  "new": "    max_fan_in: Spec::known(\n        64,\n        \"This review did not locate a per-neuron fan-in cap. 64,000/1,000 = 64 is a MEAN, not a \\\n         maximum, and a mean in a maximum's field would let fits() pass a network it should refuse.\",\n        Evidence::Derived,\n    ),"
+ },
+ {
+  "label": "Speck's nine convolutional cores are recorded as sixteen",
+  "old": "        9,\n        \"SynSense Speck material: nine event-driven convolutional SNN cores",
+  "new": "        16,\n        \"SynSense Speck material: nine event-driven convolutional SNN cores"
+ },
+ {
+  "label": "ODIN's neuron count is transcribed as 128",
+  "old": "        256,\n        \"In the paper's title: 256 neurons.",
+  "new": "        128,\n        \"In the paper's title: 256 neurons."
+ },
+ {
+  "label": "ODIN's crossbar column is recorded as DYNAP-SE's 64",
+  "old": "        256,\n        \"STRUCTURAL: one column of the 256x256 crossbar.",
+  "new": "        64,\n        \"STRUCTURAL: one column of the 256x256 crossbar."
+ },
+ {
+  "label": "ODIN's note stops saying its silicon energy is not transcribed here",
+  "old": "    note: \"Reports 12.7 pJ per synaptic operation at 0.55 V, MEASURED on fabricated silicon. This \\\n           module deliberately does not transcribe that into a Prices entry;",
+  "new": "    note: \"Reports 12.7 pJ per synaptic operation at 0.55 V, MEASURED on fabricated silicon. This \\\n           module deliberately leaves that out of a Prices entry;"
+ },
+ {
+  "label": "DYNAP-SE's neurons per core are transcribed as 512",
+  "old": "        256,\n        \"Moradi et al., IEEE TBioCAS 12(1), 2018: 256 analogue",
+  "new": "        512,\n        \"Moradi et al., IEEE TBioCAS 12(1), 2018: 256 analogue"
+ },
+ {
+  "label": "DYNAP-SE's core count is transcribed as eight",
+  "old": "        4,\n        \"Moradi et al., 2018: four cores per chip,",
+  "new": "        8,\n        \"Moradi et al., 2018: four cores per chip,"
+ },
+ {
+  "label": "DYNAP-SE's derived synapse store is TrueNorth's crossbar instead",
+  "old": "        16384,",
+  "new": "        65536,"
+ },
+ {
+  "label": "DYNAP-SE's chip total is transcribed as 2,048",
+  "old": "        1024,\n        \"Moradi et al., 2018 states 1,024 neurons per chip",
+  "new": "        2048,\n        \"Moradi et al., 2018 states 1,024 neurons per chip"
+ },
+ {
+  "label": "Darwin's virtual neuron count is halved",
+  "old": "        2048,\n        \"Shen et al., 2016: up to 2,048 neurons,",
+  "new": "        1024,\n        \"Shen et al., 2016: up to 2,048 neurons,"
+ },
+ {
+  "label": "Darwin's all-to-all synapse count is rounded to four million",
+  "old": "        4_194_304,",
+  "new": "        4_000_000,"
+ },
+ {
+  "label": "Darwin3's chip total loses a factor of ten",
+  "old": "        2_350_000,",
+  "new": "        235_000,"
+ },
+ {
+  "label": "BrainScaleS-2's AdEx neuron count is halved",
+  "old": "        512,\n        \"Pehle et al., Front. Neurosci. 16:795876, 2022: 512 adaptive-exponential",
+  "new": "        256,\n        \"Pehle et al., Front. Neurosci. 16:795876, 2022: 512 adaptive-exponential"
+ },
+ {
+  "label": "BrainScaleS-2's synapse rows per neuron are transcribed as 512",
+  "old": "        256,\n        \"DERIVED by this review: 256 synapse rows per neuron column",
+  "new": "        512,\n        \"DERIVED by this review: 256 synapse rows per neuron column"
+ },
+ {
+  "label": "BrainScaleS-2's chip total is the composed multi-chip figure",
+  "old": "        512,\n        \"The single-chip system carries 512 neurons;",
+  "new": "        1024,\n        \"The single-chip system carries 512 neurons;"
+ },
+ {
+  "label": "BrainScaleS-2's schema choice of one core is graded as a located figure",
+  "old": "         which is why that test excludes this record from its independent count.\",\n        Evidence::Projected,",
+  "new": "         which is why that test excludes this record from its independent count.\",\n        Evidence::Measured,"
+ },
+ {
+  "label": "Innatera's record invents a neuron count from the press release",
+  "old": "    neurons_per_core: Spec::unlocated(\n        \"This review did not locate a neuron count for the T1 in any document it read.\",\n    ),",
+  "new": "    neurons_per_core: Spec::known(\n        1000,\n        \"This review did not locate a neuron count for the T1 in any document it read.\",\n        Evidence::Projected,\n    ),"
+ },
+ {
+  "label": "the fan-in overflow is the cap minus the in-degree",
+  "old": "            Self::FanIn { fan_in, cap, .. } => fan_in.saturating_sub(*cap),",
+  "new": "            Self::FanIn { fan_in, cap, .. } => cap.saturating_sub(*fan_in),"
+ },
+ {
+  "label": "a delay past the ceiling reports the ceiling minus the delay",
+  "old": "            Self::DelayTooLong { delay, cap, .. } => u64::from(delay.saturating_sub(*cap)),",
+  "new": "            Self::DelayTooLong { delay, cap, .. } => u64::from(cap.saturating_sub(*delay)),"
+ },
+ {
+  "label": "a delay below the floor reports the delay minus the floor",
+  "old": "            Self::DelayTooShort { delay, floor, .. } => u64::from(floor.saturating_sub(*delay)),",
+  "new": "            Self::DelayTooShort { delay, floor, .. } => u64::from(delay.saturating_sub(*floor)),"
+ },
+ {
+  "label": "a capacity overflow reports the cap minus the requirement",
+  "old": "                needed.saturating_sub(*cap)",
+  "new": "                cap.saturating_sub(*needed)"
+ },
+ {
+  "label": "a delay ceiling is reported as relieved by more chips",
+  "old": "            Self::FanIn { .. } | Self::DelayTooLong { .. } | Self::DelayTooShort { .. } => false,\n            Self::Neurons { .. } | Self::Synapses { .. } | Self::Cores { .. } => true,",
+  "new": "            Self::FanIn { .. } | Self::DelayTooShort { .. } => false,\n            Self::DelayTooLong { .. } | Self::Neurons { .. } | Self::Synapses { .. } | Self::Cores { .. } => true,"
+ },
+ {
+  "label": "the fan-in wall is the least severe constraint and the core count the most",
+  "old": "            Self::FanIn { .. } => 0,\n            Self::DelayTooShort { .. } => 1,\n            Self::DelayTooLong { .. } => 2,",
+  "new": "            Self::FanIn { .. } => 5,\n            Self::DelayTooShort { .. } => 1,\n            Self::DelayTooLong { .. } => 2,"
+ },
+ {
+  "label": "the formatter prints no overflow at all",
+  "old": "        let over = self.overflow();",
+  "new": "        let over = 0u64;"
+ },
+ {
+  "label": "a cap of zero is divided by anyway",
+  "old": "        if self.cap == 0 {\n            return None;\n        }\n        Some(self.used as f64 / self.cap as f64)",
+  "new": "        Some(self.used as f64 / self.cap as f64)"
+ },
+ {
+  "label": "utilisation is the cap over the use",
+  "old": "        Some(self.used as f64 / self.cap as f64)",
+  "new": "        Some(self.cap as f64 / self.used as f64)"
+ },
+ {
+  "label": "the spare is the use minus the cap",
+  "old": "        self.cap.saturating_sub(self.used)",
+  "new": "        self.used.saturating_sub(self.cap)"
+ },
+ {
+  "label": "a chip with no cores is divided by anyway",
+  "old": "        if cores_per_chip == 0 {\n            return None;\n        }\n        Some((self.lower_bound as u64).div_ceil(u64::from(cores_per_chip)))",
+  "new": "        Some((self.lower_bound as u64).div_ceil(u64::from(cores_per_chip)))"
+ },
+ {
+  "label": "the chip count rounds down instead of up",
+  "old": "        Some((self.lower_bound as u64).div_ceil(u64::from(cores_per_chip)))",
+  "new": "        Some((self.lower_bound as u64) / u64::from(cores_per_chip))"
+ },
+ {
+  "label": "the binding constraint is the least severe one",
+  "old": "        self.binds.first()",
+  "new": "        self.binds.last()"
+ },
+ {
+  "label": "a network scales out when any one of its violations would",
+  "old": "        !self.binds.is_empty() && self.binds.iter().all(Bind::relieved_by_more_chips)",
+  "new": "        !self.binds.is_empty() && self.binds.iter().any(Bind::relieved_by_more_chips)"
+ },
+ {
+  "label": "a network that violates nothing reports buy more chips",
+  "old": "        !self.binds.is_empty() && self.binds.iter().all(Bind::relieved_by_more_chips)",
+  "new": "        self.binds.iter().all(Bind::relieved_by_more_chips)"
+ },
+ {
+  "label": "a neuron exactly at the fan-in cap is refused",
+  "old": "        if d > cap_u {",
+  "new": "        if d >= cap_u {"
+ },
+ {
+  "label": "a neuron one input past the wall is accepted",
+  "old": "        if d > cap_u {",
+  "new": "        if d > cap_u + 1 {"
+ },
+ {
+  "label": "the fan-in offender reported is the first one scanned, not the worst",
+  "old": "                if worst.is_none_or(|(_, wd)| d > wd) {",
+  "new": "                if worst.is_none() {"
+ },
+ {
+  "label": "a tie for the worst fan-in is reported at the highest index",
+  "old": "                if worst.is_none_or(|(_, wd)| d > wd) {",
+  "new": "                if worst.is_none_or(|(_, wd)| d >= wd) {"
+ },
+ {
+  "label": "the offender count is one however many neurons exceed the cap",
+  "old": "                offenders += 1;",
+  "new": "                offenders = 1;"
+ },
+ {
+  "label": "a violated fan-in cap is reported as headroom",
+  "old": "            Some((neuron, fan_in)) => binds.push(Bind::FanIn { neuron, fan_in, cap: cap_u, offenders }),",
+  "new": "            Some((neuron, fan_in)) => headroom.push(Headroom {\n                constraint: \"maximum fan-in per neuron\",\n                used: u64::from(neuron) + fan_in + offenders as u64,\n                cap: cap_u,\n            }),"
+ },
+ {
+  "label": "the fan-in headroom reports no fan-in used at all",
+  "old": "                used: max_deg as u64,",
+  "new": "                used: 0,"
+ },
+ {
+  "label": "an unstated fan-in cap is filed under the wrong constraint name",
+  "old": "        unchecked.push(\"maximum fan-in per neuron\");",
+  "new": "        unchecked.push(\"neurons per chip\");"
+ },
+ {
+  "label": "a delay exactly at the part's ceiling is refused",
+  "old": "                if d > range.max_ticks {",
+  "new": "                if d >= range.max_ticks {"
+ },
+ {
+  "label": "a delay exactly at the part's floor is refused",
+  "old": "                } else if d < range.min_ticks {",
+  "new": "                } else if d <= range.min_ticks {"
+ },
+ {
+  "label": "a same-tick delay is never too short",
+  "old": "                } else if d < range.min_ticks {",
+  "new": "                } else if false {"
+ },
+ {
+  "label": "the delay headroom reports the longest delay as zero",
+  "old": "                max_seen = max_seen.max(d);",
+  "new": "                max_seen = 0;"
+ },
+ {
+  "label": "the delay headroom is reported even when a delay binds",
+  "old": "        if short.is_none() && long.is_none() {",
+  "new": "        if true {"
+ },
+ {
+  "label": "a too-short delay is reported against the part's longest delay",
+  "old": "                floor: range.min_ticks,",
+  "new": "                floor: range.max_ticks,"
+ },
+ {
+  "label": "the too-short offender count stops accumulating",
+  "old": "                    n_short += 1;",
+  "new": "                    n_short = 1;"
+ },
+ {
+  "label": "an unstated delay range leaves only one of its two ends unchecked",
+  "old": "        unchecked.push(\"shortest synaptic delay\");\n        unchecked.push(\"longest synaptic delay\");",
+  "new": "        unchecked.push(\"longest synaptic delay\");"
+ },
+ {
+  "label": "an unstated delay range is filed under a name no Bind returns",
+  "old": "        unchecked.push(\"shortest synaptic delay\");\n        unchecked.push(\"longest synaptic delay\");",
+  "new": "        unchecked.push(\"synaptic delay range\");\n        unchecked.push(\"longest synaptic delay\");"
+ },
+ {
+  "label": "the neuron count checked is the synapse count",
+  "old": "            let needed = net.n as u64;\n            if needed > cap {\n                binds.push(Bind::Neurons { needed, cap });",
+  "new": "            let needed = net.n_syn as u64;\n            if needed > cap {\n                binds.push(Bind::Neurons { needed, cap });"
+ },
+ {
+  "label": "a synapse is counted once for every two stored, as the sibling crate's graph does",
+  "old": "            let needed = net.n_syn as u64;\n            if needed > cap {\n                binds.push(Bind::Synapses { needed, cap });",
+  "new": "            let needed = net.n_syn as u64 / 2;\n            if needed > cap {\n                binds.push(Bind::Synapses { needed, cap });"
+ },
+ {
+  "label": "an unstated neuron capacity is filed under the core count",
+  "old": "        None => unchecked.push(\"neurons per chip\"),",
+  "new": "        None => unchecked.push(\"cores per chip\"),"
+ },
+ {
+  "label": "the chip count is never reported",
+  "old": "            chips_lower_bound = c.chips(per_chip);",
+  "new": "            chips_lower_bound = None;"
+ },
+ {
+  "label": "the binds are left in the order the scan happened to find them",
+  "old": "    binds.sort_by_key(Bind::precedence);",
+  "new": ""
+ },
+ {
+  "label": "a part with nothing checkable passes",
+  "old": "    } else if headroom.is_empty() {\n        None\n    } else {\n        Some(true)\n    };",
+  "new": "    } else {\n        Some(true)\n    };"
+ },
+ {
+  "label": "the verdict is inverted",
+  "old": "    let verdict = if !binds.is_empty() {\n        Some(false)",
+  "new": "    let verdict = if !binds.is_empty() {\n        Some(true)"
+ },
+ {
+  "label": "a core that holds no neurons is packed against anyway",
+  "old": "    if npc == 0 {\n        return None;\n    }",
+  "new": ""
+ },
+ {
+  "label": "a core that stores no synapses is packed against anyway",
+  "old": "    if spc == Some(0) {\n        return None;\n    }",
+  "new": ""
+ },
+ {
+  "label": "the neuron bound rounds down instead of up",
+  "old": "    let by_neurons = net.n.div_ceil(npc_u);",
+  "new": "    let by_neurons = net.n / npc_u;"
+ },
+ {
+  "label": "the synapse bound rounds down instead of up",
+  "old": "    let by_synapses = spc.map(|s| (net.n_syn as u64).div_ceil(s) as usize);",
+  "new": "    let by_synapses = spc.map(|s| ((net.n_syn as u64) / s) as usize);"
+ },
+ {
+  "label": "the synapse bound divides the neuron count by the synapse capacity",
+  "old": "    let by_synapses = spc.map(|s| (net.n_syn as u64).div_ceil(s) as usize);",
+  "new": "    let by_synapses = spc.map(|s| (net.n as u64).div_ceil(s) as usize);"
+ },
+ {
+  "label": "the lower bound is the smaller of the two bounds",
+  "old": "    let lower_bound = by_synapses.map_or(by_neurons, |s| by_neurons.max(s));",
+  "new": "    let lower_bound = by_synapses.map_or(by_neurons, |s| by_neurons.min(s));"
+ },
+ {
+  "label": "the bound is called exact exactly when it is not",
+  "old": "    let exact = spc.is_some_and(|s| max_deg.saturating_mul(u64::from(npc)) <= s);",
+  "new": "    let exact = spc.is_some_and(|s| max_deg.saturating_mul(u64::from(npc)) >= s);"
+ },
+ {
+  "label": "the tightness test adds the worst fan-in to the neuron cap instead of multiplying",
+  "old": "    let exact = spc.is_some_and(|s| max_deg.saturating_mul(u64::from(npc)) <= s);",
+  "new": "    let exact = spc.is_some_and(|s| max_deg.saturating_add(u64::from(npc)) <= s);"
+ },
+ {
+  "label": "the greedy packing ignores the neuron cap",
+  "old": "    let greedy = spc.and_then(|s| first_fit_decreasing(&deg, npc_u, s));",
+  "new": "    let greedy = spc.and_then(|s| first_fit_decreasing(&deg, usize::MAX, s));"
+ },
+ {
+  "label": "first-fit-decreasing packs the smallest in-degrees first",
+  "old": "    order.sort_unstable_by(|&a, &b| deg[b].cmp(&deg[a]).then(a.cmp(&b)));",
+  "new": "    order.sort_unstable_by(|&a, &b| deg[a].cmp(&deg[b]).then(a.cmp(&b)));"
+ },
+ {
+  "label": "a neuron too big for any core is packed into one of its own",
+  "old": "        if d > synapses_per_core {\n            return None;\n        }",
+  "new": ""
+ },
+ {
+  "label": "the packing fills cores past their neuron cap",
+  "old": "            if c.0 < neurons_per_core && c.1 + d <= synapses_per_core {",
+  "new": "            if c.1 + d <= synapses_per_core {"
+ },
+ {
+  "label": "the packing fills cores past their synapse cap",
+  "old": "            if c.0 < neurons_per_core && c.1 + d <= synapses_per_core {",
+  "new": "            if c.0 < neurons_per_core {"
+ },
+ {
+  "label": "a core's neuron count stops accumulating",
+  "old": "                c.0 += 1;",
+  "new": "                c.0 = 1;"
+ },
+ {
+  "label": "a core's synapse total stops accumulating",
+  "old": "                c.1 += d;",
+  "new": "                c.1 = d;"
+ },
+ {
+  "label": "a one-bit signed quantiser is accepted",
+  "old": "        if !(2..=31).contains(&bits) {",
+  "new": "        if !(1..=31).contains(&bits) {"
+ },
+ {
+  "label": "an infinite full scale is not refused at the boundary",
+  "old": "        if !max_abs.is_finite() {",
+  "new": "        if max_abs.is_nan() {"
+ },
+ {
+  "label": "a non-positive full scale is refused by comparison rather than by negation",
+  "old": "        if !(max_abs > 0.0) {",
+  "new": "        if max_abs < 0.0 {",
+  "equivalent": "the NaN this negated form exists to reject is already gone: `!max_abs.is_finite()` returns NonFiniteScale two lines above, so the only inputs reaching here are finite. For a finite max_abs the two forms differ only at max_abs == 0.0 and at -0.0, and both of those fall through to `step = max_abs / f64::from(max_code)`, which is 0.0 or -0.0, and to the guard `!(step > 0.0) || !step.is_finite()`, which returns the same HardwareError::NoScale this branch would have returned. A negative max_abs is refused by both forms, one immediately and one after dividing. No caller can observe which of the two produced the identical error value."
+ },
+ {
+  "label": "the largest code is 2^bits - 1 rather than 2^(bits-1) - 1",
+  "old": "        let max_code = (1i32 << (bits - 1)) - 1;",
+  "new": "        let max_code = (1i32 << bits) - 1;"
+ },
+ {
+  "label": "the step multiplies the full scale by the largest code",
+  "old": "        let step = max_abs / f64::from(max_code);",
+  "new": "        let step = max_abs * f64::from(max_code);"
+ },
+ {
+  "label": "a step that underflows to zero is accepted",
+  "old": "        if !(step > 0.0) || !step.is_finite() {",
+  "new": "        if !step.is_finite() {"
+ },
+ {
+  "label": "the step is checked for positivity and not for finiteness",
+  "old": "        if !(step > 0.0) || !step.is_finite() {",
+  "new": "        if !(step > 0.0) {",
+  "equivalent": "max_abs is already known finite — `!max_abs.is_finite()` returns NonFiniteScale above — and max_code is at least 1, because `bits` is at least 2 and max_code is 2^(bits-1) - 1. A finite numerator divided by a finite divisor of magnitude at least 1 is finite: the quotient's magnitude is at most |max_abs|, so it can neither overflow to an infinity nor be 0/0. There is therefore no input for which `!step.is_finite()` is true and `!(step > 0.0)` is false, and the disjunction's second term can never be the one that fires."
+ },
+ {
+  "label": "a part with no stated weight width gets a default of eight",
+  "old": "            .ok_or(HardwareError::UnstatedSpec { part: part.name, field: \"weight_bits\" })?;",
+  "new": "            .unwrap_or(8);"
+ },
+ {
+  "label": "the scale is the largest signed weight rather than the largest magnitude",
+  "old": "        m = m.max(v.abs());",
+  "new": "        m = m.max(v);"
+ },
+ {
+  "label": "an empty slice is answered with a scale of zero rather than refused",
+  "old": "    if w.is_empty() {\n        return Err(HardwareError::NoWeights);\n    }\n    let mut m = 0.0f64;",
+  "new": "    let mut m = 0.0f64;"
+ },
+ {
+  "label": "a NaN weight passes the scale's finiteness check",
+  "old": "    for (i, &v) in w.iter().enumerate() {\n        if !v.is_finite() {",
+  "new": "    for (i, &v) in w.iter().enumerate() {\n        if v.is_infinite() {"
+ },
+ {
+  "label": "quantising an empty slice reports a NaN round trip rather than refusing",
+  "old": "        if w.is_empty() {\n            return Err(HardwareError::NoWeights);\n        }",
+  "new": ""
+ },
+ {
+  "label": "round-to-nearest truncates towards zero",
+  "old": "                Rounding::Nearest => x.round(),",
+  "new": "                Rounding::Nearest => x.trunc(),"
+ },
+ {
+  "label": "the stochastic fractional part is measured downwards from the level above",
+  "old": "                    let frac = x - floor;",
+  "new": "                    let frac = floor - x;"
+ },
+ {
+  "label": "stochastic rounding rounds up with probability one minus the fractional part",
+  "old": "                    if u < frac { floor + 1.0 } else { floor }",
+  "new": "                    if u > frac { floor + 1.0 } else { floor }"
+ },
+ {
+  "label": "the stochastic draw is compared inclusively",
+  "old": "                    if u < frac { floor + 1.0 } else { floor }",
+  "new": "                    if u <= frac { floor + 1.0 } else { floor }",
+  "equivalent": "the two forms differ only on the event u == frac exactly. `u` is a draw from `Rng::next_f64` and `frac` is `x - x.floor()`, a value fixed by the weight and the step; for the fixtures in this module frac is 0.3, 0.1, 0.25 or 0.5 and u is one of 2^53 equally likely values, so P(u == frac) is 2^-53 per weight, about 1e-16, against the 40,000-weight vectors these tests use — an expected 4e-12 occurrences across the whole suite. The one input on which the difference is systematic is a weight that is an exact multiple of the step, where frac is exactly 0.0 and a u of exactly 0.0 would round up by a whole step; no fixture in this module quantises an exact multiple stochastically, and a rng draw of exactly 0.0 has probability 2^-53 in any case. Neither the codes, the bias, the binomial count nor the RMS closed form can distinguish the two at any tolerance these tests use."
+ },
+ {
+  "label": "the fallback for a missing generator rounds up rather than down",
+  "old": "                    let u = rng.as_deref_mut().map_or(0.0, Rng::next_f64);",
+  "new": "                    let u = rng.as_deref_mut().map_or(1.0, Rng::next_f64);",
+  "equivalent": "the default is reached only when `rng` is None, and `mode` is Stochastic. The only two callers of `quantise_with` are `quantise_nearest`, which passes `(Rounding::Nearest, None)`, and `quantise_stochastic`, which passes `(Rounding::Stochastic, Some(rng))`; `quantise_with` is private, so no third caller can exist outside this file. In the Nearest arm the match never evaluates this line at all. The pair (Stochastic, None) is therefore unconstructible from outside the module, and no test — indeed no code path in the crate — can observe which default this `map_or` carries."
+ },
+ {
+  "label": "a weight past the top code is not clamped to it",
+  "old": "            let clamped = raw.clamp(lo, hi);",
+  "new": "            let clamped = raw;"
+ },
+ {
+  "label": "the round-trip error is measured with the sign inverted",
+  "old": "            let err = f64::from(code) * self.step - v;",
+  "new": "            let err = v - f64::from(code) * self.step;"
+ },
+ {
+  "label": "the largest error ignores every error that rounded down",
+  "old": "            max_abs_error = max_abs_error.max(err.abs());",
+  "new": "            max_abs_error = max_abs_error.max(err);"
+ },
+ {
+  "label": "the bias is the last weight's error rather than the sum",
+  "old": "            sum_error += err;",
+  "new": "            sum_error = err;"
+ },
+ {
+  "label": "the mean square error accumulates the error rather than its square",
+  "old": "            sum_sq += err * err;",
+  "new": "            sum_sq += err;"
+ },
+ {
+  "label": "the bias is the sum of the errors rather than their mean",
+  "old": "            mean_error: sum_error / n,",
+  "new": "            mean_error: sum_error,"
+ },
+ {
+  "label": "the root-mean-square error keeps the square",
+  "old": "            rms_error: (sum_sq / n).sqrt(),",
+  "new": "            rms_error: sum_sq / n,"
+ },
+ {
+  "label": "round-to-nearest is routed through the stochastic branch",
+  "old": "        self.quantise_with(w, Rounding::Nearest, None)",
+  "new": "        self.quantise_with(w, Rounding::Stochastic, None)"
+ },
+ {
+  "label": "the quantiser's half LSB is a whole one",
+  "old": "        self.step / 2.0\n    }\n\n    /// Round `w` to the nearest code, ties away from zero.",
+  "new": "        self.step\n    }\n\n    /// Round `w` to the nearest code, ties away from zero."
+ },
+ {
+  "label": "dequantisation divides by the step instead of multiplying",
+  "old": "        self.codes.iter().map(|&c| f64::from(c) * self.step).collect()",
+  "new": "        self.codes.iter().map(|&c| f64::from(c) / self.step).collect()"
+ },
+ {
+  "label": "the half-LSB certificate ignores clipping",
+  "old": "        self.clipped == 0 && self.max_abs_error <= self.half_lsb() * (1.0 + tol)",
+  "new": "        self.max_abs_error <= self.half_lsb() * (1.0 + tol)"
+ },
+ {
+  "label": "the half-LSB certificate ignores the error it certifies",
+  "old": "        self.clipped == 0 && self.max_abs_error <= self.half_lsb() * (1.0 + tol)",
+  "new": "        self.clipped == 0"
+ }
+]

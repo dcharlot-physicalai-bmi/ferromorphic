@@ -1,0 +1,1508 @@
+[
+ {
+  "label": "a non-finite scalar is accepted at the boundary",
+  "old": "    if x.is_finite() { Ok(x) } else { Err(VisionError::NonFinite { what, value: x }) }",
+  "new": "    let _ = what;\n    Ok(x)"
+ },
+ {
+  "label": "a strictly-positive check accepts zero",
+  "old": "    if x > 0.0 { Ok(x) } else { Err(VisionError::NonPositive { what, value: x }) }",
+  "new": "    if x >= 0.0 { Ok(x) } else { Err(VisionError::NonPositive { what, value: x }) }"
+ },
+ {
+  "label": "a positive quantity is no longer checked for finiteness",
+  "old": "fn positive(x: f64, what: &'static str) -> Result<f64, VisionError> {\n    let x = finite(x, what)?;",
+  "new": "fn positive(x: f64, what: &'static str) -> Result<f64, VisionError> {\n    let x = x;"
+ },
+ {
+  "label": "the neighbourhood bound is the sensor's smaller dimension",
+  "old": "    if r + 1 > usize::from(geom.width.max(geom.height)) {",
+  "new": "    if r + 1 > usize::from(geom.width.min(geom.height)) {"
+ },
+ {
+  "label": "the neighbourhood bound refuses a half-width one short of it",
+  "old": "    if r + 1 > usize::from(geom.width.max(geom.height)) {",
+  "new": "    if r >= usize::from(geom.width.max(geom.height)) {"
+ },
+ {
+  "label": "a neighbourhood wider than the sensor is accepted",
+  "old": "    let r = usize::from(radius);\n    if r + 1 > usize::from(geom.width.max(geom.height)) {",
+  "new": "    let r = usize::from(radius);\n    if false {"
+ },
+ {
+  "label": "a sensor with one zero dimension is accepted",
+  "old": "        if width == 0 || height == 0 {",
+  "new": "        if width == 0 && height == 0 {"
+ },
+ {
+  "label": "the pixel count is the sum of the two dimensions",
+  "old": "        usize::from(self.width) * usize::from(self.height)",
+  "new": "        usize::from(self.width) + usize::from(self.height)"
+ },
+ {
+  "label": "the lattice membership test compares each coordinate against the other dimension",
+  "old": "        x >= 0 && y >= 0 && x < i64::from(self.width) && y < i64::from(self.height)",
+  "new": "        x >= 0 && y >= 0 && x < i64::from(self.height) && y < i64::from(self.width)"
+ },
+ {
+  "label": "a negative coordinate falls on the lattice",
+  "old": "        x >= 0 && y >= 0 && x < i64::from(self.width) && y < i64::from(self.height)",
+  "new": "        x < i64::from(self.width) && y < i64::from(self.height)"
+ },
+ {
+  "label": "the row-major stride is the height rather than the width",
+  "old": "        Some(usize::from(y) * usize::from(self.width) + usize::from(x))",
+  "new": "        Some(usize::from(y) * usize::from(self.height) + usize::from(x))"
+ },
+ {
+  "label": "the index is column-major while every buffer in the module is row-major",
+  "old": "        Some(usize::from(y) * usize::from(self.width) + usize::from(x))",
+  "new": "        Some(usize::from(x) * usize::from(self.height) + usize::from(y))"
+ },
+ {
+  "label": "a coordinate at the sensor's extent is indexed rather than refused",
+  "old": "        if x >= self.width || y >= self.height {\n            return None;\n        }",
+  "new": "        if x > self.width || y > self.height {\n            return None;\n        }"
+ },
+ {
+  "label": "the wire timestamp is read as milliseconds rather than microseconds",
+  "old": "        Self { t_s: e.t as f64 * 1e-6, x: e.x, y: e.y, polarity: e.polarity }",
+  "new": "        Self { t_s: e.t as f64 * 1e-3, x: e.x, y: e.y, polarity: e.polarity }"
+ },
+ {
+  "label": "a negative time is encoded as a wire timestamp",
+  "old": "        if !self.t_s.is_finite() || self.t_s < 0.0 {",
+  "new": "        if !self.t_s.is_finite() {"
+ },
+ {
+  "label": "the conversion back to the wire truncates instead of rounding",
+  "old": "        let us = (self.t_s * 1e6).round();",
+  "new": "        let us = (self.t_s * 1e6).floor();"
+ },
+ {
+  "label": "the conversion back to the wire scales by the wrong power of ten",
+  "old": "        let us = (self.t_s * 1e6).round();",
+  "new": "        let us = (self.t_s * 1e3).round();"
+ },
+ {
+  "label": "a time past u64's range is encoded rather than refused",
+  "old": "        if us > u64::MAX as f64 {\n            return None;\n        }",
+  "new": "        if false {\n            return None;\n        }"
+ },
+ {
+  "label": "the polarity plane convention is inverted",
+  "old": "            match self.polarity {\n                Polarity::Off => 0,\n                Polarity::On => 1,\n            }",
+  "new": "            match self.polarity {\n                Polarity::Off => 1,\n                Polarity::On => 0,\n            }"
+ },
+ {
+  "label": "a collapsed surface still splits its planes by polarity",
+  "old": "        if !split {\n            0\n        } else {",
+  "new": "        if false {\n            0\n        } else {"
+ },
+ {
+  "label": "the ordering check starts from positive infinity so every stream is backwards",
+  "old": "    let mut prev = f64::NEG_INFINITY;\n    for e in events {",
+  "new": "    let mut prev = f64::INFINITY;\n    for e in events {"
+ },
+ {
+  "label": "the ordering check never advances its running time",
+  "old": "            return Err(VisionError::OutOfOrder { t_s: t, now_s: prev });\n        }\n        prev = t;",
+  "new": "            return Err(VisionError::OutOfOrder { t_s: t, now_s: prev });\n        }"
+ },
+ {
+  "label": "a slice of events is required to be strictly increasing rather than non-decreasing",
+  "old": "        if t < prev {\n            return Err(VisionError::OutOfOrder { t_s: t, now_s: prev });",
+  "new": "        if t <= prev {\n            return Err(VisionError::OutOfOrder { t_s: t, now_s: prev });"
+ },
+ {
+  "label": "a negative elapsed time is not clamped, so the surface exceeds its peak",
+  "old": "        let d = if elapsed_s > 0.0 { elapsed_s } else { 0.0 };",
+  "new": "        let d = elapsed_s;"
+ },
+ {
+  "label": "the exponential time surface grows instead of decaying",
+  "old": "            Self::Exponential { tau_s } => (-d / tau_s).exp(),",
+  "new": "            Self::Exponential { tau_s } => (d / tau_s).exp(),"
+ },
+ {
+  "label": "the exponential's elapsed time is multiplied by the time constant instead of divided",
+  "old": "            Self::Exponential { tau_s } => (-d / tau_s).exp(),",
+  "new": "            Self::Exponential { tau_s } => (-d * tau_s).exp(),"
+ },
+ {
+  "label": "the linear ramp multiplies by its window instead of dividing",
+  "old": "                let v = 1.0 - d / window_s;",
+  "new": "                let v = 1.0 - d * window_s;"
+ },
+ {
+  "label": "the linear ramp goes negative past its window instead of cutting off",
+  "old": "                let v = 1.0 - d / window_s;\n                if v > 0.0 { v } else { 0.0 }",
+  "new": "                let v = 1.0 - d / window_s;\n                v"
+ },
+ {
+  "label": "the linear ramp's cut-off is written as a non-strict comparison",
+  "old": "                if v > 0.0 { v } else { 0.0 }",
+  "new": "                if v >= 0.0 { v } else { 0.0 }",
+  "equivalent": "the two forms differ only at `v == 0.0`, and there they return the same number. `v` is `1.0 - d / window_s`; when that is exactly zero the taken branch yields `+0.0` and the else branch yields the literal `0.0`, which is the same bit pattern, so no comparison anywhere in the crate can separate them. For `v < 0.0` both comparisons are false and both return `0.0`; for a `NaN` `v` — unreachable here, since `window_s` is validated positive and finite and `d` is non-negative — `>` and `>=` are both false and both return `0.0`. The mutation is therefore the identity on every input the type admits."
+ },
+ {
+  "label": "the exponential reports twice its time constant as its scale",
+  "old": "            Self::Exponential { tau_s } => tau_s,\n            Self::Linear { window_s } => window_s,",
+  "new": "            Self::Exponential { tau_s } => 2.0 * tau_s,\n            Self::Linear { window_s } => window_s,"
+ },
+ {
+  "label": "the linear decay reports half its window as its scale",
+  "old": "            Self::Exponential { tau_s } => tau_s,\n            Self::Linear { window_s } => window_s,\n        }\n    }",
+  "new": "            Self::Exponential { tau_s } => tau_s,\n            Self::Linear { window_s } => window_s / 2.0,\n        }\n    }"
+ },
+ {
+  "label": "a zero exponential time constant is accepted",
+  "old": "            Self::Exponential { tau_s } => positive(tau_s, \"decay time constant tau\").map(|_| ()),",
+  "new": "            Self::Exponential { tau_s } => finite(tau_s, \"decay time constant tau\").map(|_| ()),"
+ },
+ {
+  "label": "a zero or negative linear window is accepted",
+  "old": "            Self::Linear { window_s } => positive(window_s, \"decay window\").map(|_| ()),",
+  "new": "            Self::Linear { window_s } => finite(window_s, \"decay window\").map(|_| ()),"
+ },
+ {
+  "label": "a split surface allocates one plane instead of two",
+  "old": "        let planes = if split { 2 } else { 1 };",
+  "new": "        let planes = 1;"
+ },
+ {
+  "label": "a pixel that has never fired is born at time zero rather than at minus infinity",
+  "old": "            last: vec![f64::NEG_INFINITY; planes * geom.pixels()],",
+  "new": "            last: vec![0.0; planes * geom.pixels()],"
+ },
+ {
+  "label": "the stream's clock starts at zero rather than before every event",
+  "old": "            last: vec![f64::NEG_INFINITY; planes * geom.pixels()],\n            now_s: f64::NEG_INFINITY,",
+  "new": "            last: vec![f64::NEG_INFINITY; planes * geom.pixels()],\n            now_s: 0.0,"
+ },
+ {
+  "label": "two events at the same instant are refused as out of order",
+  "old": "        if t < self.now_s {\n            return Err(VisionError::OutOfOrder { t_s: t, now_s: self.now_s });",
+  "new": "        if t <= self.now_s {\n            return Err(VisionError::OutOfOrder { t_s: t, now_s: self.now_s });"
+ },
+ {
+  "label": "the surface accepts an event that goes backwards in time",
+  "old": "        if t < self.now_s {\n            return Err(VisionError::OutOfOrder { t_s: t, now_s: self.now_s });\n        }\n        let plane = e.plane(self.split);",
+  "new": "        if false {\n            return Err(VisionError::OutOfOrder { t_s: t, now_s: self.now_s });\n        }\n        let plane = e.plane(self.split);"
+ },
+ {
+  "label": "the surface records the stream's previous time rather than the event's own",
+  "old": "        self.last[plane * self.geom.pixels() + idx] = t;\n        self.now_s = t;",
+  "new": "        self.last[plane * self.geom.pixels() + idx] = self.now_s;\n        self.now_s = t;"
+ },
+ {
+  "label": "the two polarity planes overlap by one pixel instead of tiling",
+  "old": "        self.last[plane * self.geom.pixels() + idx] = t;",
+  "new": "        self.last[plane + idx] = t;"
+ },
+ {
+  "label": "the query's polarity plane is the opposite of the one the event wrote",
+  "old": "            match pol {\n                Polarity::Off => 0,\n                Polarity::On => 1,\n            }",
+  "new": "            match pol {\n                Polarity::Off => 1,\n                Polarity::On => 0,\n            }"
+ },
+ {
+  "label": "a query always reads plane zero however the surface was built",
+  "old": "        let plane = if self.split {\n            match pol {",
+  "new": "        let plane = if false {\n            match pol {"
+ },
+ {
+  "label": "a pixel that has never fired reports a timestamp",
+  "old": "        Ok(if v.is_finite() { Some(v) } else { None })",
+  "new": "        Ok(Some(v))"
+ },
+ {
+  "label": "a pixel that has never fired reads as freshly fired",
+  "old": "            None => Ok(0.0),\n            Some(last) => Ok(self.decay.value(t - last)),",
+  "new": "            None => Ok(1.0),\n            Some(last) => Ok(self.decay.value(t - last)),"
+ },
+ {
+  "label": "the elapsed time is measured backwards",
+  "old": "            Some(last) => Ok(self.decay.value(t - last)),",
+  "new": "            Some(last) => Ok(self.decay.value(last - t)),"
+ },
+ {
+  "label": "a patch has an even side, so it has no centre pixel",
+  "old": "        let side = 2 * radius_within(self.geom, radius)? + 1;",
+  "new": "        let side = 2 * radius_within(self.geom, radius)?;"
+ },
+ {
+  "label": "the patch is written column-major",
+  "old": "                out[((dy + r) as usize) * side + (dx + r) as usize] = v;",
+  "new": "                out[((dx + r) as usize) * side + (dy + r) as usize] = v;"
+ },
+ {
+  "label": "the patch loop stops one row short of its radius",
+  "old": "        for dy in -r..=r {\n            for dx in -r..=r {\n                let px = i64::from(x) + dx;\n                let py = i64::from(y) + dy;\n                if !self.geom.contains(px, py) {",
+  "new": "        for dy in -r..r {\n            for dx in -r..=r {\n                let px = i64::from(x) + dx;\n                let py = i64::from(y) + dy;\n                if !self.geom.contains(px, py) {"
+ },
+ {
+  "label": "a patch at the border reads off the lattice instead of padding with zero",
+  "old": "                if !self.geom.contains(px, py) {\n                    continue;\n                }\n                let v = self.value_at(px as u16, py as u16, pol, t)?;",
+  "new": "                if false {\n                    continue;\n                }\n                let v = self.value_at(px as u16, py as u16, pol, t)?;"
+ },
+ {
+  "label": "the rendered surface transposes its query",
+  "old": "                f.data[idx] = self.value_at(x, y, pol, t)?;",
+  "new": "                f.data[idx] = self.value_at(y, x, pol, t)?;"
+ },
+ {
+  "label": "clearing the surface leaves every pixel reading as fired at time zero",
+  "old": "        self.last.fill(f64::NEG_INFINITY);\n        self.now_s = f64::NEG_INFINITY;",
+  "new": "        self.last.fill(0.0);\n        self.now_s = f64::NEG_INFINITY;"
+ },
+ {
+  "label": "clearing the surface leaves the stream clock where it was",
+  "old": "        self.last.fill(f64::NEG_INFINITY);\n        self.now_s = f64::NEG_INFINITY;\n    }",
+  "new": "        self.last.fill(f64::NEG_INFINITY);\n    }"
+ },
+ {
+  "label": "an all-zero image is born holding ones",
+  "old": "        Self { width: geom.width, height: geom.height, data: vec![0.0; geom.pixels()] }",
+  "new": "        Self { width: geom.width, height: geom.height, data: vec![1.0; geom.pixels()] }"
+ },
+ {
+  "label": "a consistent image reports itself inconsistent",
+  "old": "        self.data.len() == self.geometry().pixels()",
+  "new": "        self.data.len() != self.geometry().pixels()"
+ },
+ {
+  "label": "reading a pixel of a short image panics rather than reporting None",
+  "old": "        self.geometry().index(x, y).and_then(|i| self.data.get(i).copied())",
+  "new": "        self.geometry().index(x, y).map(|i| self.data[i])"
+ },
+ {
+  "label": "the image sum skips its first pixel",
+  "old": "    pub fn sum(&self) -> f64 {\n        self.data.iter().sum()",
+  "new": "    pub fn sum(&self) -> f64 {\n        self.data.iter().skip(1).sum()"
+ },
+ {
+  "label": "the sum of squares is a sum of magnitudes",
+  "old": "        self.data.iter().map(|v| v * v).sum()",
+  "new": "        self.data.iter().map(|v| v.abs()).sum()"
+ },
+ {
+  "label": "an empty image reports a NaN mean rather than None",
+  "old": "        if self.data.is_empty() {\n            return None;\n        }\n        Some(self.sum() / self.data.len() as f64)",
+  "new": "        Some(self.sum() / self.data.len() as f64)"
+ },
+ {
+  "label": "the mean divides by the lattice size rather than by the data it has",
+  "old": "        Some(self.sum() / self.data.len() as f64)",
+  "new": "        Some(self.sum() / self.geometry().pixels() as f64)"
+ },
+ {
+  "label": "the variance is the sample form rather than the population form",
+  "old": "        Some(self.data.iter().map(|v| (v - m) * (v - m)).sum::<f64>() / n)",
+  "new": "        Some(self.data.iter().map(|v| (v - m) * (v - m)).sum::<f64>() / (n - 1.0))"
+ },
+ {
+  "label": "the variance forgets to subtract the mean",
+  "old": "        Some(self.data.iter().map(|v| (v - m) * (v - m)).sum::<f64>() / n)",
+  "new": "        Some(self.data.iter().map(|v| v * v).sum::<f64>() / n)"
+ },
+ {
+  "label": "the largest value reported is the smallest",
+  "old": "        self.data.iter().copied().reduce(f64::max)",
+  "new": "        self.data.iter().copied().reduce(f64::min)"
+ },
+ {
+  "label": "the smallest value reported is the largest",
+  "old": "        self.data.iter().copied().reduce(f64::min)",
+  "new": "        self.data.iter().copied().reduce(f64::max)"
+ },
+ {
+  "label": "the count image records whether a pixel fired rather than how often",
+  "old": "        f.data[geom.require(e.x, e.y)?] += 1.0;",
+  "new": "        f.data[geom.require(e.x, e.y)?] = 1.0;"
+ },
+ {
+  "label": "a non-finite timestamp reaches the count image",
+  "old": "        finite(e.t_s, \"event timestamp\")?;\n        f.data[geom.require(e.x, e.y)?] += 1.0;",
+  "new": "        f.data[geom.require(e.x, e.y)?] += 1.0;"
+ },
+ {
+  "label": "the polarity image sums magnitudes, so On and Off no longer cancel",
+  "old": "        f.data[geom.require(e.x, e.y)?] += e.polarity.sign();",
+  "new": "        f.data[geom.require(e.x, e.y)?] += e.polarity.sign().abs();"
+ },
+ {
+  "label": "the polarity image keeps only the last event at each pixel",
+  "old": "        f.data[geom.require(e.x, e.y)?] += e.polarity.sign();",
+  "new": "        f.data[geom.require(e.x, e.y)?] = e.polarity.sign();"
+ },
+ {
+  "label": "the decayed image weights by time since the reference rather than before it",
+  "old": "        f.data[geom.require(e.x, e.y)?] += e.polarity.sign() * decay.value(t_ref - t);",
+  "new": "        f.data[geom.require(e.x, e.y)?] += e.polarity.sign() * decay.value(t - t_ref);"
+ },
+ {
+  "label": "the decayed image drops the polarity sign",
+  "old": "        f.data[geom.require(e.x, e.y)?] += e.polarity.sign() * decay.value(t_ref - t);",
+  "new": "        f.data[geom.require(e.x, e.y)?] += decay.value(t_ref - t);"
+ },
+ {
+  "label": "the decayed accumulator does not validate its decay constant",
+  "old": "    decay.validate()?;\n    let t_ref = finite(t_ref_s, \"reference time\")?;",
+  "new": "    let t_ref = finite(t_ref_s, \"reference time\")?;"
+ },
+ {
+  "label": "the plane's prediction drops its intercept",
+  "old": "        self.a * x + self.b * y + self.c",
+  "new": "        self.a * x + self.b * y"
+ },
+ {
+  "label": "the plane's prediction applies each gradient to the other coordinate",
+  "old": "        self.a * x + self.b * y + self.c",
+  "new": "        self.a * y + self.b * x + self.c"
+ },
+ {
+  "label": "the residual's sign is inverted",
+  "old": "        t_s - self.predict(x, y)",
+  "new": "        self.predict(x, y) - t_s"
+ },
+ {
+  "label": "the squared gradient is a difference of squares",
+  "old": "        let g2 = self.a * self.a + self.b * self.b;",
+  "new": "        let g2 = self.a * self.a - self.b * self.b;"
+ },
+ {
+  "label": "a flat plane is inverted into an infinite speed instead of being refused",
+  "old": "        if !(g2 > 0.0) || !g2.is_finite() {",
+  "new": "        if g2 < 0.0 {"
+ },
+ {
+  "label": "the flow multiplies by the squared gradient instead of dividing",
+  "old": "        let vx = self.a / g2;\n        let vy = self.b / g2;",
+  "new": "        let vx = self.a * g2;\n        let vy = self.b * g2;"
+ },
+ {
+  "label": "the flow's two components are exchanged",
+  "old": "        let vx = self.a / g2;\n        let vy = self.b / g2;",
+  "new": "        let vx = self.b / g2;\n        let vy = self.a / g2;"
+ },
+ {
+  "label": "the reported speed is the gradient magnitude rather than its reciprocal",
+  "old": "        Ok(Flow { vx, vy, speed: 1.0 / g2.sqrt(), direction_rad: self.b.atan2(self.a) })",
+  "new": "        Ok(Flow { vx, vy, speed: g2.sqrt(), direction_rad: self.b.atan2(self.a) })"
+ },
+ {
+  "label": "the flow direction's two arguments are exchanged",
+  "old": "        Ok(Flow { vx, vy, speed: 1.0 / g2.sqrt(), direction_rad: self.b.atan2(self.a) })",
+  "new": "        Ok(Flow { vx, vy, speed: 1.0 / g2.sqrt(), direction_rad: self.a.atan2(self.b) })"
+ },
+ {
+  "label": "a plane is fitted through two points",
+  "old": "    if points.len() < 3 {",
+  "new": "    if points.len() < 2 {"
+ },
+ {
+  "label": "the mixed second moment is a squared one",
+  "old": "        suv += u * v;",
+  "new": "        suv += u * u;"
+ },
+ {
+  "label": "the x-time moment is taken against y",
+  "old": "        sut += u * w;",
+  "new": "        sut += v * w;"
+ },
+ {
+  "label": "the design determinant adds its off-diagonal term",
+  "old": "    let det = suu * svv - suv * suv;",
+  "new": "    let det = suu * svv + suv * suv;"
+ },
+ {
+  "label": "the collinearity guard compares the determinant against an absolute epsilon",
+  "old": "    if !(suu > 0.0) || !(svv > 0.0) || !(det > 1e-9 * suu * svv) {",
+  "new": "    if !(suu > 0.0) || !(svv > 0.0) || !(det > 1e-9) {"
+ },
+ {
+  "label": "the collinearity guard is loosened to a bare positivity test",
+  "old": "    if !(suu > 0.0) || !(svv > 0.0) || !(det > 1e-9 * suu * svv) {",
+  "new": "    if !(suu > 0.0) || !(svv > 0.0) || !(det > 0.0) {"
+ },
+ {
+  "label": "the collinearity guard is tightened by seven orders of magnitude",
+  "old": "!(det > 1e-9 * suu * svv) {",
+  "new": "!(det > 1e-2 * suu * svv) {"
+ },
+ {
+  "label": "the zero-x-variance half of the collinearity guard is dropped",
+  "old": "    if !(suu > 0.0) || !(svv > 0.0) || !(det > 1e-9 * suu * svv) {",
+  "new": "    if !(svv > 0.0) || !(det > 1e-9 * suu * svv) {",
+  "equivalent": "`suu` is a sum of squares of the centred x-coordinates, each of which passed `finite`, so it is either strictly positive or exactly zero and can be neither negative nor NaN. When it is exactly zero every centred `u` is exactly zero, so `suv = sum(u*v)` is exactly zero too and `det = suu*svv - suv*suv = 0`; the threshold `1e-9 * suu * svv` is then also exactly 0, and `0 > 0` is false, so the third clause refuses precisely the cases the deleted clause did. The mutation removes a test that cannot change any answer, only the number of comparisons."
+ },
+ {
+  "label": "the a-coefficient adds the cross term instead of subtracting it",
+  "old": "    let a = (svv * sut - suv * svt) / det;",
+  "new": "    let a = (svv * sut + suv * svt) / det;"
+ },
+ {
+  "label": "the b-coefficient reads the x-time moment where the y-time one belongs",
+  "old": "    let b = (suu * svt - suv * sut) / det;",
+  "new": "    let b = (suu * sut - suv * svt) / det;"
+ },
+ {
+  "label": "the intercept adds the centring terms it should subtract",
+  "old": "    let c = tm - a * xm - b * ym;",
+  "new": "    let c = tm + a * xm + b * ym;"
+ },
+ {
+  "label": "the fit reports a support of three whatever it was given",
+  "old": "    let fit = PlaneFit { a, b, c, points: points.len(), rms_s: 0.0 };",
+  "new": "    let fit = PlaneFit { a, b, c, points: 3, rms_s: 0.0 };"
+ },
+ {
+  "label": "the residual is summed rather than squared before the root",
+  "old": "    let ss: f64 = points.iter().map(|&(x, y, t)| fit.residual(x, y, t).powi(2)).sum();",
+  "new": "    let ss: f64 = points.iter().map(|&(x, y, t)| fit.residual(x, y, t).abs()).sum();"
+ },
+ {
+  "label": "the reported residual is the mean square rather than its root",
+  "old": "    Ok(PlaneFit { rms_s: (ss / n).sqrt(), ..fit })",
+  "new": "    Ok(PlaneFit { rms_s: ss / n, ..fit })"
+ },
+ {
+  "label": "the residual is normalised by one fewer than the support",
+  "old": "    Ok(PlaneFit { rms_s: (ss / n).sqrt(), ..fit })",
+  "new": "    Ok(PlaneFit { rms_s: (ss / (n - 1.0)).sqrt(), ..fit })"
+ },
+ {
+  "label": "a radius-zero neighbourhood is accepted",
+  "old": "        if radius == 0 {\n            return Err(VisionError::BadParameters {\n                why: \"a radius-0 neighbourhood contains only the event itself\",",
+  "new": "        if false {\n            return Err(VisionError::BadParameters {\n                why: \"a radius-0 neighbourhood contains only the event itself\","
+ },
+ {
+  "label": "a plane is fitted from fewer than three supporting events",
+  "old": "        if min_events < 3 {\n            return Err(VisionError::TooFew {\n                what: \"minimum plane-fit support\",",
+  "new": "        if min_events < 2 {\n            return Err(VisionError::TooFew {\n                what: \"minimum plane-fit support\","
+ },
+ {
+  "label": "a rejection threshold wider than the time window is accepted",
+  "old": "            if r > window_s {",
+  "new": "            if false {"
+ },
+ {
+  "label": "the fitting surface decays exponentially rather than over a hard window",
+  "old": "        let sae = TimeSurface::new(geom, Decay::Linear { window_s }, true)?;",
+  "new": "        let sae = TimeSurface::new(geom, Decay::Exponential { tau_s: window_s }, true)?;"
+ },
+ {
+  "label": "the plane fit's surface collapses the two polarities",
+  "old": "        let sae = TimeSurface::new(geom, Decay::Linear { window_s }, true)?;",
+  "new": "        let sae = TimeSurface::new(geom, Decay::Linear { window_s }, false)?;"
+ },
+ {
+  "label": "the plane fit reads every neighbour off the On plane",
+  "old": "                let Some(t) = self.sae.last_time(px as u16, py as u16, e.polarity)? else {",
+  "new": "                let Some(t) = self.sae.last_time(px as u16, py as u16, Polarity::On)? else {"
+ },
+ {
+  "label": "the fitting window is exclusive at its boundary",
+  "old": "                if e.t_s - t <= self.window_s {",
+  "new": "                if e.t_s - t < self.window_s {"
+ },
+ {
+  "label": "the fitting window is not applied, so a previous pass over the same pixels is fitted too",
+  "old": "                if e.t_s - t <= self.window_s {",
+  "new": "                if true {"
+ },
+ {
+  "label": "the supporting points are pushed with their coordinates exchanged",
+  "old": "                    pts.push((px as f64, py as f64, t));",
+  "new": "                    pts.push((py as f64, px as f64, t));"
+ },
+ {
+  "label": "a support of exactly min_events is reported as too few",
+  "old": "        if pts.len() < self.min_events {\n            return Ok(FlowOutcome::TooFew { found: pts.len() });",
+  "new": "        if pts.len() <= self.min_events {\n            return Ok(FlowOutcome::TooFew { found: pts.len() });"
+ },
+ {
+  "label": "the outlier threshold is exclusive at its boundary",
+  "old": "                pts.iter().copied().filter(|&(x, y, t)| first.residual(x, y, t).abs() <= th).collect();",
+  "new": "                pts.iter().copied().filter(|&(x, y, t)| first.residual(x, y, t).abs() < th).collect();"
+ },
+ {
+  "label": "the outlier pass keeps every point that is early, however early",
+  "old": "                pts.iter().copied().filter(|&(x, y, t)| first.residual(x, y, t).abs() <= th).collect();",
+  "new": "                pts.iter().copied().filter(|&(x, y, t)| first.residual(x, y, t) <= th).collect();"
+ },
+ {
+  "label": "an inlier set of exactly min_events is reported as over-rejected",
+  "old": "            if kept.len() < self.min_events {\n                return Ok(FlowOutcome::RejectedTooMany { inliers: kept.len() });",
+  "new": "            if kept.len() <= self.min_events {\n                return Ok(FlowOutcome::RejectedTooMany { inliers: kept.len() });"
+ },
+ {
+  "label": "the second pass is skipped and the first-pass fit is returned",
+  "old": "            match fit_plane(&kept) {\n                Ok(f) => f,",
+  "new": "            match fit_plane(&pts) {\n                Ok(f) => f,"
+ },
+ {
+  "label": "only a shorter outcome list is refused, so a longer one is zipped away",
+  "old": "    if events.len() != outcomes.len() {",
+  "new": "    if events.len() < outcomes.len() {"
+ },
+ {
+  "label": "an event whose ground truth is undefined is still counted as offered",
+  "old": "        let Some((tvx, tvy)) = truth(*e) else { continue };\n        offered += 1;",
+  "new": "        let (tvx, tvy) = truth(*e).unwrap_or((0.0, 0.0));\n        offered += 1;"
+ },
+ {
+  "label": "an event that did not fit is not counted as offered",
+  "old": "        offered += 1;\n        let FlowOutcome::Fitted(f) = o else { continue };\n        fitted += 1;",
+  "new": "        let FlowOutcome::Fitted(f) = o else { continue };\n        offered += 1;\n        fitted += 1;"
+ },
+ {
+  "label": "the speed error is accumulated as zero",
+  "old": "        se += (f.speed - tspeed).abs();",
+  "new": "        se += 0.0 * (f.speed - tspeed).abs();"
+ },
+ {
+  "label": "the relative speed error is not divided by the true speed",
+  "old": "            max_rel = max_rel.max((f.speed - tspeed).abs() / tspeed);",
+  "new": "            max_rel = max_rel.max((f.speed - tspeed).abs());"
+ },
+ {
+  "label": "a zero-speed ground truth is divided by",
+  "old": "        if tspeed > 0.0 {",
+  "new": "        if tspeed >= 0.0 {"
+ },
+ {
+  "label": "the true direction's two arguments are exchanged",
+  "old": "        let mut d = (f.direction_rad - tvy.atan2(tvx)).abs();",
+  "new": "        let mut d = (f.direction_rad - tvx.atan2(tvy)).abs();"
+ },
+ {
+  "label": "the angular error is not wrapped onto the circle",
+  "old": "        while d > core::f64::consts::PI {\n            d = (2.0 * core::f64::consts::PI - d).abs();\n        }",
+  "new": "        while false {\n            d = (2.0 * core::f64::consts::PI - d).abs();\n        }"
+ },
+ {
+  "label": "the angular error is accumulated as zero",
+  "old": "        ae += d;\n    }",
+  "new": "        ae += 0.0 * d;\n    }"
+ },
+ {
+  "label": "a mean over no fitted event is reported as zero rather than refused",
+  "old": "    if fitted == 0 {\n        return Err(VisionError::TooFew {\n            what: \"fitted events with a defined ground truth\",",
+  "new": "    if false {\n        return Err(VisionError::TooFew {\n            what: \"fitted events with a defined ground truth\","
+ },
+ {
+  "label": "the mean errors are totals, not means",
+  "old": "        mean_speed_err: se / n,\n        mean_angle_err: ae / n,",
+  "new": "        mean_speed_err: se,\n        mean_angle_err: ae,"
+ },
+ {
+  "label": "the two mean errors are reported in each other's field",
+  "old": "        mean_speed_err: se / n,\n        mean_angle_err: ae / n,",
+  "new": "        mean_speed_err: ae / n,\n        mean_angle_err: se / n,"
+ },
+ {
+  "label": "the HOTS learning rate numerator is transcribed as 0.001",
+  "old": "    pub const ALPHA0: f64 = 0.01;",
+  "new": "    pub const ALPHA0: f64 = 0.001;"
+ },
+ {
+  "label": "the HOTS learning-rate decay constant is transcribed as 10000",
+  "old": "    pub const ALPHA_DECAY: f64 = 20000.0;",
+  "new": "    pub const ALPHA_DECAY: f64 = 10000.0;"
+ },
+ {
+  "label": "the learning rate grows with the selection count instead of decaying",
+  "old": "        Self::ALPHA0 / (1.0 + n as f64 / Self::ALPHA_DECAY)",
+  "new": "        Self::ALPHA0 * (1.0 + n as f64 / Self::ALPHA_DECAY)"
+ },
+ {
+  "label": "the learning rate is read one selection ahead of the cluster's count",
+  "old": "        let p = self.counts[k] as f64;",
+  "new": "        let p = (self.counts[k] + 1) as f64;"
+ },
+ {
+  "label": "the learning rate uses the total of every cluster's selections",
+  "old": "        let p = self.counts[k] as f64;",
+  "new": "        let p = self.counts.iter().sum::<u64>() as f64;"
+ },
+ {
+  "label": "the prototype is pushed away from the patch",
+  "old": "            *ci += alpha * (si - beta * *ci);",
+  "new": "            *ci += alpha * (si + beta * *ci);"
+ },
+ {
+  "label": "the prototype is replaced by its own increment rather than moved",
+  "old": "            *ci += alpha * (si - beta * *ci);",
+  "new": "            *ci = alpha * (si - beta * *ci);"
+ },
+ {
+  "label": "the cosine factor is the raw dot product, not normalised",
+  "old": "        let beta = if nc > 0.0 && ns > 0.0 { dot / (nc * ns) } else { 0.0 };",
+  "new": "        let beta = if nc > 0.0 && ns > 0.0 { dot } else { 0.0 };"
+ },
+ {
+  "label": "a directionless prototype is given a cosine factor of one",
+  "old": "        let beta = if nc > 0.0 && ns > 0.0 { dot / (nc * ns) } else { 0.0 };",
+  "new": "        let beta = if nc > 0.0 && ns > 0.0 { dot / (nc * ns) } else { 1.0 };"
+ },
+ {
+  "label": "the cosine factor normalises by the prototype's norm alone",
+  "old": "        let beta = if nc > 0.0 && ns > 0.0 { dot / (nc * ns) } else { 0.0 };",
+  "new": "        let beta = if nc > 0.0 && ns > 0.0 { dot / (nc * nc) } else { 0.0 };"
+ },
+ {
+  "label": "the selection counter is set rather than incremented",
+  "old": "        self.counts[k] += 1;",
+  "new": "        self.counts[k] = 1;"
+ },
+ {
+  "label": "learning always moves the first prototype",
+  "old": "        let (k, _) = self.nearest(&s)?;\n        let p = self.counts[k] as f64;",
+  "new": "        let k = 0usize;\n        let p = self.counts[k] as f64;"
+ },
+ {
+  "label": "inference always reports the first prototype",
+  "old": "        Ok(self.nearest(&s)?.0)",
+  "new": "        Ok(0)"
+ },
+ {
+  "label": "a prototype tie goes to the highest index rather than the lowest",
+  "old": "            if d2 < best.1 {",
+  "new": "            if d2 <= best.1 {"
+ },
+ {
+  "label": "the nearest prototype is the farthest",
+  "old": "            if d2 < best.1 {\n                best = (i, d2);",
+  "new": "            if d2 > best.1 {\n                best = (i, d2);"
+ },
+ {
+  "label": "the reported distance is the squared one",
+  "old": "        Ok((best.0, best.1.sqrt()))",
+  "new": "        Ok((best.0, best.1))"
+ },
+ {
+  "label": "the prototype distance is Manhattan rather than Euclidean",
+  "old": "            let d2: f64 = c.iter().zip(s).map(|(a, b)| (a - b) * (a - b)).sum();",
+  "new": "            let d2: f64 = c.iter().zip(s).map(|(a, b)| (a - b).abs()).sum();"
+ },
+ {
+  "label": "a patch of the wrong length is compared against a prefix",
+  "old": "        if s.len() != self.centers[0].len() {\n            return Err(VisionError::BadParameters {\n                why: \"the patch length does not match the prototype length\",",
+  "new": "        if false {\n            return Err(VisionError::BadParameters {\n                why: \"the patch length does not match the prototype length\","
+ },
+ {
+  "label": "a dictionary's prototype length is checked against twice the side, not its square",
+  "old": "        let want = (2 * radius_within(geom, radius)? + 1).pow(2);",
+  "new": "        let want = (2 * radius_within(geom, radius)? + 1) * 2;"
+ },
+ {
+  "label": "a prototype of the wrong length is accepted into the dictionary",
+  "old": "            if c.len() != want {",
+  "new": "            if false {"
+ },
+ {
+  "label": "a non-finite prototype entry is accepted",
+  "old": "            for v in c {\n                finite(*v, \"prototype entry\")?;\n            }",
+  "new": "            for v in c {\n                let _ = v;\n            }"
+ },
+ {
+  "label": "a HOTS layer's surface uses a linear window rather than an exponential decay",
+  "old": "        let surface = TimeSurface::new(geom, Decay::Exponential { tau_s }, true)?;",
+  "new": "        let surface = TimeSurface::new(geom, Decay::Linear { window_s: tau_s }, true)?;"
+ },
+ {
+  "label": "every cluster is born having already been selected once",
+  "old": "        let counts = vec![0u64; centers.len()];",
+  "new": "        let counts = vec![1u64; centers.len()];"
+ },
+ {
+  "label": "the random dictionary is a constant, so every layer is born dead",
+  "old": "            (0..n_centers).map(|_| (0..side).map(|_| rng.next_f64()).collect()).collect();",
+  "new": "            (0..n_centers).map(|_| (0..side).map(|_| 0.5).collect()).collect();"
+ },
+ {
+  "label": "a random prototype is the patch's side rather than its area",
+  "old": "        let side = (2 * radius_within(geom, radius)? + 1).pow(2);",
+  "new": "        let side = 2 * radius_within(geom, radius)? + 1;"
+ },
+ {
+  "label": "the random constructor's own zero-radius guard is dropped",
+  "old": "        if radius == 0 {\n            return Err(VisionError::TooFew { what: \"patch radius\", have: 0, need: 1 });\n        }\n        // Bounded before the draw",
+  "new": "        if false {\n            return Err(VisionError::TooFew { what: \"patch radius\", have: 0, need: 1 });\n        }\n        // Bounded before the draw",
+  "equivalent": "`Hots::new` does no work of its own between this guard and `Hots::with_centers`, and `with_centers` carries the identical guard. With the guard disabled and `radius == 0`, `radius_within(geom, 0)` returns `Ok(0)`, `side` becomes `(2*0 + 1)^2 = 1`, `n_centers` length-1 vectors are drawn from the rng, and `with_centers` is then reached — where `centers.is_empty()` is false (the caller's `n_centers == 0` guard is untouched) and the very next statement returns `Err(VisionError::TooFew { what: \"patch radius\", have: 0, need: 1 })`, the same error value this branch would have produced. The only observable difference is that `n_centers` draws are taken from the supplied `Rng` before the refusal, and the `Rng` is passed by `&mut` from a caller that has just been handed an `Err` — no test, and nothing in the crate, reads that generator again after a refused construction."
+ },
+ {
+  "label": "the N-CARS cell side is transcribed as 12 pixels",
+  "old": "        Self { cell_px: 10, radius: 3, tau_s: 1.0, window_s: 0.1, split_polarity: true }",
+  "new": "        Self { cell_px: 12, radius: 3, tau_s: 1.0, window_s: 0.1, split_polarity: true }"
+ },
+ {
+  "label": "the N-CARS neighbourhood is transcribed as a 9x9 rather than a 7x7",
+  "old": "        Self { cell_px: 10, radius: 3, tau_s: 1.0, window_s: 0.1,",
+  "new": "        Self { cell_px: 10, radius: 4, tau_s: 1.0, window_s: 0.1,"
+ },
+ {
+  "label": "the N-CARS time constant is transcribed as 100 ms",
+  "old": "    pub fn n_cars() -> Self {\n        Self { cell_px: 10, radius: 3, tau_s: 1.0, window_s: 0.1, split_polarity: true }",
+  "new": "    pub fn n_cars() -> Self {\n        Self { cell_px: 10, radius: 3, tau_s: 0.1, window_s: 0.1, split_polarity: true }"
+ },
+ {
+  "label": "the N-CARS memory window is transcribed as one second",
+  "old": "radius: 3, tau_s: 1.0, window_s: 0.1, split_polarity: true }",
+  "new": "radius: 3, tau_s: 1.0, window_s: 1.0, split_polarity: true }"
+ },
+ {
+  "label": "the N-CARS configuration collapses its polarity planes",
+  "old": "    pub fn n_cars() -> Self {\n        Self { cell_px: 10, radius: 3, tau_s: 1.0, window_s: 0.1, split_polarity: true }",
+  "new": "    pub fn n_cars() -> Self {\n        Self { cell_px: 10, radius: 3, tau_s: 1.0, window_s: 0.1, split_polarity: false }"
+ },
+ {
+  "label": "the histogram's side is twice the radius rather than twice plus one",
+  "old": "        let side = 2 * usize::from(self.radius) + 1;\n        side.saturating_mul(side)",
+  "new": "        let side = 2 * usize::from(self.radius);\n        side.saturating_mul(side)"
+ },
+ {
+  "label": "the bin count wraps instead of saturating",
+  "old": "        side.saturating_mul(side)",
+  "new": "        side * side"
+ },
+ {
+  "label": "a zero cell side divides rather than refusing",
+  "old": "        if self.cell_px == 0 {\n            return Err(VisionError::NonPositive { what: \"cell side\", value: 0.0 });\n        }",
+  "new": "        if false {\n            return Err(VisionError::NonPositive { what: \"cell side\", value: 0.0 });\n        }"
+ },
+ {
+  "label": "the cell grid truncates the partial column instead of rounding up",
+  "old": "            usize::from(geom.width).div_ceil(k),\n            usize::from(geom.height).div_ceil(k),",
+  "new": "            usize::from(geom.width) / k,\n            usize::from(geom.height).div_ceil(k),"
+ },
+ {
+  "label": "the cell grid truncates the partial row instead of rounding up",
+  "old": "            usize::from(geom.width).div_ceil(k),\n            usize::from(geom.height).div_ceil(k),\n        ))",
+  "new": "            usize::from(geom.width).div_ceil(k),\n            usize::from(geom.height) / k,\n        ))"
+ },
+ {
+  "label": "the cell grid reports its two dimensions the wrong way round",
+  "old": "            usize::from(geom.width).div_ceil(k),\n            usize::from(geom.height).div_ceil(k),\n        ))\n    }",
+  "new": "            usize::from(geom.height).div_ceil(k),\n            usize::from(geom.width).div_ceil(k),\n        ))\n    }"
+ },
+ {
+  "label": "the descriptor length forgets that the planes are separate",
+  "old": "        let planes = if self.split_polarity { 2 } else { 1 };\n        let side = 2 * usize::from(self.radius) + 1;",
+  "new": "        let planes = 1;\n        let side = 2 * usize::from(self.radius) + 1;"
+ },
+ {
+  "label": "the descriptor length is one cell's worth of bins short of the whole tiling",
+  "old": "        cx.checked_mul(cy)\n            .and_then(|c| c.checked_mul(planes))\n            .and_then(|c| c.checked_mul(bins))",
+  "new": "        cx.checked_mul(cy)\n            .and_then(|c| c.checked_mul(planes))"
+ },
+ {
+  "label": "an overflowing bin count is wrapped rather than refused",
+  "old": "        let bins = side.checked_mul(side).ok_or_else(too_long)?;",
+  "new": "        let bins = side * side;"
+ },
+ {
+  "label": "a zero HATS time constant is accepted",
+  "old": "        positive(self.tau_s, \"HATS time constant tau\")?;",
+  "new": "        finite(self.tau_s, \"HATS time constant tau\")?;"
+ },
+ {
+  "label": "a negative HATS memory window is accepted",
+  "old": "        positive(self.window_s, \"HATS memory window\")?;",
+  "new": "        finite(self.window_s, \"HATS memory window\")?;"
+ },
+ {
+  "label": "a shuffled event slice is described as if it were in order",
+  "old": "        require_time_ordered(events)?;\n        let (cells_x, _cells_y) = self.cell_grid(geom)?;",
+  "new": "        let (cells_x, _cells_y) = self.cell_grid(geom)?;"
+ },
+ {
+  "label": "the cell index transposes the tiling",
+  "old": "            let cell = (usize::from(e.y) / k) * cells_x + usize::from(e.x) / k;",
+  "new": "            let cell = (usize::from(e.x) / k) * cells_x + usize::from(e.y) / k;"
+ },
+ {
+  "label": "the per-cell blocks of the descriptor overlap",
+  "old": "            let base = (cell * planes + plane) * bins;",
+  "new": "            let base = (cell + plane * planes) * bins;"
+ },
+ {
+  "label": "the cell's event counter records only whether the cell fired",
+  "old": "            per_cell[cell] += 1;",
+  "new": "            per_cell[cell] = 1;"
+ },
+ {
+  "label": "the event's own contribution to its histogram is dropped",
+  "old": "            out[base + rho as usize * side + rho as usize] += 1.0;",
+  "new": "            out[base + rho as usize * side + rho as usize] += 0.0;"
+ },
+ {
+  "label": "the centre bin is overwritten rather than accumulated",
+  "old": "            out[base + rho as usize * side + rho as usize] += 1.0;",
+  "new": "            out[base + rho as usize * side + rho as usize] = 1.0;"
+ },
+ {
+  "label": "the local memory surface sums over later events instead of earlier ones",
+  "old": "            for e_j in events[..i].iter().rev() {",
+  "new": "            for e_j in events[i + 1..].iter() {"
+ },
+ {
+  "label": "the memory window is exclusive at its boundary",
+  "old": "                if dt > self.window_s {\n                    break;\n                }",
+  "new": "                if dt >= self.window_s {\n                    break;\n                }"
+ },
+ {
+  "label": "the memory window's early exit becomes a skip",
+  "old": "                if dt > self.window_s {\n                    break;\n                }",
+  "new": "                if dt > self.window_s {\n                    continue;\n                }",
+  "equivalent": "`Hats::descriptor` runs `require_time_ordered(events)?` first, so `events` is non-decreasing in `t_s`; the inner loop walks `events[..i]` in REVERSE, so `e_j.t_s` is non-increasing along it and `dt = e.t_s - e_j.t_s` is non-decreasing. Once `dt > window_s` holds, every remaining `e_j` has a `dt` at least as large, so each of them fails the same test and is skipped. The set of neighbours that reach the accumulation below is therefore identical, and every bin of the output is bit-for-bit the same. Only the work changes: the pass over a cell becomes unconditionally O(i) instead of stopping at the window."
+ },
+ {
+  "label": "a joint-polarity descriptor sums only same-polarity neighbours",
+  "old": "                if self.split_polarity && e_j.polarity != e.polarity {",
+  "new": "                if e_j.polarity != e.polarity {"
+ },
+ {
+  "label": "the histogram leaks across the cell boundary",
+  "old": "                if usize::from(e_j.y) / k != usize::from(e.y) / k\n                    || usize::from(e_j.x) / k != usize::from(e.x) / k\n                {\n                    continue;\n                }",
+  "new": "                if false\n                {\n                    continue;\n                }"
+ },
+ {
+  "label": "the neighbour offset is mirrored",
+  "old": "                let dx = i64::from(e_j.x) - i64::from(e.x);\n                let dy = i64::from(e_j.y) - i64::from(e.y);",
+  "new": "                let dx = i64::from(e.x) - i64::from(e_j.x);\n                let dy = i64::from(e.y) - i64::from(e_j.y);"
+ },
+ {
+  "label": "the outer ring of the neighbourhood is dropped",
+  "old": "                if dx.abs() > rho || dy.abs() > rho {",
+  "new": "                if dx.abs() >= rho || dy.abs() >= rho {"
+ },
+ {
+  "label": "a neighbour counts if either offset is inside the neighbourhood",
+  "old": "                if dx.abs() > rho || dy.abs() > rho {",
+  "new": "                if dx.abs() > rho && dy.abs() > rho {"
+ },
+ {
+  "label": "the histogram bin is written column-major",
+  "old": "                let bin = (dy + rho) as usize * side + (dx + rho) as usize;",
+  "new": "                let bin = (dx + rho) as usize * side + (dy + rho) as usize;"
+ },
+ {
+  "label": "the memory surface's decay multiplies by the time constant instead of dividing",
+  "old": "                out[base + bin] += (-dt / self.tau_s).exp();",
+  "new": "                out[base + bin] += (-dt * self.tau_s).exp();"
+ },
+ {
+  "label": "the histogram is not averaged over the cell's events",
+  "old": "            for v in &mut out[lo..lo + planes * bins] {\n                *v /= *n as f64;\n            }",
+  "new": "            for v in &mut out[lo..lo + planes * bins] {\n                *v /= 1.0;\n            }"
+ },
+ {
+  "label": "only one polarity plane of each cell is averaged",
+  "old": "            let lo = c * planes * bins;",
+  "new": "            let lo = c * bins;"
+ },
+ {
+  "label": "an empty cell is divided by its zero event count",
+  "old": "            if *n == 0 {\n                continue;\n            }",
+  "new": "            if false {\n                continue;\n            }"
+ },
+ {
+  "label": "Harris's sensitivity constant is transcribed as 0.06",
+  "old": "    pub const K_HARRIS: f64 = 0.04;",
+  "new": "    pub const K_HARRIS: f64 = 0.06;"
+ },
+ {
+  "label": "a window too small for a structure tensor is accepted",
+  "old": "        if radius < 2 {",
+  "new": "        if radius < 1 {"
+ },
+ {
+  "label": "a non-finite Harris constant is accepted",
+  "old": "        finite(k, \"Harris constant k\")?;",
+  "new": "        let _ = k;"
+ },
+ {
+  "label": "the eHarris binarisation surface decays exponentially rather than over its window",
+  "old": "        let sae = TimeSurface::new(geom, Decay::Linear { window_s }, false)?;",
+  "new": "        let sae = TimeSurface::new(geom, Decay::Exponential { tau_s: window_s }, false)?;"
+ },
+ {
+  "label": "eHarris splits the polarity planes, halving the pattern an alternating edge writes",
+  "old": "        let sae = TimeSurface::new(geom, Decay::Linear { window_s }, false)?;",
+  "new": "        let sae = TimeSurface::new(geom, Decay::Linear { window_s }, true)?;"
+ },
+ {
+  "label": "the detector's threshold is ignored and zero is used",
+  "old": "        if s > self.threshold {",
+  "new": "        if s > 0.0 {"
+ },
+ {
+  "label": "a score that merely reaches the threshold fires",
+  "old": "        if s > self.threshold {",
+  "new": "        if s >= self.threshold {"
+ },
+ {
+  "label": "the binarised patch is written as twos, scaling the response by sixteen",
+  "old": "                    patch[((dy + r) as usize) * side + (dx + r) as usize] = 1.0;",
+  "new": "                    patch[((dy + r) as usize) * side + (dx + r) as usize] = 2.0;"
+ },
+ {
+  "label": "the binarisation window is exclusive at its boundary",
+  "old": "                if let Some(l) = last\n                    && t - l <= self.window_s",
+  "new": "                if let Some(l) = last\n                    && t - l < self.window_s"
+ },
+ {
+  "label": "the binarisation reads the surface's Off plane",
+  "old": "                let last = self.sae.last_time(px as u16, py as u16, Polarity::On)?;",
+  "new": "                let last = self.sae.last_time(px as u16, py as u16, Polarity::Off)?;",
+  "equivalent": "`EHarris::new` builds its `SAE` with `TimeSurface::new(geom, Decay::Linear { window_s }, false)` — `split` is FALSE, which is the detector's own documented choice ('the detector is looking for geometry, and splitting the planes here would halve the pattern an alternating edge writes'). With `split == false`, `TimeSurface::last_time` computes `let plane = if self.split { .. } else { 0 }`, so the polarity argument is discarded before it reaches the buffer and both `On` and `Off` read index `0 * pixels + idx`. The two calls return the identical `f64` for every pixel and every stream, so no test can distinguish them. (The mutation that IS observable is the one that flips `split` to `true` in the constructor, and that one is recorded separately.)"
+ },
+ {
+  "label": "the binarised patch is written column-major",
+  "old": "                    patch[((dy + r) as usize) * side + (dx + r) as usize] = 1.0;",
+  "new": "                    patch[((dx + r) as usize) * side + (dy + r) as usize] = 1.0;",
+  "equivalent": "The Harris response is invariant under transposing its patch, so this mutation changes no observable output. `GY` is exactly the transpose of `GX` (`GX[dj][di] == GY[di][dj]` entry for entry), so evaluating the pair on a transposed image gives `gx' (i, j) = gy (j, i)` and `gy' (i, j) = gx (j, i)`. Summing over the full square interior then gives `Mxx' = Myy`, `Myy' = Mxx` and `Mxy' = sum gy*gx = Mxy`, and the score `det - k*trace^2 = Mxx*Myy - Mxy^2 - k*(Mxx + Myy)^2` is symmetric in `Mxx` and `Myy`, so it is unchanged. The module already asserts this invariance directly in `swapping_the_sobel_kernels_is_an_equivalent_mutation`, which is the same algebra reached from the other side."
+ },
+ {
+  "label": "a patch smaller than the Sobel kernel is scored rather than refused",
+  "old": "    if side < 3 || patch.len() != side * side {",
+  "new": "    if patch.len() != side * side {"
+ },
+ {
+  "label": "a non-finite patch entry is scored",
+  "old": "    for v in patch {\n        finite(*v, \"patch entry\")?;\n    }",
+  "new": "    for v in patch {\n        let _ = v;\n    }"
+ },
+ {
+  "label": "the Sobel x-kernel loses its centre-row weighting and becomes Prewitt",
+  "old": "\n    const GX: [[f64; 3]; 3] = [[-1.0, 0.0, 1.0], [-2.0, 0.0, 2.0], [-1.0, 0.0, 1.0]];",
+  "new": "\n    const GX: [[f64; 3]; 3] = [[-1.0, 0.0, 1.0], [-1.0, 0.0, 1.0], [-1.0, 0.0, 1.0]];"
+ },
+ {
+  "label": "one corner of the Sobel y-kernel is transcribed wrongly",
+  "old": "\n    const GY: [[f64; 3]; 3] = [[-1.0, -2.0, -1.0], [0.0, 0.0, 0.0], [1.0, 2.0, 1.0]];",
+  "new": "\n    const GY: [[f64; 3]; 3] = [[-1.0, -2.0, -1.0], [0.0, 0.0, 0.0], [1.0, 2.0, 2.0]];"
+ },
+ {
+  "label": "the structure tensor's last interior column is never visited",
+  "old": "    for j in 1..side - 1 {\n        for i in 1..side - 1 {",
+  "new": "    for j in 1..side - 1 {\n        for i in 1..side - 2 {"
+ },
+ {
+  "label": "the structure tensor's off-diagonal is a second copy of its xx term",
+  "old": "\n            mxy += gx * gy;",
+  "new": "\n            mxy += gx * gx;"
+ },
+ {
+  "label": "the structure tensor's diagonal terms are accumulated from the same gradient",
+  "old": "            mxx += gx * gx;\n            myy += gy * gy;",
+  "new": "            mxx += gx * gx;\n            myy += gx * gx;"
+ },
+ {
+  "label": "the Harris determinant adds its off-diagonal term",
+  "old": "    let det = mxx * myy - mxy * mxy;",
+  "new": "    let det = mxx * myy + mxy * mxy;"
+ },
+ {
+  "label": "the structure tensor's trace is a difference",
+  "old": "    let trace = mxx + myy;",
+  "new": "    let trace = mxx - myy;"
+ },
+ {
+  "label": "the Harris response penalises the trace rather than its square",
+  "old": "    Ok(det - k * trace * trace)",
+  "new": "    Ok(det - k * trace)"
+ },
+ {
+  "label": "the Harris response adds the trace penalty instead of subtracting it",
+  "old": "    Ok(det - k * trace * trace)",
+  "new": "    Ok(det + k * trace * trace)"
+ },
+ {
+  "label": "one offset of the inner Bresenham circle is off the ring",
+  "old": "pub const FAST_CIRCLE_16: [(i64, i64); 16] = [\n    (0, 3),\n    (1, 3),\n    (2, 2),",
+  "new": "pub const FAST_CIRCLE_16: [(i64, i64); 16] = [\n    (0, 3),\n    (1, 3),\n    (2, 1),"
+ },
+ {
+  "label": "the inner circle repeats a pixel and misses another",
+  "old": "    (-3, 0),\n    (-3, 1),\n    (-2, 2),\n    (-1, 3),\n];",
+  "new": "    (-3, 0),\n    (-3, 1),\n    (-3, 1),\n    (-1, 3),\n];"
+ },
+ {
+  "label": "one offset of the outer Bresenham circle is off the ring",
+  "old": "pub const FAST_CIRCLE_20: [(i64, i64); 20] = [\n    (0, 4),\n    (1, 4),\n    (2, 3),",
+  "new": "pub const FAST_CIRCLE_20: [(i64, i64); 20] = [\n    (0, 4),\n    (1, 4),\n    (2, 4),"
+ },
+ {
+  "label": "a zero-length arc is searched for and always found",
+  "old": "    if n == 0 || lo == 0 || hi < lo || hi >= n {",
+  "new": "    if n == 0 || hi < lo || hi >= n {"
+ },
+ {
+  "label": "an arc as long as the whole circle is accepted",
+  "old": "    if n == 0 || lo == 0 || hi < lo || hi >= n {",
+  "new": "    if n == 0 || lo == 0 || hi < lo || hi > n {"
+ },
+ {
+  "label": "the arc search returns the longest valid arc rather than the shortest",
+  "old": "    for len in lo..=hi {\n        for start in 0..n {",
+  "new": "    for len in (lo..=hi).rev() {\n        for start in 0..n {"
+ },
+ {
+  "label": "the arc includes one pixel past its own length",
+  "old": "                let inside = (j + n - start) % n < len;",
+  "new": "                let inside = (j + n - start) % n <= len;"
+ },
+ {
+  "label": "the arc is compared against the oldest pixel off it rather than the newest",
+  "old": "                    out_max = out_max.max(*t);",
+  "new": "                    out_max = out_max.min(*t);"
+ },
+ {
+  "label": "an arc merely as new as its complement qualifies",
+  "old": "            if arc_min > out_max {",
+  "new": "            if arc_min >= out_max {"
+ },
+ {
+  "label": "the arc is judged by its newest pixel rather than its oldest",
+  "old": "                    arc_min = arc_min.min(*t);",
+  "new": "                    arc_min = arc_min.max(*t);"
+ },
+ {
+  "label": "the accepted inner arc range runs to seven of sixteen",
+  "old": "    pub const INNER_ARC: (usize, usize) = (3, 6);",
+  "new": "    pub const INNER_ARC: (usize, usize) = (3, 7);"
+ },
+ {
+  "label": "the accepted outer arc range runs to nine of twenty",
+  "old": "    pub const OUTER_ARC: (usize, usize) = (4, 8);",
+  "new": "    pub const OUTER_ARC: (usize, usize) = (4, 9);"
+ },
+ {
+  "label": "an inner arc of the circle's whole circumference is accepted",
+  "old": "        if inner_arc.0 == 0 || inner_arc.1 < inner_arc.0 || inner_arc.1 >= FAST_CIRCLE_16.len() {",
+  "new": "        if inner_arc.0 == 0 || inner_arc.1 < inner_arc.0 || inner_arc.1 > FAST_CIRCLE_16.len() {"
+ },
+ {
+  "label": "the inner arc range is bounded by the outer circle's circumference",
+  "old": "        if inner_arc.0 == 0 || inner_arc.1 < inner_arc.0 || inner_arc.1 >= FAST_CIRCLE_16.len() {",
+  "new": "        if inner_arc.0 == 0 || inner_arc.1 < inner_arc.0 || inner_arc.1 >= FAST_CIRCLE_20.len() {"
+ },
+ {
+  "label": "an inner arc range starting at zero is accepted",
+  "old": "        if inner_arc.0 == 0 || inner_arc.1 < inner_arc.0",
+  "new": "        if inner_arc.1 < inner_arc.0"
+ },
+ {
+  "label": "an empty outer arc range is accepted",
+  "old": "        if outer_arc.0 == 0 || outer_arc.1 < outer_arc.0 || outer_arc.1 >= FAST_CIRCLE_20.len() {",
+  "new": "        if outer_arc.0 == 0 || outer_arc.1 > outer_arc.0 || outer_arc.1 >= FAST_CIRCLE_20.len() {"
+ },
+ {
+  "label": "eFAST's surface collapses the two polarity planes",
+  "old": "        let sae = TimeSurface::new(geom, Decay::Linear { window_s: 1.0 }, true)?;",
+  "new": "        let sae = TimeSurface::new(geom, Decay::Linear { window_s: 1.0 }, false)?;"
+ },
+ {
+  "label": "the inner circle is read on the outer ring",
+  "old": "        let inner = self.circle_times(x, y, pol, &FAST_CIRCLE_16)?;",
+  "new": "        let inner = self.circle_times(x, y, pol, &FAST_CIRCLE_20)?;"
+ },
+ {
+  "label": "the two circles are judged against each other's arc ranges",
+  "old": "            newest_arc(&inner, self.inner_arc.0, self.inner_arc.1),\n            newest_arc(&outer, self.outer_arc.0, self.outer_arc.1),",
+  "new": "            newest_arc(&inner, self.outer_arc.0, self.outer_arc.1),\n            newest_arc(&outer, self.inner_arc.0, self.inner_arc.1),"
+ },
+ {
+  "label": "a pixel that has never fired is treated as infinitely new",
+  "old": "                    .unwrap_or(f64::NEG_INFINITY),",
+  "new": "                    .unwrap_or(f64::INFINITY),"
+ },
+ {
+  "label": "a circle running off the sensor is silently shortened rather than refused",
+  "old": "            if !geom.contains(px, py) {\n                return Err(VisionError::OutOfBounds {",
+  "new": "            if false {\n                return Err(VisionError::OutOfBounds {"
+ },
+ {
+  "label": "the corner criterion drops its outer circle",
+  "old": "            (Some(inner), Some(_outer)) => Some(inner),",
+  "new": "            (Some(inner), _) => Some(inner),"
+ },
+ {
+  "label": "the corner criterion drops its inner circle",
+  "old": "            (Some(inner), Some(_outer)) => Some(inner),",
+  "new": "            (_, Some(inner)) => Some(inner),"
+ },
+ {
+  "label": "the reported corner score is the outer arc length",
+  "old": "        match arcs {\n            (Some(inner), Some(_outer)) => Some(inner),",
+  "new": "        match arcs {\n            (Some(_inner), Some(outer)) => Some(outer),"
+ },
+ {
+  "label": "the corner verdict is inverted",
+  "old": "        Ok(Self::verdict(self.arcs_at(x, y, pol)?).is_some())",
+  "new": "        Ok(Self::verdict(self.arcs_at(x, y, pol)?).is_none())"
+ },
+ {
+  "label": "eFAST reads every circle on the On plane",
+  "old": "        match self.arcs_at(e.x, e.y, e.polarity) {",
+  "new": "        match self.arcs_at(e.x, e.y, Polarity::On) {"
+ },
+ {
+  "label": "a border event is an error rather than a classification",
+  "old": "            Err(VisionError::OutOfBounds { .. }) => Ok(None),\n            Err(other) => Err(other),",
+  "new": "            Err(other) => Err(other),"
+ },
+ {
+  "label": "the translation warp goes forward in time instead of undoing the motion",
+  "old": "            Self::Translation { vx, vy } => (x - vx * dt, y - vy * dt),",
+  "new": "            Self::Translation { vx, vy } => (x + vx * dt, y + vy * dt),"
+ },
+ {
+  "label": "the translation warp applies each velocity component to the other axis",
+  "old": "            Self::Translation { vx, vy } => (x - vx * dt, y - vy * dt),",
+  "new": "            Self::Translation { vx, vy } => (x - vy * dt, y - vx * dt),"
+ },
+ {
+  "label": "the rotation warp turns the same way the scene did",
+  "old": "                let a = -omega_rad_s * dt;",
+  "new": "                let a = omega_rad_s * dt;"
+ },
+ {
+  "label": "the rotation warp loses its centre offset",
+  "old": "                (cx + c * dx - s * dy, cy + s * dx + c * dy)",
+  "new": "                (c * dx - s * dy, s * dx + c * dy)"
+ },
+ {
+  "label": "the rotation matrix's off-diagonal signs are exchanged",
+  "old": "                (cx + c * dx - s * dy, cy + s * dx + c * dy)",
+  "new": "                (cx + c * dx + s * dy, cy - s * dx + c * dy)"
+ },
+ {
+  "label": "the radial warp expands instead of contracting",
+  "old": "                let k = (r - rate_px_s * dt) / r;",
+  "new": "                let k = (r + rate_px_s * dt) / r;"
+ },
+ {
+  "label": "the radial warp is not normalised by the radius",
+  "old": "                let k = (r - rate_px_s * dt) / r;",
+  "new": "                let k = r - rate_px_s * dt;"
+ },
+ {
+  "label": "an event at the expansion centre warps to a NaN and is silently dropped",
+  "old": "                if r == 0.0 {\n                    return (cx, cy);\n                }",
+  "new": "                if false {\n                    return (cx, cy);\n                }"
+ },
+ {
+  "label": "the radial warp exchanges the two offsets it scales",
+  "old": "                (cx + k * dx, cy + k * dy)",
+  "new": "                (cx + k * dy, cy + k * dx)"
+ },
+ {
+  "label": "a non-finite vertical velocity is accepted",
+  "old": "                finite(vx, \"translation vx\")?;\n                finite(vy, \"translation vy\")?;",
+  "new": "                finite(vx, \"translation vx\")?;"
+ },
+ {
+  "label": "a non-finite rotation centre column is accepted",
+  "old": "                finite(cx, \"rotation centre column\")?;",
+  "new": "                let _ = cx;"
+ },
+ {
+  "label": "a non-finite expansion centre row is accepted",
+  "old": "                finite(cy, \"expansion centre row\")?;",
+  "new": "                let _ = cy;"
+ },
+ {
+  "label": "the warp is evaluated against the reference time backwards",
+  "old": "        let (wx, wy) = m.warp(f64::from(e.x), f64::from(e.y), t - t_ref);",
+  "new": "        let (wx, wy) = m.warp(f64::from(e.x), f64::from(e.y), t_ref - t);"
+ },
+ {
+  "label": "an event off the lattice is warped rather than refused",
+  "old": "        let t = finite(e.t_s, \"event timestamp\")?;\n        geom.require(e.x, e.y)?;",
+  "new": "        let t = finite(e.t_s, \"event timestamp\")?;"
+ },
+ {
+  "label": "the bilinear vote's diagonal weight is not a product of the two fractions",
+  "old": "            (1, 1, fx * fy),",
+  "new": "            (1, 1, fy * fy),"
+ },
+ {
+  "label": "the bilinear vote's corner weight is not the product of the two complements",
+  "old": "            (0i64, 0i64, (1.0 - fx) * (1.0 - fy)),",
+  "new": "            (0i64, 0i64, 1.0 - fx * fy),"
+ },
+ {
+  "label": "the two off-diagonal bilinear weights take each other's fractions",
+  "old": "            (1, 0, fx * (1.0 - fy)),\n            (0, 1, (1.0 - fx) * fy),",
+  "new": "            (1, 0, fy * (1.0 - fx)),\n            (0, 1, fx * (1.0 - fy)),"
+ },
+ {
+  "label": "only the zero-weight corners of the bilinear vote are cast",
+  "old": "            if weight == 0.0 {\n                continue;\n            }",
+  "new": "            if weight != 0.0 {\n                continue;\n            }"
+ },
+ {
+  "label": "the warped image's right-hand bound is not checked",
+  "old": "            if px < 0 || py < 0 || px >= w || py >= h {",
+  "new": "            if px < 0 || py < 0 || py >= h {"
+ },
+ {
+  "label": "the warped image keeps the last vote at a pixel rather than summing them",
+  "old": "            frame.data[(py * w + px) as usize] += weight;",
+  "new": "            frame.data[(py * w + px) as usize] = weight;"
+ },
+ {
+  "label": "the warped image indexes with the height as its stride",
+  "old": "            frame.data[(py * w + px) as usize] += weight;",
+  "new": "            frame.data[(py * h + px) as usize] += weight;"
+ },
+ {
+  "label": "placed and dropped are counted the wrong way round",
+  "old": "        if any {\n            placed += 1;\n        } else {\n            dropped += 1;\n        }",
+  "new": "        if any {\n            dropped += 1;\n        } else {\n            placed += 1;\n        }"
+ },
+ {
+  "label": "the variance objective is the mean square",
+  "old": "        Objective::Variance => wi.frame.variance(),",
+  "new": "        Objective::Variance => Some(wi.frame.sum_of_squares() / n as f64),"
+ },
+ {
+  "label": "the mean-square objective is the variance",
+  "old": "            if n == 0 { None } else { Some(wi.frame.sum_of_squares() / n as f64) }",
+  "new": "            if n == 0 { None } else { wi.frame.variance() }"
+ },
+ {
+  "label": "the mean square is taken over the events placed rather than over the pixels",
+  "old": "            if n == 0 { None } else { Some(wi.frame.sum_of_squares() / n as f64) }",
+  "new": "            if n == 0 { None } else { Some(wi.frame.sum_of_squares() / wi.placed as f64) }"
+ },
+ {
+  "label": "a one-point sweep is accepted and divides by zero",
+  "old": "    if n < 2 {\n        return Err(VisionError::TooFew { what: \"sweep\", have: n, need: 2 });",
+  "new": "    if n < 1 {\n        return Err(VisionError::TooFew { what: \"sweep\", have: n, need: 2 });"
+ },
+ {
+  "label": "the sweep's grid never reaches its upper bound",
+  "old": "        let p = lo + (hi - lo) * i as f64 / (n - 1) as f64;",
+  "new": "        let p = lo + (hi - lo) * i as f64 / n as f64;"
+ },
+ {
+  "label": "the sweep's upper bound is not validated",
+  "old": "    let lo = finite(lo, \"sweep lower bound\")?;\n    let hi = finite(hi, \"sweep upper bound\")?;",
+  "new": "    let lo = finite(lo, \"sweep lower bound\")?;\n    let hi = hi;"
+ },
+ {
+  "label": "an argmax tie goes to the last entry rather than the first",
+  "old": "        if best.is_none_or(|(_, bv)| v > bv) {",
+  "new": "        if best.is_none_or(|(_, bv)| v >= bv) {"
+ },
+ {
+  "label": "the argmax is an argmin",
+  "old": "        if best.is_none_or(|(_, bv)| v > bv) {",
+  "new": "        if best.is_none_or(|(_, bv)| v < bv) {"
+ },
+ {
+  "label": "a zero search bound is accepted",
+  "old": "    let bound = positive(bound, \"search bound\")?;",
+  "new": "    let bound = finite(bound, \"search bound\")?;"
+ },
+ {
+  "label": "a one-point search grid is accepted and divides by zero",
+  "old": "    if steps < 2 {\n        return Err(VisionError::TooFew { what: \"search grid\", have: steps, need: 2 });",
+  "new": "    if steps < 1 {\n        return Err(VisionError::TooFew { what: \"search grid\", have: steps, need: 2 });"
+ },
+ {
+  "label": "the search grid covers only half the bounded square",
+  "old": "            let vx = -bound + 2.0 * bound * ix as f64 / (steps - 1) as f64;",
+  "new": "            let vx = -bound + bound * ix as f64 / (steps - 1) as f64;"
+ },
+ {
+  "label": "the search grid runs along its diagonal only",
+  "old": "            let vy = -bound + 2.0 * bound * iy as f64 / (steps - 1) as f64;",
+  "new": "            let vy = -bound + 2.0 * bound * ix as f64 / (steps - 1) as f64;"
+ },
+ {
+  "label": "the refinement step grows when nothing improves instead of halving",
+  "old": "        if !moved {\n            step *= 0.5;\n        }",
+  "new": "        if !moved {\n            step *= 2.0;\n        }"
+ },
+ {
+  "label": "the pattern refinement tries only two of its four directions",
+  "old": "        for (dx, dy) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {",
+  "new": "        for (dx, dy) in [(1.0, 0.0), (0.0, 1.0)] {"
+ },
+ {
+  "label": "the stream's tie-break is by column then row",
+  "old": "            .then(a.y.cmp(&b.y))\n            .then(a.x.cmp(&b.x))",
+  "new": "            .then(a.x.cmp(&b.x))\n            .then(a.y.cmp(&b.y))"
+ },
+ {
+  "label": "the stream is sorted backwards in time",
+  "old": "        a.t_s\n            .partial_cmp(&b.t_s)",
+  "new": "        b.t_s\n            .partial_cmp(&a.t_s)"
+ },
+ {
+  "label": "the edge's normal has its two components exchanged",
+  "old": "    let (ny, nx) = normal_rad.sin_cos();\n    let mut out = Vec::new();",
+  "new": "    let (nx, ny) = normal_rad.sin_cos();\n    let mut out = Vec::new();"
+ },
+ {
+  "label": "the edge's initial offset is added rather than subtracted",
+  "old": "\n            let t = (nx * f64::from(x) + ny * f64::from(y) - d0) / speed;",
+  "new": "\n            let t = (nx * f64::from(x) + ny * f64::from(y) + d0) / speed;"
+ },
+ {
+  "label": "the edge's crossing time is multiplied by its speed instead of divided",
+  "old": "\n            let t = (nx * f64::from(x) + ny * f64::from(y) - d0) / speed;",
+  "new": "\n            let t = (nx * f64::from(x) + ny * f64::from(y) - d0) * speed;"
+ },
+ {
+  "label": "the edge emits events from before the recording started",
+  "old": "            let t = (nx * f64::from(x) + ny * f64::from(y) - d0) / speed;\n            if (0.0..=duration).contains(&t) {\n                out.push(PixelEvent { t_s: t, x, y, polarity });",
+  "new": "            let t = (nx * f64::from(x) + ny * f64::from(y) - d0) / speed;\n            if (-duration..=duration).contains(&t) {\n                out.push(PixelEvent { t_s: t, x, y, polarity });"
+ },
+ {
+  "label": "a static edge is generated rather than refused",
+  "old": "    let speed = positive(speed_px_s, \"edge speed\")?;",
+  "new": "    let speed = finite(speed_px_s, \"edge speed\")?;"
+ },
+ {
+  "label": "a zero-duration recording is accepted",
+  "old": "    let duration = positive(duration_s, \"scene duration\")?;\n    let (ny, nx) = normal_rad.sin_cos();",
+  "new": "    let duration = finite(duration_s, \"scene duration\")?;\n    let (ny, nx) = normal_rad.sin_cos();"
+ },
+ {
+  "label": "the edge's ground-truth flow has its two components exchanged",
+  "old": "    (speed_px_s * c, speed_px_s * s)",
+  "new": "    (speed_px_s * s, speed_px_s * c)"
+ },
+ {
+  "label": "the corner's arm direction has its two components exchanged",
+  "old": "        let (dy, dx) = a.sin_cos();\n        let cross_v = vx * dy - vy * dx;",
+  "new": "        let (dx, dy) = a.sin_cos();\n        let cross_v = vx * dy - vy * dx;"
+ },
+ {
+  "label": "the arm-velocity cross product is a dot product",
+  "old": "        let cross_v = vx * dy - vy * dx;",
+  "new": "        let cross_v = vx * dx - vy * dy;"
+ },
+ {
+  "label": "an arm parallel to the velocity is swept rather than refused",
+  "old": "        if cross_v.abs() < 1e-12 {",
+  "new": "        if false {"
+ },
+ {
+  "label": "the corner's crossing time has the wrong sign",
+  "old": "                let t = (px * dy - py * dx) / cross_v;",
+  "new": "                let t = (py * dx - px * dy) / cross_v;"
+ },
+ {
+  "label": "the foot along the arm is measured from the vertex's starting position",
+  "old": "                let s = (px - vx * t) * dx + (py - vy * t) * dy;",
+  "new": "                let s = px * dx + py * dy;"
+ },
+ {
+  "label": "the arm extends backwards from the vertex as well as forwards",
+  "old": "                if (0.0..=len).contains(&s) {",
+  "new": "                if (-len..=len).contains(&s) {"
+ },
+ {
+  "label": "the rotating bar's period is a whole turn rather than a half turn",
+  "old": "    let period = pi / omega;",
+  "new": "    let period = 2.0 * pi / omega;"
+ },
+ {
+  "label": "the rotating bar's per-pixel crossing count drops its first crossing",
+  "old": "    let per_pixel = (duration / period).floor() + 1.0;",
+  "new": "    let per_pixel = (duration / period).floor();"
+ },
+ {
+  "label": "the rotating bar's event cap is not applied",
+  "old": "    if !per_pixel.is_finite() || per_pixel * annulus as f64 > MAX_ROTATING_BAR_EVENTS as f64 {",
+  "new": "    if false {"
+ },
+ {
+  "label": "the rotating bar's cap is ten times what its doc states",
+  "old": "pub const MAX_ROTATING_BAR_EVENTS: usize = 10_000_000;",
+  "new": "pub const MAX_ROTATING_BAR_EVENTS: usize = 100_000_000;"
+ },
+ {
+  "label": "the rotating bar stops one crossing short of the duration",
+  "old": "    let sweeps = per_pixel as u64 + 1;",
+  "new": "    let sweeps = per_pixel as u64;"
+ },
+ {
+  "label": "the rotating bar's first crossing is taken below zero rather than at or after it",
+  "old": "            let k0 = (-base / period).ceil();",
+  "new": "            let k0 = (-base / period).floor();"
+ },
+ {
+  "label": "a pixel crossed exactly at time zero is dropped",
+  "old": "                if t >= 0.0 {\n                    out.push(PixelEvent { t_s: t, x, y, polarity });",
+  "new": "                if t > 0.0 {\n                    out.push(PixelEvent { t_s: t, x, y, polarity });"
+ },
+ {
+  "label": "the annulus excludes its own inner boundary",
+  "old": "            if r < r_min || r > r_max {",
+  "new": "            if r <= r_min || r > r_max {"
+ },
+ {
+  "label": "the rotating bar's angle is measured against the wrong axis",
+  "old": "            let phi = dy.atan2(dx);",
+  "new": "            let phi = dx.atan2(dy);"
+ },
+ {
+  "label": "the rotating bar's ground-truth flow is tangential the wrong way round",
+  "old": "    Some((-omega_rad_s * dy, omega_rad_s * dx))",
+  "new": "    Some((omega_rad_s * dy, -omega_rad_s * dx))"
+ },
+ {
+  "label": "the rotating bar's ground-truth flow is radial rather than tangential",
+  "old": "    Some((-omega_rad_s * dy, omega_rad_s * dx))",
+  "new": "    Some((omega_rad_s * dx, omega_rad_s * dy))"
+ },
+ {
+  "label": "the looming disc's initial radius is added rather than subtracted",
+  "old": "            let t = (r - r0) / rate;",
+  "new": "            let t = (r + r0) / rate;"
+ },
+ {
+  "label": "the looming disc's radius is measured against the centre column twice",
+  "old": "            let r = (f64::from(x) - cx).hypot(f64::from(y) - cy);\n            let t = (r - r0) / rate;",
+  "new": "            let r = (f64::from(x) - cx).hypot(f64::from(y) - cx);\n            let t = (r - r0) / rate;"
+ },
+ {
+  "label": "the looming disc's ground-truth flow is not normalised to the radial unit vector",
+  "old": "    Some((rate_px_s * dx / r, rate_px_s * dy / r))",
+  "new": "    Some((rate_px_s * dx, rate_px_s * dy))"
+ },
+ {
+  "label": "the looming disc's ground-truth flow is tangential rather than radial",
+  "old": "    Some((rate_px_s * dx / r, rate_px_s * dy / r))",
+  "new": "    Some((-rate_px_s * dy / r, rate_px_s * dx / r))"
+ },
+ {
+  "label": "quantisation truncates the clock instead of rounding to nearest",
+  "old": "        out.push(PixelEvent { t_s: (t * 1e6).round() * 1e-6, ..*e });",
+  "new": "        out.push(PixelEvent { t_s: (t * 1e6).floor() * 1e-6, ..*e });"
+ },
+ {
+  "label": "quantisation rounds to whole milliseconds",
+  "old": "        out.push(PixelEvent { t_s: (t * 1e6).round() * 1e-6, ..*e });",
+  "new": "        out.push(PixelEvent { t_s: (t * 1e3).round() * 1e-3, ..*e });"
+ },
+ {
+  "label": "a negative timestamp is quantised rather than refused",
+  "old": "        if t < 0.0 {\n            return Err(VisionError::NonPositive { what: \"event timestamp\", value: t });\n        }",
+  "new": "        if false {\n            return Err(VisionError::NonPositive { what: \"event timestamp\", value: t });\n        }"
+ },
+ {
+  "label": "quantisation does not re-sort the stream it may have reordered",
+  "old": "        out.push(PixelEvent { t_s: (t * 1e6).round() * 1e-6, ..*e });\n    }\n    Ok(sort_events(out))",
+  "new": "        out.push(PixelEvent { t_s: (t * 1e6).round() * 1e-6, ..*e });\n    }\n    Ok(out)"
+ }
+]

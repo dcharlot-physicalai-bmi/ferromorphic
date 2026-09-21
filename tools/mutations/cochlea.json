@@ -1,0 +1,962 @@
+[
+ {
+  "label": "the positive check accepts zero",
+  "old": "    if !(v > 0.0) {\n        return Err(CochleaError::NotPositive { what, value: v });",
+  "new": "    if v < 0.0 {\n        return Err(CochleaError::NotPositive { what, value: v });"
+ },
+ {
+  "label": "the finite check accepts anything",
+  "old": "fn finite(what: &'static str, v: f64) -> Result<f64, CochleaError> {\n    if v.is_finite() {\n        Ok(v)\n    } else {\n        Err(CochleaError::NotFinite { what, index: 0 })\n    }",
+  "new": "fn finite(what: &'static str, v: f64) -> Result<f64, CochleaError> {\n    let _ = what;\n    Ok(v)"
+ },
+ {
+  "label": "a slice scan reports every bad sample as index zero",
+  "old": "            return Err(CochleaError::NotFinite { what, index: i });",
+  "new": "            return Err(CochleaError::NotFinite { what, index: 0 });"
+ },
+ {
+  "label": "a refusal names no value",
+  "old": "            Self::Channels { n } => write!(f, \"a filterbank of {n} channels cannot be built\"),",
+  "new": "            Self::Channels { n } => {\n                let _ = n;\n                write!(f, \"a filterbank of that size cannot be built\")\n            }"
+ },
+ {
+  "label": "the Nyquist guard goes back to the argued 0.45",
+  "old": "pub const NYQUIST_GUARD: f64 = 0.40;",
+  "new": "pub const NYQUIST_GUARD: f64 = 0.45;"
+ },
+ {
+  "label": "Patterson's bandwidth factor is transcribed as 1.19",
+  "old": "pub const PATTERSON_B: f64 = 1.019;",
+  "new": "pub const PATTERSON_B: f64 = 1.19;"
+ },
+ {
+  "label": "the order ceiling is lowered to four",
+  "old": "pub const MAX_ORDER: usize = 8;",
+  "new": "pub const MAX_ORDER: usize = 4;"
+ },
+ {
+  "label": "the half-wave drive is a factor of ten small",
+  "old": "pub const DEFAULT_DRIVE_HALF_WAVE: f64 = 2e-8;",
+  "new": "pub const DEFAULT_DRIVE_HALF_WAVE: f64 = 2e-9;"
+ },
+ {
+  "label": "the Meddis drive is a factor of a hundred large",
+  "old": "pub const DEFAULT_DRIVE_MEDDIS: f64 = 1e-10;",
+  "new": "pub const DEFAULT_DRIVE_MEDDIS: f64 = 1e-8;"
+ },
+ {
+  "label": "the onset path is given the sustained path's drive",
+  "old": "pub const DEFAULT_DRIVE_ONSET: f64 = 6e-8;",
+  "new": "pub const DEFAULT_DRIVE_ONSET: f64 = 2e-8;"
+ },
+ {
+  "label": "the ERB equation loses its fitted intercept",
+  "old": "    24.7 * (4.37 * f / 1000.0 + 1.0)",
+  "new": "    24.7 * (4.37 * f / 1000.0)"
+ },
+ {
+  "label": "the ERB equation's slope is transcribed as 4.73",
+  "old": "    24.7 * (4.37 * f / 1000.0 + 1.0)",
+  "new": "    24.7 * (4.73 * f / 1000.0 + 1.0)"
+ },
+ {
+  "label": "the ERB-rate scale uses a natural logarithm",
+  "old": "    Some(21.4 * arg.log10())",
+  "new": "    Some(21.4 * arg.ln())"
+ },
+ {
+  "label": "the ERB-rate scale's prefactor is transcribed as 24.1",
+  "old": "    Some(21.4 * arg.log10())",
+  "new": "    Some(24.1 * arg.log10())"
+ },
+ {
+  "label": "a frequency off the bottom of the ERB scale is accepted",
+  "old": "    let arg = 4.37 * f / 1000.0 + 1.0;\n    if !(arg > 0.0) {\n        return None;\n    }",
+  "new": "    let arg = 4.37 * f / 1000.0 + 1.0;\n    if arg < -1.0 {\n        return None;\n    }"
+ },
+ {
+  "label": "the inverse ERB-rate scale drops the subtraction of one",
+  "old": "    let f = 1000.0 * (10f64.powf(e / 21.4) - 1.0) / 4.37;",
+  "new": "    let f = 1000.0 * 10f64.powf(e / 21.4) / 4.37;"
+ },
+ {
+  "label": "an inverted band is laid out rather than refused",
+  "old": "    if !(lo < hi) {\n        return Err(CochleaError::Band { lo, hi });",
+  "new": "    if lo.is_nan() {\n        return Err(CochleaError::Band { lo, hi });"
+ },
+ {
+  "label": "an empty bank is refused as a bad band rather than as a channel count",
+  "old": "    if n == 0 {\n        return Err(CochleaError::Channels { n });",
+  "new": "    if n == 0 {\n        return Err(CochleaError::Band { lo, hi });"
+ },
+ {
+  "label": "the ERB-rate step divides by the channel count rather than by the gaps",
+  "old": "    let step = (e_hi - e_lo) / (n - 1) as f64;",
+  "new": "    let step = (e_hi - e_lo) / n as f64;"
+ },
+ {
+  "label": "the channel spacing starts one step above the lower edge",
+  "old": "        let e = e_lo + step * i as f64;",
+  "new": "        let e = e_lo + step * (i + 1) as f64;"
+ },
+ {
+  "label": "the channels are spaced linearly in hertz rather than on the ERB scale",
+  "old": "        let e = e_lo + step * i as f64;\n        out.push(erb_rate_to_hz(e).ok_or(CochleaError::Band { lo, hi })?);",
+  "new": "        let e = e_lo + step * i as f64;\n        let _ = e;\n        out.push(lo + (hi - lo) * i as f64 / (n - 1) as f64);"
+ },
+ {
+  "label": "the centre-frequency guard sits at Nyquist itself",
+  "old": "        let limit = NYQUIST_GUARD * fs;",
+  "new": "        let limit = 0.5 * fs;"
+ },
+ {
+  "label": "a centre frequency exactly at the guard is refused",
+  "old": "        if !(f_c > 0.0) || f_c > limit {",
+  "new": "        if !(f_c > 0.0) || f_c >= limit {"
+ },
+ {
+  "label": "a zero order is built rather than refused",
+  "old": "        if order == 0 || order > MAX_ORDER {",
+  "new": "        if order > MAX_ORDER {"
+ },
+ {
+  "label": "the pole's decay rate drops its factor of 2 pi",
+  "old": "        let beta = 2.0 * PI * b_factor * erb_hz(f_c);",
+  "new": "        let beta = b_factor * erb_hz(f_c);"
+ },
+ {
+  "label": "the pole's decay rate is set by the centre frequency rather than by the ERB",
+  "old": "        let beta = 2.0 * PI * b_factor * erb_hz(f_c);",
+  "new": "        let beta = 2.0 * PI * b_factor * f_c;"
+ },
+ {
+  "label": "the bandwidth factor supplied is ignored in favour of Patterson's",
+  "old": "        let beta = 2.0 * PI * b_factor * erb_hz(f_c);",
+  "new": "        let beta = 2.0 * PI * PATTERSON_B * erb_hz(f_c);"
+ },
+ {
+  "label": "the pole magnitude is not normalised by the sample rate",
+  "old": "        let r = (-beta / fs).exp();",
+  "new": "        let r = (-beta).exp();"
+ },
+ {
+  "label": "the pole angle is not normalised by the sample rate",
+  "old": "        let theta = 2.0 * PI * f_c / fs;",
+  "new": "        let theta = 2.0 * PI * f_c;"
+ },
+ {
+  "label": "the gain forgets that a real tone splits into two conjugate halves",
+  "old": "        let gain = 2.0 * (1.0 - r).powi(order as i32);",
+  "new": "        let gain = (1.0 - r).powi(order as i32);"
+ },
+ {
+  "label": "the gain is normalised for a fourth-order cascade whatever the order",
+  "old": "        let gain = 2.0 * (1.0 - r).powi(order as i32);",
+  "new": "        let gain = 2.0 * (1.0 - r).powi(4);"
+ },
+ {
+  "label": "the pole's real and imaginary parts are swapped",
+  "old": "            p_re: r * theta.cos(),\n            p_im: r * theta.sin(),",
+  "new": "            p_re: r * theta.sin(),\n            p_im: r * theta.cos(),"
+ },
+ {
+  "label": "the pole is conjugated",
+  "old": "            p_re: r * theta.cos(),\n            p_im: r * theta.sin(),",
+  "new": "            p_re: r * theta.cos(),\n            p_im: -r * theta.sin(),",
+  "equivalent": "conjugation commutes with the whole cascade. Every input sample is real and every state starts at exactly 0.0, so by induction on both the stage index and the sample index the state under the conjugated pole is the complex conjugate of the state under the original: if y = x + p*z then conj(y) = conj(x) + conj(p)*conj(z), and conj(x) = x for a real input. `step` returns the REAL part, which conjugation leaves bit-for-bit unchanged, and `envelope` returns the hypot of the two parts, which is unchanged because only the sign of the imaginary part moves. No test can tell, and neither can any caller, because nothing in this module exposes the imaginary part. The defect this would be in a module that did expose it is a spectrum mirrored about DC."
+ },
+ {
+  "label": "the decay rate is computed from the centre frequency rather than the ERB",
+  "old": "        2.0 * PI * self.b_factor * erb_hz(self.f_c)",
+  "new": "        2.0 * PI * self.b_factor * self.f_c"
+ },
+ {
+  "label": "the stated peak frequency drifts one percent off the centre frequency",
+  "old": "    pub fn peak_frequency(&self) -> f64 {\n        self.f_c\n    }",
+  "new": "    pub fn peak_frequency(&self) -> f64 {\n        self.f_c * 1.01\n    }"
+ },
+ {
+  "label": "the transfer function's detuning is a sum rather than a difference",
+  "old": "        let d = 2.0 * PI * (self.f_c - f) / self.fs;",
+  "new": "        let d = 2.0 * PI * (self.f_c + f) / self.fs;"
+ },
+ {
+  "label": "the transfer function's denominator adds where it should subtract",
+  "old": "        let denom = 1.0 - 2.0 * self.r * d.cos() + self.r * self.r;",
+  "new": "        let denom = 1.0 + 2.0 * self.r * d.cos() + self.r * self.r;"
+ },
+ {
+  "label": "the magnitude response is squared rather than taken as an amplitude",
+  "old": "        (peak / denom).powf(self.order as f64 / 2.0)",
+  "new": "        (peak / denom).powf(self.order as f64)"
+ },
+ {
+  "label": "the magnitude response is a fourth-order shape at every order",
+  "old": "        (peak / denom).powf(self.order as f64 / 2.0)",
+  "new": "        (peak / denom).powf(2.0)"
+ },
+ {
+  "label": "the half-power point is computed for a fourth-order filter at every order",
+  "old": "        let two_pow = 2f64.powf(1.0 / self.order as f64);",
+  "new": "        let two_pow = 2f64.powf(1.0 / 4.0);"
+ },
+ {
+  "label": "the discrete bandwidth drops the half-power factor",
+  "old": "        let arg = (1.0 + r * r - (1.0 - r) * (1.0 - r) * two_pow) / (2.0 * r);",
+  "new": "        let arg = (1.0 + r * r - (1.0 - r) * (1.0 - r)) / (2.0 * r);"
+ },
+ {
+  "label": "an arccos argument outside its domain is returned as a NaN bandwidth",
+  "old": "        if !(-1.0..=1.0).contains(&arg) {\n            return None;\n        }",
+  "new": "        if false {\n            return None;\n        }"
+ },
+ {
+  "label": "the discrete bandwidth reports a half width as the full width",
+  "old": "        Some(arg.acos() * self.fs / PI)",
+  "new": "        Some(arg.acos() * self.fs / (2.0 * PI))"
+ },
+ {
+  "label": "the continuous bandwidth drops the subtraction inside its square root",
+  "old": "        let factor = (2f64.powf(1.0 / self.order as f64) - 1.0).sqrt();",
+  "new": "        let factor = 2f64.powf(1.0 / self.order as f64).sqrt();"
+ },
+ {
+  "label": "the travelling-wave latency counts every stage rather than the gaps between them",
+  "old": "        let m = (self.order as f64 - 1.0) * self.r / (1.0 - self.r);",
+  "new": "        let m = self.order as f64 * self.r / (1.0 - self.r);"
+ },
+ {
+  "label": "the travelling-wave latency inverts its pole ratio",
+  "old": "        let m = (self.order as f64 - 1.0) * self.r / (1.0 - self.r);",
+  "new": "        let m = (self.order as f64 - 1.0) * (1.0 - self.r) / self.r;"
+ },
+ {
+  "label": "the peak-sample tie is broken toward the earlier sample",
+  "old": "        m.max(0.0).floor() / self.fs",
+  "new": "        m.max(0.0).ceil() / self.fs"
+ },
+ {
+  "label": "the continuous latency counts every stage rather than the gaps between them",
+  "old": "        (self.order as f64 - 1.0) / self.decay_rate()",
+  "new": "        self.order as f64 / self.decay_rate()"
+ },
+ {
+  "label": "the input is not scaled by the normalising gain",
+  "old": "        let mut re = x * self.gain;\n        let mut im = 0.0;",
+  "new": "        let mut re = x;\n        let mut im = 0.0;"
+ },
+ {
+  "label": "the cascade always runs four stages",
+  "old": "        for k in 0..self.order {\n            // y[k][t] = x[k][t] + p · y[k][t-1], with the stored state being y[k][t-1].",
+  "new": "        for k in 0..self.order.min(4) {\n            // y[k][t] = x[k][t] + p · y[k][t-1], with the stored state being y[k][t-1]."
+ },
+ {
+  "label": "the complex multiply adds the imaginary cross term to the real part",
+  "old": "            let yr = re + self.p_re * self.state_re[k] - self.p_im * self.state_im[k];",
+  "new": "            let yr = re + self.p_re * self.state_re[k] + self.p_im * self.state_im[k];"
+ },
+ {
+  "label": "the imaginary update reads the real state AFTER this sample has overwritten it",
+  "old": "            let yi = im + self.p_re * self.state_im[k] + self.p_im * self.state_re[k];\n            self.state_re[k] = yr;\n            self.state_im[k] = yi;",
+  "new": "            self.state_re[k] = yr;\n            let yi = im + self.p_re * self.state_im[k] + self.p_im * self.state_re[k];\n            self.state_im[k] = yi;"
+ },
+ {
+  "label": "the imaginary part never reaches the next stage",
+  "old": "            re = yr;\n            im = yi;\n        }\n        re",
+  "new": "            re = yr;\n        }\n        re"
+ },
+ {
+  "label": "the filter outputs the quadrature part rather than the displacement",
+  "old": "            re = yr;\n            im = yi;\n        }\n        re",
+  "new": "            re = yr;\n            im = yi;\n        }\n        im"
+ },
+ {
+  "label": "the envelope is read from the first cascade stage rather than the last",
+  "old": "        let k = self.order - 1;\n        self.state_re[k].hypot(self.state_im[k])",
+  "new": "        let k = 0;\n        self.state_re[k].hypot(self.state_im[k])"
+ },
+ {
+  "label": "a reset clears only the real half of the cascade state",
+  "old": "            self.state_re[k] = 0.0;\n            self.state_im[k] = 0.0;",
+  "new": "            self.state_re[k] = 0.0;"
+ },
+ {
+  "label": "filtering a buffer carries the previous buffer's state",
+  "old": "        finite_slice(\"signal sample\", signal)?;\n        self.reset();\n        Ok(signal.iter().map(|&x| self.step(x)).collect())",
+  "new": "        finite_slice(\"signal sample\", signal)?;\n        Ok(signal.iter().map(|&x| self.step(x)).collect())"
+ },
+ {
+  "label": "the envelope is read one sample before the step that produces it",
+  "old": "                self.step(x);\n                self.envelope()",
+  "new": "                let e = self.envelope();\n                self.step(x);\n                e"
+ },
+ {
+  "label": "the default compression is the 0.5 end of the measured range",
+  "old": "    fn default() -> Self {\n        Self::Power { exponent: 0.4 }\n    }",
+  "new": "    fn default() -> Self {\n        Self::Power { exponent: 0.5 }\n    }"
+ },
+ {
+  "label": "a zero or negative exponent is accepted",
+  "old": "                if !(exponent > 0.0) || exponent > 1.0 {",
+  "new": "                if exponent > 1.0 {"
+ },
+ {
+  "label": "a non-finite exponent is not refused before the range check",
+  "old": "                if !exponent.is_finite() {\n                    return Err(CochleaError::NotFinite {",
+  "new": "                if false {\n                    return Err(CochleaError::NotFinite {"
+ },
+ {
+  "label": "compression does not rectify its input first",
+  "old": "    pub fn apply(self, x: f64) -> f64 {\n        let x = x.max(0.0);",
+  "new": "    pub fn apply(self, x: f64) -> f64 {"
+ },
+ {
+  "label": "the power law raises to the reciprocal of its exponent",
+  "old": "            Self::Power { exponent } => x.powf(exponent),",
+  "new": "            Self::Power { exponent } => x.powf(1.0 / exponent),"
+ },
+ {
+  "label": "the logarithm's knee multiplies rather than divides",
+  "old": "            Self::Log { knee } => (1.0 + x / knee).ln(),",
+  "new": "            Self::Log { knee } => (1.0 + x * knee).ln(),"
+ },
+ {
+  "label": "the logarithm loses the linear region that keeps silence finite",
+  "old": "            Self::Log { knee } => (1.0 + x / knee).ln(),",
+  "new": "            Self::Log { knee } => (x / knee).ln(),"
+ },
+ {
+  "label": "the logarithm is base ten rather than natural",
+  "old": "            Self::Log { knee } => (1.0 + x / knee).ln(),",
+  "new": "            Self::Log { knee } => (1.0 + x / knee).log10(),"
+ },
+ {
+  "label": "the zero floor launders a NaN into a healthy silence",
+  "old": "fn floor_at_zero(x: f64) -> f64 {\n    if x < 0.0 { 0.0 } else { x }\n}",
+  "new": "fn floor_at_zero(x: f64) -> f64 {\n    x.max(0.0)\n}"
+ },
+ {
+  "label": "rectification is full-wave",
+  "old": "pub fn half_wave(x: f64) -> f64 {\n    x.max(0.0)\n}",
+  "new": "pub fn half_wave(x: f64) -> f64 {\n    x.abs()\n}"
+ },
+ {
+  "label": "the gain ignores the sensitivity it was built with",
+  "old": "    pub fn gain(&self) -> f64 {\n        1.0 / (1.0 + self.target * self.level)\n    }",
+  "new": "    pub fn gain(&self) -> f64 {\n        1.0 / (1.0 + self.level)\n    }"
+ },
+ {
+  "label": "the gain control reacts to the sample it is gaining",
+  "old": "        let y = x * self.gain();\n        let alpha = 1.0 - (-dt / self.tau).exp();\n        self.level += (x.max(0.0) - self.level) * alpha;\n        y",
+  "new": "        let alpha = 1.0 - (-dt / self.tau).exp();\n        self.level += (x.max(0.0) - self.level) * alpha;\n        let y = x * self.gain();\n        y"
+ },
+ {
+  "label": "the level detector's step coefficient is its own complement",
+  "old": "        let alpha = 1.0 - (-dt / self.tau).exp();",
+  "new": "        let alpha = (-dt / self.tau).exp();"
+ },
+ {
+  "label": "the level detector assigns rather than accumulates",
+  "old": "        self.level += (x.max(0.0) - self.level) * alpha;",
+  "new": "        self.level = (x.max(0.0) - self.level) * alpha;"
+ },
+ {
+  "label": "the level detector has no leak, so the level only ever rises",
+  "old": "        self.level += (x.max(0.0) - self.level) * alpha;",
+  "new": "        self.level += x.max(0.0) * alpha;"
+ },
+ {
+  "label": "a gain loop starts attenuating rather than at rest",
+  "old": "    /// Return the level to zero.\n    pub fn reset(&mut self) {\n        self.level = 0.0;\n    }",
+  "new": "    /// Return the level to zero.\n    pub fn reset(&mut self) {\n        self.level = 1.0;\n    }"
+ },
+ {
+  "label": "a loop with an infinite time constant is accepted",
+  "old": "        let tau = positive(\"agc tau\", tau)?;",
+  "new": "        let tau = finite(\"agc tau\", tau)?;"
+ },
+ {
+  "label": "Meddis's A is the 1988 revision's value",
+  "old": "            a: 5.0,\n            b: 300.0,",
+  "new": "            a: 10.0,\n            b: 300.0,"
+ },
+ {
+  "label": "Meddis's B is the 1988 revision's value",
+  "old": "            a: 5.0,\n            b: 300.0,",
+  "new": "            a: 5.0,\n            b: 3000.0,"
+ },
+ {
+  "label": "Meddis's maximum permeability is the 1988 revision's value",
+  "old": "            g: 2000.0,\n            y: 5.05,",
+  "new": "            g: 1000.0,\n            y: 5.05,"
+ },
+ {
+  "label": "Meddis's replenishment rate is transcribed with a digit transposed",
+  "old": "            g: 2000.0,\n            y: 5.05,",
+  "new": "            g: 2000.0,\n            y: 5.5,"
+ },
+ {
+  "label": "Meddis's loss rate is a factor of ten small",
+  "old": "            l: 2500.0,\n            x: 66.31,",
+  "new": "            l: 250.0,\n            x: 66.31,"
+ },
+ {
+  "label": "Meddis's reprocessing return rate is a factor of ten small",
+  "old": "            l: 2500.0,\n            x: 66.31,",
+  "new": "            l: 2500.0,\n            x: 6.631,"
+ },
+ {
+  "label": "Meddis's cleft uptake rate is transcribed as 6850",
+  "old": "            r: 6580.0,\n            m: 1.0,",
+  "new": "            r: 6850.0,\n            m: 1.0,"
+ },
+ {
+  "label": "Meddis's pool maximum is not unity",
+  "old": "            r: 6580.0,\n            m: 1.0,",
+  "new": "            r: 6580.0,\n            m: 2.0,"
+ },
+ {
+  "label": "Meddis's spikes-per-quantum scale is a factor of ten small",
+  "old": "            h: 50000.0,\n            q: 0.0,",
+  "new": "            h: 5000.0,\n            q: 0.0,"
+ },
+ {
+  "label": "a hair cell starts with a full pool rather than at its silent steady state",
+  "old": "            w: 0.0,\n        };\n        m.reset();\n        m",
+  "new": "            w: 0.0,\n        };\n        m.q = m.m;\n        m"
+ },
+ {
+  "label": "the permeability law drops its half-saturation constant from the denominator",
+  "old": "            self.g * num / (num + self.b)",
+  "new": "            self.g * num / self.b"
+ },
+ {
+  "label": "the permeability law loses the displacement offset that sets the spontaneous rate",
+  "old": "        let num = s + self.a;\n        if num > 0.0 {",
+  "new": "        let num = s;\n        if num > 0.0 {"
+ },
+ {
+  "label": "the permeability law's own clamp is loosened by one comparison",
+  "old": "        let num = s + self.a;\n        if num > 0.0 {",
+  "new": "        let num = s + self.a;\n        if num >= 0.0 {",
+  "equivalent": "at num == 0.0 the two branches return the same number. The taken branch evaluates g*num/(num + b) = g*0.0/(0.0 + b) = 0.0, since `b` is validated strictly positive and finite, so the denominator is b != 0 and the quotient is exactly +0.0; the untaken branch returns the literal 0.0. The only input the mutation moves between branches is the one where they agree bit for bit, so no test and no caller can distinguish them. The clamp that DOES matter, and that a test could see, is the one on num < 0, which this edit leaves in place."
+ },
+ {
+  "label": "the permeability law does not shut the channels at large inward displacement",
+  "old": "        let num = s + self.a;\n        if num > 0.0 {\n            self.g * num / (num + self.b)\n        } else {\n            0.0\n        }",
+  "new": "        let num = s + self.a;\n        self.g * num / (num + self.b)"
+ },
+ {
+  "label": "the steady-state cleft is driven by the uptake rate rather than the loss rate",
+  "old": "        k * self.y * self.m / (self.y * (self.l + self.r) + k * self.l)",
+  "new": "        k * self.y * self.m / (self.y * (self.l + self.r) + k * self.r)"
+ },
+ {
+  "label": "the steady-state cleft drops the pool maximum",
+  "old": "        k * self.y * self.m / (self.y * (self.l + self.r) + k * self.l)",
+  "new": "        k * self.y / (self.y * (self.l + self.r) + k * self.l)"
+ },
+ {
+  "label": "the steady-state pool routes cleft transmitter through the uptake rate rather than the loss rate",
+  "old": "        self.y * self.m / (self.y + k * self.l / (self.l + self.r))",
+  "new": "        self.y * self.m / (self.y + k * self.r / (self.l + self.r))"
+ },
+ {
+  "label": "the steady rate takes the stimulus as a permeability",
+  "old": "        self.h * self.steady_state_cleft(self.permeability(s))",
+  "new": "        self.h * self.steady_state_cleft(s)"
+ },
+ {
+  "label": "the transmitter ceiling divides by both cleft rates",
+  "old": "        self.h * self.y * self.m / self.l",
+  "new": "        self.h * self.y * self.m / (self.l + self.r)"
+ },
+ {
+  "label": "the achievable ceiling is evaluated at the half-saturation constant rather than at the maximum permeability",
+  "old": "        self.h * self.steady_state_cleft(self.g)",
+  "new": "        self.h * self.steady_state_cleft(self.b)"
+ },
+ {
+  "label": "the stability bound omits the maximum permeability",
+  "old": "        1.0 / (self.y + self.l + self.r + self.x + self.g)",
+  "new": "        1.0 / (self.y + self.l + self.r + self.x)"
+ },
+ {
+  "label": "the stability bound is the loose eigenvalue limit rather than the tighter accuracy one",
+  "old": "        1.0 / (self.y + self.l + self.r + self.x + self.g)",
+  "new": "        1.0 / (self.l + self.r)"
+ },
+ {
+  "label": "the pool is replenished at a fixed rate rather than toward its maximum",
+  "old": "        let dq = self.y * (self.m - self.q) + self.x * self.w - k * self.q;",
+  "new": "        let dq = self.y * self.m + self.x * self.w - k * self.q;"
+ },
+ {
+  "label": "the reprocessing store never returns to the pool",
+  "old": "        let dq = self.y * (self.m - self.q) + self.x * self.w - k * self.q;",
+  "new": "        let dq = self.y * (self.m - self.q) - k * self.q;"
+ },
+ {
+  "label": "cleft transmitter is never taken up into the reprocessing store",
+  "old": "        let dc = k * self.q - self.l * self.c - self.r * self.c;",
+  "new": "        let dc = k * self.q - self.l * self.c;"
+ },
+ {
+  "label": "the reprocessing store's two rates are swapped",
+  "old": "        let dw = self.r * self.c - self.x * self.w;",
+  "new": "        let dw = self.x * self.c - self.r * self.w;"
+ },
+ {
+  "label": "the cleft is integrated without its time step",
+  "old": "        self.c = floor_at_zero(self.c + dc * dt);",
+  "new": "        self.c = floor_at_zero(self.c + dc);"
+ },
+ {
+  "label": "the pool is updated BEFORE the cleft's derivative reads it",
+  "old": "        let dc = k * self.q - self.l * self.c - self.r * self.c;\n        let dw = self.r * self.c - self.x * self.w;",
+  "new": "        self.q = floor_at_zero(self.q + dq * dt);\n        let dc = k * self.q - self.l * self.c - self.r * self.c;\n        let dw = self.r * self.c - self.x * self.w;"
+ },
+ {
+  "label": "the firing rate is the cleft concentration itself, unscaled",
+  "old": "        self.w = floor_at_zero(self.w + dw * dt);\n        self.h * self.c",
+  "new": "        self.w = floor_at_zero(self.w + dw * dt);\n        self.c"
+ },
+ {
+  "label": "a zero constant passes validation",
+  "old": "        ] {\n            positive(what, v)?;\n        }",
+  "new": "        ] {\n            finite(what, v)?;\n        }"
+ },
+ {
+  "label": "a negative pool passes validation",
+  "old": "            let v = finite(what, v)?;\n            if v < 0.0 {",
+  "new": "            let v = finite(what, v)?;\n            if v < -1.0 {"
+ },
+ {
+  "label": "the time step may be twice the stability bound",
+  "old": "        if dt > bound {\n            return Err(CochleaError::TimeStep { dt, bound });",
+  "new": "        if dt > 2.0 * bound {\n            return Err(CochleaError::TimeStep { dt, bound });"
+ },
+ {
+  "label": "a negative time step is accepted by the checked step",
+  "old": "        let dt = positive(\"time step\", dt)?;\n        let s = finite(\"stimulus\", s)?;",
+  "new": "        let dt = finite(\"time step\", dt)?;\n        let s = finite(\"stimulus\", s)?;"
+ },
+ {
+  "label": "a spike probability is a rate rather than a probability",
+  "old": "        let p = self.h * self.c * dt;",
+  "new": "        let p = self.h * self.c;"
+ },
+ {
+  "label": "a probability above one is returned rather than refused",
+  "old": "        if p.is_finite() && (0.0..=1.0).contains(&p) {",
+  "new": "        if p.is_finite() && p >= 0.0 {"
+ },
+ {
+  "label": "the finiteness guard is dropped from the probability check",
+  "old": "        if p.is_finite() && (0.0..=1.0).contains(&p) {",
+  "new": "        if (0.0..=1.0).contains(&p) {",
+  "equivalent": "`RangeInclusive::contains` is `p >= 0.0 && p <= 1.0`, and both comparisons are FALSE for every non-finite p: a NaN compares false against everything, +inf fails p <= 1.0 and -inf fails p >= 0.0. So the range test already returns false on exactly the values `is_finite` excludes, and the conjunction has the same truth table with or without it. `spike_probability(f64::NAN)` still returns None, as its test asserts. The guard is defensive documentation, not a branch, and no test could tell it apart from its absence."
+ },
+ {
+  "label": "a draw fires when the random number is ABOVE the probability",
+  "old": "        Some(rng.next_f64() < p)",
+  "new": "        Some(rng.next_f64() > p)"
+ },
+ {
+  "label": "the silent equilibrium's pool and cleft are swapped",
+  "old": "        self.c = self.steady_state_cleft(k);\n        self.q = self.steady_state_pool(k);",
+  "new": "        self.c = self.steady_state_pool(k);\n        self.q = self.steady_state_cleft(k);"
+ },
+ {
+  "label": "the default fast constant is 2 ms",
+  "old": "            tau_fast: 1e-3,\n            tau_slow: 20e-3,",
+  "new": "            tau_fast: 2e-3,\n            tau_slow: 20e-3,"
+ },
+ {
+  "label": "a detector whose two constants are equal is accepted",
+  "old": "        if !(tau_fast < tau_slow) {",
+  "new": "        if tau_fast > tau_slow {"
+ },
+ {
+  "label": "the two time constants are stored the wrong way round",
+  "old": "        Ok(Self {\n            tau_fast,\n            tau_slow,\n            fast: 0.0,\n            slow: 0.0,\n        })",
+  "new": "        Ok(Self {\n            tau_fast: tau_slow,\n            tau_slow: tau_fast,\n            fast: 0.0,\n            slow: 0.0,\n        })"
+ },
+ {
+  "label": "the step-response peak time inverts the ratio inside its logarithm",
+  "old": "        self.tau_fast * self.tau_slow * (self.tau_slow / self.tau_fast).ln()\n            / (self.tau_slow - self.tau_fast)",
+  "new": "        self.tau_fast * self.tau_slow * (self.tau_fast / self.tau_slow).ln()\n            / (self.tau_slow - self.tau_fast)"
+ },
+ {
+  "label": "the step-response peak height has its two exponentials the wrong way round",
+  "old": "        (-t / self.tau_slow).exp() - (-t / self.tau_fast).exp()",
+  "new": "        (-t / self.tau_fast).exp() - (-t / self.tau_slow).exp()"
+ },
+ {
+  "label": "the slow smoother runs at the fast constant",
+  "old": "        let as_ = 1.0 - (-dt / self.tau_slow).exp();",
+  "new": "        let as_ = 1.0 - (-dt / self.tau_fast).exp();"
+ },
+ {
+  "label": "the fast smoother assigns rather than accumulates",
+  "old": "        self.fast += (x - self.fast) * af;",
+  "new": "        self.fast = (x - self.fast) * af;"
+ },
+ {
+  "label": "the change detector reports slow minus fast, so every onset reads as an offset",
+  "old": "        self.fast += (x - self.fast) * af;\n        self.slow += (x - self.slow) * as_;\n        self.fast - self.slow",
+  "new": "        self.fast += (x - self.fast) * af;\n        self.slow += (x - self.slow) * as_;\n        self.slow - self.fast"
+ },
+ {
+  "label": "priming sets only the fast smoother, so a primed detector opens with a swing",
+  "old": "    pub fn prime(&mut self, x: f64) {\n        self.fast = x;\n        self.slow = x;\n    }",
+  "new": "    pub fn prime(&mut self, x: f64) {\n        self.fast = x;\n    }"
+ },
+ {
+  "label": "the compression law is stored without being validated",
+  "old": "            Transduction::HalfWave(c) => {\n                c.validate()?;",
+  "new": "            Transduction::HalfWave(c) => {\n                let _ = c;"
+ },
+ {
+  "label": "a hair cell built by struct literal is not validated",
+  "old": "            Transduction::Meddis(m) => {\n                m.validate()?;",
+  "new": "            Transduction::Meddis(m) => {"
+ },
+ {
+  "label": "a bank is built at a rate the hair cell cannot be stepped at",
+  "old": "                if dt > bound {\n                    return Err(CochleaError::TimeStep { dt, bound });\n                }",
+  "new": "                if false {\n                    return Err(CochleaError::TimeStep { dt, bound });\n                }"
+ },
+ {
+  "label": "the Meddis arm is given the half-wave path's drive scale",
+  "old": "                (vec![m; f_c.len()], DEFAULT_DRIVE_MEDDIS)",
+  "new": "                (vec![m; f_c.len()], DEFAULT_DRIVE_HALF_WAVE)"
+ },
+ {
+  "label": "the change detectors are built at another preset's time constants",
+  "old": "            onset: vec![Onset::default(); n],",
+  "new": "            onset: vec![Onset::new(5e-3, 50e-3).expect(\"valid\"); n],"
+ },
+ {
+  "label": "a zero drive is accepted",
+  "old": "        self.drive = positive(\"drive\", drive)?;",
+  "new": "        self.drive = finite(\"drive\", drive)?;"
+ },
+ {
+  "label": "the onset drive is stored without being checked",
+  "old": "        self.onset_drive = positive(\"onset drive\", drive)?;",
+  "new": "        self.onset_drive = drive;"
+ },
+ {
+  "label": "a change detector is installed without being re-validated",
+  "old": "        let onset = Onset::new(onset.tau_fast, onset.tau_slow)?;\n        self.onset = vec![onset; self.f_c.len()];",
+  "new": "        self.onset = vec![onset; self.f_c.len()];"
+ },
+ {
+  "label": "the envelope compression is validated and then thrown away",
+  "old": "        self.envelope_compression = c.validate()?;",
+  "new": "        c.validate()?;"
+ },
+ {
+  "label": "a gain loop built by struct literal is installed without being re-validated",
+  "old": "            Some(a) => vec![Agc::new(a.tau, a.target)?; self.f_c.len()],",
+  "new": "            Some(a) => vec![a; self.f_c.len()],"
+ },
+ {
+  "label": "removing the gain loops installs a default one instead",
+  "old": "            None => Vec::new(),\n        };\n        self.reset();",
+  "new": "            None => vec![Agc::new(20e-3, 20.0)?; self.f_c.len()],\n        };\n        self.reset();"
+ },
+ {
+  "label": "the simulation step is the sample rate rather than its reciprocal",
+  "old": "    pub fn dt(&self) -> f64 {\n        1.0 / self.fs\n    }",
+  "new": "    pub fn dt(&self) -> f64 {\n        self.fs\n    }"
+ },
+ {
+  "label": "the onset and offset address blocks overlap the sustained one",
+  "old": "            ChannelKind::Sustained => 0,\n            ChannelKind::Onset => n,\n            ChannelKind::Offset => 2 * n,",
+  "new": "            ChannelKind::Sustained => 0,\n            ChannelKind::Onset => 1,\n            ChannelKind::Offset => 2,"
+ },
+ {
+  "label": "the onset and offset address blocks are swapped",
+  "old": "            ChannelKind::Sustained => 0,\n            ChannelKind::Onset => n,\n            ChannelKind::Offset => 2 * n,",
+  "new": "            ChannelKind::Sustained => 0,\n            ChannelKind::Onset => 2 * n,\n            ChannelKind::Offset => n,"
+ },
+ {
+  "label": "an address one past the last channel is issued",
+  "old": "        let n = self.f_c.len();\n        if channel >= n {\n            return None;\n        }",
+  "new": "        let n = self.f_c.len();\n        if channel > n {\n            return None;\n        }"
+ },
+ {
+  "label": "addresses a whole population past the bank are decoded",
+  "old": "        if s >= 3 * n {\n            return None;\n        }",
+  "new": "        if s >= 4 * n {\n            return None;\n        }"
+ },
+ {
+  "label": "the kind is decoded from the channel index rather than from the block",
+  "old": "        let kind = match s / n {",
+  "new": "        let kind = match s % n {"
+ },
+ {
+  "label": "the channel is decoded from the block rather than from the offset within it",
+  "old": "        Some((kind, s % n))",
+  "new": "        Some((kind, s / n))"
+ },
+ {
+  "label": "the change detectors are primed at a unit envelope rather than at silence",
+  "old": "        let rest = self.envelope_compression.apply(0.0);",
+  "new": "        let rest = self.envelope_compression.apply(1.0);"
+ },
+ {
+  "label": "the change detectors are zeroed rather than primed with their resting input",
+  "old": "        for o in &mut self.onset {\n            o.prime(rest);\n        }",
+  "new": "        for o in &mut self.onset {\n            o.reset();\n        }",
+  "equivalent": "`rest` is `self.envelope_compression.apply(0.0)`, and every compression law in this module maps 0.0 to exactly 0.0: `Linear` returns x, `Power` returns 0.0.powf(e) = 0.0 for the e in (0, 1] that `validate` admits, and `Log` returns (1.0 + 0.0/knee).ln() = 1.0.ln() = 0.0 exactly. So `prime(0.0)` sets fast = 0.0 and slow = 0.0, which is bit-for-bit what `reset()` does. The distinction the doc draws is real but lives OUTSIDE this call: `prime` is what a caller running a detector on a Meddis channel's own output needs, where the resting value is the spontaneous rate. Inside `Filterbank::reset` the argument is always zero and no test could tell the two apart."
+ },
+ {
+  "label": "a reset leaves the gammatone states where the last run left them",
+  "old": "        for f in &mut self.filters {\n            f.reset();\n        }",
+  "new": "        for f in &mut self.filters {\n            let _ = f;\n        }"
+ },
+ {
+  "label": "a reset leaves the hair cells' transmitter pools where the last run left them",
+  "old": "        for h in &mut self.hair {\n            h.reset();\n        }",
+  "new": "        for h in &mut self.hair {\n            let _ = h;\n        }"
+ },
+ {
+  "label": "a reset leaves the gain loops at the level the last run drove them to",
+  "old": "        for a in &mut self.agc {\n            a.reset();\n        }",
+  "new": "        for a in &mut self.agc {\n            let _ = a;\n        }"
+ },
+ {
+  "label": "a reset leaves the sustained cells charged",
+  "old": "        for c in &mut self.sustained {\n            c.reset();\n        }",
+  "new": "        for c in &mut self.sustained {\n            let _ = c;\n        }"
+ },
+ {
+  "label": "the transduction stage is skipped and the raw displacement reported",
+  "old": "                let bm = self.filters[ch].step(x);\n                out[ch][i] = self.transduce_one(ch, bm, dt);",
+  "new": "                let bm = self.filters[ch].step(x);\n                out[ch][i] = bm;"
+ },
+ {
+  "label": "the displacement reaches the transduction stage unrectified",
+  "old": "        let mut rect = half_wave(bm);",
+  "new": "        let mut rect = bm;"
+ },
+ {
+  "label": "every channel's gain loop is channel zero's",
+  "old": "        if let Some(a) = self.agc.get_mut(ch) {",
+  "new": "        if let Some(a) = self.agc.get_mut(0) {"
+ },
+ {
+  "label": "the gain control's output is discarded, so the loop watches without acting",
+  "old": "            rect = a.step(dt, rect);",
+  "new": "            a.step(dt, rect);"
+ },
+ {
+  "label": "the hair cell never sees the sound",
+  "old": "            Transduction::Meddis(_) => self.hair[ch].step(dt, rect),",
+  "new": "            Transduction::Meddis(_) => self.hair[ch].step(dt, 0.0),"
+ },
+ {
+  "label": "the change detector watches the uncompressed envelope",
+  "old": "        let e = self.envelope_compression.apply(self.filters[ch].envelope());",
+  "new": "        let e = self.filters[ch].envelope();"
+ },
+ {
+  "label": "every channel's change detector is channel zero's",
+  "old": "        self.onset[ch].step(dt, e)",
+  "new": "        self.onset[0].step(dt, e)"
+ },
+ {
+  "label": "the drive scale is dropped from the sustained path",
+  "old": "                let drive = self.transduce_one(ch, bm, dt) * self.drive;",
+  "new": "                let drive = self.transduce_one(ch, bm, dt);"
+ },
+ {
+  "label": "every spike is timestamped at half the sample index",
+  "old": "            let t = i as u64;",
+  "new": "            let t = (i / 2) as u64;"
+ },
+ {
+  "label": "the onset cells fire on falls rather than on rises",
+  "old": "                let i_on = d.max(0.0) * self.onset_drive;",
+  "new": "                let i_on = (-d).max(0.0) * self.onset_drive;"
+ },
+ {
+  "label": "the change signal is never handed to the offset pass",
+  "old": "                change[ch] = d;",
+  "new": "                change[ch] = 0.0;"
+ },
+ {
+  "label": "the offset cells are driven by the same rectified half as the onset cells",
+  "old": "                let i_off = (-change[ch]).max(0.0) * self.onset_drive;",
+  "new": "                let i_off = change[ch].max(0.0) * self.onset_drive;"
+ },
+ {
+  "label": "the onset population spikes at the sustained addresses",
+  "old": "                if self.onset_cells[ch].step(dt, i_on)\n                    && let Some(source) = self.source(ChannelKind::Onset, ch)",
+  "new": "                if self.onset_cells[ch].step(dt, i_on)\n                    && let Some(source) = self.source(ChannelKind::Sustained, ch)"
+ },
+ {
+  "label": "the offset population is stepped with the onset population's cells",
+  "old": "                if self.offset_cells[ch].step(dt, i_off)",
+  "new": "                if self.onset_cells[ch].step(dt, i_off)"
+ },
+ {
+  "label": "the change detector is advanced before the filter that feeds it",
+  "old": "                self.filters[ch].step(x);\n                out[ch][i] = self.step_change_detector(ch, dt);",
+  "new": "                out[ch][i] = self.step_change_detector(ch, dt);\n                self.filters[ch].step(x);"
+ },
+ {
+  "label": "the spiking front end does not reset before a run",
+  "old": "        finite_slice(\"signal sample\", signal)?;\n        self.reset();\n        let dt = self.dt();\n        let n = self.filters.len();\n        let mut train = Train::new();",
+  "new": "        finite_slice(\"signal sample\", signal)?;\n        let dt = self.dt();\n        let n = self.filters.len();\n        let mut train = Train::new();"
+ },
+ {
+  "label": "the run duration is counted in ticks rather than seconds",
+  "old": "        let seconds = ticks as f64 * self.dt();",
+  "new": "        let seconds = ticks as f64;"
+ },
+ {
+  "label": "a foreign address is folded into channel zero",
+  "old": "            if let Some((kind, ch)) = self.decode_source(s.source) {",
+  "new": "            let (kind, ch) = self.decode_source(s.source).unwrap_or((ChannelKind::Sustained, 0));\n            {"
+ },
+ {
+  "label": "the sustained counter assigns rather than accumulates",
+  "old": "                    ChannelKind::Sustained => sustained[ch] += 1,",
+  "new": "                    ChannelKind::Sustained => sustained[ch] = 1,"
+ },
+ {
+  "label": "onset spikes are counted as offsets",
+  "old": "                    ChannelKind::Onset => onset[ch] += 1,",
+  "new": "                    ChannelKind::Onset => offset[ch] += 1,"
+ },
+ {
+  "label": "a zero-length run divides by zero rather than reporting nothing",
+  "old": "            if seconds > 0.0 {",
+  "new": "            if seconds >= 0.0 {"
+ },
+ {
+  "label": "a silent bank reports its first channel as the best one",
+  "old": "            if r > 0.0 && best.is_none_or(|(_, b)| r > b) {",
+  "new": "            if r >= 0.0 && best.is_none_or(|(_, b)| r > b) {"
+ },
+ {
+  "label": "the best channel is the quietest one",
+  "old": "            if r > 0.0 && best.is_none_or(|(_, b)| r > b) {",
+  "new": "            if r > 0.0 && best.is_none_or(|(_, b)| r < b) {"
+ },
+ {
+  "label": "the total sustained rate sums the onset channels",
+  "old": "        self.sustained_hz.iter().sum()",
+  "new": "        self.onset_hz.iter().sum()"
+ },
+ {
+  "label": "the audio band reaches the sample rate rather than Nyquist",
+  "old": "    let limit = fs / 2.0;\n    if !(f > 0.0) || f >= limit {",
+  "new": "    let limit = fs;\n    if !(f > 0.0) || f >= limit {"
+ },
+ {
+  "label": "a tone is a cosine, so it begins with a click",
+  "old": "    Ok((0..n).map(|i| amplitude * (w * i as f64).sin()).collect())",
+  "new": "    Ok((0..n).map(|i| amplitude * (w * i as f64).cos()).collect())"
+ },
+ {
+  "label": "a tone's angular frequency is not normalised by the sample rate",
+  "old": "    let w = 2.0 * PI * f / fs;\n    Ok((0..n).map(|i| amplitude * (w * i as f64).sin()).collect())",
+  "new": "    let w = 2.0 * PI * f;\n    Ok((0..n).map(|i| amplitude * (w * i as f64).sin()).collect())"
+ },
+ {
+  "label": "a two-tone signal gives each component the other's amplitude",
+  "old": "    let a = tone(fs, f_probe, a_probe, seconds)?;\n    let b = tone(fs, f_masker, a_masker, seconds)?;",
+  "new": "    let a = tone(fs, f_probe, a_masker, seconds)?;\n    let b = tone(fs, f_masker, a_probe, seconds)?;"
+ },
+ {
+  "label": "a linear chirp's swept term is not halved, so it accumulates the wrong phase",
+  "old": "            Sweep::Linear => 2.0 * PI * (f0 * t + (f1 - f0) * t * t / (2.0 * t_end)),",
+  "new": "            Sweep::Linear => 2.0 * PI * (f0 * t + (f1 - f0) * t * t / t_end),"
+ },
+ {
+  "label": "an exponential chirp's phase drops the subtraction of one",
+  "old": "                    2.0 * PI * f0 * t_end * (ratio.powf(t / t_end) - 1.0) / ratio.ln()",
+  "new": "                    2.0 * PI * f0 * t_end * ratio.powf(t / t_end) / ratio.ln()"
+ },
+ {
+  "label": "the linear chirp's total phase is the sum of its endpoints rather than their mean",
+  "old": "        Sweep::Linear => 2.0 * PI * seconds * (f0 + f1) / 2.0,",
+  "new": "        Sweep::Linear => 2.0 * PI * seconds * (f0 + f1),"
+ },
+ {
+  "label": "a click's sample index divides by the sample rate rather than multiplying",
+  "old": "    let idx = (at * fs).round();",
+  "new": "    let idx = (at / fs).round();"
+ },
+ {
+  "label": "a click before the start of the buffer is not refused",
+  "old": "    if !(idx >= 0.0) || idx >= n as f64 {",
+  "new": "    if idx >= n as f64 {"
+ },
+ {
+  "label": "the gate's start is in seconds rather than samples",
+  "old": "    let start = onset * fs;",
+  "new": "    let start = onset;"
+ },
+ {
+  "label": "the ramp length is in seconds rather than samples",
+  "old": "    let ramp_n = (ramp * fs).max(0.0);",
+  "new": "    let ramp_n = ramp.max(0.0);"
+ },
+ {
+  "label": "the gate never closes",
+  "old": "        if t < start || t >= stop {\n            continue;\n        }",
+  "new": "        if t < start {\n            continue;\n        }"
+ },
+ {
+  "label": "the gate takes the larger of its two edges, so the ramps vanish",
+  "old": "        let shape = rise.min(fall);",
+  "new": "        let shape = rise.max(fall);"
+ },
+ {
+  "label": "the edge shape is a straight line rather than a raised cosine",
+  "old": "        *slot = 0.5 * (1.0 - (PI * shape).cos());",
+  "new": "        *slot = shape;"
+ },
+ {
+  "label": "a burst that runs past the end of the buffer is accepted",
+  "old": "    if !(onset >= 0.0) || !(ramp >= 0.0) || onset + duration > seconds {\n        return Err(CochleaError::Window {\n            onset,\n            duration,\n            total: seconds,\n        });\n    }\n    let g = gate(fs, carrier.len(), onset, duration, ramp);",
+  "new": "    if !(onset >= 0.0) || !(ramp >= 0.0) {\n        return Err(CochleaError::Window {\n            onset,\n            duration,\n            total: seconds,\n        });\n    }\n    let g = gate(fs, carrier.len(), onset, duration, ramp);"
+ },
+ {
+  "label": "a noise burst is unipolar, so it carries a step into every channel",
+  "old": "        .map(|i| amplitude * (2.0 * rng.next_f64() - 1.0) * g[i])",
+  "new": "        .map(|i| amplitude * rng.next_f64() * g[i])"
+ },
+ {
+  "label": "a noise burst ignores the amplitude it was asked for",
+  "old": "        .map(|i| amplitude * (2.0 * rng.next_f64() - 1.0) * g[i])",
+  "new": "        .map(|i| (2.0 * rng.next_f64() - 1.0) * g[i])"
+ },
+ {
+  "label": "the single-bin transform reports half the amplitude it should",
+  "old": "    Ok(2.0 * re.hypot(im) / samples.len() as f64)",
+  "new": "    Ok(re.hypot(im) / samples.len() as f64)"
+ },
+ {
+  "label": "the single-bin transform's kernel rotates the wrong way",
+  "old": "        im -= x * p.sin();",
+  "new": "        im += x * p.sin();",
+  "equivalent": "the sign of the imaginary accumulator conjugates the kernel: with e^{+iωn} in place of e^{-iωn} the sum becomes the complex conjugate of the original, term by term, because every sample x is real. The function returns 2·|re + i·im|/N, and |z| = |conj(z)| exactly in IEEE arithmetic, so the returned amplitude is bit-for-bit identical. Nothing in this module reads the phase of the bin — `bin_amplitude` is the whole interface — so no test could tell. It would matter to a caller measuring a phase or a group delay, which is why the sign is written the way the transform is defined rather than either way."
+ },
+ {
+  "label": "the root-mean-square is a mean absolute value",
+  "old": "    let s: f64 = samples.iter().map(|x| x * x).sum();",
+  "new": "    let s: f64 = samples.iter().map(|x| x.abs()).sum();"
+ },
+ {
+  "label": "the root-mean-square never takes its square root",
+  "old": "    Ok((s / samples.len() as f64).sqrt())",
+  "new": "    Ok(s / samples.len() as f64)"
+ }
+]

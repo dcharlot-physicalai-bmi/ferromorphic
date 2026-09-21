@@ -1,0 +1,706 @@
+[
+ {
+  "label": "the exponential term's argument is clamped a decade too low",
+  "old": "pub const EXP_ARG_LIMIT: f64 = 50.0;",
+  "new": "pub const EXP_ARG_LIMIT: f64 = 5.0;"
+ },
+ {
+  "label": "pi is carried to three significant figures",
+  "old": "/// `π`, spelled out rather than imported so the constant a reader compares against is visible.\nconst PI: f64 = std::f64::consts::PI;",
+  "new": "/// `π`, spelled out rather than imported so the constant a reader compares against is visible.\nconst PI: f64 = 3.14;"
+ },
+ {
+  "label": "the exponential clamp acts below the limit instead of above it",
+  "old": "    if x > EXP_ARG_LIMIT { EXP_ARG_LIMIT.exp() } else { x.exp() }",
+  "new": "    if x < EXP_ARG_LIMIT { EXP_ARG_LIMIT.exp() } else { x.exp() }"
+ },
+ {
+  "label": "the clamped branch returns the limit rather than its exponential",
+  "old": "    if x > EXP_ARG_LIMIT { EXP_ARG_LIMIT.exp() } else { x.exp() }",
+  "new": "    if x > EXP_ARG_LIMIT { EXP_ARG_LIMIT } else { x.exp() }"
+ },
+ {
+  "label": "a non-finite parameter is accepted by name",
+  "old": "    if value.is_finite() { Ok(()) } else { Err(ModelError::NotFinite { what, value }) }",
+  "new": "    let _ = (what, value);\n    Ok(())"
+ },
+ {
+  "label": "a strictly positive parameter check accepts zero",
+  "old": "    if value > 0.0 { Ok(()) } else { Err(ModelError::NotPositive { what, value }) }",
+  "new": "    if value >= 0.0 { Ok(()) } else { Err(ModelError::NotPositive { what, value }) }"
+ },
+ {
+  "label": "try_step lets a non-finite dt through",
+  "old": "    if !dt.is_finite() {\n        return Err(ModelError::NotFinite { what: \"dt\", value: dt });\n    }",
+  "new": "    if false {\n        return Err(ModelError::NotFinite { what: \"dt\", value: dt });\n    }"
+ },
+ {
+  "label": "try_step accepts a negative time step",
+  "old": "    if dt <= 0.0 {\n        return Err(ModelError::NotPositive { what: \"dt\", value: dt });\n    }",
+  "new": "    if false {\n        return Err(ModelError::NotPositive { what: \"dt\", value: dt });\n    }"
+ },
+ {
+  "label": "try_step does not check the current at all",
+  "old": "    if !i.is_finite() {\n        return Err(ModelError::NotFinite { what: \"i\", value: i });\n    }\n    Ok(n.step(dt, i))",
+  "new": "    Ok(n.step(dt, i))"
+ },
+ {
+  "label": "the angle is folded onto a half turn rather than a full one",
+  "old": "    let two_pi = 2.0 * PI;",
+  "new": "    let two_pi = PI;"
+ },
+ {
+  "label": "an angle above pi is folded further up",
+  "old": "    if r > PI {\n        r -= two_pi;",
+  "new": "    if r > PI {\n        r += two_pi;"
+ },
+ {
+  "label": "the canonical frequency is eta rather than its square root",
+  "old": "        let b = eta.sqrt();\n        let phi0 = (y0 / b).atan();",
+  "new": "        let b = eta;\n        let phi0 = (y0 / b).atan();"
+ },
+ {
+  "label": "the phase runs backwards over the step",
+  "old": "        let phi1 = phi0 + b * h;",
+  "new": "        let phi1 = phi0 - b * h;"
+ },
+ {
+  "label": "the divergence time above rheobase is multiplied by the frequency instead of divided",
+  "old": "            return Flow::Diverged { at: (0.5 * PI - phi0) / b };",
+  "new": "            return Flow::Diverged { at: (0.5 * PI - phi0) * b };"
+ },
+ {
+  "label": "at rheobase exactly the flow never reports a divergence",
+  "old": "        if y0 > 0.0 && h >= 1.0 / y0 {\n            return Flow::Diverged { at: 1.0 / y0 };\n        }",
+  "new": "        if false {\n            return Flow::Diverged { at: 1.0 / y0 };\n        }"
+ },
+ {
+  "label": "the zero-input Riccati solution has the wrong sign in its denominator",
+  "old": "        Flow::Finite(y0 / (1.0 - y0 * h))",
+  "new": "        Flow::Finite(y0 / (1.0 + y0 * h))"
+ },
+ {
+  "label": "every start below the unstable fixed point is tested for divergence",
+  "old": "        let a = (-eta).sqrt();\n        if y0 > a {",
+  "new": "        let a = (-eta).sqrt();\n        if true {"
+ },
+ {
+  "label": "the divergence time below rheobase drops its factor of two",
+  "old": "            let h_star = (2.0 * a / (y0 - a)).ln_1p() / (2.0 * a);",
+  "new": "            let h_star = (2.0 * a / (y0 - a)).ln_1p() / a;"
+ },
+ {
+  "label": "the divergence time is evaluated with ln rather than ln_1p",
+  "old": "            let h_star = (2.0 * a / (y0 - a)).ln_1p() / (2.0 * a);",
+  "new": "            let h_star = (2.0 * a / (y0 - a)).ln() / (2.0 * a);"
+ },
+ {
+  "label": "the unstable-side coordinate inverts its ratio",
+  "old": "        }\n        if y0 > 0.0 {\n            let u0 = (y0 - a) / (y0 + a);",
+  "new": "        }\n        if y0 > 0.0 {\n            let u0 = (y0 + a) / (y0 - a);"
+ },
+ {
+  "label": "a start exactly on the unstable fixed point falls to the stable one",
+  "old": "                return Flow::Finite(a);",
+  "new": "                return Flow::Finite(-a);"
+ },
+ {
+  "label": "the unstable-side exponent drops its factor of two",
+  "old": "            let u = u0 * (2.0 * a * h).exp();",
+  "new": "            let u = u0 * (a * h).exp();"
+ },
+ {
+  "label": "an overflowing coordinate settles on the unstable fixed point instead of the stable one",
+  "old": "                return Flow::Finite(-a);\n            }\n            if u >= 1.0 {",
+  "new": "                return Flow::Finite(a);\n            }\n            if u >= 1.0 {"
+ },
+ {
+  "label": "the unstable-side Mobius map is inverted",
+  "old": "            return Flow::Finite(a * (1.0 + u) / (1.0 - u));",
+  "new": "            return Flow::Finite(a * (1.0 - u) / (1.0 + u));"
+ },
+ {
+  "label": "the stable fixed point is no longer returned exactly",
+  "old": "        if y0 == -a {\n            return Flow::Finite(-a);\n        }",
+  "new": "        if false {\n            return Flow::Finite(-a);\n        }",
+  "equivalent": "the guard is provably redundant for this arithmetic. With y0 = -a the tanh form evaluates a*(y0 - a*T)/(a - y0*T) = a*(-a - a*T)/(a + a*T); numerator and denominator are computed from the SAME two roundings fl(a*T) and are exact negatives of one another, so their quotient is -1.0 exactly for every T in [0, 1] including T rounded to 1.0, and the result is -a bit for bit. No test can see the difference because there is none: the guard is a reader's aid, which is what its own doc comment says."
+ },
+ {
+  "label": "the stable-side flow uses tan rather than tanh",
+  "old": "        let t = (a * h).tanh();",
+  "new": "        let t = (a * h).tan();"
+ },
+ {
+  "label": "the stable-side denominator has the wrong sign",
+  "old": "        Flow::Finite(a * (y0 - a * t) / (a - y0 * t))",
+  "new": "        Flow::Finite(a * (y0 - a * t) / (a + y0 * t))"
+ },
+ {
+  "label": "the default membrane resistance is transcribed as 1 megohm",
+  "old": "            r_m: 10e6,\n            v_peak: 30e-3,",
+  "new": "            r_m: 1e6,\n            v_peak: 30e-3,"
+ },
+ {
+  "label": "the default membrane time constant is 2 ms",
+  "old": "            tau_m: 20e-3,\n            v_rest: -65e-3,",
+  "new": "            tau_m: 2e-3,\n            v_rest: -65e-3,"
+ },
+ {
+  "label": "the default refractory period is carried in seconds rather than milliseconds",
+  "old": "            t_ref: 2e-3,\n            v: -65e-3,\n            refractory: 0.0,",
+  "new": "            t_ref: 2.0,\n            v: -65e-3,\n            refractory: 0.0,"
+ },
+ {
+  "label": "the default membrane starts at the critical potential rather than at rest",
+  "old": "            v: -65e-3,\n            refractory: 0.0,",
+  "new": "            v: -50e-3,\n            refractory: 0.0,"
+ },
+ {
+  "label": "a critical potential at or below rest is accepted",
+  "old": "        if v_c <= v_rest {\n            return Err(ModelError::Disordered {\n                what: \"v_c <= v_rest\",",
+  "new": "        if false {\n            return Err(ModelError::Disordered {\n                what: \"v_c <= v_rest\","
+ },
+ {
+  "label": "a quadratic cell may be built with its cutoff at or below its reset",
+  "old": "        if v_peak <= v_reset {\n            return Err(ModelError::Disordered {\n                what: \"v_peak <= v_reset\",\n                lower: v_reset,\n                upper: v_peak,\n            });\n        }\n        Ok(Self { tau_m, v_rest, v_c, r_m, v_peak, v_reset, t_ref, v: v_rest, refractory: 0.0 })",
+  "new": "        if false {\n            return Err(ModelError::Disordered {\n                what: \"v_peak <= v_reset\",\n                lower: v_reset,\n                upper: v_peak,\n            });\n        }\n        Ok(Self { tau_m, v_rest, v_c, r_m, v_peak, v_reset, t_ref, v: v_rest, refractory: 0.0 })"
+ },
+ {
+  "label": "the voltage scale of the canonical reduction is negated",
+  "old": "        self.v_c - self.v_rest",
+  "new": "        self.v_rest - self.v_c"
+ },
+ {
+  "label": "the canonical coordinate is measured from rest rather than from the midpoint",
+  "old": "        (self.v - self.v_mid()) / self.delta()",
+  "new": "        (self.v - self.v_rest) / self.delta()"
+ },
+ {
+  "label": "setting a canonical coordinate drops the voltage scale",
+  "old": "        self.v = self.v_mid() + self.delta() * y;",
+  "new": "        self.v = self.v_mid() + y;"
+ },
+ {
+  "label": "the quadratic drift drops its normalisation by the fixed-point separation",
+  "old": "        ((v - self.v_rest) * (v - self.v_c) / self.delta() + self.r_m * i) / self.tau_m",
+  "new": "        ((v - self.v_rest) * (v - self.v_c) + self.r_m * i) / self.tau_m"
+ },
+ {
+  "label": "the quadratic rheobase drops a factor of two",
+  "old": "        self.delta() / (4.0 * self.r_m)",
+  "new": "        self.delta() / (2.0 * self.r_m)"
+ },
+ {
+  "label": "the interval's reset coordinate is measured from rest",
+  "old": "        let y_r = (self.v_reset - self.v_mid()) / d;",
+  "new": "        let y_r = (self.v_reset - self.v_rest) / d;"
+ },
+ {
+  "label": "the arctangent difference runs from the cutoff back to the reset",
+  "old": "            self.tau_m / b * ((y_p / b).atan() - (y_r / b).atan())",
+  "new": "            self.tau_m / b * ((y_r / b).atan() - (y_p / b).atan())"
+ },
+ {
+  "label": "a reset at or below the unstable fixed point is still handed an interval",
+  "old": "            if y_r <= a {\n                return Err(ModelError::NoFiring { i, rheobase });\n            }",
+  "new": "            if false {\n                return Err(ModelError::NoFiring { i, rheobase });\n            }"
+ },
+ {
+  "label": "the quadratic interval does not carry the refractory period",
+  "old": "        };\n        Ok(t + self.t_ref)",
+  "new": "        };\n        Ok(t)"
+ },
+ {
+  "label": "the matching theta maps the circle's origin onto rest rather than the midpoint",
+  "old": "            v_mid: self.v_mid(),",
+  "new": "            v_mid: self.v_rest,"
+ },
+ {
+  "label": "the matching theta's voltage scale is doubled",
+  "old": "            v_scale: self.delta(),",
+  "new": "            v_scale: 2.0 * self.delta(),"
+ },
+ {
+  "label": "the matching theta's starting phase drops the half-angle factor",
+  "old": "            theta: 2.0 * self.canonical_y().atan(),",
+  "new": "            theta: self.canonical_y().atan(),"
+ },
+ {
+  "label": "the quadratic model claims it can be jumped across a quiet gap",
+  "old": "    // accept the model and then drop half the network's spikes while reporting success.\n    const EXACT_OVER_GAPS: bool = false;",
+  "new": "    // accept the model and then drop half the network's spikes while reporting success.\n    const EXACT_OVER_GAPS: bool = true;"
+ },
+ {
+  "label": "the refractory clamp holds the membrane at rest rather than at the reset",
+  "old": "            self.refractory -= dt;\n            self.v = self.v_reset;\n            return false;\n        }\n        if self.v >= self.v_peak {\n            // Reachable by `bump`",
+  "new": "            self.refractory -= dt;\n            self.v = self.v_rest;\n            return false;\n        }\n        if self.v >= self.v_peak {\n            // Reachable by `bump`"
+ },
+ {
+  "label": "a synaptic kick that jumps the cutoff outright is not a spike",
+  "old": "        if self.v >= self.v_peak {\n            // Reachable by `bump`: a synaptic kick can jump the cutoff outright, which the circle\n            // formulation cannot do. See `Theta::bump`.",
+  "new": "        if false {\n            // Reachable by `bump`: a synaptic kick can jump the cutoff outright, which the circle\n            // formulation cannot do. See `Theta::bump`."
+ },
+ {
+  "label": "the flow is advanced in seconds rather than in membrane constants",
+  "old": "        match canonical_flow(y0, eta, dt / self.tau_m) {",
+  "new": "        match canonical_flow(y0, eta, dt) {"
+ },
+ {
+  "label": "a spike reached through the flow resets to rest rather than to the reset potential",
+  "old": "            Flow::Finite(y1) => {\n                self.set_canonical_y(y1);\n                if self.v >= self.v_peak {\n                    self.v = self.v_reset;",
+  "new": "            Flow::Finite(y1) => {\n                self.set_canonical_y(y1);\n                if self.v >= self.v_peak {\n                    self.v = self.v_rest;"
+ },
+ {
+  "label": "a divergence inside the tick is not reported as a spike",
+  "old": "                self.v = self.v_reset;\n                self.refractory = self.t_ref;\n                true",
+  "new": "                self.v = self.v_reset;\n                self.refractory = self.t_ref;\n                false"
+ },
+ {
+  "label": "a quadratic cell accepts synaptic input while refractory",
+  "old": "            }\n        }\n    }\n\n    fn bump(&mut self, dv: f64) {\n        if self.refractory > 0.0 {\n            return;\n        }\n        self.v += dv;",
+  "new": "            }\n        }\n    }\n\n    fn bump(&mut self, dv: f64) {\n        if false {\n            return;\n        }\n        self.v += dv;"
+ },
+ {
+  "label": "a synaptic kick replaces the membrane potential instead of adding to it",
+  "old": "            }\n        }\n    }\n\n    fn bump(&mut self, dv: f64) {\n        if self.refractory > 0.0 {\n            return;\n        }\n        self.v += dv;",
+  "new": "            }\n        }\n    }\n\n    fn bump(&mut self, dv: f64) {\n        if self.refractory > 0.0 {\n            return;\n        }\n        self.v = dv;"
+ },
+ {
+  "label": "resetting a quadratic cell puts it at the post-spike potential rather than at rest",
+  "old": "    fn reset(&mut self) {\n        self.v = self.v_rest;\n        self.refractory = 0.0;\n    }",
+  "new": "    fn reset(&mut self) {\n        self.v = self.v_reset;\n        self.refractory = 0.0;\n    }"
+ },
+ {
+  "label": "a zero reference current is accepted by the theta constructor",
+  "old": "        positive(\"i_ref\", i_ref)?;",
+  "new": "        finite(\"i_ref\", i_ref)?;"
+ },
+ {
+  "label": "the theta constructor does not fold the phase it is handed",
+  "old": "        Ok(Self { tau, i_ref, bias, v_mid, v_scale, theta: wrap_pi(theta), substeps: 4 })",
+  "new": "        Ok(Self { tau, i_ref, bias, v_mid, v_scale, theta, substeps: 4 })"
+ },
+ {
+  "label": "the theta neuron's canonical input subtracts the drive",
+  "old": "        self.bias + i / self.i_ref",
+  "new": "        self.bias - i / self.i_ref"
+ },
+ {
+  "label": "the theta rheobase has the wrong sign",
+  "old": "        -self.bias * self.i_ref",
+  "new": "        self.bias * self.i_ref"
+ },
+ {
+  "label": "the circle coordinate drops the half-angle",
+  "old": "        (0.5 * self.theta).tan()",
+  "new": "        self.theta.tan()"
+ },
+ {
+  "label": "the closed-form phase scales time by tau instead of dividing by it",
+  "old": "        let s = t / self.tau;\n        let y0 = self.canonical_y();\n        if eta > 0.0 {\n            let b = eta.sqrt();\n            let phi = (y0 / b).atan() + b * s;",
+  "new": "        let s = t * self.tau;\n        let y0 = self.canonical_y();\n        if eta > 0.0 {\n            let b = eta.sqrt();\n            let phi = (y0 / b).atan() + b * s;"
+ },
+ {
+  "label": "the rigid rotation above rheobase runs backwards",
+  "old": "            let phi = (y0 / b).atan() + b * s;",
+  "new": "            let phi = (y0 / b).atan() - b * s;"
+ },
+ {
+  "label": "the closed form's unstable-side coordinate inverts its ratio",
+  "old": "        let a = (-eta).sqrt();\n        if y0 > 0.0 {\n            let u0 = (y0 - a) / (y0 + a);",
+  "new": "        let a = (-eta).sqrt();\n        if y0 > 0.0 {\n            let u0 = (y0 + a) / (y0 - a);"
+ },
+ {
+  "label": "a phase parked on the unstable fixed point is reported at the stable one",
+  "old": "                return Ok(wrap_pi(2.0 * a.atan()));",
+  "new": "                return Ok(wrap_pi(2.0 * (-a).atan()));"
+ },
+ {
+  "label": "the closed form's exponent drops its factor of two",
+  "old": "            let u = u0 * (2.0 * a * s).exp();",
+  "new": "            let u = u0 * (a * s).exp();"
+ },
+ {
+  "label": "the stable-side closed form uses sinh rather than tanh",
+  "old": "        let tt = (a * s).tanh();",
+  "new": "        let tt = (a * s).sinh();"
+ },
+ {
+  "label": "a negative window is accepted by the spike count",
+  "old": "        if t < 0.0 {\n            return Err(ModelError::NotPositive { what: \"t\", value: t });\n        }",
+  "new": "        if t < -1.0 {\n            return Err(ModelError::NotPositive { what: \"t\", value: t });\n        }"
+ },
+ {
+  "label": "the spike count rounds the phase rather than flooring it",
+  "old": "            let n = ((phi0 + b * s + 0.5 * PI) / PI).floor();",
+  "new": "            let n = ((phi0 + b * s + 0.5 * PI) / PI).round();"
+ },
+ {
+  "label": "the sub-rheobase spike count reports one where the trajectory stayed finite",
+  "old": "        let one = match canonical_flow(y0, eta, s) {\n            Flow::Diverged { .. } => 1,\n            Flow::Finite(_) => 0,\n        };",
+  "new": "        let one = match canonical_flow(y0, eta, s) {\n            Flow::Diverged { .. } => 0,\n            Flow::Finite(_) => 1,\n        };"
+ },
+ {
+  "label": "the Type I interval drops its factor of pi",
+  "old": "        Ok(self.tau * PI / eta.sqrt())",
+  "new": "        Ok(self.tau / eta.sqrt())"
+ },
+ {
+  "label": "the substep size is the whole tick, so a step advances by its substep count",
+  "old": "        let h = dt / self.tau / f64::from(n);",
+  "new": "        let h = dt / self.tau;"
+ },
+ {
+  "label": "the Runge-Kutta weights on the circle no longer sum to one",
+  "old": "            self.theta = t0 + h * (k1 + 2.0 * k2 + 2.0 * k3 + k4) / 6.0;",
+  "new": "            self.theta = t0 + h * (k1 + k2 + k3 + k4) / 6.0;"
+ },
+ {
+  "label": "the spike is the downward crossing of the cut rather than the upward one",
+  "old": "            if self.theta > PI {\n                fired = true;\n            }",
+  "new": "            if self.theta < -PI {\n                fired = true;\n            }"
+ },
+ {
+  "label": "the phase is folded before the crossing is read, so no crossing is ever seen",
+  "old": "            if self.theta > PI {\n                fired = true;\n            }\n            self.theta = wrap_pi(self.theta);",
+  "new": "            self.theta = wrap_pi(self.theta);\n            if self.theta > PI {\n                fired = true;\n            }"
+ },
+ {
+  "label": "resetting a theta neuron parks it on the spike",
+  "old": "    fn reset(&mut self) {\n        self.theta = 0.0;\n    }",
+  "new": "    fn reset(&mut self) {\n        self.theta = PI;\n    }"
+ },
+ {
+  "label": "the reference onset sharpness is transcribed as 1 mV",
+  "old": "            v_t: -50e-3,\n            delta_t: 2e-3,\n            v_peak: 0.0,\n            v_reset: -58e-3,",
+  "new": "            v_t: -50e-3,\n            delta_t: 1e-3,\n            v_peak: 0.0,\n            v_reset: -58e-3,"
+ },
+ {
+  "label": "the reference post-spike potential is above the soft threshold",
+  "old": "            v_peak: 0.0,\n            v_reset: -58e-3,\n            t_ref: 0.0,",
+  "new": "            v_peak: 0.0,\n            v_reset: -45e-3,\n            t_ref: 0.0,"
+ },
+ {
+  "label": "the reference membrane acquires a 5 ms refractory period",
+  "old": "            v_reset: -58e-3,\n            t_ref: 0.0,\n            v: -70e-3,",
+  "new": "            v_reset: -58e-3,\n            t_ref: 5e-3,\n            v: -70e-3,"
+ },
+ {
+  "label": "the reference membrane starts above its unstable fixed point",
+  "old": "            t_ref: 0.0,\n            v: -70e-3,\n            refractory: 0.0,",
+  "new": "            t_ref: 0.0,\n            v: -40e-3,\n            refractory: 0.0,"
+ },
+ {
+  "label": "an exponential cell may be built with its cutoff below the soft threshold",
+  "old": "        if v_peak <= v_t {",
+  "new": "        if false {"
+ },
+ {
+  "label": "the leak current pushes the membrane away from its reversal",
+  "old": "        -self.g_l * (v - self.e_l)",
+  "new": "        self.g_l * (v - self.e_l)"
+ },
+ {
+  "label": "the exponential rheobase adds the onset sharpness rather than subtracting it",
+  "old": "        self.g_l * (self.v_t - self.e_l - self.delta_t)",
+  "new": "        self.g_l * (self.v_t - self.e_l + self.delta_t)"
+ },
+ {
+  "label": "a non-finite current still asks for a pair of fixed points",
+  "old": "        if !i.is_finite() {\n            return None;\n        }",
+  "new": "        if false {\n            return None;\n        }",
+  "equivalent": "the guard is a restatement of one `exp_offset_roots` already makes. A non-finite `i` gives a non-finite `k`, and `exp_offset_roots` opens with `if !(k >= 1.0) || !k.is_finite()`, which returns `None` for NaN (the negated comparison is true) and for either infinity. So both the guarded and the unguarded code return `None` for every non-finite current, and no test can distinguish them because the observable behaviour is identical."
+ },
+ {
+  "label": "a current below rheobase is never refused an interval",
+  "old": "        if i <= rheobase {\n            let escapes",
+  "new": "        if false {\n            let escapes"
+ },
+ {
+  "label": "the escape test asks whether the reset is BELOW the unstable fixed point",
+  "old": "                Some((_, unstable)) => self.v_reset > unstable,",
+  "new": "                Some((_, unstable)) => self.v_reset < unstable,"
+ },
+ {
+  "label": "a membrane with no fixed-point pair below rheobase is assumed to escape",
+  "old": "                Some((_, unstable)) => self.v_reset > unstable,\n                None => false,",
+  "new": "                Some((_, unstable)) => self.v_reset > unstable,\n                None => true,",
+  "equivalent": "the arm is unreachable. This match runs only inside `if i <= rheobase`, and `i` has already been checked finite. For a finite `i <= g_L(V_T - E_L - delta_T)` the fixed-point parameter `k = (V_T - E_L - i/g_L)/delta_T` is at least 1 — at i = rheobase exactly it is 1 — so `exp_offset_roots(k)` returns `Some` and `fixed_points` returns `Some`. The `None` arm is never taken here whichever value it yields."
+ },
+ {
+  "label": "the quadrature's upper limit no longer protects against a reset above the truncation",
+  "old": "        let top = self.v_peak.min(self.v_t + EXP_ARG_LIMIT * self.delta_t).max(self.v_reset);",
+  "new": "        let top = self.v_peak.min(self.v_t + EXP_ARG_LIMIT * self.delta_t);"
+ },
+ {
+  "label": "the truncation point is a bare offset from the soft threshold in volts",
+  "old": "        let top = self.v_peak.min(self.v_t + EXP_ARG_LIMIT * self.delta_t).max(self.v_reset);",
+  "new": "        let top = self.v_peak.min(self.v_t + EXP_ARG_LIMIT).max(self.v_reset);"
+ },
+ {
+  "label": "the quadrature is not split at the peak of its integrand",
+  "old": "        let split = self.v_t.clamp(self.v_reset, top);",
+  "new": "        let split = top;"
+ },
+ {
+  "label": "the exponential interval does not carry the refractory period",
+  "old": "        let t = integrate(&f, self.v_reset, split, 1e-12) + integrate(&f, split, top, 1e-12);\n        Ok(t + self.t_ref)",
+  "new": "        let t = integrate(&f, self.v_reset, split, 1e-12) + integrate(&f, split, top, 1e-12);\n        Ok(t)"
+ },
+ {
+  "label": "the onset is a cube root of the excess current rather than a square root",
+  "old": "        Ok((self.g_l * (i - rheobase) / (2.0 * self.delta_t)).sqrt() / (PI * self.c))",
+  "new": "        Ok((self.g_l * (i - rheobase) / (2.0 * self.delta_t)).cbrt() / (PI * self.c))"
+ },
+ {
+  "label": "the limiting Lif is given the capacitance as its time constant",
+  "old": "            tau_m: self.tau_m(),",
+  "new": "            tau_m: self.c,"
+ },
+ {
+  "label": "the limiting Lif resets to the leak reversal",
+  "old": "            v_th: self.v_t,\n            v_reset: self.v_reset,\n            r_m: self.r_m(),",
+  "new": "            v_th: self.v_t,\n            v_reset: self.e_l,\n            r_m: self.r_m(),"
+ },
+ {
+  "label": "the exponential model claims it can be jumped across a quiet gap",
+  "old": "    // is the kind of error that produces a plausible raster and an unreproducible result.\n    const EXACT_OVER_GAPS: bool = false;",
+  "new": "    // is the kind of error that produces a plausible raster and an unreproducible result.\n    const EXACT_OVER_GAPS: bool = true;"
+ },
+ {
+  "label": "a membrane already above the cutoff does not report its spike",
+  "old": "        if self.v >= self.v_peak {\n            self.v = self.v_reset;\n            self.refractory = self.t_ref;\n            return true;\n        }\n        let n = self.substeps.max(1);",
+  "new": "        if self.v >= self.v_peak {\n            self.v = self.v_reset;\n            self.refractory = self.t_ref;\n            return false;\n        }\n        let n = self.substeps.max(1);"
+ },
+ {
+  "label": "a membrane that has gone non-finite is left that way",
+  "old": "            if self.v >= self.v_peak || !self.v.is_finite() {",
+  "new": "            if self.v >= self.v_peak {"
+ },
+ {
+  "label": "the cutoff is tested after the substep loop rather than inside it",
+  "old": "            self.v = v0 + h * (k1 + 2.0 * k2 + 2.0 * k3 + k4) / 6.0;\n            // Inside the loop, not after it: the drift above the cutoff is astronomically large and\n            // a second substep from there would leave a number no reader could interpret.\n            if self.v >= self.v_peak || !self.v.is_finite() {\n                self.v = self.v_reset;\n                self.refractory = self.t_ref;\n                return true;\n            }\n        }\n        false",
+  "new": "            self.v = v0 + h * (k1 + 2.0 * k2 + 2.0 * k3 + k4) / 6.0;\n        }\n        if self.v >= self.v_peak || !self.v.is_finite() {\n            self.v = self.v_reset;\n            self.refractory = self.t_ref;\n            return true;\n        }\n        false"
+ },
+ {
+  "label": "a zero or negative adaptation time constant is accepted",
+  "old": "        positive(\"tau_w\", tau_w)?;\n        Ok(Self { eif, a, tau_w, b, w: 0.0 })",
+  "new": "        finite(\"tau_w\", tau_w)?;\n        Ok(Self { eif, a, tau_w, b, w: 0.0 })"
+ },
+ {
+  "label": "the adaptation relaxes away from its target instead of toward it",
+  "old": "        (self.a * (v - self.eif.e_l) - w) / self.tau_w",
+  "new": "        (self.a * (v - self.eif.e_l) + w) / self.tau_w"
+ },
+ {
+  "label": "the adaptation ignores its own conductance",
+  "old": "        (self.a * (v - self.eif.e_l) - w) / self.tau_w",
+  "new": "        ((v - self.eif.e_l) - w) / self.tau_w"
+ },
+ {
+  "label": "a vanishing total conductance is not refused",
+  "old": "        if sum == 0.0 {\n            return Err(ModelError::Degenerate { what: \"g_l + a\" });\n        }",
+  "new": "        if false {\n            return Err(ModelError::Degenerate { what: \"g_l + a\" });\n        }"
+ },
+ {
+  "label": "the subthreshold matrix's voltage-to-adaptation coupling has the wrong sign",
+  "old": "        let m = [[-g_l / c, -1.0 / c], [self.a / self.tau_w, -1.0 / self.tau_w]];",
+  "new": "        let m = [[-g_l / c, 1.0 / c], [self.a / self.tau_w, -1.0 / self.tau_w]];"
+ },
+ {
+  "label": "the discriminant adds the determinant instead of subtracting it",
+  "old": "        let disc = alpha * alpha - det;",
+  "new": "        let disc = alpha * alpha + det;"
+ },
+ {
+  "label": "the resonant branch is integrated with hyperbolic functions",
+  "old": "            ((beta * t).cos(), (beta * t).sin() / beta)",
+  "new": "            ((beta * t).cosh(), (beta * t).sinh() / beta)"
+ },
+ {
+  "label": "the matrix exponential's off-diagonal entries are swapped",
+  "old": "            [scale * (ch + sh * n[0][0]), scale * sh * n[0][1]],\n            [scale * sh * n[1][0], scale * (ch + sh * n[1][1])],",
+  "new": "            [scale * (ch + sh * n[0][0]), scale * sh * n[1][0]],\n            [scale * sh * n[0][1], scale * (ch + sh * n[1][1])],"
+ },
+ {
+  "label": "the subthreshold solution drops the steady state from its adaptation",
+  "old": "        Ok((e_l + x_star + e[0][0] * d0 + e[0][1] * d1, w_star + e[1][0] * d0 + e[1][1] * d1))",
+  "new": "        Ok((e_l + x_star + e[0][0] * d0 + e[0][1] * d1, e[1][0] * d0 + e[1][1] * d1))"
+ },
+ {
+  "label": "the adaptive model claims it can be jumped across a quiet gap",
+  "old": "    // pair is integrated jointly by fourth-order Runge-Kutta.\n    const EXACT_OVER_GAPS: bool = false;",
+  "new": "    // pair is integrated jointly by fourth-order Runge-Kutta.\n    const EXACT_OVER_GAPS: bool = true;"
+ },
+ {
+  "label": "the adaptation is frozen through the refractory period",
+  "old": "        self.w = w_inf + (self.w - w_inf) * (-dt / self.tau_w).exp();",
+  "new": "        self.w = w_inf;"
+ },
+ {
+  "label": "the adaptive substep is the whole tick",
+  "old": "        let n = self.eif.substeps.max(1);\n        let h = dt / f64::from(n);",
+  "new": "        let n = self.eif.substeps.max(1);\n        let h = dt;"
+ },
+ {
+  "label": "the adaptation current is added to the drive rather than subtracted from it",
+  "old": "            let (kv1, kw1) = (self.eif.drift(v0, i - w0), self.w_drift(v0, w0));",
+  "new": "            let (kv1, kw1) = (self.eif.drift(v0, i + w0), self.w_drift(v0, w0));"
+ },
+ {
+  "label": "the spike-triggered kick is added to the stage that crossed the cutoff",
+  "old": "                self.w = w0 + self.b;",
+  "new": "                self.w = self.w + self.b;"
+ },
+ {
+  "label": "a synaptic kick to an adaptive cell is inverted",
+  "old": "    fn bump(&mut self, dv: f64) {\n        self.eif.bump(dv);\n    }",
+  "new": "    fn bump(&mut self, dv: f64) {\n        self.eif.bump(-dv);\n    }"
+ },
+ {
+  "label": "resetting an adaptive cell clears the adaptation but not the membrane",
+  "old": "    fn reset(&mut self) {\n        self.eif.reset();\n        self.w = 0.0;\n    }",
+  "new": "    fn reset(&mut self) {\n        self.w = 0.0;\n    }"
+ },
+ {
+  "label": "the taxonomy's tonic and adapting drives are a tenth of the published one",
+  "old": "            Self::Tonic | Self::Adapting => 500e-12,",
+  "new": "            Self::Tonic | Self::Adapting => 50e-12,"
+ },
+ {
+  "label": "the transient drive is above the window in which the cell falls silent",
+  "old": "            Self::Transient => 220e-12,",
+  "new": "            Self::Transient => 300e-12,"
+ },
+ {
+  "label": "the tonic preset is given the adapting row",
+  "old": "            Self::Tonic => (200e-12, 10e-9, -70e-3, 2e-9, 30e-3, 0.0, -58e-3),",
+  "new": "            Self::Tonic => (200e-12, 12e-9, -70e-3, 2e-9, 300e-3, 60e-12, -58e-3),"
+ },
+ {
+  "label": "the adapting preset loses its spike-triggered adaptation",
+  "old": "            Self::Adapting => (200e-12, 12e-9, -70e-3, 2e-9, 300e-3, 60e-12, -58e-3),",
+  "new": "            Self::Adapting => (200e-12, 12e-9, -70e-3, 2e-9, 300e-3, 0.0, -58e-3),"
+ },
+ {
+  "label": "the initial-burst preset's reset drops below the soft threshold",
+  "old": "            Self::InitialBurst => (130e-12, 18e-9, -58e-3, 4e-9, 150e-3, 120e-12, -50e-3),",
+  "new": "            Self::InitialBurst => (130e-12, 18e-9, -58e-3, 4e-9, 150e-3, 120e-12, -58e-3),"
+ },
+ {
+  "label": "the bursting preset's reset drops below the soft threshold",
+  "old": "            Self::RegularBursting => (200e-12, 10e-9, -58e-3, 2e-9, 120e-3, 100e-12, -46e-3),",
+  "new": "            Self::RegularBursting => (200e-12, 10e-9, -58e-3, 2e-9, 120e-3, 100e-12, -58e-3),"
+ },
+ {
+  "label": "the transient preset goes back to the table's 100 pA spike-triggered kick",
+  "old": "            Self::Transient => (100e-12, 10e-9, -65e-3, 10e-9, 90e-3, 30e-12, -47e-3),",
+  "new": "            Self::Transient => (100e-12, 10e-9, -65e-3, 10e-9, 90e-3, 100e-12, -47e-3),"
+ },
+ {
+  "label": "the transient preset's adaptation time constant is transcribed as 9 ms",
+  "old": "            Self::Transient => (100e-12, 10e-9, -65e-3, 10e-9, 90e-3, 30e-12, -47e-3),",
+  "new": "            Self::Transient => (100e-12, 10e-9, -65e-3, 10e-9, 9e-3, 30e-12, -47e-3),"
+ },
+ {
+  "label": "the irregular preset's subthreshold adaptation is positive",
+  "old": "            Self::Irregular => (100e-12, 12e-9, -60e-3, -11e-9, 130e-3, 30e-12, -48e-3),",
+  "new": "            Self::Irregular => (100e-12, 12e-9, -60e-3, 11e-9, 130e-3, 30e-12, -48e-3),"
+ },
+ {
+  "label": "the taxonomy's membranes acquire a 2 ms refractory period",
+  "old": "            v_reset,\n            t_ref: 0.0,\n            v: e_l,",
+  "new": "            v_reset,\n            t_ref: 2e-3,\n            v: e_l,"
+ },
+ {
+  "label": "the bursting and initial-burst labels are swapped",
+  "old": "            Self::InitialBurst => \"initial burst\",\n            Self::RegularBursting => \"regular bursting\",",
+  "new": "            Self::InitialBurst => \"regular bursting\",\n            Self::RegularBursting => \"initial burst\","
+ },
+ {
+  "label": "the list of every variant repeats the tonic cell in place of the transient one",
+  "old": "        FiringPattern::Transient,",
+  "new": "        FiringPattern::Tonic,"
+ },
+ {
+  "label": "the root pair is refused at the annihilation, where it is real and double",
+  "old": "    if !(k >= 1.0) || !k.is_finite() {",
+  "new": "    if !(k > 1.0) || !k.is_finite() {"
+ },
+ {
+  "label": "a NaN offset slips past the root solver's guard",
+  "old": "    if !(k >= 1.0) || !k.is_finite() {",
+  "new": "    if k < 1.0 {"
+ },
+ {
+  "label": "the branch-point expansion is written about k rather than about k minus one",
+  "old": "    let m = k - 1.0;",
+  "new": "    let m = k;"
+ },
+ {
+  "label": "the branch-point half-width drops its factor of two",
+  "old": "    let q = (2.0 * m).sqrt();",
+  "new": "    let q = m.sqrt();"
+ },
+ {
+  "label": "the unrefined series is returned far from the branch point",
+  "old": "    if q < 1e-4 {",
+  "new": "    if q < 1.0 {"
+ },
+ {
+  "label": "Newton's iteration is run once rather than to convergence",
+  "old": "        for _ in 0..100 {",
+  "new": "        for _ in 0..1 {"
+ },
+ {
+  "label": "the Newton derivative is the exponential rather than the derivative of the residual",
+  "old": "            let d = x.exp_m1();\n            if d == 0.0 || !d.is_finite() {",
+  "new": "            let d = x.exp();\n            if d == 0.0 || !d.is_finite() {"
+ },
+ {
+  "label": "the Newton residual adds the offset instead of subtracting it",
+  "old": "            let step = (x.exp_m1() - x - m) / d;",
+  "new": "            let step = (x.exp_m1() - x + m) / d;"
+ },
+ {
+  "label": "Newton steps away from the root",
+  "old": "            let next = x - step;",
+  "new": "            let next = x + step;"
+ },
+ {
+  "label": "the Newton guard on a vanishing or infinite derivative is deleted",
+  "old": "            let d = x.exp_m1();\n            if d == 0.0 || !d.is_finite() {\n                break;\n            }",
+  "new": "            let d = x.exp_m1();\n            if false {\n                break;\n            }",
+  "equivalent": "the guard only anticipates what the next two lines already do. If `d` is 0 the step is `g/0`, which is an infinity for a non-zero residual and a NaN for a zero one; if `d` is infinite the step is 0 or NaN. `if !step.is_finite() { break; }` catches the infinity and both NaNs, and `if next == x { break; }` catches the step of 0, so the iteration leaves `x` exactly where the guard would have left it in every case."
+ },
+ {
+  "label": "the lower contraction map adds the offset instead of subtracting it",
+  "old": "            lo = lo.exp() - k;",
+  "new": "            lo = lo.exp() + k;"
+ },
+ {
+  "label": "the quadrature budget is twenty panels",
+  "old": "pub const QUADRATURE_BUDGET: u32 = 200_000;",
+  "new": "pub const QUADRATURE_BUDGET: u32 = 20;"
+ },
+ {
+  "label": "the refinement stops ten thousand tolerances early",
+  "old": "    if depth == 0 || *budget == 0 || err.abs() <= 15.0 * tol {",
+  "new": "    if depth == 0 || *budget == 0 || err.abs() <= 1.5e5 * tol {"
+ },
+ {
+  "label": "the Richardson extrapolation is dropped",
+  "old": "        return left + right + err / 15.0;",
+  "new": "        return left + right;"
+ },
+ {
+  "label": "the quadrature tolerance has a floor of a millisecond rather than of a subnormal",
+  "old": "    let tol = (rel * whole.abs()).max(1e-300);",
+  "new": "    let tol = (rel * whole.abs()).max(1e-3);"
+ },
+ {
+  "label": "an inverted or empty interval is integrated rather than priced at zero",
+  "old": "    if !(b > a) {\n        return 0.0;\n    }",
+  "new": "    if b > a {\n        return 0.0;\n    }"
+ }
+]

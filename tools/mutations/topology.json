@@ -1,0 +1,747 @@
+[
+ {
+  "label": "the cortical inhibitory fraction is transcribed as 15%",
+  "old": "pub const CORTICAL_INHIBITORY_FRACTION: f64 = 0.2;",
+  "new": "pub const CORTICAL_INHIBITORY_FRACTION: f64 = 0.15;"
+ },
+ {
+  "label": "Brunel's balance ratio is transcribed as five",
+  "old": "pub const BALANCED_G: f64 = 4.0;",
+  "new": "pub const BALANCED_G: f64 = 5.0;"
+ },
+ {
+  "label": "the default excitatory weight is ten millivolts per spike",
+  "old": "            w_exc: 1e-3,\n            w_inh: -BALANCED_G * 1e-3,",
+  "new": "            w_exc: 1e-2,\n            w_inh: -BALANCED_G * 1e-3,"
+ },
+ {
+  "label": "the default synapse delivers in the same tick",
+  "old": "            delay: 1,\n            inhibitory_fraction: CORTICAL_INHIBITORY_FRACTION,",
+  "new": "            delay: 0,\n            inhibitory_fraction: CORTICAL_INHIBITORY_FRACTION,"
+ },
+ {
+  "label": "the excitatory-only wiring still declares a fifth of the neurons inhibitory",
+  "old": "        Self { w_exc: w, w_inh: 0.0, delay, inhibitory_fraction: 0.0 }",
+  "new": "        Self { w_exc: w, w_inh: 0.0, delay, inhibitory_fraction: CORTICAL_INHIBITORY_FRACTION }"
+ },
+ {
+  "label": "the balanced wiring inverts its inhibition-to-excitation ratio",
+  "old": "            w_inh: -BALANCED_G * w_exc,",
+  "new": "            w_inh: -w_exc / BALANCED_G,"
+ },
+ {
+  "label": "a non-finite excitatory weight is left for the network builder to refuse",
+  "old": "        if !self.w_exc.is_finite() || self.w_exc < 0.0 {",
+  "new": "        if self.w_exc < 0.0 {"
+ },
+ {
+  "label": "a negative excitatory weight is accepted",
+  "old": "        if !self.w_exc.is_finite() || self.w_exc < 0.0 {\n            return Err(TopologyError::Weight { name: \"w_exc\", value: self.w_exc });\n        }",
+  "new": ""
+ },
+ {
+  "label": "a positive inhibitory weight is accepted",
+  "old": "        if !self.w_inh.is_finite() || self.w_inh > 0.0 {",
+  "new": "        if false {"
+ },
+ {
+  "label": "the inhibitory fraction is not checked for being a probability",
+  "old": "        check_probability(\"inhibitory_fraction\", self.inhibitory_fraction)\n    }",
+  "new": "        Ok(())\n    }"
+ },
+ {
+  "label": "the inhibitory count truncates instead of rounding",
+  "old": "        ((f * n as f64).round() as usize).min(n)",
+  "new": "        ((f * n as f64) as usize).min(n)"
+ },
+ {
+  "label": "the inhibitory block starts one neuron early",
+  "old": "        if index < n - self.n_inhibitory(n) { Sign::Excitatory } else { Sign::Inhibitory }",
+  "new": "        if index <= n - self.n_inhibitory(n) { Sign::Excitatory } else { Sign::Inhibitory }"
+ },
+ {
+  "label": "the excitatory and inhibitory blocks are the other way round",
+  "old": "        if index < n - self.n_inhibitory(n) { Sign::Excitatory } else { Sign::Inhibitory }",
+  "new": "        if index < n - self.n_inhibitory(n) { Sign::Inhibitory } else { Sign::Excitatory }"
+ },
+ {
+  "label": "every synapse carries the first neuron's weight",
+  "old": "        self.weight_for(self.sign_of(n, pre))",
+  "new": "        self.weight_for(self.sign_of(n, 0))"
+ },
+ {
+  "label": "a silent neuron's synapses carry the excitatory weight",
+  "old": "            Sign::Silent => 0.0,",
+  "new": "            Sign::Silent => self.w_exc,"
+ },
+ {
+  "label": "the excitatory and inhibitory weights are swapped at the lookup",
+  "old": "            Sign::Excitatory => self.w_exc,\n            Sign::Inhibitory => self.w_inh,",
+  "new": "            Sign::Excitatory => self.w_inh,\n            Sign::Inhibitory => self.w_exc,"
+ },
+ {
+  "label": "a silent neuron's sign multiplier is one",
+  "old": "            Self::Silent => 0.0,",
+  "new": "            Self::Silent => 1.0,"
+ },
+ {
+  "label": "the expected drive drops the self-exclusion factor",
+  "old": "        let self_excluded = (n - 1) as f64 / n as f64;",
+  "new": "        let self_excluded = 1.0;"
+ },
+ {
+  "label": "the expected drive gives each population the other's weight",
+  "old": "        p * self_excluded * (n_exc as f64 * self.w_exc + n_inh as f64 * self.w_inh)",
+  "new": "        p * self_excluded * (n_exc as f64 * self.w_inh + n_inh as f64 * self.w_exc)"
+ },
+ {
+  "label": "the expected drive ignores the connection probability",
+  "old": "        p * self_excluded * (n_exc as f64 * self.w_exc + n_inh as f64 * self.w_inh)",
+  "new": "        self_excluded * (n_exc as f64 * self.w_exc + n_inh as f64 * self.w_inh)"
+ },
+ {
+  "label": "the expected drive counts the inhibitory neurons twice over",
+  "old": "        let n_exc = n - n_inh;",
+  "new": "        let n_exc = n;"
+ },
+ {
+  "label": "a zero-weight synapse counts as excitatory",
+  "old": "            if w > 0.0 {\n                positive += 1;",
+  "new": "            if w >= 0.0 {\n                positive += 1;"
+ },
+ {
+  "label": "one sign is enough to report a neuron as mixed",
+  "old": "        if positive > 0 && negative > 0 {",
+  "new": "        if positive > 0 || negative > 0 {"
+ },
+ {
+  "label": "the Dale reading calls an excitatory neuron inhibitory",
+  "old": "        out.push(if positive > 0 {\n            Sign::Excitatory\n        } else if negative > 0 {\n            Sign::Inhibitory",
+  "new": "        out.push(if positive > 0 {\n            Sign::Inhibitory\n        } else if negative > 0 {\n            Sign::Excitatory"
+ },
+ {
+  "label": "a neuron with no output is excitatory by default rather than silent",
+  "old": "        } else {\n            Sign::Silent\n        });",
+  "new": "        } else {\n            Sign::Excitatory\n        });"
+ },
+ {
+  "label": "the declared partition's length is not checked",
+  "old": "    if declared.len() != net.n {",
+  "new": "    if false {"
+ },
+ {
+  "label": "a silent neuron contradicts every declaration",
+  "old": "        if found[i] != Sign::Silent && found[i] != declared[i] {",
+  "new": "        if found[i] != declared[i] {"
+ },
+ {
+  "label": "the partition helper does not check its fraction",
+  "old": "    check_probability(\"inhibitory_fraction\", inhibitory_fraction)?;",
+  "new": ""
+ },
+ {
+  "label": "the partition shuffle is Sattolo's rather than Fisher-Yates",
+  "old": "        let j = below_u64(&mut rng, i as u64 + 1) as usize;",
+  "new": "        let j = below_u64(&mut rng, i as u64) as usize;"
+ },
+ {
+  "label": "the partition shuffle walks the array forwards",
+  "old": "    for i in (1..signs.len()).rev() {",
+  "new": "    for i in 1..signs.len() {"
+ },
+ {
+  "label": "the random graph connects the complement of its probability",
+  "old": "            if rng.next_f64() < p {\n                b.connect(a as u32, c as u32, w, wiring.delay)?;",
+  "new": "            if rng.next_f64() > p {\n                b.connect(a as u32, c as u32, w, wiring.delay)?;"
+ },
+ {
+  "label": "the random graph is allowed to build autapses",
+  "old": "            if a == c {\n                continue;\n            }\n            if rng.next_f64() < p {",
+  "new": "            if rng.next_f64() < p {"
+ },
+ {
+  "label": "the random graph is built transposed",
+  "old": "            if rng.next_f64() < p {\n                b.connect(a as u32, c as u32, w, wiring.delay)?;",
+  "new": "            if rng.next_f64() < p {\n                b.connect(c as u32, a as u32, w, wiring.delay)?;"
+ },
+ {
+  "label": "the pair space of G(n, m) counts the diagonal",
+  "old": "    let space = (n as u64) * (n as u64).saturating_sub(1);",
+  "new": "    let space = (n as u64) * (n as u64);"
+ },
+ {
+  "label": "a request for the whole pair space is refused",
+  "old": "    if m as u64 > space {",
+  "new": "    if m as u64 >= space {"
+ },
+ {
+  "label": "Floyd's algorithm draws from the bottom of the code space",
+  "old": "    for j in (space - m as u64)..space {",
+  "new": "    for j in 0..m as u64 {"
+ },
+ {
+  "label": "a collision in Floyd's algorithm repeats the code it collided with",
+  "old": "        if chosen.insert(t) {\n            codes.push(t);\n        } else {\n            chosen.insert(j);\n            codes.push(j);\n        }",
+  "new": "        if chosen.insert(t) {\n            codes.push(t);\n        } else {\n            chosen.insert(j);\n            codes.push(t);\n        }"
+ },
+ {
+  "label": "the decoded row divides by the neuron count rather than the row width",
+  "old": "        let a = code / (n as u64 - 1);",
+  "new": "        let a = code / (n as u64);"
+ },
+ {
+  "label": "the diagonal shift is off by one so a neuron contacts itself",
+  "old": "        let c = if r >= a { r + 1 } else { r };",
+  "new": "        let c = if r > a { r + 1 } else { r };"
+ },
+ {
+  "label": "a G(n, m) synapse carries its postsynaptic neuron's weight",
+  "old": "        let w = wiring.weight_of(n, a as usize);",
+  "new": "        let w = wiring.weight_of(n, c as usize);"
+ },
+ {
+  "label": "an odd ring degree is accepted",
+  "old": "    if k == 0 || !k.is_multiple_of(2) {",
+  "new": "    if k == 0 {"
+ },
+ {
+  "label": "a ring as wide as the network is accepted",
+  "old": "    if n <= k {",
+  "new": "    if n < k {"
+ },
+ {
+  "label": "each side of the ring gets k neighbours instead of k/2",
+  "old": "    let half = k / 2;",
+  "new": "    let half = k;"
+ },
+ {
+  "label": "the ring's first lap joins every neuron to itself",
+  "old": "    for lap in 1..=half {",
+  "new": "    for lap in 0..=half {"
+ },
+ {
+  "label": "the rewiring fires with probability one minus beta",
+  "old": "        if rng.next_f64() >= beta {\n            continue;\n        }",
+  "new": "        if rng.next_f64() < beta {\n            continue;\n        }"
+ },
+ {
+  "label": "no edge is ever rewired",
+  "old": "        if deg[u as usize] >= n - 1 {\n            continue;\n        }",
+  "new": "        if true {\n            continue;\n        }"
+ },
+ {
+  "label": "a rewiring may land on the neuron itself",
+  "old": "            if w == u || present.contains(&norm(u, w)) {",
+  "new": "            if present.contains(&norm(u, w)) {"
+ },
+ {
+  "label": "a rewiring may duplicate an edge the ring already has",
+  "old": "            if w == u || present.contains(&norm(u, w)) {",
+  "new": "            if w == u {"
+ },
+ {
+  "label": "the rewiring moves the endpoint Watts and Strogatz hold fixed",
+  "old": "            edges[e] = (u, w);",
+  "new": "            edges[e] = (w, v);"
+ },
+ {
+  "label": "the edge normaliser is the identity",
+  "old": "    if a <= b { (a, b) } else { (b, a) }",
+  "new": "    (a, b)"
+ },
+ {
+  "label": "the edge normaliser breaks its tie the other way",
+  "old": "    if a <= b { (a, b) } else { (b, a) }",
+  "new": "    if a < b { (a, b) } else { (b, a) }",
+  "equivalent": "The two forms differ only when `a == b`, and there `(a, b)` and `(b, a)` are the same pair, so the function returns the identical value for every input. Nothing else in the module can observe a difference that does not exist."
+ },
+ {
+  "label": "an undirected edge becomes a single synapse",
+  "old": "        b.connect(v, u, wiring.weight_of(n, v as usize), wiring.delay)?;",
+  "new": ""
+ },
+ {
+  "label": "the return synapse carries the forward neuron's weight",
+  "old": "        b.connect(v, u, wiring.weight_of(n, v as usize), wiring.delay)?;",
+  "new": "        b.connect(v, u, wiring.weight_of(n, u as usize), wiring.delay)?;"
+ },
+ {
+  "label": "the reciprocal pair is emitted in the other order",
+  "old": "        b.connect(u, v, wiring.weight_of(n, u as usize), wiring.delay)?;\n        b.connect(v, u, wiring.weight_of(n, v as usize), wiring.delay)?;",
+  "new": "        b.connect(v, u, wiring.weight_of(n, v as usize), wiring.delay)?;\n        b.connect(u, v, wiring.weight_of(n, u as usize), wiring.delay)?;",
+  "equivalent": "`NetBuilder::build` sorts the edge list by `(pre, post)` before laying out the CSR arrays, and the two calls produce different keys — `(u, v)` and `(v, u)` — so the sorted order, and therefore every field of the resulting `Net`, is the same whichever call is made first. Only the order of two pushes into a vector that is about to be sorted changes."
+ },
+ {
+  "label": "the seed clique joins a node to itself",
+  "old": "        for c in (a + 1)..=m {",
+  "new": "        for c in a..=m {"
+ },
+ {
+  "label": "the seed clique's endpoint array counts one end of each edge twice",
+  "old": "            repeated.push(a as u32);\n            repeated.push(c as u32);",
+  "new": "            repeated.push(a as u32);\n            repeated.push(a as u32);"
+ },
+ {
+  "label": "growth starts one node before the seed clique ends",
+  "old": "    for v in (m + 1)..n {",
+  "new": "    for v in m..n {"
+ },
+ {
+  "label": "preferential attachment always probes from the start of the array",
+  "old": "            let start = below_u64(&mut rng, repeated.len() as u64) as usize;",
+  "new": "            let start = below_u64(&mut rng, 1) as usize;"
+ },
+ {
+  "label": "a new edge's target does not gain a degree in the endpoint array",
+  "old": "            repeated.push(v as u32);\n            repeated.push(t);",
+  "new": "            repeated.push(v as u32);"
+ },
+ {
+  "label": "the probe returns a node that is already a target",
+  "old": "        .find(|cand| !targets.contains(cand))",
+  "new": "        .find(|cand| targets.contains(cand))"
+ },
+ {
+  "label": "the probe scans from the start rather than from the drawn position",
+  "old": "        .map(|step| repeated[(start + step) % repeated.len()])",
+  "new": "        .map(|step| repeated[step % repeated.len()])"
+ },
+ {
+  "label": "the probe's empty-array guard is removed",
+  "old": "    if repeated.is_empty() {\n        return None;\n    }",
+  "new": "",
+  "equivalent": "With an empty slice the range `0..repeated.len()` is `0..0`, so the mapping closure — the only place `% repeated.len()` is evaluated — is never called and `find` returns `None` without dividing by zero. That is exactly the value the guard returns, so the two forms agree on every input including the empty one the test passes."
+ },
+ {
+  "label": "a network too small for the seed clique is accepted",
+  "old": "    if n < m + 1 {",
+  "new": "    if false {"
+ },
+ {
+  "label": "the Maass column's long axis is transposed",
+  "old": "        Self { nx: 15, ny: 3, nz: 3, spacing }",
+  "new": "        Self { nx: 3, ny: 15, nz: 3, spacing }"
+ },
+ {
+  "label": "the grid's neuron count wraps instead of saturating",
+  "old": "        self.nx.saturating_mul(self.ny).saturating_mul(self.nz)",
+  "new": "        self.nx.wrapping_mul(self.ny).wrapping_mul(self.nz)"
+ },
+ {
+  "label": "lambda is divided by the lattice spacing rather than multiplied",
+  "old": "        lambda_steps * self.spacing",
+  "new": "        lambda_steps / self.spacing"
+ },
+ {
+  "label": "the neuron one past the end of the grid is given a position",
+  "old": "        if index >= self.len() {\n            return None;\n        }",
+  "new": "        if index > self.len() {\n            return None;\n        }"
+ },
+ {
+  "label": "the grid's y index is taken modulo the z extent",
+  "old": "        let y = (index / self.nx) % self.ny;",
+  "new": "        let y = (index / self.nx) % self.nz;"
+ },
+ {
+  "label": "the grid's z index divides by the wrong plane size",
+  "old": "        let z = index / (self.nx * self.ny);",
+  "new": "        let z = index / (self.nx * self.nz);"
+ },
+ {
+  "label": "the z coordinate is not scaled by the spacing",
+  "old": "        Some([x as f64 * self.spacing, y as f64 * self.spacing, z as f64 * self.spacing])",
+  "new": "        Some([x as f64 * self.spacing, y as f64 * self.spacing, z as f64])"
+ },
+ {
+  "label": "the distance between two neurons ignores the z axis",
+  "old": "        let d2 = (p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2) + (p[2] - q[2]).powi(2);",
+  "new": "        let d2 = (p[0] - q[0]).powi(2) + (p[1] - q[1]).powi(2);"
+ },
+ {
+  "label": "the distance is returned squared",
+  "old": "        Some(d2.sqrt())",
+  "new": "        Some(d2)"
+ },
+ {
+  "label": "a grid with no y extent is accepted",
+  "old": "        if self.nx == 0 || self.ny == 0 || self.nz == 0 {",
+  "new": "        if self.nx == 0 || self.nz == 0 {"
+ },
+ {
+  "label": "a zero lattice spacing is accepted",
+  "old": "        if !self.spacing.is_finite() || self.spacing <= 0.0 {",
+  "new": "        if !self.spacing.is_finite() || self.spacing < 0.0 {"
+ },
+ {
+  "label": "the EE scale factor is transcribed as 0.03",
+  "old": "pub const MAASS_2002: MaassC = MaassC { ee: 0.3, ei: 0.2, ie: 0.4, ii: 0.1 };",
+  "new": "pub const MAASS_2002: MaassC = MaassC { ee: 0.03, ei: 0.2, ie: 0.4, ii: 0.1 };"
+ },
+ {
+  "label": "the two cross scale factors are transposed in the table",
+  "old": "pub const MAASS_2002: MaassC = MaassC { ee: 0.3, ei: 0.2, ie: 0.4, ii: 0.1 };",
+  "new": "pub const MAASS_2002: MaassC = MaassC { ee: 0.3, ei: 0.4, ie: 0.2, ii: 0.1 };"
+ },
+ {
+  "label": "the II scale factor is the neighbouring row's",
+  "old": "pub const MAASS_2002: MaassC = MaassC { ee: 0.3, ei: 0.2, ie: 0.4, ii: 0.1 };",
+  "new": "pub const MAASS_2002: MaassC = MaassC { ee: 0.3, ei: 0.2, ie: 0.4, ii: 0.4 };"
+ },
+ {
+  "label": "a uniform scale factor leaves the inhibitory-to-inhibitory term at zero",
+  "old": "        Self { ee: c, ei: c, ie: c, ii: c }",
+  "new": "        Self { ee: c, ei: c, ie: c, ii: 0.0 }"
+ },
+ {
+  "label": "the presynaptic and postsynaptic cross terms are swapped at the lookup",
+  "old": "            (Sign::Excitatory, Sign::Inhibitory) => self.ei,\n            (Sign::Inhibitory, Sign::Excitatory) => self.ie,",
+  "new": "            (Sign::Excitatory, Sign::Inhibitory) => self.ie,\n            (Sign::Inhibitory, Sign::Excitatory) => self.ei,"
+ },
+ {
+  "label": "a silent endpoint is given a certain connection",
+  "old": "            _ => 0.0,",
+  "new": "            _ => 1.0,"
+ },
+ {
+  "label": "the EE scale factor is never validated",
+  "old": "        check_probability(\"MaassC::ee\", self.ee)?;",
+  "new": ""
+ },
+ {
+  "label": "the II scale factor is validated against the IE field",
+  "old": "        check_probability(\"MaassC::ii\", self.ii)",
+  "new": "        check_probability(\"MaassC::ii\", self.ie)"
+ },
+ {
+  "label": "every lambda is refused as non-positive",
+  "old": "    if !lambda.is_finite() || lambda <= 0.0 {\n        return Err(TopologyError::Length { name: \"lambda\", value: lambda });\n    }\n    let n = grid.len();\n    check_n(n)?;\n    distance_dependent_signed(grid, c, lambda, wiring, &wiring.signs(n), seed)",
+  "new": "    if !lambda.is_finite() || lambda >= 0.0 {\n        return Err(TopologyError::Length { name: \"lambda\", value: lambda });\n    }\n    let n = grid.len();\n    check_n(n)?;\n    distance_dependent_signed(grid, c, lambda, wiring, &wiring.signs(n), seed)"
+ },
+ {
+  "label": "the signed entry point accepts a zero lambda",
+  "old": "    if !lambda.is_finite() || lambda <= 0.0 {\n        return Err(TopologyError::Length { name: \"lambda\", value: lambda });\n    }\n    let n = grid.len();\n    check_n(n)?;\n    if signs.len() != n {",
+  "new": "    if !lambda.is_finite() || lambda < 0.0 {\n        return Err(TopologyError::Length { name: \"lambda\", value: lambda });\n    }\n    let n = grid.len();\n    check_n(n)?;\n    if signs.len() != n {"
+ },
+ {
+  "label": "the contiguous entry point hands its delegate an all-excitatory partition",
+  "old": "    distance_dependent_signed(grid, c, lambda, wiring, &wiring.signs(n), seed)",
+  "new": "    distance_dependent_signed(grid, c, lambda, wiring, &vec![Sign::Excitatory; n], seed)"
+ },
+ {
+  "label": "a partition shorter than the network is accepted",
+  "old": "    if signs.len() != n {",
+  "new": "    if signs.len() > n {"
+ },
+ {
+  "label": "the distance rule falls off exponentially rather than as a Gaussian",
+  "old": "            let p = c.c_for(sa, signs[d]) * (-(ratio * ratio)).exp();",
+  "new": "            let p = c.c_for(sa, signs[d]) * (-ratio).exp();"
+ },
+ {
+  "label": "the distance rule reads the pair back to front",
+  "old": "            let p = c.c_for(sa, signs[d]) * (-(ratio * ratio)).exp();",
+  "new": "            let p = c.c_for(signs[d], sa) * (-(ratio * ratio)).exp();"
+ },
+ {
+  "label": "the distance is multiplied by lambda instead of divided by it",
+  "old": "            let ratio = dist / lambda;",
+  "new": "            let ratio = dist * lambda;"
+ },
+ {
+  "label": "a neuron connects to itself at the rule's full probability",
+  "old": "            if a == d {\n                continue;\n            }",
+  "new": ""
+ },
+ {
+  "label": "every distance-dependent synapse carries the excitatory weight",
+  "old": "        let sa = signs[a];\n        let w = wiring.weight_for(sa);",
+  "new": "        let sa = signs[a];\n        let w = wiring.weight_for(Sign::Excitatory);"
+ },
+ {
+  "label": "the distance-dependent graph is built transposed",
+  "old": "                b.connect(a as u32, d as u32, w, wiring.delay)?;",
+  "new": "                b.connect(d as u32, a as u32, w, wiring.delay)?;"
+ },
+ {
+  "label": "each layer's range starts where the next layer starts",
+  "old": "        out.push(at..at + size);\n        at += size;",
+  "new": "        at += size;\n        out.push(at..at + size);"
+ },
+ {
+  "label": "a single layer is a feedforward network",
+  "old": "    if layers.len() < 2 {",
+  "new": "    if layers.len() < 1 {"
+ },
+ {
+  "label": "an empty layer is accepted",
+  "old": "        if size == 0 {",
+  "new": "        if size == usize::MAX {"
+ },
+ {
+  "label": "a layer projects into itself rather than into the next one",
+  "old": "            for c in ranges[l + 1].clone() {",
+  "new": "            for c in ranges[l].clone() {"
+ },
+ {
+  "label": "the output layer projects past the end of the network",
+  "old": "    for l in 0..ranges.len() - 1 {",
+  "new": "    for l in 0..ranges.len() {"
+ },
+ {
+  "label": "the all-to-all short circuit is removed",
+  "old": "                if p >= 1.0 || rng.next_f64() < p {",
+  "new": "                if rng.next_f64() < p {",
+  "equivalent": "`Rng::next_f64` is built from 53 bits divided by 2^53, so its largest value is `(2^53 - 1) / 2^53` and it is never exactly 1.0 — a guarantee `rng`'s own doc makes and its tests assert. At `p == 1.0` the comparison `next_f64() < 1.0` is therefore true for every draw, so the same synapses are emitted; `check_probability` has already refused any `p` above 1.0. The only difference is how many draws the local `rng` consumes, and it is dropped at the end of the call."
+ },
+ {
+  "label": "every layer's synapses carry neuron zero's weight",
+  "old": "            let w = wiring.weight_of(n, a);\n            for c in ranges[l + 1].clone() {",
+  "new": "            let w = wiring.weight_of(n, 0);\n            for c in ranges[l + 1].clone() {"
+ },
+ {
+  "label": "a single unit is a competition",
+  "old": "    if n < 2 {",
+  "new": "    if n < 1 {"
+ },
+ {
+  "label": "a non-finite inhibition weight is left for the network builder to refuse",
+  "old": "    if !w_inh.is_finite() || w_inh > 0.0 {",
+  "new": "    if w_inh > 0.0 {"
+ },
+ {
+  "label": "zero self-excitation is refused",
+  "old": "    if !w_self.is_finite() || w_self < 0.0 {",
+  "new": "    if !w_self.is_finite() || w_self <= 0.0 {"
+ },
+ {
+  "label": "every unit is given a self-synapse whether or not it was asked for",
+  "old": "        if w_self > 0.0 {",
+  "new": "        if w_self >= 0.0 {"
+ },
+ {
+  "label": "a unit inhibits itself along with its rivals",
+  "old": "            if a != c {\n                b.connect(a as u32, c as u32, w_inh, delay)?;\n            }",
+  "new": "            b.connect(a as u32, c as u32, w_inh, delay)?;"
+ },
+ {
+  "label": "the runner-up's excess is measured from the threshold downwards",
+  "old": "    let excess = lif.v_inf(i_other) - lif.v_th;",
+  "new": "    let excess = lif.v_th - lif.v_inf(i_other);"
+ },
+ {
+  "label": "a runner-up above threshold is said to need no inhibition",
+  "old": "    if excess <= 0.0 {\n        return Some(0.0);\n    }",
+  "new": "    if excess >= 0.0 {\n        return Some(0.0);\n    }"
+ },
+ {
+  "label": "the inhibition floor multiplies by the membrane time constant instead of dividing",
+  "old": "    Some(excess / (r_win * lif.tau_m))",
+  "new": "    Some(excess / r_win * lif.tau_m)"
+ },
+ {
+  "label": "the inhibition floor uses the runner-up's own firing rate",
+  "old": "    let r_win = lif.rate(i_win)?;",
+  "new": "    let r_win = lif.rate(i_other)?;"
+ },
+ {
+  "label": "the undirected reading keeps self-loops",
+  "old": "            if post as usize == pre {\n                continue;\n            }",
+  "new": ""
+ },
+ {
+  "label": "the undirected reading follows synapses forwards only",
+  "old": "            adj[pre].push(post);\n            adj[post as usize].push(pre as u32);",
+  "new": "            adj[pre].push(post);"
+ },
+ {
+  "label": "a reciprocal pair counts as two neighbours",
+  "old": "        a.sort_unstable();\n        a.dedup();",
+  "new": "        a.sort_unstable();"
+ },
+ {
+  "label": "clustering averages over every neuron rather than over the ones it is defined for",
+  "old": "    if counted == 0 { None } else { Some(sum / counted as f64) }",
+  "new": "    if counted == 0 { None } else { Some(sum / net.n as f64) }"
+ },
+ {
+  "label": "a graph with no measurable neuron reports a clustering anyway",
+  "old": "    if counted == 0 { None } else { Some(sum / counted as f64) }",
+  "new": "    Some(sum / counted as f64)"
+ },
+ {
+  "label": "the neighbour-pair count is not halved",
+  "old": "        let links = links as f64 / 2.0;",
+  "new": "        let links = links as f64;"
+ },
+ {
+  "label": "a neuron's triangles are counted against its own neighbourhood twice",
+  "old": "            links += intersection_size(&adj[u as usize], &adj[v]);",
+  "new": "            links += intersection_size(&adj[v], &adj[v]);"
+ },
+ {
+  "label": "a source one past the end of the network is searched anyway",
+  "old": "    if source >= net.n {\n        return None;\n    }",
+  "new": "    if source > net.n {\n        return None;\n    }"
+ },
+ {
+  "label": "the source is one hop from itself",
+  "old": "    dist[source] = Some(0);",
+  "new": "    dist[source] = Some(1);"
+ },
+ {
+  "label": "every reachable neuron is at the source's own distance",
+  "old": "                dist[v as usize] = Some(du + 1);",
+  "new": "                dist[v as usize] = Some(du);"
+ },
+ {
+  "label": "the search never leaves the source",
+  "old": "            if dist[v as usize].is_none() {",
+  "new": "            if false {"
+ },
+ {
+  "label": "the pair census counts each neuron with itself",
+  "old": "    let pairs = n * n.saturating_sub(1);",
+  "new": "    let pairs = n * n;"
+ },
+ {
+  "label": "a neuron counts as reachable from itself",
+  "old": "            if j == s {\n                continue;\n            }",
+  "new": ""
+ },
+ {
+  "label": "the hop sum counts reachable pairs rather than hops",
+  "old": "                sum += u64::from(d);",
+  "new": "                sum += 1;"
+ },
+ {
+  "label": "the diameter is the shortest path found rather than the longest",
+  "old": "                diameter = diameter.max(d);",
+  "new": "                diameter = diameter.min(d);"
+ },
+ {
+  "label": "the mean hop count is taken over every pair rather than the reachable ones",
+  "old": "        mean_hops: if reachable > 0 { Some(sum as f64 / reachable as f64) } else { None },",
+  "new": "        mean_hops: if reachable > 0 { Some(sum as f64 / pairs as f64) } else { None },"
+ },
+ {
+  "label": "the reachable count is set rather than accumulated",
+  "old": "                reachable += 1;",
+  "new": "                reachable = 1;"
+ },
+ {
+  "label": "an empty network is strongly connected",
+  "old": "        self.pairs > 0 && self.reachable == self.pairs",
+  "new": "        self.reachable == self.pairs"
+ },
+ {
+  "label": "a disconnected network is given a characteristic path length anyway",
+  "old": "    if s.is_strongly_connected() { s.mean_hops } else { None }",
+  "new": "    s.mean_hops"
+ },
+ {
+  "label": "every weak component is given two labels' worth of room",
+  "old": "        next += 1;",
+  "new": "        next += 2;"
+ },
+ {
+  "label": "the estimator drops its continuity correction",
+  "old": "\n    let shift = k_min as f64 - 0.5;\n    let mut sum = 0.0;",
+  "new": "\n    let shift = k_min as f64;\n    let mut sum = 0.0;"
+ },
+ {
+  "label": "a k_min of zero is fitted anyway",
+  "old": "    if k_min < 1 {\n        return None;\n    }",
+  "new": "    if false {\n        return None;\n    }"
+ },
+ {
+  "label": "the fitted sample excludes the degrees at k_min",
+  "old": "        if k >= k_min {",
+  "new": "        if k > k_min {"
+ },
+ {
+  "label": "the log ratio of the estimator is inverted",
+  "old": "            sum += (k as f64 / shift).ln();",
+  "new": "            sum += (shift / k as f64).ln();"
+ },
+ {
+  "label": "the exponent drops its leading one",
+  "old": "    Some(1.0 + count as f64 / sum)",
+  "new": "    Some(count as f64 / sum)"
+ },
+ {
+  "label": "the incoming weight sums are attributed to the presynaptic neuron",
+  "old": "            s[post as usize] += w;",
+  "new": "            s[pre] += w;"
+ },
+ {
+  "label": "the incoming weight sums overwrite rather than accumulate",
+  "old": "            s[post as usize] += w;",
+  "new": "            s[post as usize] = w;"
+ },
+ {
+  "label": "the probability check drops its finiteness test",
+  "old": "    if !p.is_finite() || !(0.0..=1.0).contains(&p) {",
+  "new": "    if !(0.0..=1.0).contains(&p) {",
+  "equivalent": "`RangeInclusive::contains` is `start <= item && item <= end` through `PartialOrd`, and every comparison against NaN is false, so `contains(&NaN)` is false and the negation still returns the error; positive and negative infinity are outside `[0, 1]` by the same two comparisons. The finiteness test therefore rejects nothing the range test does not already reject, and the two forms accept exactly the same set of values."
+ },
+ {
+  "label": "one is not a probability",
+  "old": "    if !p.is_finite() || !(0.0..=1.0).contains(&p) {",
+  "new": "    if !p.is_finite() || !(0.0..1.0).contains(&p) {"
+ },
+ {
+  "label": "a negative probability is accepted",
+  "old": "    if !p.is_finite() || !(0.0..=1.0).contains(&p) {",
+  "new": "    if !p.is_finite() || !(-1.0..=1.0).contains(&p) {"
+ },
+ {
+  "label": "the u32 index-space limit is not enforced",
+  "old": "    if n as u64 > u64::from(u32::MAX) {",
+  "new": "    if false {"
+ },
+ {
+  "label": "the rejection zone is the form that over-represents the low residues",
+  "old": "    u64::MAX - (u64::MAX % n).wrapping_add(1) % n",
+  "new": "    u64::MAX - (u64::MAX % n) - (n - 1)"
+ },
+ {
+  "label": "the rejection zone keeps a whole excess residue class",
+  "old": "    u64::MAX - (u64::MAX % n).wrapping_add(1) % n",
+  "new": "    u64::MAX - (u64::MAX % n)"
+ },
+ {
+  "label": "the excess is not folded back for a power-of-two modulus",
+  "old": "    u64::MAX - (u64::MAX % n).wrapping_add(1) % n",
+  "new": "    u64::MAX - (u64::MAX % n).wrapping_add(1)"
+ },
+ {
+  "label": "the 64-bit draw does not delegate to the 32-bit generator",
+  "old": "    if n <= u64::from(u32::MAX) {\n        return u64::from(rng.below(n as u32));\n    }",
+  "new": ""
+ },
+ {
+  "label": "the two halves of a 64-bit draw overlap",
+  "old": "        let v = (u64::from(rng.next_u32()) << 32) | u64::from(rng.next_u32());",
+  "new": "        let v = (u64::from(rng.next_u32()) << 16) | u64::from(rng.next_u32());"
+ },
+ {
+  "label": "the rejection zone is never applied to a draw",
+  "old": "        if v <= zone {\n            return v % n;\n        }",
+  "new": "        if v <= zone || true {\n            return v % n;\n        }"
+ },
+ {
+  "label": "the draw is divided by the modulus rather than reduced by it",
+  "old": "            return v % n;",
+  "new": "            return v / n;"
+ },
+ {
+  "label": "the sorted merge advances the wrong side",
+  "old": "            core::cmp::Ordering::Less => i += 1,\n            core::cmp::Ordering::Greater => j += 1,",
+  "new": "            core::cmp::Ordering::Less => j += 1,\n            core::cmp::Ordering::Greater => i += 1,"
+ },
+ {
+  "label": "the index-space message does not name the neuron count",
+  "old": "                write!(f, \"{n} neurons cannot be named by a u32 synapse index\")",
+  "new": "                write!(f, \"too many neurons for a u32 synapse index\")"
+ }
+]

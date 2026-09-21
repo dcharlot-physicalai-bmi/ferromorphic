@@ -1,0 +1,1225 @@
+[
+ {
+  "label": "an integer-bounded stream is reported as binary, so the multiplier disappears from the audit",
+  "old": "    pub fn is_binary(self) -> bool {\n        matches!(self, Self::Binary)",
+  "new": "    pub fn is_binary(self) -> bool {\n        matches!(self, Self::Binary | Self::Integer(_))"
+ },
+ {
+  "label": "summing anything with a real tensor gives a binary one",
+  "old": "            (Self::Real, _) | (_, Self::Real) => Self::Real,",
+  "new": "            (Self::Real, _) | (_, Self::Real) => Self::Binary,"
+ },
+ {
+  "label": "two spike tensors sum to a bound of one rather than two",
+  "old": "            (Self::Binary, Self::Binary) => Self::Integer(2),",
+  "new": "            (Self::Binary, Self::Binary) => Self::Integer(1),"
+ },
+ {
+  "label": "adding a spike tensor to an integer one does not widen the bound",
+  "old": "                Self::Integer(b.saturating_add(1))",
+  "new": "                Self::Integer(b)"
+ },
+ {
+  "label": "the integer-plus-integer bound wraps instead of saturating",
+  "old": "            (Self::Integer(a), Self::Integer(b)) => Self::Integer(a.saturating_add(b)),",
+  "new": "            (Self::Integer(a), Self::Integer(b)) => Self::Integer(a.wrapping_add(b)),"
+ },
+ {
+  "label": "two integer bounds are combined by taking the larger rather than by adding",
+  "old": "            (Self::Integer(a), Self::Integer(b)) => Self::Integer(a.saturating_add(b)),",
+  "new": "            (Self::Integer(a), Self::Integer(b)) => Self::Integer(a.max(b)),"
+ },
+ {
+  "label": "an integer domain reports the binary bound rather than the one it carries",
+  "old": "            Self::Binary => Some(1),\n            Self::Integer(b) => Some(b),",
+  "new": "            Self::Binary => Some(1),\n            Self::Integer(b) => Some(1),"
+ },
+ {
+  "label": "the list a report iterates carries one kind twice and drops another",
+  "old": "        [Self::Ac, Self::Mac, Self::Add, Self::Mul, Self::Shift, Self::Compare, Self::Logic];",
+  "new": "        [Self::Ac, Self::Mac, Self::Add, Self::Mul, Self::Shift, Self::Compare, Self::Compare];"
+ },
+ {
+  "label": "the product rule needs BOTH operands binary to drop the multiplier",
+  "old": "        if a.is_binary() || b.is_binary() { Self::Ac } else { Self::Mac }",
+  "new": "        if a.is_binary() && b.is_binary() { Self::Ac } else { Self::Mac }"
+ },
+ {
+  "label": "every product is a multiply-accumulate whatever its operands",
+  "old": "        if a.is_binary() || b.is_binary() { Self::Ac } else { Self::Mac }",
+  "new": "        if false { Self::Ac } else { Self::Mac }"
+ },
+ {
+  "label": "every product is an accumulate whatever its operands",
+  "old": "        if a.is_binary() || b.is_binary() { Self::Ac } else { Self::Mac }",
+  "new": "        if true { Self::Ac } else { Self::Mac }"
+ },
+ {
+  "label": "a bare multiply does not occupy the multiplier",
+  "old": "    pub fn needs_multiplier(self) -> bool {\n        matches!(self, Self::Mac | Self::Mul)",
+  "new": "    pub fn needs_multiplier(self) -> bool {\n        matches!(self, Self::Mac)"
+ },
+ {
+  "label": "a shift is counted as occupying the multiplier",
+  "old": "    pub fn needs_multiplier(self) -> bool {\n        matches!(self, Self::Mac | Self::Mul)",
+  "new": "    pub fn needs_multiplier(self) -> bool {\n        matches!(self, Self::Mac | Self::Mul | Self::Shift)"
+ },
+ {
+  "label": "a multiply-accumulate is not a synaptic operation",
+  "old": "    pub fn is_synaptic(self) -> bool {\n        matches!(self, Self::Ac | Self::Mac)",
+  "new": "    pub fn is_synaptic(self) -> bool {\n        matches!(self, Self::Ac)"
+ },
+ {
+  "label": "a bare add is counted among NeuroBench's synaptic operations",
+  "old": "    pub fn is_synaptic(self) -> bool {\n        matches!(self, Self::Ac | Self::Mac)",
+  "new": "    pub fn is_synaptic(self) -> bool {\n        matches!(self, Self::Ac | Self::Mac | Self::Add)"
+ },
+ {
+  "label": "an accumulate is labelled MAC in every report",
+  "old": "            Self::Ac => \"AC\",\n            Self::Mac => \"MAC\",",
+  "new": "            Self::Ac => \"MAC\",\n            Self::Mac => \"MAC\","
+ },
+ {
+  "label": "an infinity is accepted as an exact power of two",
+  "old": "    if !(x > 0.0) || !x.is_finite() {\n        return false;\n    }",
+  "new": "    if !(x > 0.0) {\n        return false;\n    }"
+ },
+ {
+  "label": "a negative power of two is accepted",
+  "old": "    if !(x > 0.0) || !x.is_finite() {\n        return false;\n    }",
+  "new": "    if !x.is_finite() {\n        return false;\n    }"
+ },
+ {
+  "label": "any finite positive number is called a power of two",
+  "old": "    exponent != 0 && mantissa == 0",
+  "new": "    exponent != 0"
+ },
+ {
+  "label": "the mantissa mask drops its top bit, so 1.5 reads as a power of two",
+  "old": "    let mantissa = bits & ((1u64 << 52) - 1);",
+  "new": "    let mantissa = bits & ((1u64 << 51) - 1);"
+ },
+ {
+  "label": "the exponent clause is dropped from the power-of-two test",
+  "old": "    exponent != 0 && mantissa == 0",
+  "new": "    mantissa == 0",
+  "equivalent": "the doc comment above this line already states that `mantissa == 0` alone decides the predicate and that the exponent test is kept as the explicit statement of the rule, not as the deciding clause. The three zero-mantissa exponent classes are: exponent 0, which is +0.0 or -0.0 and is already taken by the `!(x > 0.0)` guard (a subnormal power of two such as 2^-1074 has exactly one mantissa bit SET, so its mantissa is not zero and it is rejected by this clause either way); exponents 1..=2046, which are exactly the positive normal powers of two the predicate exists to accept; and exponent 2047 with a zero mantissa, which is an infinity and is already taken by the `!x.is_finite()` guard. So for every f64 that reaches this line the two expressions agree bit for bit, and no test on any input could tell them apart."
+ },
+ {
+  "label": "an effective count above its dense count is recorded rather than refused",
+  "old": "        if effective > dense {\n            return Err(AttnError::Inconsistent { what: because });",
+  "new": "        if false {\n            return Err(AttnError::Inconsistent { what: because });"
+ },
+ {
+  "label": "a site whose effective count equals its dense count is refused",
+  "old": "        if effective > dense {\n            return Err(AttnError::Inconsistent { what: because });",
+  "new": "        if effective >= dense {\n            return Err(AttnError::Inconsistent { what: because });"
+ },
+ {
+  "label": "sites merge on the path alone, so two kinds at one path fold into one row",
+  "old": "        if let Some(s) = self.sites.iter_mut().find(|s| s.path == path && s.kind == kind) {",
+  "new": "        if let Some(s) = self.sites.iter_mut().find(|s| s.path == path) {"
+ },
+ {
+  "label": "a repeated charge overwrites the site's dense count instead of adding to it",
+  "old": "            s.dense = s.dense.checked_add(dense).ok_or(AttnError::Overflow { what: \"dense\" })?;",
+  "new": "            s.dense = dense;"
+ },
+ {
+  "label": "a repeated charge subtracts the new effective count instead of adding it",
+  "old": "            s.effective = s\n                .effective\n                .checked_add(effective)",
+  "new": "            s.effective = s\n                .effective\n                .checked_sub(effective)"
+ },
+ {
+  "label": "a new site stores its dense and effective counts the wrong way round",
+  "old": "        self.sites.push(Site { path: path.to_string(), kind, dense, effective, because });",
+  "new": "        self.sites.push(Site { path: path.to_string(), kind, dense: effective, effective: dense, because });"
+ },
+ {
+  "label": "a timestep is not counted",
+  "old": "        self.timesteps = self.timesteps.saturating_add(1);",
+  "new": "        self.timesteps = self.timesteps.saturating_add(0);"
+ },
+ {
+  "label": "the site lookup ignores the kind it was asked for",
+  "old": "        self.sites.iter().find(|s| s.path == path && s.kind == kind)",
+  "new": "        self.sites.iter().find(|s| s.path == path)"
+ },
+ {
+  "label": "the effective aggregate sums every kind EXCEPT the one asked for",
+  "old": "            .filter(|s| s.kind == kind)\n            .fold(0u64, |a, s| a.saturating_add(s.effective))",
+  "new": "            .filter(|s| s.kind != kind)\n            .fold(0u64, |a, s| a.saturating_add(s.effective))"
+ },
+ {
+  "label": "the effective aggregate sums dense counts",
+  "old": "            .fold(0u64, |a, s| a.saturating_add(s.effective))",
+  "new": "            .fold(0u64, |a, s| a.saturating_add(s.dense))"
+ },
+ {
+  "label": "the effective aggregate wraps instead of saturating",
+  "old": "            .fold(0u64, |a, s| a.saturating_add(s.effective))",
+  "new": "            .fold(0u64, |a, s| a.wrapping_add(s.effective))"
+ },
+ {
+  "label": "the dense aggregate sums effective counts",
+  "old": "        self.sites.iter().filter(|s| s.kind == kind).fold(0u64, |a, s| a.saturating_add(s.dense))",
+  "new": "        self.sites.iter().filter(|s| s.kind == kind).fold(0u64, |a, s| a.saturating_add(s.effective))"
+ },
+ {
+  "label": "the dense aggregate wraps instead of saturating",
+  "old": "        self.sites.iter().filter(|s| s.kind == kind).fold(0u64, |a, s| a.saturating_add(s.dense))",
+  "new": "        self.sites.iter().filter(|s| s.kind == kind).fold(0u64, |a, s| a.wrapping_add(s.dense))"
+ },
+ {
+  "label": "the split reports accumulates in its bare-add row",
+  "old": "            adds: self.effective_of(OpKind::Add),",
+  "new": "            adds: self.effective_of(OpKind::Ac),"
+ },
+ {
+  "label": "the split's shift row reads the bare-multiply count",
+  "old": "            shifts: self.effective_of(OpKind::Shift),",
+  "new": "            shifts: self.effective_of(OpKind::Mul),"
+ },
+ {
+  "label": "the split's comparison row reads the logic count",
+  "old": "            comparisons: self.effective_of(OpKind::Compare),",
+  "new": "            comparisons: self.effective_of(OpKind::Logic),"
+ },
+ {
+  "label": "the split drops its bare-multiply row",
+  "old": "            multiplies: self.effective_of(OpKind::Mul),",
+  "new": "            multiplies: 0,"
+ },
+ {
+  "label": "the split's logic row is always zero",
+  "old": "            logic: self.effective_of(OpKind::Logic),",
+  "new": "            logic: 0,"
+ },
+ {
+  "label": "the grand total leaves out the threshold comparisons",
+  "old": "            self.shifts,\n            self.comparisons,\n            self.logic,",
+  "new": "            self.shifts,\n            self.logic,"
+ },
+ {
+  "label": "the grand total wraps past u64 instead of refusing",
+  "old": "        .try_fold(0u64, |a, b| a.checked_add(*b))",
+  "new": "        .try_fold(0u64, |a, b| Some(a.wrapping_add(*b)))"
+ },
+ {
+  "label": "the honest fraction is built from the dense accumulate count",
+  "old": "        Some(self.effective_of(OpKind::Ac) as f64 / total as f64)",
+  "new": "        Some(self.dense_of(OpKind::Ac) as f64 / total as f64)"
+ },
+ {
+  "label": "a pass that performed nothing reports a fraction of NaN rather than None",
+  "old": "        let total = self.effective_total()?;\n        if total == 0 {\n            return None;\n        }",
+  "new": "        let total = self.effective_total()?;"
+ },
+ {
+  "label": "the reported fraction's synaptic total wraps instead of refusing",
+  "old": "        let syn = ac.checked_add(mac)?;",
+  "new": "        let syn = ac.wrapping_add(mac);"
+ },
+ {
+  "label": "a run with no synaptic operations reports itself perfectly spike-driven",
+  "old": "        let syn = ac.checked_add(mac)?;\n        if syn == 0 {\n            return None;\n        }",
+  "new": "        let syn = ac.checked_add(mac)?;"
+ },
+ {
+  "label": "the reported fraction is the multiply-accumulate share, not the accumulate share",
+  "old": "        Some(ac as f64 / syn as f64)",
+  "new": "        Some(mac as f64 / syn as f64)"
+ },
+ {
+  "label": "the reported fraction counts DENSE multiply-accumulates against effective accumulates",
+  "old": "        let mac = self.effective_of(OpKind::Mac);",
+  "new": "        let mac = self.dense_of(OpKind::Mac);"
+ },
+ {
+  "label": "the multiplier count is the synaptic count instead",
+  "old": "            .filter(|k| k.needs_multiplier())\n            .fold(0u64, |a, k| a.saturating_add(self.effective_of(*k)))",
+  "new": "            .filter(|k| k.is_synaptic())\n            .fold(0u64, |a, k| a.saturating_add(self.effective_of(*k)))"
+ },
+ {
+  "label": "the multiplier count wraps instead of saturating",
+  "old": "            .fold(0u64, |a, k| a.saturating_add(self.effective_of(*k)))",
+  "new": "            .fold(0u64, |a, k| a.wrapping_add(self.effective_of(*k)))"
+ },
+ {
+  "label": "the NeuroBench denominator drops its multiply-accumulate sites",
+  "old": "            .filter(|k| k.is_synaptic())\n            .fold(0u64, |a, k| a.saturating_add(self.dense_of(*k)));",
+  "new": "            .filter(|k| **k == OpKind::Ac)\n            .fold(0u64, |a, k| a.saturating_add(self.dense_of(*k)));"
+ },
+ {
+  "label": "the NeuroBench denominator counts effective operations rather than dense ones",
+  "old": "            .fold(0u64, |a, k| a.saturating_add(self.dense_of(*k)));",
+  "new": "            .fold(0u64, |a, k| a.saturating_add(self.effective_of(*k)));"
+ },
+ {
+  "label": "the two NeuroBench effective counts are swapped",
+  "old": "            effective_macs: self.effective_of(OpKind::Mac),\n            effective_acs: self.effective_of(OpKind::Ac),",
+  "new": "            effective_macs: self.effective_of(OpKind::Ac),\n            effective_acs: self.effective_of(OpKind::Mac),"
+ },
+ {
+  "label": "the report's header counts sites rather than timesteps",
+  "old": "        writeln!(f, \"operation audit over {} timestep(s)\", self.timesteps)?;",
+  "new": "        writeln!(f, \"operation audit over {} timestep(s)\", self.sites.len())?;"
+ },
+ {
+  "label": "the report prints a row for every kind including the ones the pass never touched",
+  "old": "            if dense == 0 {\n                continue;\n            }",
+  "new": "            if false {\n                continue;\n            }"
+ },
+ {
+  "label": "an unrepresentable synaptic total is reported as no synaptic operations",
+  "old": "                writeln!(f, \"  AC share of synaptic operations: the total does not fit in u64\")?;",
+  "new": "                writeln!(f, \"  AC share of synaptic operations: no synaptic operations\")?;"
+ },
+ {
+  "label": "an unrepresentable grand total is reported as nothing having run",
+  "old": "            (None, None) => write!(f, \"  AC share of ALL operations: the total does not fit in u64\"),",
+  "new": "            (None, None) => write!(f, \"  AC share of ALL operations: nothing ran\"),"
+ },
+ {
+  "label": "a zero-token tensor is accepted by the general constructor",
+  "old": "        if tokens == 0 {\n            return Err(AttnError::Empty { what: \"tokens\" });\n        }\n        if channels == 0 {\n            return Err(AttnError::Empty { what: \"channels\" });\n        }\n        let want = tokens.checked_mul(channels).ok_or(AttnError::Overflow { what: \"tensor\" })?;",
+  "new": "        if channels == 0 {\n            return Err(AttnError::Empty { what: \"channels\" });\n        }\n        let want = tokens.checked_mul(channels).ok_or(AttnError::Overflow { what: \"tensor\" })?;"
+ },
+ {
+  "label": "a zero-channel tensor is accepted by the general constructor",
+  "old": "        if channels == 0 {\n            return Err(AttnError::Empty { what: \"channels\" });\n        }\n        let want = tokens.checked_mul(channels).ok_or(AttnError::Overflow { what: \"tensor\" })?;",
+  "new": "        let want = tokens.checked_mul(channels).ok_or(AttnError::Overflow { what: \"tensor\" })?;"
+ },
+ {
+  "label": "a shape whose element count does not fit in a usize wraps instead of refusing",
+  "old": "        let want = tokens.checked_mul(channels).ok_or(AttnError::Overflow { what: \"tensor\" })?;\n        if values.len() != want {",
+  "new": "        let want = tokens.wrapping_mul(channels);\n        if values.len() != want {"
+ },
+ {
+  "label": "a values vector of the wrong length is accepted",
+  "old": "        if values.len() != want {\n            return Err(AttnError::BadShape { what: \"tensor\", got: values.len(), want });\n        }",
+  "new": "        if values.len() != want {\n            let _ = want;\n        }"
+ },
+ {
+  "label": "a non-finite element reaches a tensor",
+  "old": "        for (i, v) in values.iter().enumerate() {\n            if !v.is_finite() {\n                return Err(AttnError::NonFinite { what: \"tensor\", index: i });\n            }\n        }",
+  "new": "        for (i, v) in values.iter().enumerate() {\n            if false {\n                return Err(AttnError::NonFinite { what: \"tensor\", index: i });\n            }\n        }"
+ },
+ {
+  "label": "an integer bound of one is left as an integer domain and keeps its multiplier",
+  "old": "            Domain::Integer(b) if b <= 1 => Domain::Binary,",
+  "new": "            Domain::Integer(b) if b < 1 => Domain::Binary,"
+ },
+ {
+  "label": "a bound of two is promoted to binary, which removes a multiplier the hardware still needs",
+  "old": "            Domain::Integer(b) if b <= 1 => Domain::Binary,",
+  "new": "            Domain::Integer(b) if b <= 2 => Domain::Binary,"
+ },
+ {
+  "label": "a binary tensor admits any value between zero and one",
+  "old": "                    if *v != 0.0 && *v != 1.0 {",
+  "new": "                    if *v < 0.0 || *v > 1.0 {"
+ },
+ {
+  "label": "an integer domain admits a fractional value",
+  "old": "                    if *v < 0.0 || *v > f64::from(bound) || v.fract() != 0.0 {",
+  "new": "                    if *v < 0.0 || *v > f64::from(bound) {"
+ },
+ {
+  "label": "an integer domain admits a negative value",
+  "old": "                    if *v < 0.0 || *v > f64::from(bound) || v.fract() != 0.0 {",
+  "new": "                    if *v > f64::from(bound) || v.fract() != 0.0 {"
+ },
+ {
+  "label": "an integer domain admits a value above the bound it declared",
+  "old": "                    if *v < 0.0 || *v > f64::from(bound) || v.fract() != 0.0 {",
+  "new": "                    if *v < 0.0 || v.fract() != 0.0 {"
+ },
+ {
+  "label": "a spike tensor inverts the bit pattern it is built from",
+  "old": "        let values = bits.iter().map(|b| f64::from(u8::from(*b))).collect();",
+  "new": "        let values = bits.iter().map(|b| f64::from(u8::from(!*b))).collect();"
+ },
+ {
+  "label": "a silent tensor is full of spikes",
+  "old": "        Self::new(tokens, channels, vec![0.0; n], Domain::Binary)",
+  "new": "        Self::new(tokens, channels, vec![1.0; n], Domain::Binary)"
+ },
+ {
+  "label": "a silent tensor is declared real rather than binary",
+  "old": "        Self::new(tokens, channels, vec![0.0; n], Domain::Binary)",
+  "new": "        Self::new(tokens, channels, vec![0.0; n], Domain::Real)"
+ },
+ {
+  "label": "the silent constructor's own zero-token check is removed",
+  "old": "        if tokens == 0 {\n            return Err(AttnError::Empty { what: \"tokens\" });\n        }\n        if channels == 0 {\n            return Err(AttnError::Empty { what: \"channels\" });\n        }\n        let n = tokens.checked_mul(channels).ok_or(AttnError::Overflow { what: \"tensor\" })?;\n        Self::new(tokens, channels, vec![0.0; n], Domain::Binary)",
+  "new": "        if channels == 0 {\n            return Err(AttnError::Empty { what: \"channels\" });\n        }\n        let n = tokens.checked_mul(channels).ok_or(AttnError::Overflow { what: \"tensor\" })?;\n        Self::new(tokens, channels, vec![0.0; n], Domain::Binary)",
+  "equivalent": "`Tensor::new`, which this constructor delegates to on its last line, performs exactly the same `tokens == 0` check first and returns exactly the same value, `Err(AttnError::Empty { what: \"tokens\" })`. With tokens = 0 the intermediate steps are total: `0usize.checked_mul(channels)` is `Some(0)` for every channels, and `vec![0.0; 0]` is an empty allocation that cannot fail, so nothing panics on the way to that delegated check. The only observable difference the early return could have is on which line the error is constructed, and `AttnError` carries no location. No test could tell the two apart; what the early check buys is the OVERFLOW case (`tokens * channels` past a usize), and that is the `checked_mul` on the line below, which this edit leaves in place."
+ },
+ {
+  "label": "the sinusoidal schedule drops the factor of two in its exponent",
+  "old": "                let arg = pos as f64 / 10000f64.powf(2.0 * pair / d);",
+  "new": "                let arg = pos as f64 / 10000f64.powf(pair / d);"
+ },
+ {
+  "label": "the sinusoidal base is transcribed as 1000",
+  "old": "                let arg = pos as f64 / 10000f64.powf(2.0 * pair / d);",
+  "new": "                let arg = pos as f64 / 1000f64.powf(2.0 * pair / d);"
+ },
+ {
+  "label": "each channel gets its own wavelength rather than each PAIR of channels",
+  "old": "                let pair = (c / 2) as f64;",
+  "new": "                let pair = c as f64;"
+ },
+ {
+  "label": "the sine and cosine channels are swapped",
+  "old": "                let value = if c % 2 == 0 { arg.sin() } else { arg.cos() };",
+  "new": "                let value = if c % 2 == 0 { arg.cos() } else { arg.sin() };"
+ },
+ {
+  "label": "the positional threshold is strict, so a value of exactly zero does not spike",
+  "old": "                bits.push(value >= 0.0);",
+  "new": "                bits.push(value > 0.0);"
+ },
+ {
+  "label": "the wavelength schedule is normalised by the token count rather than the channel count",
+  "old": "        let d = channels as f64;\n        let mut bits = Vec::with_capacity(n);",
+  "new": "        let d = tokens as f64;\n        let mut bits = Vec::with_capacity(n);"
+ },
+ {
+  "label": "the row accessor returns the row one past the end",
+  "old": "        if t >= self.tokens {\n            return None;\n        }\n        self.values.get(t * self.channels..(t + 1) * self.channels)",
+  "new": "        if t > self.tokens {\n            return None;\n        }\n        self.values.get(t * self.channels..(t + 1) * self.channels)"
+ },
+ {
+  "label": "the element accessor is transposed",
+  "old": "        self.values.get(token * self.channels + channel).copied()",
+  "new": "        self.values.get(token + channel * self.channels).copied()"
+ },
+ {
+  "label": "a channel index past the end reads into the next token's row",
+  "old": "        if token >= self.tokens || channel >= self.channels {",
+  "new": "        if token >= self.tokens {"
+ },
+ {
+  "label": "the non-zero count counts every non-negative element",
+  "old": "        self.values.iter().filter(|v| **v != 0.0).count() as u64",
+  "new": "        self.values.iter().filter(|v| **v >= 0.0).count() as u64"
+ },
+ {
+  "label": "density divides by the token count rather than the element count",
+  "old": "        Some(self.nonzero() as f64 / n as f64)",
+  "new": "        Some(self.nonzero() as f64 / self.tokens as f64)"
+ },
+ {
+  "label": "a head's channel slice always starts at channel zero",
+  "old": "                v.push(self.values[t * self.channels + lo + c]);",
+  "new": "                v.push(self.values[t * self.channels + c]);"
+ },
+ {
+  "label": "slicing a head's channels forgets the tensor's declared domain",
+  "old": "        Self::new(self.tokens, width, v, self.domain)",
+  "new": "        Self::new(self.tokens, width, v, Domain::Real)"
+ },
+ {
+  "label": "the rate readout averages over timesteps but not over tokens",
+  "old": "    let n = (outputs.len() * tokens) as f64;",
+  "new": "    let n = outputs.len() as f64;"
+ },
+ {
+  "label": "the rate readout divides by the channel count as well",
+  "old": "    let n = (outputs.len() * tokens) as f64;",
+  "new": "    let n = (outputs.len() * tokens * channels) as f64;"
+ },
+ {
+  "label": "the rate readout keeps only the last timestep instead of accumulating",
+  "old": "                acc[c] += o.values[t * channels + c];",
+  "new": "                acc[c] = o.values[t * channels + c];"
+ },
+ {
+  "label": "the readout averages over ragged shapes instead of refusing them",
+  "old": "        if o.tokens != tokens || o.channels != channels {",
+  "new": "        if false {"
+ },
+ {
+  "label": "a two-way count multiplies by adding",
+  "old": "    (a as u64).checked_mul(b as u64).ok_or(AttnError::Overflow { what })",
+  "new": "    (a as u64).checked_add(b as u64).ok_or(AttnError::Overflow { what })"
+ },
+ {
+  "label": "a three-way count drops its third factor",
+  "old": "    mul2(a, b, what)?.checked_mul(c as u64).ok_or(AttnError::Overflow { what })",
+  "new": "    mul2(a, b, what)"
+ },
+ {
+  "label": "the accumulate and multiply-accumulate explanations are interchanged",
+  "old": "const WHY_AC_WEIGHT: &str =\n    \"the activation operand is binary, so the weight is gated rather than multiplied\";",
+  "new": "const WHY_AC_WEIGHT: &str =\n    \"neither operand is binary: the activation is multi-valued and needs a multiplier\";"
+ },
+ {
+  "label": "the membrane and leak explanations are interchanged",
+  "old": "const WHY_MEMBRANE: &str = \"membrane update terms: the leak difference and the sum back into v\";",
+  "new": "const WHY_MEMBRANE: &str = \"the membrane leak factor 1/tau multiplies the whole difference\";"
+ },
+ {
+  "label": "the additive shortcut is explained as a gate",
+  "old": "const WHY_RESIDUAL_ADD: &str = \"a shortcut adds two tensors elementwise, widening the domain\";",
+  "new": "const WHY_RESIDUAL_ADD: &str = \"a shortcut combines two binary tensors with one gate per element\";"
+ },
+ {
+  "label": "a weight matrix of the wrong length is accepted",
+  "old": "        if w.len() != want {\n            return Err(AttnError::BadShape { what: \"weights\", got: w.len(), want });\n        }",
+  "new": "        if w.len() != want {\n            let _ = want;\n        }"
+ },
+ {
+  "label": "a non-finite weight reaches a projection",
+  "old": "                return Err(AttnError::NonFinite { what: \"weights\", index: i });",
+  "new": "                let _ = i;"
+ },
+ {
+  "label": "a non-finite bias reaches a projection",
+  "old": "                    return Err(AttnError::NonFinite { what: \"bias\", index: i });",
+  "new": "                    let _ = i;"
+ },
+ {
+  "label": "a bias of the wrong length is accepted",
+  "old": "            if b.len() != n_out {\n                return Err(AttnError::BadShape { what: \"bias\", got: b.len(), want: n_out });\n            }",
+  "new": "            if b.len() != n_out {\n                let _ = n_out;\n            }"
+ },
+ {
+  "label": "a negative weight is not counted as a connection",
+  "old": "        self.w.iter().filter(|v| **v != 0.0).count() as u64",
+  "new": "        self.w.iter().filter(|v| **v > 0.0).count() as u64"
+ },
+ {
+  "label": "a projection's kind ignores its input's domain and always needs a multiplier",
+  "old": "        let mut out = vec![0.0f64; tokens * self.n_out];\n        let kind = OpKind::product(x.domain, Domain::Real);",
+  "new": "        let mut out = vec![0.0f64; tokens * self.n_out];\n        let kind = OpKind::product(Domain::Real, Domain::Real);"
+ },
+ {
+  "label": "a projection states the wrong operand as the reason for its kind",
+  "old": "        let because = if kind == OpKind::Ac { WHY_AC_WEIGHT } else { WHY_MAC_WEIGHT };\n        let dense = mul3(tokens, self.n_in, self.n_out, \"projection\")?;",
+  "new": "        let because = if kind == OpKind::Ac { WHY_MAC_WEIGHT } else { WHY_AC_WEIGHT };\n        let dense = mul3(tokens, self.n_in, self.n_out, \"projection\")?;"
+ },
+ {
+  "label": "a projection's dense count leaves out its input width",
+  "old": "        let dense = mul3(tokens, self.n_in, self.n_out, \"projection\")?;",
+  "new": "        let dense = mul2(tokens, self.n_out, \"projection\")?;"
+ },
+ {
+  "label": "the weight matrix is read transposed",
+  "old": "                    let w = self.w[j * self.n_in + i];",
+  "new": "                    let w = self.w[i * self.n_out + j];"
+ },
+ {
+  "label": "a projection counts an operation against a zero weight",
+  "old": "                    let w = self.w[j * self.n_in + i];\n                    if w != 0.0 {",
+  "new": "                    let w = self.w[j * self.n_in + i];\n                    if true {"
+ },
+ {
+  "label": "a projection skips a zero activation's row but still counts it",
+  "old": "                let a = x.values[t * self.n_in + i];\n                if a == 0.0 {\n                    continue;\n                }",
+  "new": "                let a = x.values[t * self.n_in + i];\n                if a == 0.0 {\n                    effective += self.n_out as u64;\n                    continue;\n                }"
+ },
+ {
+  "label": "a projection overwrites each output instead of accumulating into it",
+  "old": "                        out[t * self.n_out + j] += a * w;",
+  "new": "                        out[t * self.n_out + j] = a * w;"
+ },
+ {
+  "label": "the bias replaces the projection's output rather than being added to it",
+  "old": "                    out[t * self.n_out + j] += b[j];",
+  "new": "                    out[t * self.n_out + j] = b[j];"
+ },
+ {
+  "label": "the bias is charged over the input width rather than the output width",
+  "old": "            let n = mul2(tokens, self.n_out, \"bias\")?;",
+  "new": "            let n = mul2(tokens, self.n_in, \"bias\")?;"
+ },
+ {
+  "label": "the bias is charged nothing effective, so a silent layer's adds vanish",
+  "old": "            audit.charge(&format!(\"{path}.bias\"), OpKind::Add, WHY_BIAS, n, n)?;",
+  "new": "            audit.charge(&format!(\"{path}.bias\"), OpKind::Add, WHY_BIAS, n, 0)?;"
+ },
+ {
+  "label": "repeated squaring accumulates on the wrong parity of bit",
+  "old": "        if e & 1 == 1 {\n            acc *= b;\n        }",
+  "new": "        if e & 1 == 0 {\n            acc *= b;\n        }"
+ },
+ {
+  "label": "repeated squaring consumes two exponent bits per squaring",
+  "old": "        e >>= 1;\n        if e > 0 {\n            b *= b;\n        }",
+  "new": "        e >>= 2;\n        if e > 0 {\n            b *= b;\n        }"
+ },
+ {
+  "label": "repeated squaring multiplies by the base instead of squaring",
+  "old": "        e >>= 1;\n        if e > 0 {\n            b *= b;\n        }",
+  "new": "        e >>= 1;\n        if e > 0 {\n            b *= base;\n        }"
+ },
+ {
+  "label": "an exponent of zero gives zero rather than one",
+  "old": "    let mut acc = 1.0f64;\n    let mut b = base;",
+  "new": "    let mut acc = 0.0f64;\n    let mut b = base;"
+ },
+ {
+  "label": "the membrane decay is the leak itself rather than one minus it",
+  "old": "        1.0 - 1.0 / self.tau\n    }",
+  "new": "        1.0 / self.tau\n    }"
+ },
+ {
+  "label": "the closed form relaxes the whole membrane rather than its offset from the reset",
+  "old": "        self.v_reset + (v0 - self.v_reset) * pow_u32(self.decay(), steps)",
+  "new": "        self.v_reset + v0 * pow_u32(self.decay(), steps)"
+ },
+ {
+  "label": "the closed form relaxes toward zero rather than toward the reset potential",
+  "old": "        self.v_reset + (v0 - self.v_reset) * pow_u32(self.decay(), steps)",
+  "new": "        (v0 - self.v_reset) * pow_u32(self.decay(), steps)"
+ },
+ {
+  "label": "the closed form is off by one step",
+  "old": "        self.v_reset + (v0 - self.v_reset) * pow_u32(self.decay(), steps)",
+  "new": "        self.v_reset + (v0 - self.v_reset) * pow_u32(self.decay(), steps.saturating_sub(1))"
+ },
+ {
+  "label": "a NaN time constant is accepted",
+  "old": "        if !tau.is_finite() || tau < 1.0 {",
+  "new": "        if tau < 1.0 {"
+ },
+ {
+  "label": "a time constant below one is accepted, so the membrane oscillates",
+  "old": "        if !tau.is_finite() || tau < 1.0 {",
+  "new": "        if !tau.is_finite() || tau < 0.5 {"
+ },
+ {
+  "label": "a threshold equal to the reset potential is accepted, so the neuron fires every timestep",
+  "old": "        if !v_th.is_finite() || !v_reset.is_finite() || v_th <= v_reset {",
+  "new": "        if !v_th.is_finite() || !v_reset.is_finite() || v_th < v_reset {"
+ },
+ {
+  "label": "an infinite threshold is accepted",
+  "old": "        if !v_th.is_finite() || !v_reset.is_finite() || v_th <= v_reset {",
+  "new": "        if !v_reset.is_finite() || v_th <= v_reset {"
+ },
+ {
+  "label": "a layer starts at zero rather than at its reset potential",
+  "old": "        Ok(Self { tokens, channels, tau, v_th, v_reset, v: vec![v_reset; n] })",
+  "new": "        Ok(Self { tokens, channels, tau, v_th, v_reset, v: vec![0.0; n] })"
+ },
+ {
+  "label": "a non-finite drive is solved for a first spike rather than refused",
+  "old": "        if !x.is_finite() {\n            return None;\n        }\n        let d = self.decay();",
+  "new": "        let d = self.decay();"
+ },
+ {
+  "label": "the tau = 1 neuron that lands exactly on its threshold is said never to fire",
+  "old": "            return if x + self.v_reset >= self.v_th { Some(1) } else { None };",
+  "new": "            return if x + self.v_reset > self.v_th { Some(1) } else { None };"
+ },
+ {
+  "label": "the sub-threshold guard is tested BEFORE the tau = 1 branch",
+  "old": "        let d = self.decay();\n        if d == 0.0 {",
+  "new": "        let d = self.decay();\n        if x <= self.v_th - self.v_reset {\n            return None;\n        }\n        if d == 0.0 {"
+ },
+ {
+  "label": "the first-spike ratio is normalised by the threshold rather than by the drive",
+  "old": "        let r = (x + self.v_reset - self.v_th) / x;",
+  "new": "        let r = (x + self.v_reset - self.v_th) / self.v_th;"
+ },
+ {
+  "label": "the first-spike step is rounded down rather than up",
+  "old": "        let t = (r.ln() / d.ln()).ceil();",
+  "new": "        let t = (r.ln() / d.ln()).floor();"
+ },
+ {
+  "label": "the first-spike logarithms are inverted",
+  "old": "        let t = (r.ln() / d.ln()).ceil();",
+  "new": "        let t = (d.ln() / r.ln()).ceil();"
+ },
+ {
+  "label": "a first spike past u32::MAX saturates to a step no run reaches",
+  "old": "        if !t.is_finite() || t > f64::from(u32::MAX) {",
+  "new": "        if !t.is_finite() {"
+ },
+ {
+  "label": "the first-spike step is not floored at one",
+  "old": "        Some((t as u32).max(1))",
+  "new": "        Some(t as u32)",
+  "equivalent": "`.max(1)` can never fire. By the time this line is reached the guard above has established x > v_th - v_reset > 0, so x > 0 and the numerator x + v_reset - v_th is strictly positive; therefore r = (x + v_reset - v_th)/x = 1 - (v_th - v_reset)/x lies strictly between 0 and 1, and r.ln() is strictly negative. The tau = 1 case (d == 0) returned earlier and tau >= 1 is enforced at construction, so here 0 < d < 1 and d.ln() is strictly negative too. A negative divided by a negative is positive, so (r.ln()/d.ln()).ceil() is at least 1 for every input that reaches the cast, and the `t > f64::from(u32::MAX)` guard above has already excluded the values where the cast itself would misbehave. `t as u32` and `(t as u32).max(1)` therefore agree on every reachable input and no test could distinguish them."
+ },
+ {
+  "label": "resetting the layer's state parks every membrane at zero rather than at the reset potential",
+  "old": "        self.v.fill(self.v_reset);",
+  "new": "        self.v.fill(0.0);"
+ },
+ {
+  "label": "the membrane leak is the time constant rather than its reciprocal",
+  "old": "        let leak = 1.0 / self.tau;",
+  "new": "        let leak = self.tau;"
+ },
+ {
+  "label": "the membrane update drops the offset from the reset potential",
+  "old": "            let h = v + leak * (x.values[idx] - (v - self.v_reset));",
+  "new": "            let h = v + leak * (x.values[idx] - v);"
+ },
+ {
+  "label": "the membrane update subtracts the leak term instead of adding it",
+  "old": "            let h = v + leak * (x.values[idx] - (v - self.v_reset));",
+  "new": "            let h = v - leak * (x.values[idx] - (v - self.v_reset));"
+ },
+ {
+  "label": "the leak scales only the input and not the whole difference",
+  "old": "            let h = v + leak * (x.values[idx] - (v - self.v_reset));",
+  "new": "            let h = v + leak * x.values[idx] - (v - self.v_reset);"
+ },
+ {
+  "label": "a membrane that left the finite range is carried forward rather than refused",
+  "old": "            if !h.is_finite() {\n                return Err(AttnError::NonFinite { what: \"membrane\", index: idx });\n            }",
+  "new": "            if false {\n                return Err(AttnError::NonFinite { what: \"membrane\", index: idx });\n            }"
+ },
+ {
+  "label": "a membrane landing exactly on the threshold does not fire",
+  "old": "            let fired = h >= self.v_th;",
+  "new": "            let fired = h > self.v_th;"
+ },
+ {
+  "label": "a spike subtracts the threshold rather than resetting to v_reset",
+  "old": "            self.v[idx] = if fired { self.v_reset } else { h };",
+  "new": "            self.v[idx] = if fired { h - self.v_th } else { h };"
+ },
+ {
+  "label": "the emitted spikes are the neurons that did NOT fire",
+  "old": "            bits[idx] = fired;",
+  "new": "            bits[idx] = !fired;"
+ },
+ {
+  "label": "every neuron is billed three adds whatever its reset potential",
+  "old": "        let adds = if self.v_reset == 0.0 { 2 * n } else { 3 * n };",
+  "new": "        let adds = 3 * n;"
+ },
+ {
+  "label": "every neuron is billed two adds whatever its reset potential",
+  "old": "        let adds = if self.v_reset == 0.0 { 2 * n } else { 3 * n };",
+  "new": "        let adds = 2 * n;"
+ },
+ {
+  "label": "the membrane add count is billed against the token count rather than the neuron count",
+  "old": "        let n = self.v.len() as u64;",
+  "new": "        let n = self.tokens as u64;"
+ },
+ {
+  "label": "a power-of-two leak is billed as a multiply and a non-power-of-two one as a shift",
+  "old": "        let leak_kind = if is_exact_power_of_two(leak) { OpKind::Shift } else { OpKind::Mul };",
+  "new": "        let leak_kind = if is_exact_power_of_two(leak) { OpKind::Mul } else { OpKind::Shift };"
+ },
+ {
+  "label": "the leak is billed twice per neuron per timestep",
+  "old": "        audit.charge(&format!(\"{path}.leak\"), leak_kind, WHY_LEAK, n, n)?;",
+  "new": "        audit.charge(&format!(\"{path}.leak\"), leak_kind, WHY_LEAK, 2 * n, 2 * n)?;"
+ },
+ {
+  "label": "the threshold comparison is charged nothing effective",
+  "old": "        audit.charge(&format!(\"{path}.threshold\"), OpKind::Compare, WHY_THRESHOLD, n, n)?;",
+  "new": "        audit.charge(&format!(\"{path}.threshold\"), OpKind::Compare, WHY_THRESHOLD, n, 0)?;"
+ },
+ {
+  "label": "a neuron layer returns its spikes transposed",
+  "old": "        Tensor::spikes(self.tokens, self.channels, &bits)",
+  "new": "        Tensor::spikes(self.channels, self.tokens, &bits)"
+ },
+ {
+  "label": "the score product's kind is decided by the query and the weights rather than by Q and K",
+  "old": "            let kind = OpKind::product(q.domain, k.domain);",
+  "new": "            let kind = OpKind::product(q.domain, Domain::Real);"
+ },
+ {
+  "label": "a score counts an operation where only one of the two operands fired",
+  "old": "                        if x != 0.0 && y != 0.0 {",
+  "new": "                        if x != 0.0 || y != 0.0 {"
+ },
+ {
+  "label": "a score adds its two operands rather than multiplying them",
+  "old": "                            acc += x * y;",
+  "new": "                            acc += x + y;"
+ },
+ {
+  "label": "the score matrix is written transposed",
+  "old": "                    scores[a * nk + b] = acc;",
+  "new": "                    scores[b * nq + a] = acc;"
+ },
+ {
+  "label": "the scores-first dense count uses the value width instead of the head width",
+  "old": "                mul3(nq, nk, d, \"scores\")?,",
+  "new": "                mul3(nq, nk, dv, \"scores\")?,"
+ },
+ {
+  "label": "the second product's kind is decided by the scores rather than by V",
+  "old": "            let kind2 = OpKind::product(Domain::Real, v.domain);",
+  "new": "            let kind2 = OpKind::product(v.domain, Domain::Real);"
+ },
+ {
+  "label": "a zero score still walks the whole value row and is billed for it",
+  "old": "                    let s = scores[a * nk + b];\n                    if s == 0.0 {\n                        continue;\n                    }",
+  "new": "                    let s = scores[a * nk + b];\n                    if false {\n                        continue;\n                    }"
+ },
+ {
+  "label": "the attended output counts an operation against a silent value channel",
+  "old": "                        let y = v.values[b * dv + e];\n                        if y != 0.0 {\n                            eff2 += 1;",
+  "new": "                        let y = v.values[b * dv + e];\n                        if true {\n                            eff2 += 1;"
+ },
+ {
+  "label": "the attended output adds the score to the value rather than weighting by it",
+  "old": "                            out[a * dv + e] += s * y;",
+  "new": "                            out[a * dv + e] += s + y;"
+ },
+ {
+  "label": "the attended output keeps only the last key's contribution",
+  "old": "                            out[a * dv + e] += s * y;",
+  "new": "                            out[a * dv + e] = s * y;"
+ },
+ {
+  "label": "the scores-first attend dense count uses the head width instead of the key count",
+  "old": "                mul3(nq, nk, dv, \"attend\")?,",
+  "new": "                mul3(nq, d, dv, \"attend\")?,"
+ },
+ {
+  "label": "the gram product's kind is decided by the query rather than by K and V",
+  "old": "            let kind = OpKind::product(k.domain, v.domain);",
+  "new": "            let kind = OpKind::product(q.domain, v.domain);"
+ },
+ {
+  "label": "the gram counts an operation against a silent value channel",
+  "old": "                        let y = v.values[b * dv + e];\n                        if y != 0.0 {\n                            eff += 1;",
+  "new": "                        let y = v.values[b * dv + e];\n                        if true {\n                            eff += 1;"
+ },
+ {
+  "label": "the gram adds its two operands rather than multiplying them",
+  "old": "                            g[c * dv + e] += x * y;",
+  "new": "                            g[c * dv + e] += x + y;"
+ },
+ {
+  "label": "the gram's dense count uses the key count where the head width belongs",
+  "old": "                mul3(d, nk, dv, \"gram\")?,",
+  "new": "                mul3(nk, nk, dv, \"gram\")?,"
+ },
+ {
+  "label": "the values-first attend's kind is decided by K rather than by Q",
+  "old": "            let kind2 = OpKind::product(q.domain, Domain::Real);",
+  "new": "            let kind2 = OpKind::product(k.domain, Domain::Real);"
+ },
+ {
+  "label": "the values-first attend counts every operand pair, zero or not",
+  "old": "                        let y = g[c * dv + e];\n                        if y != 0.0 {",
+  "new": "                        let y = g[c * dv + e];\n                        if true {"
+ },
+ {
+  "label": "the values-first attend keeps only the last channel's contribution",
+  "old": "                            out[a * dv + e] += x * y;",
+  "new": "                            out[a * dv + e] = x * y;"
+ },
+ {
+  "label": "the values-first attend dense count uses the key count instead of the head width",
+  "old": "                mul3(nq, d, dv, \"attend\")?,",
+  "new": "                mul3(nq, nk, dv, \"attend\")?,"
+ },
+ {
+  "label": "a head count of zero is accepted",
+  "old": "        if heads == 0 {\n            return Err(AttnError::Empty { what: \"heads\" });\n        }",
+  "new": "        if heads == 0 {\n            let _ = heads;\n        }"
+ },
+ {
+  "label": "heads that do not tile the channels are accepted and the remainder is dropped",
+  "old": "        if !d_model.is_multiple_of(heads) {",
+  "new": "        if false {"
+ },
+ {
+  "label": "a scale of zero is accepted",
+  "old": "        if !scale.is_finite() || scale <= 0.0 {",
+  "new": "        if !scale.is_finite() || scale < 0.0 {"
+ },
+ {
+  "label": "the fold is allowed for a scale that is not a power of two",
+  "old": "            if !is_exact_power_of_two(scale) {",
+  "new": "            if false {"
+ },
+ {
+  "label": "the fold is allowed with a non-zero reset potential",
+  "old": "            if v_reset != 0.0 {",
+  "new": "            if false {"
+ },
+ {
+  "label": "the fold's overflow condition forgets the head width",
+  "old": "            let peak = (tokens as f64) * ((d_model / heads) as f64);",
+  "new": "            let peak = tokens as f64;"
+ },
+ {
+  "label": "the fold's overflow condition is inverted",
+  "old": "            if !(peak * scale).is_finite() {",
+  "new": "            if (peak * scale).is_finite() {"
+ },
+ {
+  "label": "the fold is allowed where the folded threshold is subnormal",
+  "old": "            if !(v_th / scale).is_normal() {",
+  "new": "            if false {"
+ },
+ {
+  "label": "the folded threshold multiplies by the scale rather than dividing",
+  "old": "        let attn_th = if fold_scale { v_th / scale } else { v_th };",
+  "new": "        let attn_th = if fold_scale { v_th * scale } else { v_th };"
+ },
+ {
+  "label": "the fold is applied to the unfolded path and not to the folded one",
+  "old": "        let attn_th = if fold_scale { v_th / scale } else { v_th };",
+  "new": "        let attn_th = if fold_scale { v_th } else { v_th / scale };"
+ },
+ {
+  "label": "the attention neuron ignores the folded threshold",
+  "old": "            na: LifLayer::new(tokens, d_model, tau, attn_th, v_reset)?,",
+  "new": "            na: LifLayer::new(tokens, d_model, tau, v_th, v_reset)?,"
+ },
+ {
+  "label": "the head width is the head COUNT",
+  "old": "            d_head: d_model / heads,",
+  "new": "            d_head: heads,"
+ },
+ {
+  "label": "every head writes its output at channel zero",
+  "old": "                    merged[t * self.d_model + lo + c] = oh.values[t * self.d_head + c];",
+  "new": "                    merged[t * self.d_model + c] = oh.values[t * self.d_head + c];"
+ },
+ {
+  "label": "a scale of exactly one is still charged as an operation",
+  "old": "        if !self.fold_scale && self.scale != 1.0 {",
+  "new": "        if !self.fold_scale {"
+ },
+ {
+  "label": "the scale is applied even when it has been folded into the threshold",
+  "old": "        if !self.fold_scale && self.scale != 1.0 {",
+  "new": "        if self.scale != 1.0 {"
+ },
+ {
+  "label": "the attention scale is added rather than multiplied",
+  "old": "                    *m *= self.scale;",
+  "new": "                    *m += self.scale;"
+ },
+ {
+  "label": "a power-of-two scale is billed as a full multiply",
+  "old": "            let kind = if is_exact_power_of_two(self.scale) { OpKind::Shift } else { OpKind::Mul };",
+  "new": "            let kind = OpKind::Mul;"
+ },
+ {
+  "label": "the scale's dense count is per head rather than per channel",
+  "old": "            let dense = mul2(self.tokens, self.d_model, \"scale\")?;",
+  "new": "            let dense = mul2(self.tokens, self.heads, \"scale\")?;"
+ },
+ {
+  "label": "the scale is charged on every element including the zeros",
+  "old": "            for m in &mut merged {\n                if *m != 0.0 {\n                    effective += 1;",
+  "new": "            for m in &mut merged {\n                if true {\n                    effective += 1;"
+ },
+ {
+  "label": "the output projection reads the attended matrix instead of the attention neuron's spikes",
+  "old": "        let o_pre = self.wo.forward(&a, &format!(\"{path}.out_proj\"), audit)?;",
+  "new": "        let o_pre = self.wo.forward(&scaled, &format!(\"{path}.out_proj\"), audit)?;"
+ },
+ {
+  "label": "the MLP's two neuron layers are built at each other's widths",
+  "old": "        let (h, o) = (fc1.n_out, fc2.n_out);",
+  "new": "        let (h, o) = (fc2.n_out, fc1.n_out);"
+ },
+ {
+  "label": "the MLP's first layer is filed under the second's path",
+  "old": "        let h_pre = self.fc1.forward(x, &format!(\"{path}.fc1\"), audit)?;",
+  "new": "        let h_pre = self.fc1.forward(x, &format!(\"{path}.fc2\"), audit)?;"
+ },
+ {
+  "label": "the MLP's second layer reads the hidden pre-activation rather than its spikes",
+  "old": "        let o_pre = self.fc2.forward(&h, &format!(\"{path}.fc2\"), audit)?;",
+  "new": "        let o_pre = self.fc2.forward(&h_pre, &format!(\"{path}.fc2\"), audit)?;"
+ },
+ {
+  "label": "a block with no shortcut returns the shortcut rather than the branch",
+  "old": "        if self == Self::None {\n            return Ok(branch.clone());\n        }",
+  "new": "        if self == Self::None {\n            return Ok(shortcut.clone());\n        }"
+ },
+ {
+  "label": "the additive shortcut takes the larger of the two rather than their sum",
+  "old": "                    shortcut.values.iter().zip(&branch.values).map(|(a, b)| a + b).collect();",
+  "new": "                    shortcut.values.iter().zip(&branch.values).map(|(a, b)| a.max(*b)).collect();"
+ },
+ {
+  "label": "the additive shortcut is charged nothing effective",
+  "old": "                audit.charge(path, OpKind::Add, WHY_RESIDUAL_ADD, n, n)?;",
+  "new": "                audit.charge(path, OpKind::Add, WHY_RESIDUAL_ADD, n, 0)?;"
+ },
+ {
+  "label": "the additive shortcut does not widen the declared domain",
+  "old": "                    shortcut.domain.sum(branch.domain),",
+  "new": "                    shortcut.domain,"
+ },
+ {
+  "label": "the gated shortcut refuses only when BOTH operands are non-binary",
+  "old": "                if !shortcut.domain.is_binary() || !branch.domain.is_binary() {",
+  "new": "                if !shortcut.domain.is_binary() && !branch.domain.is_binary() {"
+ },
+ {
+  "label": "the IAND gate is an OR of the shortcut and the branch's silence",
+  "old": "                    .map(|(a, b)| if *a != 0.0 && *b == 0.0 { 1.0 } else { 0.0 })",
+  "new": "                    .map(|(a, b)| if *a != 0.0 || *b == 0.0 { 1.0 } else { 0.0 })"
+ },
+ {
+  "label": "the IAND gate is inverted: the branch gates the shortcut",
+  "old": "                    .map(|(a, b)| if *a != 0.0 && *b == 0.0 { 1.0 } else { 0.0 })",
+  "new": "                    .map(|(a, b)| if *a == 0.0 && *b != 0.0 { 1.0 } else { 0.0 })"
+ },
+ {
+  "label": "the gated shortcut is billed as an add rather than as a gate",
+  "old": "                audit.charge(path, OpKind::Logic, WHY_RESIDUAL_LOGIC, n, n)?;\n                Tensor::new(shortcut.tokens, shortcut.channels, values, Domain::Binary)",
+  "new": "                audit.charge(path, OpKind::Add, WHY_RESIDUAL_LOGIC, n, n)?;\n                Tensor::new(shortcut.tokens, shortcut.channels, values, Domain::Binary)"
+ },
+ {
+  "label": "the gated shortcut declares a widened domain although it stays binary",
+  "old": "                Tensor::new(shortcut.tokens, shortcut.channels, values, Domain::Binary)",
+  "new": "                Tensor::new(shortcut.tokens, shortcut.channels, values, Domain::Integer(2))"
+ },
+ {
+  "label": "a shortcut's element count is the square of the token count",
+  "old": "        let n = mul2(shortcut.tokens, shortcut.channels, \"shortcut\")?;",
+  "new": "        let n = mul2(shortcut.tokens, shortcut.tokens, \"shortcut\")?;"
+ },
+ {
+  "label": "an MLP whose output width is not the attention's is accepted",
+  "old": "        if mlp.n_out() != attn.d_model {",
+  "new": "        if false {"
+ },
+ {
+  "label": "the first shortcut's two sides are swapped, so the branch gates the identity path",
+  "old": "        let h = self.residual.combine(x, &a, &format!(\"{path}.shortcut1\"), audit)?;",
+  "new": "        let h = self.residual.combine(&a, x, &format!(\"{path}.shortcut1\"), audit)?;"
+ },
+ {
+  "label": "the second shortcut skips the first one and reads the block's input",
+  "old": "        self.residual.combine(&h, &m, &format!(\"{path}.shortcut2\"), audit)",
+  "new": "        self.residual.combine(x, &m, &format!(\"{path}.shortcut2\"), audit)"
+ },
+ {
+  "label": "an even kernel, which has no centre, is accepted",
+  "old": "        if k.is_multiple_of(2) {\n            return Err(AttnError::BadParameter { what: \"kernel width\", value: k as f64 });\n        }",
+  "new": "        if false {\n            return Err(AttnError::BadParameter { what: \"kernel width\", value: k as f64 });\n        }"
+ },
+ {
+  "label": "the centre tap is placed at the start of the kernel",
+  "old": "            kernel[c * k + k / 2] = 1.0;",
+  "new": "            kernel[c * k] = 1.0;"
+ },
+ {
+  "label": "the convolution's padding is the whole kernel width",
+  "old": "        let pad = (self.k / 2) as isize;",
+  "new": "        let pad = self.k as isize;"
+ },
+ {
+  "label": "the convolution shifts the sequence forward instead of centring it",
+  "old": "                    let src = t as isize + j as isize - pad;",
+  "new": "                    let src = t as isize + j as isize + pad;"
+ },
+ {
+  "label": "the convolution drops position zero's own contribution",
+  "old": "                    if src < 0 || src >= tokens as isize {",
+  "new": "                    if src <= 0 || src >= tokens as isize {"
+ },
+ {
+  "label": "the convolution reads the current position instead of the tap's position",
+  "old": "                    let a = x.values[src as usize * self.channels + c];",
+  "new": "                    let a = x.values[t * self.channels + c];"
+ },
+ {
+  "label": "the depthwise kernel is indexed tap-major rather than channel-major",
+  "old": "                    let w = self.kernel[c * self.k + j];",
+  "new": "                    let w = self.kernel[j * self.k + c];"
+ },
+ {
+  "label": "the convolution counts a tap where only one of the two operands is non-zero",
+  "old": "                    if a != 0.0 && w != 0.0 {",
+  "new": "                    if a != 0.0 || w != 0.0 {"
+ },
+ {
+  "label": "the convolution writes its output transposed",
+  "old": "                out[t * self.channels + c] = acc;",
+  "new": "                out[c * tokens + t] = acc;"
+ },
+ {
+  "label": "the convolution's dense count drops the kernel width",
+  "old": "        let dense = mul3(tokens, self.channels, self.k, \"conv\")?;",
+  "new": "        let dense = mul2(tokens, self.channels, \"conv\")?;"
+ },
+ {
+  "label": "the convolution assumes a binary input whatever it was given",
+  "old": "        let mut out = vec![0.0f64; tokens * self.channels];\n        let kind = OpKind::product(x.domain, Domain::Real);",
+  "new": "        let mut out = vec![0.0f64; tokens * self.channels];\n        let kind = OpKind::product(Domain::Binary, Domain::Real);"
+ },
+ {
+  "label": "the additive position table is gated in rather than added",
+  "old": "            Self::AddTable(table) => Residual::SpikeAdd.combine(x, table, path, audit),",
+  "new": "            Self::AddTable(table) => Residual::SewIand.combine(x, table, path, audit),"
+ },
+ {
+  "label": "the OR position table is an AND",
+  "old": "                    .map(|(a, b)| if *a != 0.0 || *b != 0.0 { 1.0 } else { 0.0 })",
+  "new": "                    .map(|(a, b)| if *a != 0.0 && *b != 0.0 { 1.0 } else { 0.0 })"
+ },
+ {
+  "label": "the OR table refuses only when BOTH operands are non-binary",
+  "old": "                if !x.domain.is_binary() || !table.domain.is_binary() {",
+  "new": "                if !x.domain.is_binary() && !table.domain.is_binary() {"
+ },
+ {
+  "label": "the OR table's gate is charged nothing effective",
+  "old": "                audit.charge(path, OpKind::Logic, WHY_RESIDUAL_LOGIC, n, n)?;\n                Tensor::new(x.tokens, x.channels, values, Domain::Binary)",
+  "new": "                audit.charge(path, OpKind::Logic, WHY_RESIDUAL_LOGIC, n, 0)?;\n                Tensor::new(x.tokens, x.channels, values, Domain::Binary)"
+ },
+ {
+  "label": "the conditional encoder gates its convolution in rather than adding it",
+  "old": "                Residual::SpikeAdd.combine(x, &spikes, path, audit)",
+  "new": "                Residual::SewIand.combine(x, &spikes, path, audit)"
+ },
+ {
+  "label": "the conditional encoder returns the convolution's spikes and drops the input",
+  "old": "                let spikes = neuron.forward(&pre, &format!(\"{path}.neuron\"), audit)?;\n                Residual::SpikeAdd.combine(x, &spikes, path, audit)",
+  "new": "                let spikes = neuron.forward(&pre, &format!(\"{path}.neuron\"), audit)?;\n                Ok(spikes)"
+ },
+ {
+  "label": "the conditional encoder's reset does nothing",
+  "old": "        if let Self::Conditional(_, n) = self {\n            n.reset_state();\n        }",
+  "new": "        if let Self::Conditional(_, n) = self {\n            let _ = n;\n        }"
+ },
+ {
+  "label": "blocks of different widths are allowed to stack",
+  "old": "            if b.d_model() != d_model {",
+  "new": "            if false {"
+ },
+ {
+  "label": "a block built for another token count joins the model",
+  "old": "            if b.attn.tokens != tokens {",
+  "new": "            if false {"
+ },
+ {
+  "label": "a model accepts an input of any shape",
+  "old": "        if x.tokens != self.tokens || x.channels != self.d_model {\n            return Err(AttnError::BadShape {\n                what: \"model input\",",
+  "new": "        if false {\n            return Err(AttnError::BadShape {\n                what: \"model input\","
+ },
+ {
+  "label": "the model never runs its positional encoder",
+  "old": "        let mut h = self.position.apply(x, \"position\", audit)?;",
+  "new": "        let mut h = x.clone();"
+ },
+ {
+  "label": "every block reads the model's input rather than the previous block's output",
+  "old": "            h = b.forward(&h, &format!(\"block{i}\"), audit)?;",
+  "new": "            h = b.forward(x, &format!(\"block{i}\"), audit)?;"
+ },
+ {
+  "label": "a timestep is never recorded on the audit",
+  "old": "        audit.tick();\n        Ok(h)",
+  "new": "        Ok(h)"
+ },
+ {
+  "label": "a run resets the model's membranes first, so it cannot be driven a timestep at a time",
+  "old": "        let mut audit = Audit::new();\n        let mut out = Vec::with_capacity(inputs.len());",
+  "new": "        self.reset_state();\n        let mut audit = Audit::new();\n        let mut out = Vec::with_capacity(inputs.len());"
+ },
+ {
+  "label": "an empty input sequence produces an empty run rather than a refusal",
+  "old": "        if inputs.is_empty() {\n            return Err(AttnError::Empty { what: \"inputs\" });\n        }",
+  "new": "        if inputs.is_empty() {\n            let _ = inputs;\n        }"
+ },
+ {
+  "label": "the MLP expansion is twofold rather than fourfold",
+  "old": "            mlp_hidden: d_model * 4,",
+  "new": "            mlp_hidden: d_model * 2,"
+ },
+ {
+  "label": "Spikformer's membrane time constant is transcribed as 4",
+  "old": "            tau: 2.0,\n            v_th: 1.0,",
+  "new": "            tau: 4.0,\n            v_th: 1.0,"
+ },
+ {
+  "label": "Spikformer's threshold is transcribed as 0.5",
+  "old": "            tau: 2.0,\n            v_th: 1.0,",
+  "new": "            tau: 2.0,\n            v_th: 0.5,"
+ },
+ {
+  "label": "the default reset potential is not zero, so the scale can no longer be folded",
+  "old": "            v_reset: 0.0,\n            scale: 0.125,",
+  "new": "            v_reset: -0.1,\n            scale: 0.125,"
+ },
+ {
+  "label": "Spikformer's scale is transcribed as 0.25",
+  "old": "            v_reset: 0.0,\n            scale: 0.125,",
+  "new": "            v_reset: 0.0,\n            scale: 0.25,"
+ },
+ {
+  "label": "the default folds the scale into the threshold",
+  "old": "            fold_scale: false,\n            order: Order::ScoresFirst,",
+  "new": "            fold_scale: true,\n            order: Order::ScoresFirst,"
+ },
+ {
+  "label": "the default associates the triple product the other way",
+  "old": "            fold_scale: false,\n            order: Order::ScoresFirst,",
+  "new": "            fold_scale: false,\n            order: Order::ValuesFirst,"
+ },
+ {
+  "label": "the default shortcut is the gated one rather than Spikformer's addition",
+  "old": "            residual: Residual::SpikeAdd,\n            gain: 6.0,",
+  "new": "            residual: Residual::SewIand,\n            gain: 6.0,"
+ },
+ {
+  "label": "the initialisation gain is given another value than the one the sweep is measured at",
+  "old": "            residual: Residual::SpikeAdd,\n            gain: 6.0,",
+  "new": "            residual: Residual::SpikeAdd,\n            gain: 4.0,"
+ },
+ {
+  "label": "the default charges no folded BatchNorm shift",
+  "old": "            gain: 6.0,\n            bias: true,",
+  "new": "            gain: 6.0,\n            bias: false,"
+ },
+ {
+  "label": "the folded BatchNorm shift is not zero at initialisation",
+  "old": "        if self.bias { Some(vec![0.0; n_out]) } else { None }",
+  "new": "        if self.bias { Some(vec![1.0; n_out]) } else { None }"
+ },
+ {
+  "label": "the bias switch is inverted",
+  "old": "        if self.bias { Some(vec![0.0; n_out]) } else { None }",
+  "new": "        if self.bias { None } else { Some(vec![0.0; n_out]) }"
+ },
+ {
+  "label": "the key projection is drawn before the query projection",
+  "old": "            let wq = Linear::new(d, d, draw(self.gain, d, d, rng), self.bias_for(d))?;\n            let wk = Linear::new(d, d, draw(self.gain, d, d, rng), self.bias_for(d))?;",
+  "new": "            let wk = Linear::new(d, d, draw(self.gain, d, d, rng), self.bias_for(d))?;\n            let wq = Linear::new(d, d, draw(self.gain, d, d, rng), self.bias_for(d))?;"
+ },
+ {
+  "label": "the MLP's first layer is given a bias of the model width rather than the hidden width",
+  "old": "                draw(self.gain, d, self.mlp_hidden, rng),\n                self.bias_for(self.mlp_hidden),",
+  "new": "                draw(self.gain, d, self.mlp_hidden, rng),\n                self.bias_for(d),"
+ },
+ {
+  "label": "the MLP's second layer is scaled for the wrong fan-in",
+  "old": "                draw(self.gain, self.mlp_hidden, d, rng),",
+  "new": "                draw(self.gain, d, self.mlp_hidden, rng),"
+ },
+ {
+  "label": "the initialisation is scaled by the fan-OUT",
+  "old": "    let a = gain / (n_in as f64).sqrt();",
+  "new": "    let a = gain / (n_out as f64).sqrt();"
+ },
+ {
+  "label": "the initialisation multiplies by the square root of the fan-in rather than dividing",
+  "old": "    let a = gain / (n_in as f64).sqrt();",
+  "new": "    let a = gain * (n_in as f64).sqrt();"
+ },
+ {
+  "label": "every initial weight is non-negative",
+  "old": "    (0..n_in * n_out).map(|_| (rng.next_f64() * 2.0 - 1.0) * a).collect()",
+  "new": "    (0..n_in * n_out).map(|_| rng.next_f64() * a).collect()"
+ }
+]

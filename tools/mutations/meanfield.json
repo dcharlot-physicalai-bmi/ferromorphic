@@ -1,0 +1,771 @@
+[
+ {
+  "label": "a NaN argument is turned into a number",
+  "old": "    if x.is_nan() {\n        return x;\n    }\n    if x >= 2.0 {",
+  "new": "    if x >= 2.0 {"
+ },
+ {
+  "label": "the continued fraction is used all the way down to zero",
+  "old": "    if x >= 2.0 {\n        // Backward recurrence on the continued fraction.",
+  "new": "    if x >= 0.0 {\n        // Backward recurrence on the continued fraction."
+ },
+ {
+  "label": "the crossover excludes the point the two paths are checked at",
+  "old": "    if x >= 2.0 {\n        // Backward recurrence on the continued fraction. 200 levels",
+  "new": "    if x > 2.0 {\n        // Backward recurrence on the continued fraction. 200 levels"
+ },
+ {
+  "label": "the continued fraction's coefficients are whole numbers rather than halves",
+  "old": "            t = (f64::from(k) * 0.5) / (x + t);",
+  "new": "            t = f64::from(k) / (x + t);"
+ },
+ {
+  "label": "the continued fraction drops its one over root pi",
+  "old": "        return 1.0 / ((x + t) * PI.sqrt());",
+  "new": "        return 1.0 / (x + t);"
+ },
+ {
+  "label": "the small-argument path integrates erf rather than its complement",
+  "old": "        return (x * x).exp() * (1.0 - erf(x));",
+  "new": "        return (x * x).exp() * erf(x);"
+ },
+ {
+  "label": "the reflection loses its factor of two",
+  "old": "    2.0 * e - erfcx(-x)\n}",
+  "new": "    e - erfcx(-x)\n}"
+ },
+ {
+  "label": "an overflowing reflection returns zero rather than infinity",
+  "old": "    if !e.is_finite() {\n        return f64::INFINITY;\n    }",
+  "new": "    if !e.is_finite() {\n        return 0.0;\n    }"
+ },
+ {
+  "label": "the quadrature uses half the nodes its stated degree needs",
+  "old": "const GL_N: usize = 24;",
+  "new": "const GL_N: usize = 12;"
+ },
+ {
+  "label": "the Legendre recurrence adds the lower-order term instead of subtracting it",
+  "old": "                p0 = ((2.0 * jf + 1.0) * z * p1 - jf * p2) / (jf + 1.0);",
+  "new": "                p0 = ((2.0 * jf + 1.0) * z * p1 + jf * p2) / (jf + 1.0);"
+ },
+ {
+  "label": "the Newton derivative has the wrong sign",
+  "old": "            dp = n * (z * p0 - p1) / (z * z - 1.0);",
+  "new": "            dp = n * (z * p0 - p1) / (1.0 - z * z);"
+ },
+ {
+  "label": "the quadrature weights drop the node factor",
+  "old": "        ws[i] = 2.0 / ((1.0 - z * z) * dp * dp);",
+  "new": "        ws[i] = 2.0 / (dp * dp);"
+ },
+ {
+  "label": "the panel's centre is its half-width",
+  "old": "    let c = 0.5 * (a + b);",
+  "new": "    let c = 0.5 * (b - a);"
+ },
+ {
+  "label": "the panel drops the Jacobian of its own change of variable",
+  "old": "    s * h\n}",
+  "new": "    s\n}"
+ },
+ {
+  "label": "a reversed interval is integrated rather than refused",
+  "old": "    if !p.is_finite() || !q.is_finite() || q < p {",
+  "new": "    if !p.is_finite() || !q.is_finite() {"
+ },
+ {
+  "label": "the supra-threshold panels start below zero and double-count the noise half",
+  "old": "        let (mut a, b) = (p.max(0.0), q);",
+  "new": "        let (mut a, b) = (p, q);"
+ },
+ {
+  "label": "the supra-threshold half is skipped unless the upper limit exceeds one",
+  "old": "    if q > 0.0 {",
+  "new": "    if q > 1.0 {"
+ },
+ {
+  "label": "a positive upper limit is kept as the lower limit of the noise half",
+  "old": "        let (lo, hi) = (-q.min(0.0), -p); // 0 <= lo < hi, integrating in s = -w",
+  "new": "        let (lo, hi) = (-q, -p); // 0 <= lo < hi, integrating in s = -w"
+ },
+ {
+  "label": "the overflow guard is raised past the point the integrand itself overflows",
+  "old": "        if hi > 26.7 {",
+  "new": "        if hi > 100.0 {",
+  "equivalent": "exp(s^2) overflows f64 at s^2 = 709.78, that is s = 26.641, which is BELOW the 26.7 the guard uses. For any hi in (26.7, 100] the substituted branch is always entered (split is at most max(1, lo) < hi) and its last panel evaluates g at x close to hi^2 >= 712 > 709.78, so `x.exp()` is already +inf, `total` becomes +inf by addition, and the function returns Some(f64::INFINITY) — the same value the guard returns. Below 26.641 neither form fires. The only observable difference is how many panels the loop walks, which no test measures."
+ },
+ {
+  "label": "the noise half's substitution begins at the wrong lower limit when the reset is also far below the mean",
+  "old": "        let split = hi.min(1.0).max(lo);",
+  "new": "        let split = hi.min(1.0);"
+ },
+ {
+  "label": "the substituted integrand drops the Jacobian of s = sqrt(x)",
+  "old": "                (2.0 * x.exp() - erfcx(s)) / (2.0 * s)",
+  "new": "                2.0 * x.exp() - erfcx(s)"
+ },
+ {
+  "label": "the panels on the substituted axis are twenty-five times too wide",
+  "old": "                let next = (x + 2.0).min(x1);",
+  "new": "                let next = (x + 50.0).min(x1);"
+ },
+ {
+  "label": "the sub-threshold integrand loses its erfcx correction",
+  "old": "|s| 2.0 * (s * s).exp() - erfcx(s));",
+  "new": "|s| 2.0 * (s * s).exp());"
+ },
+ {
+  "label": "a zero membrane time constant is accepted",
+  "old": "        if tau_m <= 0.0 {",
+  "new": "        if tau_m < 0.0 {"
+ },
+ {
+  "label": "a negative noise amplitude is accepted",
+  "old": "        if sigma < 0.0 {",
+  "new": "        if sigma < -1.0 {"
+ },
+ {
+  "label": "a threshold equal to the reset is accepted",
+  "old": "        if v_th <= v_reset {",
+  "new": "        if v_th < v_reset {"
+ },
+ {
+  "label": "from_lif reads the neuron's reset as its threshold",
+  "old": "        Self::new(lif.tau_m, lif.t_ref, lif.v_th, lif.v_reset, mu, sigma)\n    }\n\n    /// Take the drive as a **current**",
+  "new": "        Self::new(lif.tau_m, lif.t_ref, lif.v_reset, lif.v_th, mu, sigma)\n    }\n\n    /// Take the drive as a **current**"
+ },
+ {
+  "label": "the current conversion drops the resting potential",
+  "old": "        let mu = lif.v_rest + lif.r_m * i_mean;",
+  "new": "        let mu = lif.r_m * i_mean;"
+ },
+ {
+  "label": "the noise conversion multiplies by the root of the membrane time constant",
+  "old": "        let sigma = lif.r_m * i_noise / lif.tau_m.sqrt();",
+  "new": "        let sigma = lif.r_m * i_noise * lif.tau_m.sqrt();"
+ },
+ {
+  "label": "the noise conversion drops the root of the membrane time constant",
+  "old": "        let sigma = lif.r_m * i_noise / lif.tau_m.sqrt();",
+  "new": "        let sigma = lif.r_m * i_noise;"
+ },
+ {
+  "label": "a negative noise current is accepted",
+  "old": "        if i_noise < 0.0 {",
+  "new": "        if i_noise < -1.0 {"
+ },
+ {
+  "label": "the free membrane's deviation is sigma times root two",
+  "old": "        self.sigma / core::f64::consts::SQRT_2",
+  "new": "        self.sigma * core::f64::consts::SQRT_2"
+ },
+ {
+  "label": "the threshold distance is measured from the threshold down to the mean",
+  "old": "        if self.sigma <= 0.0 { None } else { Some((self.v_th - self.mu) / self.sigma) }",
+  "new": "        if self.sigma <= 0.0 { None } else { Some((self.mu - self.v_th) / self.sigma) }"
+ },
+ {
+  "label": "a mean exactly at threshold counts as mean-driven",
+  "old": "        self.mu > self.v_th\n    }\n\n    /// Mean interval between spikes, seconds.",
+  "new": "        self.mu >= self.v_th\n    }\n\n    /// Mean interval between spikes, seconds."
+ },
+ {
+  "label": "a deterministic neuron exactly at threshold is given a finite interval",
+  "old": "            if self.mu <= self.v_th {\n                return None;\n            }",
+  "new": "            if self.mu < self.v_th {\n                return None;\n            }"
+ },
+ {
+  "label": "the zero-noise interval inverts the ratio inside its logarithm",
+  "old": "            let t = self.tau_m * ((self.mu - self.v_reset) / (self.mu - self.v_th)).ln();",
+  "new": "            let t = self.tau_m * ((self.mu - self.v_th) / (self.mu - self.v_reset)).ln();"
+ },
+ {
+  "label": "the integration limits are in volts rather than in units of the noise",
+  "old": "        let p = (self.mu - self.v_th) / self.sigma;\n        let q = (self.mu - self.v_reset) / self.sigma;\n        let j = siegert_integral(p, q)?;",
+  "new": "        let p = self.mu - self.v_th;\n        let q = self.mu - self.v_reset;\n        let j = siegert_integral(p, q)?;"
+ },
+ {
+  "label": "the Siegert interval drops its root pi",
+  "old": "        Some(self.t_ref + self.tau_m * PI.sqrt() * j)",
+  "new": "        Some(self.t_ref + self.tau_m * j)"
+ },
+ {
+  "label": "the Siegert interval omits the dead time",
+  "old": "        Some(self.t_ref + self.tau_m * PI.sqrt() * j)",
+  "new": "        Some(self.tau_m * PI.sqrt() * j)"
+ },
+ {
+  "label": "the Siegert interval is not scaled by the membrane time constant",
+  "old": "        Some(self.t_ref + self.tau_m * PI.sqrt() * j)",
+  "new": "        Some(self.t_ref + PI.sqrt() * j)"
+ },
+ {
+  "label": "the rate is the interval rather than its reciprocal",
+  "old": "        self.mean_interval().map(|t| 1.0 / t)",
+  "new": "        self.mean_interval().map(|t| t)"
+ },
+ {
+  "label": "the simulated neuron rests at its reset rather than at the drive",
+  "old": "        v_rest: input.mu,\n        v_th: input.v_th,",
+  "new": "        v_rest: input.v_reset,\n        v_th: input.v_th,"
+ },
+ {
+  "label": "the noise is injected after the step rather than before it",
+  "old": "        n.bump(normal.draw(rng) * step_sd);\n        n.step(dt, 0.0);\n        out.push(n.potential());",
+  "new": "        n.step(dt, 0.0);\n        n.bump(normal.draw(rng) * step_sd);\n        out.push(n.potential());"
+ },
+ {
+  "label": "the free membrane starts at the reset rather than at the mean",
+  "old": "        v: input.mu,\n        refractory: 0.0,",
+  "new": "        v: input.v_reset,\n        refractory: 0.0,"
+ },
+ {
+  "label": "the free membrane keeps a finite threshold",
+  "old": "        v_th: f64::INFINITY,",
+  "new": "        v_th: input.v_th,"
+ },
+ {
+  "label": "the per-tick noise is not pre-compensated for the decay the step applies",
+  "old": "    sigma * ((1.0 - (-2.0 * ratio).exp()) / 2.0).sqrt() * ratio.exp()",
+  "new": "    sigma * ((1.0 - (-2.0 * ratio).exp()) / 2.0).sqrt()"
+ },
+ {
+  "label": "the Ornstein-Uhlenbeck increment drops the factor of two in its exponent",
+  "old": "    sigma * ((1.0 - (-2.0 * ratio).exp()) / 2.0).sqrt() * ratio.exp()",
+  "new": "    sigma * ((1.0 - (-ratio).exp()) / 2.0).sqrt() * ratio.exp()"
+ },
+ {
+  "label": "the Ornstein-Uhlenbeck increment is not halved",
+  "old": "    sigma * ((1.0 - (-2.0 * ratio).exp()) / 2.0).sqrt() * ratio.exp()",
+  "new": "    sigma * (1.0 - (-2.0 * ratio).exp()).sqrt() * ratio.exp()"
+ },
+ {
+  "label": "the step-to-membrane ratio is inverted",
+  "old": "    let ratio = dt / tau_m;",
+  "new": "    let ratio = tau_m / dt;"
+ },
+ {
+  "label": "the uniform deviate is used where the code says it must be reflected away from zero",
+  "old": "        let u1 = 1.0 - rng.next_f64();",
+  "new": "        let u1 = rng.next_f64();"
+ },
+ {
+  "label": "the Box-Muller radius loses its factor of two",
+  "old": "        let m = (-2.0 * u1.ln()).sqrt();",
+  "new": "        let m = (-u1.ln()).sqrt();"
+ },
+ {
+  "label": "both members of a Box-Muller pair are the same deviate",
+  "old": "        self.spare = Some(m * theta.sin());\n        m * theta.cos()",
+  "new": "        self.spare = Some(m * theta.cos());\n        m * theta.cos()"
+ },
+ {
+  "label": "the connectivity ratio is inverted",
+  "old": "        if self.c_exc == 0.0 { None } else { Some(self.c_inh / self.c_exc) }\n    }\n\n    /// `g * gamma`, the number that decides everything.",
+  "new": "        if self.c_exc == 0.0 { None } else { Some(self.c_exc / self.c_inh) }\n    }\n\n    /// `g * gamma`, the number that decides everything."
+ },
+ {
+  "label": "the balance index adds the two ratios instead of multiplying them",
+  "old": "        self.gamma().map(|gam| self.g * gam)\n    }\n\n    /// Mean drive, **volts above rest**.",
+  "new": "        self.gamma().map(|gam| self.g + gam)\n    }\n\n    /// Mean drive, **volts above rest**."
+ },
+ {
+  "label": "the mean drive is not integrated over the membrane time constant",
+  "old": "        self.tau_m\n            * self.j\n            * (self.c_exc * (self.nu + self.nu_ext) - self.g * self.c_inh * self.nu)",
+  "new": "        self.j\n            * (self.c_exc * (self.nu + self.nu_ext) - self.g * self.c_inh * self.nu)"
+ },
+ {
+  "label": "inhibition adds to the mean drive",
+  "old": "            * (self.c_exc * (self.nu + self.nu_ext) - self.g * self.c_inh * self.nu)",
+  "new": "            * (self.c_exc * (self.nu + self.nu_ext) + self.g * self.c_inh * self.nu)"
+ },
+ {
+  "label": "the inhibitory mean drive ignores the efficacy ratio",
+  "old": "            * (self.c_exc * (self.nu + self.nu_ext) - self.g * self.c_inh * self.nu)",
+  "new": "            * (self.c_exc * (self.nu + self.nu_ext) - self.c_inh * self.nu)"
+ },
+ {
+  "label": "inhibition subtracts from the variance as it does from the mean",
+  "old": "            * (self.c_exc * (self.nu + self.nu_ext) + self.g * self.g * self.c_inh * self.nu);",
+  "new": "            * (self.c_exc * (self.nu + self.nu_ext) - self.g * self.g * self.c_inh * self.nu);"
+ },
+ {
+  "label": "the variance carries the efficacy ratio rather than its square",
+  "old": "            * (self.c_exc * (self.nu + self.nu_ext) + self.g * self.g * self.c_inh * self.nu);",
+  "new": "            * (self.c_exc * (self.nu + self.nu_ext) + self.g * self.c_inh * self.nu);"
+ },
+ {
+  "label": "the conversion to a Siegert input drops the resting potential",
+  "old": "            lif.v_rest + self.mu(),\n            self.sigma(),",
+  "new": "            self.mu(),\n            self.sigma(),"
+ },
+ {
+  "label": "the conversion to a Siegert input takes the membrane time constant from the neuron rather than from the drive",
+  "old": "        SiegertInput::new(\n            self.tau_m,\n            lif.t_ref,",
+  "new": "        SiegertInput::new(\n            lif.tau_m,\n            lif.t_ref,"
+ },
+ {
+  "label": "the conversion to a Siegert input drops the neuron's dead time",
+  "old": "            self.tau_m,\n            lif.t_ref,\n            lif.v_th,",
+  "new": "            self.tau_m,\n            0.0,\n            lif.v_th,"
+ },
+ {
+  "label": "the excitatory arrival rate is not scaled by the time step",
+  "old": "        let lambda_exc = self.c_exc * (self.nu + self.nu_ext) * dt;",
+  "new": "        let lambda_exc = self.c_exc * (self.nu + self.nu_ext);"
+ },
+ {
+  "label": "the inhibitory population also receives the external drive",
+  "old": "        let lambda_inh = self.c_inh * self.nu * dt;",
+  "new": "        let lambda_inh = self.c_inh * (self.nu + self.nu_ext) * dt;"
+ },
+ {
+  "label": "a negative recurrent rate is no longer checked",
+  "old": "            (\"nu\", self.nu),\n            (\"nu_ext\", self.nu_ext),",
+  "new": "            (\"nu_ext\", self.nu_ext),"
+ },
+ {
+  "label": "the arrival-rate ceiling is raised past what a Poisson draw can represent",
+  "old": "            if !lambda.is_finite() || lambda > 1e12 {",
+  "new": "            if !lambda.is_finite() || lambda > 1e300 {"
+ },
+ {
+  "label": "the determinant of the balance matrix has the wrong cross-term sign",
+  "old": "        let det = -self.j_ee * self.j_ii + self.j_ei * self.j_ie;",
+  "new": "        let det = -self.j_ee * self.j_ii - self.j_ei * self.j_ie;"
+ },
+ {
+  "label": "a well-conditioned balance matrix is called degenerate",
+  "old": "        if det.abs() <= 1e-12 * scale {",
+  "new": "        if det.abs() >= 1e-12 * scale {"
+ },
+ {
+  "label": "the excitatory external drive enters the balance equations with the wrong sign",
+  "old": "        let (b0, b1) = (-self.j_e0 * nu_ext, -self.j_i0 * nu_ext);",
+  "new": "        let (b0, b1) = (self.j_e0 * nu_ext, -self.j_i0 * nu_ext);"
+ },
+ {
+  "label": "the inhibitory rate reads the excitatory column",
+  "old": "        let nu_inh = (self.j_ee * b1 - self.j_ie * b0) / det;",
+  "new": "        let nu_inh = (self.j_ie * b1 - self.j_ee * b0) / det;"
+ },
+ {
+  "label": "the inhibitory residual drops the external drive",
+  "old": "            self.j_ie * nu_exc - self.j_ii * nu_inh + self.j_i0 * nu_ext,",
+  "new": "            self.j_ie * nu_exc - self.j_ii * nu_inh,"
+ },
+ {
+  "label": "the mean drive grows linearly in the fan-in rather than as its root",
+  "old": "        Some(tau_m * f64::from(k).sqrt() * r)",
+  "new": "        Some(tau_m * f64::from(k) * r)"
+ },
+ {
+  "label": "the mean drive at finite fan-in is not integrated over the membrane time constant",
+  "old": "        Some(tau_m * f64::from(k).sqrt() * r)",
+  "new": "        Some(f64::from(k).sqrt() * r)"
+ },
+ {
+  "label": "the excitatory mean drive is computed from the inhibitory residual",
+  "old": "        let (r, _) = self.residual(nu_exc, nu_inh, nu_ext);",
+  "new": "        let (_, r) = self.residual(nu_exc, nu_inh, nu_ext);"
+ },
+ {
+  "label": "the fluctuation is a variance rather than a deviation",
+  "old": "        Some(var.sqrt())\n    }\n}",
+  "new": "        Some(var)\n    }\n}"
+ },
+ {
+  "label": "the inhibitory input subtracts from the fluctuation",
+  "old": "                + self.j_ei * self.j_ei * nu_inh",
+  "new": "                - self.j_ei * self.j_ei * nu_inh"
+ },
+ {
+  "label": "the external efficacy enters the variance linearly",
+  "old": "                + self.j_e0 * self.j_e0 * nu_ext);",
+  "new": "                + self.j_e0 * nu_ext);"
+ },
+ {
+  "label": "the silence boundary is a tenth of a hertz",
+  "old": "pub const SILENCE_RATE_HZ: f64 = 1.0;",
+  "new": "pub const SILENCE_RATE_HZ: f64 = 0.1;"
+ },
+ {
+  "label": "the irregularity cut sits at a Poisson coefficient of variation",
+  "old": "pub const IRREGULARITY_CV: f64 = 0.5;",
+  "new": "pub const IRREGULARITY_CV: f64 = 1.0;"
+ },
+ {
+  "label": "the synchrony cut is raised to near-perfect locking",
+  "old": "pub const SYNCHRONY_INDEX: f64 = 0.3;",
+  "new": "pub const SYNCHRONY_INDEX: f64 = 0.9;"
+ },
+ {
+  "label": "silence no longer wins over the other two axes",
+  "old": "    if rate_hz < SILENCE_RATE_HZ {\n        return Some(Regime::NearlySilent);\n    }",
+  "new": "    if rate_hz < SILENCE_RATE_HZ && synchrony_index <= SYNCHRONY_INDEX {\n        return Some(Regime::NearlySilent);\n    }"
+ },
+ {
+  "label": "regular and irregular are the wrong way round",
+  "old": "    let irregular = cv > IRREGULARITY_CV;",
+  "new": "    let irregular = cv < IRREGULARITY_CV;"
+ },
+ {
+  "label": "an asynchronous irregular population is reported as synchronous",
+  "old": "        (false, true) => Regime::AsynchronousIrregular,",
+  "new": "        (false, true) => Regime::SynchronousIrregular,"
+ },
+ {
+  "label": "a zero bin width divides rather than refuses",
+  "old": "    if sources == 0 || bin_ticks == 0 || ticks == 0 {",
+  "new": "    if sources == 0 || ticks == 0 {"
+ },
+ {
+  "label": "the per-neuron counts overwrite rather than accumulate",
+  "old": "            counts[src * bins + b] += 1.0;",
+  "new": "            counts[src * bins + b] = 1.0;"
+ },
+ {
+  "label": "the population count is the last neuron's rather than the sum over neurons",
+  "old": "            pop[b] += counts[i * bins + b];",
+  "new": "            pop[b] = counts[i * bins + b];"
+ },
+ {
+  "label": "the synchrony index is the variance ratio rather than its root",
+  "old": "    Some((num / den).sqrt())",
+  "new": "    Some(num / den)"
+ },
+ {
+  "label": "the variance estimator loses its Bessel correction",
+  "old": "        v.iter().map(|x| (x - m) * (x - m)).sum::<f64>() / (v.len() as f64 - 1.0)",
+  "new": "        v.iter().map(|x| (x - m) * (x - m)).sum::<f64>() / v.len() as f64",
+  "equivalent": "chi is the RATIO num/den and every vector this closure is handed has the same length: `pop` is `bins` long and so is each row `counts[i * bins .. (i + 1) * bins]`. Dividing all of them by `bins` instead of `bins - 1` multiplies numerator and denominator by exactly the same factor (bins - 1) / bins, which cancels out of the ratio. The locked fixture makes `pop` and each row the identical array, so the ratio is exactly 1 either way, and the independent fixture is only asserted to 40% of 1/sqrt(400). No test could tell."
+ },
+ {
+  "label": "a zero denominator is divided by",
+  "old": "    if !(den > 0.0) {\n        return None;\n    }",
+  "new": "    if den < 0.0 {\n        return None;\n    }"
+ },
+ {
+  "label": "the threshold drive rate is not integrated over the membrane time constant",
+  "old": "        let d = self.c_exc * self.j * self.neuron.tau_m;",
+  "new": "        let d = self.c_exc * self.j;"
+ },
+ {
+  "label": "the threshold drive rate is measured from the reset rather than from rest",
+  "old": "        let num = self.neuron.v_th - self.neuron.v_rest;",
+  "new": "        let num = self.neuron.v_th - self.neuron.v_reset;"
+ },
+ {
+  "label": "the external rate is the ratio divided by the threshold rate",
+  "old": "        let nu_ext = self.nu_ext_ratio * self.nu_thr()?;",
+  "new": "        let nu_ext = self.nu_ext_ratio / self.nu_thr()?;"
+ },
+ {
+  "label": "the recurrent and external rates are swapped in the drive",
+  "old": "            nu,\n            nu_ext,\n        })",
+  "new": "            nu: nu_ext,\n            nu_ext: nu,\n        })"
+ },
+ {
+  "label": "the transfer function ignores the rate it is asked about",
+  "old": "        self.input(nu)?.siegert(&self.neuron).ok()?.rate()",
+  "new": "        self.input(0.0)?.siegert(&self.neuron).ok()?.rate()"
+ },
+ {
+  "label": "the self-consistent search accepts a neuron with no dead time",
+  "old": "        if !(self.neuron.t_ref > 0.0) {",
+  "new": "        if self.neuron.t_ref < 0.0 {"
+ },
+ {
+  "label": "the bisection bracket is the dead time rather than its reciprocal",
+  "old": "        let (mut lo, mut hi) = (0.0f64, 1.0 / self.neuron.t_ref);",
+  "new": "        let (mut lo, mut hi) = (0.0f64, self.neuron.t_ref);"
+ },
+ {
+  "label": "the bisection keeps the half of the bracket without the root",
+  "old": "            if f(mid) > 0.0 {\n                lo = mid;\n            } else {\n                hi = mid;\n            }",
+  "new": "            if f(mid) > 0.0 {\n                hi = mid;\n            } else {\n                lo = mid;\n            }"
+ },
+ {
+  "label": "the bisection stops five halvings in",
+  "old": "        for _ in 0..200 {",
+  "new": "        for _ in 0..5 {"
+ },
+ {
+  "label": "the excitation-dominated boundary is inverted",
+  "old": "            Some(b) if b < 1.0 => Ok(Some(Regime::SynchronousRegular)),",
+  "new": "            Some(b) if b > 1.0 => Ok(Some(Regime::SynchronousRegular)),"
+ },
+ {
+  "label": "a silent network is reported as firing regularly",
+  "old": "        if nu < SILENCE_RATE_HZ {\n            return Ok(Some(Regime::NearlySilent));\n        }",
+  "new": "        if nu < SILENCE_RATE_HZ {\n            return Ok(Some(Regime::SynchronousRegular));\n        }"
+ },
+ {
+  "label": "the fast oscillation band is set by the membrane time constant",
+  "old": "        Some((1.0 / (4.0 * self.delay), 1.0 / (2.0 * self.delay)))",
+  "new": "        Some((1.0 / (4.0 * self.neuron.tau_m), 1.0 / (2.0 * self.neuron.tau_m)))"
+ },
+ {
+  "label": "the population starts at the oldest age rather than at age zero",
+  "old": "        let mut density = vec![0.0; hazard.len()];\n        density[0] = 1.0;",
+  "new": "        let mut density = vec![0.0; hazard.len()];\n        let last = density.len() - 1;\n        density[last] = 1.0;"
+ },
+ {
+  "label": "an empty hazard is accepted",
+  "old": "        if hazard.is_empty() {\n            return Err(MeanFieldError::Empty { what: \"hazard\" });\n        }",
+  "new": "        if false {\n            return Err(MeanFieldError::Empty { what: \"hazard\" });\n        }"
+ },
+ {
+  "label": "the dead time is rounded down to a whole number of bins",
+  "old": "        let r = (t_ref / dt).round() as usize;",
+  "new": "        let r = (t_ref / dt).floor() as usize;"
+ },
+ {
+  "label": "the dead time lasts one bin longer than it was asked for",
+  "old": "        let h = (0..bins).map(|k| if k < r { 0.0 } else { hazard }).collect();",
+  "new": "        let h = (0..bins).map(|k| if k <= r { 0.0 } else { hazard }).collect();"
+ },
+ {
+  "label": "a zero-bin age window is accepted",
+  "old": "        if bins == 0 {\n            return Err(MeanFieldError::OutOfRange {",
+  "new": "        if false {\n            return Err(MeanFieldError::OutOfRange {"
+ },
+ {
+  "label": "the firing probability is not capped at one",
+  "old": "            let p = (self.hazard[i] * self.dt).min(1.0);\n            let f = self.density[i] * p;",
+  "new": "            let p = self.hazard[i] * self.dt;\n            let f = self.density[i] * p;"
+ },
+ {
+  "label": "the neurons that fired also survive",
+  "old": "            survivors[i] = self.density[i] - f;",
+  "new": "            survivors[i] = self.density[i];"
+ },
+ {
+  "label": "the ages shift by two bins a step",
+  "old": "        next[1..k].copy_from_slice(&survivors[..k - 1]);",
+  "new": "        next[1..k].copy_from_slice(&survivors[1..]);"
+ },
+ {
+  "label": "the survivors of the absorbing bin overwrite the ones arriving in it",
+  "old": "        next[k - 1] += survivors[k - 1];",
+  "new": "        next[k - 1] = survivors[k - 1];"
+ },
+ {
+  "label": "the last bin is not absorbing and its survivors fall off the end",
+  "old": "        next[k - 1] += survivors[k - 1];\n        next[0] += fired;",
+  "new": "        next[0] += fired;"
+ },
+ {
+  "label": "everyone who fired replaces the youngest bin rather than joining it",
+  "old": "        next[0] += fired;",
+  "new": "        next[0] = fired;"
+ },
+ {
+  "label": "a replacement density is not normalised",
+  "old": "        for (slot, &x) in self.density.iter_mut().zip(d) {\n            *slot = x / total;\n        }",
+  "new": "        for (slot, &x) in self.density.iter_mut().zip(d) {\n            *slot = x;\n        }"
+ },
+ {
+  "label": "a population that never fires is given a mean interval",
+  "old": "        let p_last = (self.hazard[k - 1] * self.dt).min(1.0);\n        if p_last <= 0.0 {\n            return None;\n        }\n        let mut survival = 1.0f64;\n        let mut sum = 0.0f64;",
+  "new": "        let p_last = (self.hazard[k - 1] * self.dt).min(1.0);\n        if p_last < 0.0 {\n            return None;\n        }\n        let mut survival = 1.0f64;\n        let mut sum = 0.0f64;"
+ },
+ {
+  "label": "the survival factor is applied before the term that is meant to precede it",
+  "old": "            sum += survival; // the k = i term of sum P(N > k)\n            survival *= 1.0 - (self.hazard[i] * self.dt).min(1.0);",
+  "new": "            survival *= 1.0 - (self.hazard[i] * self.dt).min(1.0);\n            sum += survival; // the k = i term of sum P(N > k)"
+ },
+ {
+  "label": "the geometric tail drops its survival factor",
+  "old": "        let tail = s_km1 * (1.0 - p_last) / p_last;",
+  "new": "        let tail = s_km1 / p_last;"
+ },
+ {
+  "label": "the second moment weights every age equally",
+  "old": "            m2 += (2.0 * i as f64 + 1.0) * survival;",
+  "new": "            m2 += survival;"
+ },
+ {
+  "label": "the second moment's tail loses its quadratic term",
+  "old": "        m2 += s_km1 * ((2.0 * n - 1.0) * q / p_last + 2.0 * q / (p_last * p_last));",
+  "new": "        m2 += s_km1 * ((2.0 * n - 1.0) * q / p_last);"
+ },
+ {
+  "label": "the variance is the difference of the two moments",
+  "old": "        let var = m2 - m1 * m1;",
+  "new": "        let var = m2 - m1;"
+ },
+ {
+  "label": "the coefficient of variation is not divided by the mean",
+  "old": "        Some(var.sqrt() / m1)",
+  "new": "        Some(var.sqrt())"
+ },
+ {
+  "label": "a critical process is treated as defective",
+  "old": "        if k == 0 || self.m > 1.0 {",
+  "new": "        if k == 0 || self.m >= 1.0 {"
+ },
+ {
+  "label": "a silent process puts its mass at size zero",
+  "old": "            return Some(if k == 1 { 1.0 } else { 0.0 });",
+  "new": "            return Some(if k == 0 { 1.0 } else { 0.0 });"
+ },
+ {
+  "label": "the Borel exponent is the size rather than one less than it",
+  "old": "        Some((-self.m * kf + (kf - 1.0) * (self.m * kf).ln() - ln_fact).exp())",
+  "new": "        Some((-self.m * kf + kf * (self.m * kf).ln() - ln_fact).exp())"
+ },
+ {
+  "label": "the Borel probability multiplies by the factorial instead of dividing",
+  "old": "        Some((-self.m * kf + (kf - 1.0) * (self.m * kf).ln() - ln_fact).exp())",
+  "new": "        Some((-self.m * kf + (kf - 1.0) * (self.m * kf).ln() + ln_fact).exp())"
+ },
+ {
+  "label": "the Borel logarithm drops the branching parameter from its argument",
+  "old": "        Some((-self.m * kf + (kf - 1.0) * (self.m * kf).ln() - ln_fact).exp())",
+  "new": "        Some((-self.m * kf + (kf - 1.0) * kf.ln() - ln_fact).exp())"
+ },
+ {
+  "label": "the log-factorial stops one term short",
+  "old": "        let ln_fact: f64 = (1..=k).map(|i| (i as f64).ln()).sum();",
+  "new": "        let ln_fact: f64 = (1..k).map(|i| (i as f64).ln()).sum();"
+ },
+ {
+  "label": "the mean progeny diverges one step later than it does",
+  "old": "        if self.m >= 1.0 { None } else { Some(1.0 / (1.0 - self.m)) }",
+  "new": "        if self.m > 1.0 { None } else { Some(1.0 / (1.0 - self.m)) }"
+ },
+ {
+  "label": "a critical process is given a non-trivial extinction probability",
+  "old": "        if self.m <= 1.0 {\n            return 1.0;\n        }",
+  "new": "        if self.m < 1.0 {\n            return 1.0;\n        }"
+ },
+ {
+  "label": "the extinction fixed point has the wrong sign inside its exponential",
+  "old": "            let next = (self.m * (q - 1.0)).exp();",
+  "new": "            let next = (self.m * (1.0 - q)).exp();"
+ },
+ {
+  "label": "each generation's offspring are drawn from the whole avalanche so far",
+  "old": "            let lambda = self.m * current as f64;",
+  "new": "            let lambda = self.m * total as f64;"
+ },
+ {
+  "label": "an avalanche that dies out is reported as truncated",
+  "old": "                return Avalanche { generations, complete: true };",
+  "new": "                return Avalanche { generations, complete: false };"
+ },
+ {
+  "label": "an avalanche starts from two triggering events",
+  "old": "        let mut generations = vec![1u64];\n        let mut current = 1u64;",
+  "new": "        let mut generations = vec![2u64];\n        let mut current = 1u64;"
+ },
+ {
+  "label": "the trigger is counted as somebody's offspring",
+  "old": "        offspring += size - a.generations[0];",
+  "new": "        offspring += size;"
+ },
+ {
+  "label": "the complete and truncated denominators are swapped",
+  "old": "        parents += if a.complete { size } else { size - a.generations[a.generations.len() - 1] };",
+  "new": "        parents += if a.complete { size - a.generations[a.generations.len() - 1] } else { size };"
+ },
+ {
+  "label": "the terminal transition is dropped from the denominator",
+  "old": "        parents += if a.complete { size } else { size - a.generations[a.generations.len() - 1] };",
+  "new": "        parents += size - a.generations[a.generations.len() - 1];"
+ },
+ {
+  "label": "the empty-slice refusal is removed from the branching estimator",
+  "old": "    if avalanches.is_empty() {\n        return None;\n    }\n    let (mut offspring, mut parents) = (0u64, 0u64);",
+  "new": "    let (mut offspring, mut parents) = (0u64, 0u64);",
+  "equivalent": "for an empty slice the loop body never runs, so `parents` is still 0 when control reaches the `if parents == 0 { return None; }` four lines below, and that returns exactly the same `None` the deleted guard would have. No other input reaches the deleted branch, and nothing between the two guards has an effect: the two accumulators are initialised and then left untouched. The two refusals are redundant with each other, which is itself the finding."
+ },
+ {
+  "label": "the second generation is read as the first",
+  "old": "        second += a.generations.get(1).copied().unwrap_or(0);",
+  "new": "        second += a.generations[0];"
+ },
+ {
+  "label": "a lower cut of zero is accepted",
+  "old": "    if x_min <= 0.0 {",
+  "new": "    if x_min < 0.0 {"
+ },
+ {
+  "label": "the log ratio in the Hill estimator is inverted",
+  "old": "            s += (x / x_min).ln();",
+  "new": "            s += (x_min / x).ln();"
+ },
+ {
+  "label": "samples sitting exactly at the lower cut are dropped",
+  "old": "        if x >= x_min {\n            n += 1;\n            s += (x / x_min).ln();",
+  "new": "        if x > x_min {\n            n += 1;\n            s += (x / x_min).ln();"
+ },
+ {
+  "label": "a log sum of exactly zero is fitted anyway",
+  "old": "    if n < 2 || s <= 0.0 {\n        return Err(MeanFieldError::TooFewSamples {\n            what: \"power-law exponent\",",
+  "new": "    if n < 2 || s < 0.0 {\n        return Err(MeanFieldError::TooFewSamples {\n            what: \"power-law exponent\","
+ },
+ {
+  "label": "the continuity correction is added rather than subtracted",
+  "old": "    let shifted = x_min as f64 - 0.5;",
+  "new": "    let shifted = x_min as f64 + 0.5;"
+ },
+ {
+  "label": "the discrete estimator drops its continuity correction",
+  "old": "    let shifted = x_min as f64 - 0.5;",
+  "new": "    let shifted = x_min as f64;"
+ },
+ {
+  "label": "sizes sitting exactly at the lower cut are dropped by the discrete estimator",
+  "old": "        if x >= x_min {\n            n += 1;\n            s += (x as f64 / shifted).ln();",
+  "new": "        if x > x_min {\n            n += 1;\n            s += (x as f64 / shifted).ln();"
+ },
+ {
+  "label": "the fit stops at the first lag ABOVE the floor rather than below it",
+  "old": "        if !(r > floor) {\n            break;\n        }",
+  "new": "        if r > floor {\n            break;\n        }"
+ },
+ {
+  "label": "the regression fits the correlation rather than its logarithm",
+  "old": "        let (x, y) = (k as f64, r.ln());",
+  "new": "        let (x, y) = (k as f64, r);"
+ },
+ {
+  "label": "the lag counter is not accumulated",
+  "old": "        n += 1.0;",
+  "new": "        n = 1.0;"
+ },
+ {
+  "label": "a fit to a single lag is allowed",
+  "old": "    if n < 2.0 {\n        return None;\n    }",
+  "new": "    if n < 1.0 {\n        return None;\n    }",
+  "equivalent": "with exactly one usable lag k the accumulators are sx = k, sxx = k * k and n = 1, so denom = n * sxx - sx * sx = k * k - k * k, which is exactly 0.0 in floating point because both products are the same multiplication of the same two doubles; the `if denom == 0.0` guard two lines below then returns the same `None`. With no usable lags sx = sxx = 0 and denom = 0 as well. So no series can distinguish a threshold of 2 from one of 1 here."
+ },
+ {
+  "label": "the regression's slope is not exponentiated",
+  "old": "    Some(((n * sxy - sx * sy) / denom).exp())",
+  "new": "    Some((n * sxy - sx * sy) / denom)"
+ },
+ {
+  "label": "the largest lag is not clamped below the series length",
+  "old": "    let k_max = k_max.min(t - 2);",
+  "new": "    let k_max = k_max;"
+ },
+ {
+  "label": "a non-finite value is accepted by the one check every entry point goes through",
+  "old": "    if value.is_finite() { Ok(value) } else { Err(MeanFieldError::NonFinite { what, index: 0 }) }",
+  "new": "    let _ = what;\n    Ok(value)"
+ },
+ {
+  "label": "a non-finite parameter's message does not name it",
+  "old": "            Self::NonFinite { what, index } => write!(f, \"{what}[{index}] is not a finite number\"),",
+  "new": "            Self::NonFinite { what, index } => write!(f, \"[{index}] is not a finite number\"),"
+ },
+ {
+  "label": "an ordering error does not name the parameter that must be the smaller",
+  "old": "                \"{larger} = {larger_value} must exceed {smaller} = {smaller_value}\"",
+  "new": "                \"{larger} = {larger_value} must exceed {smaller_value}\""
+ }
+]

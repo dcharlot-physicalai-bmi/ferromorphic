@@ -855,7 +855,8 @@ impl Epl {
     /// the gamma period must hold at least four ticks and both phases at least one; the mitral
     /// cell's refractory period must be positive (the broad pool divides by the maximum rate it
     /// implies); the granule cell must have `v_th > v_rest` and `r_m > 0` so its rheobase exists;
-    /// every current and threshold must be finite.
+    /// every current and threshold must be finite; and both cycle counts must be at least one
+    /// gamma cycle, each reported under its own field name rather than under the other's.
     pub fn new(params: EplParams) -> Result<Self, OlfactionError> {
         let p = &params;
         let bad = |field, reason| OlfactionError::Parameter { field, reason };
@@ -927,7 +928,16 @@ impl Epl {
             ));
         }
         if p.learn_cycles == 0 || p.recall_cycles == 0 {
-            return Err(bad("learn_cycles", "both cycle counts must be at least one"));
+            // ⛔ Name the field the CALLER got wrong. The first version reported
+            // `field: "learn_cycles"` for a zero `recall_cycles`, so a caller acting on the field
+            // name — which is the whole reason the field is in the error — went and looked at a
+            // parameter that was already correct.
+            let field = if p.learn_cycles == 0 {
+                "learn_cycles"
+            } else {
+                "recall_cycles"
+            };
+            return Err(bad(field, "must be at least one gamma cycle"));
         }
         let ticks = (1.0 / (p.gamma_hz * p.dt)).round();
         if !(ticks >= 4.0) || ticks > 1e7 {
@@ -2627,6 +2637,583 @@ mod tests {
             assert!(
                 (inh - want).abs() <= 1e-15 * want,
                 "cell {m}: integrated {inh:e} against i_broad * a_broad = {want:e}"
+            );
+        }
+    }
+
+    // ---- the holes the audit of 2026-09-20 found ----
+
+    /// Both similarity measures sweep BOTH arguments, for both the finiteness check and the
+    /// zero-vector refusal. Every fixture in this module put the bad value in `a` — the only
+    /// argument the guards were ever asked about — so `!a[k].is_finite() || !b[k].is_finite()`
+    /// collapsing to its first clause and `na <= 0.0 || nb <= 0.0` collapsing to its first were
+    /// both invisible; and `tanimoto` had never been handed a non-finite channel at all, which
+    /// left its whole finiteness sweep untested. Without the second clause these calls do not
+    /// merely answer a different number: they answer `Some(NaN)`, which a sweep plots.
+    #[test]
+    fn the_similarity_guards_read_the_second_vector_as_well_as_the_first() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(cosine_similarity(&[1.0, 1.0], &[bad, 1.0]), None, "cosine b[0] = {bad}");
+            assert_eq!(cosine_similarity(&[1.0, 1.0], &[1.0, bad]), None, "cosine b[1] = {bad}");
+            assert_eq!(cosine_similarity(&[bad, 1.0], &[1.0, 1.0]), None, "cosine a[0] = {bad}");
+            assert_eq!(tanimoto(&[1.0, 1.0], &[bad, 1.0]), None, "tanimoto b[0] = {bad}");
+            assert_eq!(tanimoto(&[1.0, 1.0], &[1.0, bad]), None, "tanimoto b[1] = {bad}");
+            assert_eq!(tanimoto(&[bad, 1.0], &[1.0, 1.0]), None, "tanimoto a[0] = {bad}");
+        }
+        // A zero vector has no direction whichever side it arrives on, and the cosine says so
+        // rather than dividing by its norm.
+        assert_eq!(cosine_similarity(&[1.0, 1.0], &[0.0, 0.0]), None);
+        assert_eq!(cosine_similarity(&[0.0, 0.0], &[1.0, 1.0]), None);
+        assert_eq!(cosine_similarity(&[0.0, 0.0], &[0.0, 0.0]), None);
+        // And the measures still answer where the answer exists, so the sweep above is a refusal
+        // test and not a "None for everything" test.
+        // 3-4-5: the norms are exactly 5 and the dot product exactly 25, so these are equalities
+        // and not tolerances.
+        assert_eq!(cosine_similarity(&[3.0, 4.0], &[3.0, 4.0]), Some(1.0));
+        assert_eq!(cosine_similarity(&[1.0, 0.0], &[0.0, 1.0]), Some(0.0));
+        assert_eq!(tanimoto(&[1.0, 0.0], &[1.0, 1.0]), Some(0.5));
+    }
+
+    /// A fraction outside `[0, 1]` is the NAMED refusal `Occlusion::apply` documents, not a silent
+    /// clip. The channel count is clamped with `k.min(n)`, so an over-range fraction still runs:
+    /// on `Dropout` it erases every channel and ends in `ZeroOdour`, which the existing sweep's
+    /// `.is_err()` could not tell apart from the parameter refusal, and on `Interferent` it
+    /// returns the background odour with no error at all. Both ends of the range are checked, and
+    /// 1.0 itself is asserted to still be legal so the fix cannot be to tighten the boundary.
+    #[test]
+    fn an_occlusion_fraction_above_one_is_refused_by_name_and_not_clipped() {
+        let mut src = OdourGenerator::new(4, 32, 0.35).unwrap();
+        let a = src.next_odour().unwrap();
+        let b = src.next_odour().unwrap();
+        let mut rng = Rng::new(9);
+        let want: Result<Odour, OlfactionError> = Err(OlfactionError::Parameter {
+            field: "fraction",
+            reason: "must be finite and in [0, 1]",
+        });
+        for fraction in [1.0 + f64::EPSILON, 1.5, 2.0, 4.0, f64::INFINITY, f64::NAN, -1e-12] {
+            assert_eq!(
+                Occlusion::Dropout { fraction }.apply(&a, &b, &mut rng),
+                want,
+                "dropout at {fraction}"
+            );
+            assert_eq!(
+                Occlusion::Interferent { fraction }.apply(&a, &b, &mut rng),
+                want,
+                "interferent at {fraction}"
+            );
+        }
+        // The boundary is inclusive at both ends, and both ends do something definite.
+        assert_eq!(Occlusion::Interferent { fraction: 1.0 }.apply(&a, &b, &mut rng).unwrap(), b);
+        assert_eq!(Occlusion::Interferent { fraction: 0.0 }.apply(&a, &b, &mut rng).unwrap(), a);
+    }
+
+    /// The third element of `pair_with_overlap` is the overlap MEASURED on the pair it returns,
+    /// not the one that was asked for. Sixty halvings put the two within about 1e-18 of each
+    /// other, eleven orders inside the 1e-6 the fixtures compare `got` against and six inside the
+    /// 1e-12 they compare the recomputed cosine against, so handing back the request was invisible
+    /// to every tolerance in the suite. Two things make it visible. The returned overlap and a
+    /// recomputation from the returned pair are the SAME expression applied to the same inputs, so
+    /// they must agree bit for bit rather than to a tolerance. And the measurement is one ulp
+    /// below the request for four of these five targets — 0.4 comes back as 0.3999999999999999 —
+    /// which is what a tolerance was hiding.
+    #[test]
+    fn the_overlap_returned_is_measured_on_the_pair_and_not_the_request() {
+        let mut src = OdourGenerator::new(77, 32, 0.35).unwrap();
+        let mut differed = 0;
+        for target in [0.4f64, 0.55, 0.7, 0.9, 0.99] {
+            let (x, y, got) = src.pair_with_overlap(target).unwrap();
+            let check = cosine_similarity(x.channels(), y.channels()).unwrap();
+            assert_eq!(check, got, "target {target}: the value returned is not the pair's overlap");
+            if got != target {
+                differed += 1;
+            }
+        }
+        assert_eq!(
+            differed, 4,
+            "this fixture no longer separates the measurement from the request, so the \
+             assertion above has nothing to bite on"
+        );
+        // Asking for exactly zero: the bisection stops one bracket-width inside the mixture, so
+        // what the returned pair actually has is 4.288203540507643e-19 as this implementation
+        // measures it — small, but not the zero that was requested.
+        let (x, y, zero) = src.pair_with_overlap(0.0).unwrap();
+        assert_eq!(cosine_similarity(x.channels(), y.channels()).unwrap(), zero);
+        assert!(zero > 0.0, "a returned overlap of exactly {zero} is the request, not a measurement");
+        assert!(zero < 1e-15, "the mixture drifted away from the target: {zero}");
+    }
+
+    /// Two refusals that name their own field and their own reason. Two holes: every fixture set
+    /// `learn_cycles: 0` and none ever set `recall_cycles: 0`, so the second clause of the cycle
+    /// check was never asked anything; and `mitral_duty` is refused twice under the same field
+    /// name — once for being outside `(0, 1)` and once for rounding a phase away — so deleting the
+    /// first check left `field` identical and moved only `reason`, which no test read.
+    ///
+    /// ⛔ The cycle check used to report `field: "learn_cycles"` for a zero `recall_cycles`. The
+    /// field name is in the error so a caller can act on it without reading the source; naming the
+    /// parameter they got right defeats exactly that.
+    #[test]
+    fn the_cycle_counts_and_the_duty_range_are_refused_with_their_own_field_and_reason() {
+        let refusal = |p: EplParams| match Epl::new(p) {
+            Err(OlfactionError::Parameter { field, reason }) => (field, reason),
+            other => panic!("expected a named parameter refusal, got {other:?}"),
+        };
+        let cycles = "must be at least one gamma cycle";
+        assert_eq!(
+            refusal(EplParams { learn_cycles: 0, ..small() }),
+            ("learn_cycles", cycles)
+        );
+        assert_eq!(
+            refusal(EplParams { recall_cycles: 0, ..small() }),
+            ("recall_cycles", cycles)
+        );
+        assert_eq!(
+            refusal(EplParams { learn_cycles: 0, recall_cycles: 0, ..small() }),
+            ("learn_cycles", cycles),
+            "with both wrong the first one is named"
+        );
+        // A duty outside (0, 1) is a RANGE error and says so ...
+        for duty in [0.0f64, 1.0, 1.5, 4.0, -0.5, f64::NAN, f64::INFINITY] {
+            assert_eq!(
+                refusal(EplParams { mitral_duty: duty, ..small() }),
+                ("mitral_duty", "must be finite and in (0, 1)"),
+                "duty {duty}"
+            );
+        }
+        // ... and a duty inside (0, 1) that still rounds a phase away is a different statement
+        // about a different quantity. At 250 ticks per cycle, 1e-3 rounds to 0 mitral ticks and
+        // 0.999 rounds to all 250 of them.
+        assert_eq!(Epl::new(small()).unwrap().ticks_per_cycle(), 250);
+        for duty in [1e-3f64, 0.999] {
+            assert_eq!(
+                refusal(EplParams { mitral_duty: duty, ..small() }),
+                ("mitral_duty", "must leave at least one time step in each phase"),
+                "duty {duty}"
+            );
+        }
+    }
+
+    /// `mitral_duty` is the fraction of the gamma cycle the MITRAL cells get, not the fraction
+    /// left to the granule cells. Every fixture in this module runs at 0.5, the one value where
+    /// the two are the same number, and the only other values any test passes (0.0 and 1.0) are
+    /// refused before the line is reached — so `ticks * mitral_duty` and `ticks * (1 - duty)` were
+    /// the same expression everywhere the suite looked. At 0.8 they are 200 ticks and 50.
+    ///
+    /// Pinned twice: in closed form through the two rate ceilings, which are
+    /// `floor(phase * dt / t_ref)` over their own phase, and in the spike train, whose mitral and
+    /// granule spikes must fall on opposite sides of tick 200 of each cycle.
+    #[test]
+    fn the_mitral_phase_is_the_duty_fraction_of_the_cycle_and_not_its_complement() {
+        let p = EplParams {
+            mitral_duty: 0.8,
+            broad_theta_lo: 0.0,
+            broad_theta_hi: 0.0,
+            granule_gain: 1e-6,
+            ..small()
+        };
+        let mut epl = Epl::new(p.clone()).unwrap();
+        assert_eq!(epl.ticks_per_cycle(), 250);
+        let mitral_ticks = 200u64;
+        // 200 * 1e-4 / 0.5e-3 = 40 mitral spikes; 50 * 1e-4 / 1e-3 = 5 granule spikes. Under the
+        // complement the same two expressions give 10 and 20.
+        assert_eq!(epl.mitral_ceiling(), 40.0);
+        assert_eq!(epl.granule_ceiling(), 5.0);
+
+        let odour = OdourGenerator::new(3, p.mitral, 0.35).unwrap().next_odour().unwrap();
+        let shown = epl.present(&odour, 3).unwrap();
+        let ticks = epl.ticks_per_cycle() as u64;
+        let (mut mitral_late, mut granule_seen) = (false, false);
+        for s in shown.train.spikes() {
+            let phase = s.t % ticks;
+            if s.source < p.mitral as u32 {
+                assert!(phase < mitral_ticks, "a mitral spike at phase tick {phase}");
+                if phase >= 50 {
+                    mitral_late = true;
+                }
+            } else {
+                assert!(phase >= mitral_ticks, "a granule spike at phase tick {phase}");
+                granule_seen = true;
+            }
+        }
+        assert!(
+            mitral_late,
+            "every mitral spike landed inside the first 50 ticks, which is the complement's \
+             phase, so the bound above asserts nothing"
+        );
+        assert!(granule_seen, "no granule cell fired, so the granule phase is untested");
+    }
+
+    /// An ensemble cell fires on ITS OWN threshold out of the spread band, not on the band's
+    /// floor. Every fixture drives the ensemble either far above the whole band — clean recall
+    /// puts the drive near 1 against thresholds of 0.30 to 0.75, where every cell fires whichever
+    /// threshold it holds — or far below it, in the threshold-50 control where none does. In both
+    /// cases `thresholds[j]` and `thresholds[0]` select the same behaviour. Here the band
+    /// straddles the drive, which is the configuration `Ensemble::thresholds` exists for: "a
+    /// graded population response to match strength instead of a single all-or-nothing cell".
+    #[test]
+    fn an_ensemble_cell_fires_only_when_the_drive_clears_its_own_threshold() {
+        let p = EplParams {
+            broad_granule: 0,
+            i_broad: 0.0,
+            i_specific: 0.0,
+            ensemble_theta_lo: 0.5,
+            ensemble_theta_hi: 1.5,
+            granule_per_odour: 4,
+            ..small()
+        };
+        let mut epl = Epl::new(p.clone()).unwrap();
+        let odour = OdourGenerator::new(11, p.mitral, 0.35).unwrap().next_odour().unwrap();
+        epl.learn(&odour).unwrap();
+        assert_eq!(epl.ensembles()[0].thresholds, spread(0.5, 1.5, 4));
+        let shown = epl.present(&odour, 3).unwrap();
+        // Re-presenting the odour the template was carved from drives the ensemble at that
+        // pattern's cosine with itself, which is 1 to rounding, so two of the four thresholds are
+        // below the drive and two are above.
+        let drive = shown.granule_drive[0];
+        assert!((drive - 1.0).abs() < 1e-12, "drive {drive}");
+        let counts: Vec<usize> = (0..4)
+            .map(|j| {
+                let id = p.mitral as u32 + j;
+                shown.train.spikes().iter().filter(|s| s.source == id).count()
+            })
+            .collect();
+        // Measured here: 12 spikes from the cell at 0.5, 6 from the cell at 0.8333, and none at
+        // all from the two whose thresholds the drive never reaches.
+        assert_eq!(counts, vec![12, 6, 0, 0], "the response is not graded over the band: {counts:?}");
+    }
+
+    /// The granule addresses are the two blocks `Presentation::train` documents: `broad_granule`
+    /// cells first, then `granule_per_odour` cells per learned ensemble. Nothing checked that the
+    /// second block starts where the first one ends — the one test that counts ensemble addresses
+    /// sets their thresholds to 50 so no ensemble cell ever fires, which is exactly the case where
+    /// an overlapping block cannot be seen.
+    ///
+    /// The control arm is what identifies the addresses rather than assuming them: with
+    /// `i_specific` at zero the ensemble cells feed nothing back, so raising their thresholds out
+    /// of reach must leave every mitral and broad spike bit-identical and remove exactly the
+    /// ensemble block.
+    #[test]
+    fn the_granule_spike_addresses_are_the_blocks_the_presentation_documents() {
+        let p = EplParams {
+            broad_granule: 4,
+            granule_per_odour: 2,
+            i_specific: 0.0,
+            ..small()
+        };
+        let odour = OdourGenerator::new(13, p.mitral, 0.35).unwrap().next_odour().unwrap();
+        let run = |params: EplParams| {
+            let mut epl = Epl::new(params).unwrap();
+            epl.learn(&odour).unwrap();
+            epl.present(&odour, 3).unwrap().train
+        };
+        let train = run(p.clone());
+        let silent = run(EplParams { ensemble_theta_lo: 50.0, ensemble_theta_hi: 50.0, ..p.clone() });
+
+        let first_ensemble = (p.mitral + p.broad_granule) as u32;
+        let past_end = first_ensemble + p.granule_per_odour as u32;
+        let addresses = |t: &Train, lo: u32, hi: u32| -> Vec<u32> {
+            let mut v: Vec<u32> = t
+                .spikes()
+                .iter()
+                .map(|s| s.source)
+                .filter(|s| *s >= lo && *s < hi)
+                .collect();
+            v.sort_unstable();
+            v.dedup();
+            v
+        };
+        assert!(
+            train.spikes().iter().all(|s| s.source < past_end),
+            "a spike landed past the last granule address {past_end}"
+        );
+        assert_eq!(
+            addresses(&train, first_ensemble, past_end),
+            vec![first_ensemble, first_ensemble + 1],
+            "the ensemble's two cells do not own the two addresses above the broad block"
+        );
+        // Three of the four broad cells clear their thresholds at this drive; the point is that
+        // the SAME three do so with the ensemble silenced, so those addresses are the broad
+        // pool's and the two above them are not.
+        assert_eq!(addresses(&train, p.mitral as u32, first_ensemble), vec![32, 33, 34]);
+        assert_eq!(
+            addresses(&silent, p.mitral as u32, first_ensemble),
+            addresses(&train, p.mitral as u32, first_ensemble)
+        );
+        assert_eq!(
+            addresses(&silent, first_ensemble, past_end),
+            Vec::<u32>::new(),
+            "an ensemble cell fired through a threshold of 50"
+        );
+        // And with the ensemble silenced nothing else moved, which is what makes the difference
+        // between the two trains attributable to the ensemble block alone.
+        let mitral_of = |t: &Train| -> Vec<(u64, u32)> {
+            t.spikes()
+                .iter()
+                .filter(|s| s.source < p.mitral as u32)
+                .map(|s| (s.t, s.source))
+                .collect()
+        };
+        assert_eq!(mitral_of(&train), mitral_of(&silent));
+    }
+
+    /// `broad_granule: 0` disables the broad pool entirely, as its doc says — the limb delivers
+    /// nothing, rather than delivering all of `i_broad`. Every fixture that sets the pool to zero
+    /// also sets `i_broad` to zero, so the branch that answers for an empty pool was multiplied by
+    /// zero in every test that reached it and could have answered anything.
+    #[test]
+    fn a_circuit_with_no_broad_pool_delivers_no_broad_inhibition() {
+        let p = EplParams { broad_granule: 0, i_specific: 0.0, ..small() };
+        assert!(p.i_broad > 0.0, "the fixture must leave a peak inhibition to be wrongly delivered");
+        let mut epl = Epl::new(p.clone()).unwrap();
+        let odour = OdourGenerator::new(17, p.mitral, 0.35).unwrap().next_odour().unwrap();
+        let shown = epl.present(&odour, 4).unwrap();
+        assert_eq!(
+            shown.inhibition,
+            vec![0.0; p.mitral],
+            "an empty broad pool delivered inhibition"
+        );
+        // With no inhibition on either limb the settled pattern IS the open-loop one, bit for bit:
+        // there is no other path by which the two could differ.
+        assert_eq!(shown.mitral, shown.mitral_open_loop);
+        // The same circuit with a pool of one cell does deliver something, so the assertion above
+        // is about the empty pool and not about these parameters being too weak to fire.
+        let mut one = Epl::new(EplParams { broad_granule: 1, ..p }).unwrap();
+        let with_pool = one.present(&odour, 4).unwrap();
+        assert!(with_pool.inhibition.iter().all(|v| *v > 0.0), "{:?}", with_pool.inhibition);
+    }
+
+    /// `Presentation::inhibition` is "what the loop had settled on when the counts in `mitral`
+    /// were produced" — the value integrated during the final cycle, not the one computed at the
+    /// end of it. The only test that reads the field runs a saturated broad pool, where every
+    /// cycle delivers the identical number and the two are the same value.
+    ///
+    /// The check is the drive map, run backwards: a bare `Lif` fed
+    /// `mitral_current(channel, reported_inhibition)` for one mitral phase must reproduce the
+    /// reported spike counts EXACTLY, cell for cell. The two candidate inhibitions differ by
+    /// 6.25e-11 A here — 3% of `i_specific` — and that moves 3 of the 32 counts, which is the
+    /// second assertion.
+    #[test]
+    fn the_reported_inhibition_is_the_one_the_reported_counts_were_produced_with() {
+        let p = small();
+        let mut epl = Epl::new(p.clone()).unwrap();
+        let mut src = OdourGenerator::new(23, p.mitral, 0.35).unwrap();
+        let learned = src.next_odour().unwrap();
+        let probe = src.next_odour().unwrap();
+        epl.learn(&learned).unwrap();
+        let cycles = 4usize;
+        let shown = epl.present(&probe, cycles).unwrap();
+        let next = epl.present(&probe, cycles + 1).unwrap();
+
+        let mitral_ticks = (epl.ticks_per_cycle() as f64 * p.mitral_duty).round() as usize;
+        let replay = |epl: &Epl, inh: &[f64]| -> Vec<f64> {
+            (0..p.mitral)
+                .map(|m| {
+                    let i = epl.mitral_current(probe.channels()[m], inh[m]);
+                    let mut cell = p.mitral_cell;
+                    let mut count = 0.0;
+                    for _ in 0..mitral_ticks {
+                        if cell.step(p.dt, i) {
+                            count += 1.0;
+                        }
+                    }
+                    count
+                })
+                .collect()
+        };
+        assert_eq!(
+            replay(&epl, &shown.inhibition),
+            shown.mitral,
+            "the reported inhibition does not reproduce the reported counts"
+        );
+        // The teeth: the value computed at the END of the final cycle is a different vector, and
+        // it does not reproduce those counts. `present(o, c + 1)` reports exactly that value,
+        // because `present` carries no state between calls.
+        assert_ne!(shown.inhibition, next.inhibition);
+        let from_next = replay(&epl, &next.inhibition);
+        let moved = (0..p.mitral).filter(|&m| from_next[m] != shown.mitral[m]).count();
+        assert_eq!(moved, 3, "the two candidate inhibitions no longer move any count apart");
+    }
+
+    /// `Epl::learn` presents for `learn_cycles` gamma cycles, not `recall_cycles`. Every fixture
+    /// leaves both at their defaults, where the loop has fully settled by cycle 3 — the settled
+    /// pattern at 4 cycles and at 8 is the same vector bit for bit — so which count `learn` read
+    /// made no difference anywhere the suite looked. Here the two counts bracket the settling, so
+    /// the templates differ; both orderings are run so that the test cannot be passed by reading
+    /// whichever field happens to be smaller.
+    #[test]
+    fn learning_presents_for_the_learning_cycle_count_and_not_the_recall_one() {
+        let unit = |v: &[f64]| -> Vec<f64> {
+            let n: f64 = v.iter().map(|x| x * x).sum::<f64>().sqrt();
+            v.iter().map(|x| x / n).collect()
+        };
+        for (learn_cycles, recall_cycles) in [(1usize, 6usize), (6, 1)] {
+            let p = EplParams { learn_cycles, recall_cycles, ..small() };
+            let odour = OdourGenerator::new(29, p.mitral, 0.35).unwrap().next_odour().unwrap();
+            let mut taught = Epl::new(p.clone()).unwrap();
+            taught.learn(&odour).unwrap();
+            // A second, untrained circuit with the same parameters: `learn` runs `present` with no
+            // ensemble stored, so this is the same computation, and the comparison is exact.
+            let mut bare = Epl::new(p.clone()).unwrap();
+            let at_learn = unit(&bare.present(&odour, learn_cycles).unwrap().mitral);
+            let at_recall = unit(&bare.present(&odour, recall_cycles).unwrap().mitral);
+            assert_eq!(taught.ensembles()[0].template, at_learn, "{learn_cycles}/{recall_cycles}");
+            assert_ne!(
+                at_learn, at_recall,
+                "{learn_cycles}/{recall_cycles}: the two cycle counts give the same pattern, so \
+                 the assertion above cannot tell them apart"
+            );
+        }
+    }
+
+    /// `Recall::runner_up` is the second-best template's cosine, which is what makes
+    /// `Recall::margin` the decision's headroom. It was computed and never asserted on: the only
+    /// claim any test made about it was `margin > 0`, which the WORST other template satisfies
+    /// just as well — and more comfortably, which is the direction that hides a capacity problem.
+    #[test]
+    fn the_runner_up_is_the_second_best_template_and_not_the_worst() {
+        let p = small();
+        let mut src = OdourGenerator::new(31, p.mitral, 0.35).unwrap();
+        let library = src.library(5).unwrap();
+        let mut epl = Epl::new(p).unwrap();
+        for o in &library {
+            epl.learn(o).unwrap();
+        }
+        let r = epl.recall(&library[0]).unwrap();
+        let mut ranked = r.scores.clone();
+        ranked.sort_by(|a, b| b.partial_cmp(a).unwrap());
+        assert_eq!(r.score, ranked[0]);
+        assert_eq!(r.runner_up, ranked[1], "scores {:?}", r.scores);
+        assert_eq!(r.margin, ranked[0] - ranked[1]);
+        // Non-vacuous: the other four templates score over a range of 0.33, so the best of them
+        // and the worst of them are nowhere near each other.
+        assert!(
+            ranked[1] - ranked[ranked.len() - 1] > 0.3,
+            "the other templates all score alike, so second-best and worst coincide: {ranked:?}"
+        );
+    }
+
+    /// `capacity_curve` refuses a probe point of zero by name. Without the check the call does not
+    /// fail loudly: `probe_at.contains(&k)` is never true for `k >= 1`, so `&[0]` returns an empty
+    /// curve and `&[0, 8]` returns a curve one point shorter than the schedule asked for — a
+    /// silently missing row rather than a refusal.
+    #[test]
+    fn a_capacity_probe_point_of_zero_is_a_named_refusal() {
+        let occ = Occlusion::Interferent { fraction: 0.4 };
+        let want = OlfactionError::Parameter {
+            field: "probe_at",
+            reason: "needs at least one probe point and none may be zero",
+        };
+        assert_eq!(capacity_curve(&small(), 5, 0.35, &[0], occ), Err(want.clone()));
+        assert_eq!(capacity_curve(&small(), 5, 0.35, &[0, 4], occ), Err(want.clone()));
+        assert_eq!(capacity_curve(&small(), 5, 0.35, &[], occ), Err(want));
+        // The schedule that is legal still returns one point per probe.
+        assert_eq!(capacity_curve(&small(), 5, 0.35, &[1, 4], occ).unwrap().len(), 2);
+    }
+
+    /// `capacity_curve` scores the OCCLUDED probe, and `CapacityPoint::accuracy` counts the
+    /// probes whose own template won. Neither was pinned: the sweep asserts on interference and
+    /// margin, and its own doc records that "accuracy is recorded but not asserted on".
+    ///
+    /// The control is a sweep at `Dropout { fraction: 0.0 }`, which is the identity on the odour.
+    /// It fixes what an unoccluded run looks like — accuracy exactly 1 and a mean self-score of
+    /// 0.987 as this implementation measures it — and a sweep at 0.5 must then come in far below
+    /// it. A curve scored on the clean odour reproduces the control at every fraction.
+    #[test]
+    fn the_capacity_probe_is_the_occluded_odour_and_accuracy_counts_the_hits() {
+        let clean =
+            capacity_curve(&small(), 41, 0.35, &[2, 8], Occlusion::Dropout { fraction: 0.0 })
+                .unwrap();
+        let occluded =
+            capacity_curve(&small(), 41, 0.35, &[2, 8], Occlusion::Dropout { fraction: 0.5 })
+                .unwrap();
+        assert_eq!(clean.len(), 2);
+        for (c, o) in clean.iter().zip(occluded.iter()) {
+            assert_eq!(c.learned, o.learned);
+            assert_eq!(
+                c.accuracy, 1.0,
+                "an unoccluded probe must pick its own template every time: {c:?}"
+            );
+            assert!(c.mean_self > 0.98, "clean recall is not clean: {c:?}");
+            assert!(
+                o.mean_self < c.mean_self - 0.2,
+                "half the channels were dropped and the score did not move: {c:?} vs {o:?}"
+            );
+        }
+    }
+
+    /// A duty-cycled population rhythm: `width` consecutive ticks carrying one spike each,
+    /// repeating every `period` ticks. A BROAD burst, unlike the five-tick one the other estimator
+    /// fixture uses, because the two properties below both need neighbouring ticks to be
+    /// correlated before they can be seen at all.
+    fn burst_train(period: u64, width: u64, cycles: u64) -> Train {
+        let mut spikes = Vec::new();
+        for c in 0..cycles {
+            for k in 0..width {
+                spikes.push(Spike { t: c * period + k, source: (k % 8) as u32 });
+            }
+        }
+        Train::from_spikes(spikes)
+    }
+
+    /// `population_period` refuses a time step that is not positive. The existing refusal fixture
+    /// is a train of ONE spike, which returns `None` three guards later because no lag scores
+    /// above zero — so the answer was the same with the time-step check deleted, and the check was
+    /// never what produced it. On a train that does have a period, dropping the check returns
+    /// `Some(0.0)` for `dt = 0` and a negative period for a negative step.
+    #[test]
+    fn population_period_refuses_a_time_step_that_is_not_positive() {
+        let train = burst_train(40, 24, 8);
+        let ticks = 320u64;
+        assert_eq!(population_period(&train, 8, ticks, 1e-4), Some(40.0 * 1e-4));
+        for dt in [0.0f64, -1e-4, -0.0, f64::NAN, f64::INFINITY] {
+            assert_eq!(population_period(&train, 8, ticks, dt), None, "dt {dt}");
+        }
+    }
+
+    /// A spike past the end of the analysis window is left out of the histogram rather than
+    /// written past its end. No fixture had ever passed a `ticks` shorter than its own train, so
+    /// the bound on `s.t` was doing nothing any test could see — and what it prevents is an
+    /// out-of-bounds write, not a wrong number.
+    #[test]
+    fn spikes_past_the_end_of_the_analysis_window_are_left_out_of_the_histogram() {
+        let train = burst_train(40, 24, 8);
+        assert!(train.spikes().iter().any(|s| s.t >= 160), "the fixture has nothing past the window");
+        // Four of the eight periods is still four periods, and the estimate is unchanged.
+        assert_eq!(population_period(&train, 8, 160, 1e-4), Some(40.0 * 1e-4));
+        assert_eq!(population_period(&train, 8, 200, 1e-4), Some(40.0 * 1e-4));
+        assert_eq!(population_period(&train, 8, 320, 1e-4), Some(40.0 * 1e-4));
+    }
+
+    /// Two steps of `population_period` that a narrow burst cannot exercise: removing the
+    /// histogram's mean, and starting the peak search only after the autocorrelation has first
+    /// gone non-positive.
+    ///
+    /// The existing fixture puts five spikes in a period of 17 to 64, so its duty cycle is under
+    /// a third and its autocorrelation at lag 1 is already below the peak at the true period. A
+    /// burst filling more than half the period reverses that: at a period of 40 with 24 ticks of
+    /// burst over 8 periods, this implementation measures an unnormalised autocorrelation of 69.0
+    /// at lag 1 against 67.2 at lag 40, because lag 1 has 39 more sample pairs to sum over — so a
+    /// search that started at lag 1 rather than after the first non-positive lag (which is 10
+    /// here) would report a period of one tick. And the mean removal stops being cosmetic: with
+    /// the mean computed from one spike instead of all 192, the histogram keeps a positive offset,
+    /// the autocorrelation stays positive out to lag 161 with a search range of 160, and the
+    /// estimator refuses a window it can in fact resolve.
+    #[test]
+    fn a_broad_rhythm_needs_the_mean_removed_and_the_first_lobe_skipped() {
+        for (period, width, cycles) in [(32u64, 18u64, 8u64), (40, 24, 8), (64, 36, 10)] {
+            let train = burst_train(period, width, cycles);
+            let ticks = period * cycles;
+            assert!(
+                width * 2 > period,
+                "the burst must fill more than half the period or lag 1 does not compete"
+            );
+            let got = population_period(&train, 8, ticks, 1e-4);
+            assert_eq!(got, Some(period as f64 * 1e-4), "period {period}");
+            // And the estimate is not an artefact of the window length: a shorter window of the
+            // same train gives the same period.
+            assert_eq!(
+                population_period(&train, 8, ticks / 2, 1e-4),
+                Some(period as f64 * 1e-4),
+                "period {period}, half the window"
             );
         }
     }

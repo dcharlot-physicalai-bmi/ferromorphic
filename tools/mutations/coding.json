@@ -1,0 +1,1182 @@
+[
+ {
+  "label": "the angle wrap uses the remainder operator and returns a negative",
+  "old": "    a.rem_euclid(TAU)\n}",
+  "new": "    a % TAU\n}"
+ },
+ {
+  "label": "the angular difference is never taken the short way round",
+  "old": "    if d > PI { d - TAU } else { d }",
+  "new": "    d"
+ },
+ {
+  "label": "the angular difference's two branches are swapped",
+  "old": "    if d > PI { d - TAU } else { d }",
+  "new": "    if d > PI { d } else { d - TAU }"
+ },
+ {
+  "label": "the angular difference wraps into (-2π, 0] by branching at zero",
+  "old": "    if d > PI { d - TAU } else { d }",
+  "new": "    if d > 0.0 { d - TAU } else { d }"
+ },
+ {
+  "label": "the angular difference is b - a rather than a - b",
+  "old": "    let d = wrap_angle(a - b);",
+  "new": "    let d = wrap_angle(b - a);"
+ },
+ {
+  "label": "the cardinal sine is zero at the origin",
+  "old": "    if x == 0.0 {\n        return 1.0;\n    }",
+  "new": "    if x == 0.0 {\n        return 0.0;\n    }"
+ },
+ {
+  "label": "the cardinal sine is not normalised by π",
+  "old": "    px.sin() / px\n}",
+  "new": "    px.sin() / x\n}"
+ },
+ {
+  "label": "the cardinal sine uses the mathematician's convention",
+  "old": "    let px = PI * x;",
+  "new": "    let px = TAU * x;"
+ },
+ {
+  "label": "the rejection seam moves down into ordinary means",
+  "old": "const POISSON_REJECTION_FLOOR: f64 = 1.0e6;",
+  "new": "const POISSON_REJECTION_FLOOR: f64 = 1.0e5;"
+ },
+ {
+  "label": "the largest representable mean is transcribed an order of magnitude high",
+  "old": "const POISSON_MAX_MEAN: f64 = 9.0e18;",
+  "new": "const POISSON_MAX_MEAN: f64 = 9.0e19;"
+ },
+ {
+  "label": "a NaN mean is drawn as zero rather than refused",
+  "old": "    if !lambda.is_finite() || lambda < 0.0 || lambda > POISSON_MAX_MEAN {",
+  "new": "    if lambda < 0.0 || lambda > POISSON_MAX_MEAN {"
+ },
+ {
+  "label": "a negative mean is drawn as zero rather than refused",
+  "old": "    if !lambda.is_finite() || lambda < 0.0 || lambda > POISSON_MAX_MEAN {",
+  "new": "    if !lambda.is_finite() || lambda > POISSON_MAX_MEAN {"
+ },
+ {
+  "label": "a mean whose count cannot fit a u64 is drawn anyway",
+  "old": "    if !lambda.is_finite() || lambda < 0.0 || lambda > POISSON_MAX_MEAN {",
+  "new": "    if !lambda.is_finite() || lambda < 0.0 {"
+ },
+ {
+  "label": "the product method splits the mean into chunks ten times too small",
+  "old": "        let chunk = left.min(500.0);",
+  "new": "        let chunk = left.min(50.0);"
+ },
+ {
+  "label": "the chunk loop subtracts a full 500 whatever it drew",
+  "old": "        left -= chunk;",
+  "new": "        left -= 500.0;"
+ },
+ {
+  "label": "the product method's stopping level is the exponential of a positive chunk",
+  "old": "        let limit = (-chunk).exp();",
+  "new": "        let limit = chunk.exp();"
+ },
+ {
+  "label": "the product method counts two spikes per uniform",
+  "old": "            k += 1;",
+  "new": "            k += 2;"
+ },
+ {
+  "label": "only the last chunk's draw survives the sum",
+  "old": "        total += k;",
+  "new": "        total = k;"
+ },
+ {
+  "label": "the Poisson log-probability adds Stirling's tail instead of subtracting it",
+  "old": "    d - (lambda + d) * (d / lambda).ln_1p() - 0.5 * (TAU * k).ln() - stirling_tail",
+  "new": "    d - (lambda + d) * (d / lambda).ln_1p() - 0.5 * (TAU * k).ln() + stirling_tail"
+ },
+ {
+  "label": "the log-probability's normalisation uses π rather than 2π",
+  "old": "    d - (lambda + d) * (d / lambda).ln_1p() - 0.5 * (TAU * k).ln() - stirling_tail",
+  "new": "    d - (lambda + d) * (d / lambda).ln_1p() - 0.5 * (PI * k).ln() - stirling_tail"
+ },
+ {
+  "label": "the log-probability drops its normalisation term",
+  "old": "    d - (lambda + d) * (d / lambda).ln_1p() - 0.5 * (TAU * k).ln() - stirling_tail",
+  "new": "    d - (lambda + d) * (d / lambda).ln_1p() - stirling_tail"
+ },
+ {
+  "label": "the cancellation-free form is written with a plain logarithm",
+  "old": "    d - (lambda + d) * (d / lambda).ln_1p() - 0.5 * (TAU * k).ln() - stirling_tail",
+  "new": "    d - (lambda + d) * (d / lambda).ln() - 0.5 * (TAU * k).ln() - stirling_tail"
+ },
+ {
+  "label": "the leading term is scaled by the mean rather than by the count",
+  "old": "    d - (lambda + d) * (d / lambda).ln_1p() - 0.5 * (TAU * k).ln() - stirling_tail",
+  "new": "    d - lambda * (d / lambda).ln_1p() - 0.5 * (TAU * k).ln() - stirling_tail"
+ },
+ {
+  "label": "Stirling's leading term is transcribed as one over 120k",
+  "old": "    let stirling_tail = 1.0 / (12.0 * k) - 1.0 / (360.0 * k2 * k) + 1.0 / (1260.0 * k2 * k2 * k);",
+  "new": "    let stirling_tail = 1.0 / (120.0 * k) - 1.0 / (360.0 * k2 * k) + 1.0 / (1260.0 * k2 * k2 * k);"
+ },
+ {
+  "label": "Stirling's second term has the wrong sign",
+  "old": "    let stirling_tail = 1.0 / (12.0 * k) - 1.0 / (360.0 * k2 * k) + 1.0 / (1260.0 * k2 * k2 * k);",
+  "new": "    let stirling_tail = 1.0 / (12.0 * k) + 1.0 / (360.0 * k2 * k) + 1.0 / (1260.0 * k2 * k2 * k);"
+ },
+ {
+  "label": "Stirling's third term is one power of k short",
+  "old": "    let stirling_tail = 1.0 / (12.0 * k) - 1.0 / (360.0 * k2 * k) + 1.0 / (1260.0 * k2 * k2 * k);",
+  "new": "    let stirling_tail = 1.0 / (12.0 * k) - 1.0 / (360.0 * k2 * k) + 1.0 / (1260.0 * k2 * k2);"
+ },
+ {
+  "label": "the zero-count shortcut swallows a count of one as well",
+  "old": "    if k < 0.5 {\n        return -lambda;\n    }",
+  "new": "    if k < 1.5 {\n        return -lambda;\n    }"
+ },
+ {
+  "label": "the transformed-rejection envelope's width constant is ten times too large",
+  "old": "    let b = 0.931 + 2.53 * smu;",
+  "new": "    let b = 0.931 + 25.3 * smu;"
+ },
+ {
+  "label": "the envelope's a constant loses a decimal place",
+  "old": "    let a = -0.059 + 0.02483 * b;",
+  "new": "    let a = -0.059 + 0.2483 * b;"
+ },
+ {
+  "label": "the rejection constant's leading digits are transposed",
+  "old": "    let inv_alpha = 1.1239 + 1.1328 / (b - 3.4);",
+  "new": "    let inv_alpha = 1.1932 + 1.1328 / (b - 3.4);"
+ },
+ {
+  "label": "the squeeze's rectangle is widened past the envelope it sits under",
+  "old": "    let v_r = 0.9277 - 3.6224 / (b - 2.0);",
+  "new": "    let v_r = 0.9277 - 0.36224 / (b - 2.0);"
+ },
+ {
+  "label": "the squeeze constant's digits are transposed",
+  "old": "    let v_r = 0.9277 - 3.6224 / (b - 2.0);",
+  "new": "    let v_r = 0.9727 - 3.6224 / (b - 2.0);"
+ },
+ {
+  "label": "the proposal's half-integer offset is the wrong constant",
+  "old": "        let k = ((2.0 * a / us + b) * u + lambda + 0.43).floor();",
+  "new": "        let k = ((2.0 * a / us + b) * u + lambda + 0.93).floor();"
+ },
+ {
+  "label": "the proposed count is rounded rather than floored",
+  "old": "        let k = ((2.0 * a / us + b) * u + lambda + 0.43).floor();",
+  "new": "        let k = ((2.0 * a / us + b) * u + lambda + 0.43).round();"
+ },
+ {
+  "label": "the envelope's width term is not doubled",
+  "old": "        let k = ((2.0 * a / us + b) * u + lambda + 0.43).floor();",
+  "new": "        let k = ((a / us + b) * u + lambda + 0.43).floor();"
+ },
+ {
+  "label": "the symmetric fold of the first uniform is inverted",
+  "old": "        let us = 0.5 - u.abs();",
+  "new": "        let us = 0.5 + u.abs();"
+ },
+ {
+  "label": "the first uniform is not centred on zero",
+  "old": "        let u = rng.next_f64() - 0.5;",
+  "new": "        let u = rng.next_f64();"
+ },
+ {
+  "label": "the squeeze accepts on either of its two tests rather than on both",
+  "old": "        if us >= 0.07 && v <= v_r {",
+  "new": "        if us >= 0.07 || v <= v_r {"
+ },
+ {
+  "label": "the squeeze extends a tenth of the way further into the tail",
+  "old": "        if us >= 0.07 && v <= v_r {",
+  "new": "        if us >= 0.007 && v <= v_r {"
+ },
+ {
+  "label": "the acceptance test keeps exactly what it should reject",
+  "old": "        if (v * inv_alpha / (a / (us * us) + b)).ln() <= poisson_ln_pmf(k, lambda) {",
+  "new": "        if (v * inv_alpha / (a / (us * us) + b)).ln() >= poisson_ln_pmf(k, lambda) {"
+ },
+ {
+  "label": "a zero-tap windowed sinc is not refused",
+  "old": "    if taps == 0 {\n        return Err(CodeError::Empty { what: \"filter taps\" });\n    }\n    if !cutoff.is_finite() || cutoff <= 0.0 || cutoff >= 0.5 {",
+  "new": "    if !cutoff.is_finite() || cutoff <= 0.0 || cutoff >= 0.5 {"
+ },
+ {
+  "label": "a cutoff of zero is accepted",
+  "old": "    if !cutoff.is_finite() || cutoff <= 0.0 || cutoff >= 0.5 {",
+  "new": "    if !cutoff.is_finite() || cutoff >= 0.5 {"
+ },
+ {
+  "label": "a cutoff at the Nyquist frequency is accepted",
+  "old": "    if !cutoff.is_finite() || cutoff <= 0.0 || cutoff >= 0.5 {",
+  "new": "    if !cutoff.is_finite() || cutoff <= 0.0 || cutoff > 0.5 {"
+ },
+ {
+  "label": "a NaN cutoff slips past the range test",
+  "old": "    if !cutoff.is_finite() || cutoff <= 0.0 || cutoff >= 0.5 {",
+  "new": "    if cutoff <= 0.0 || cutoff >= 0.5 {"
+ },
+ {
+  "label": "the one-tap filter is not special-cased and divides by a zero span",
+  "old": "    if taps == 1 {\n        // Not a shortcut: `m = taps - 1` is zero below, and the Hamming window would divide by it.\n        // A single tap normalised to unit DC gain has no other value it could take.\n        return Ok(vec![1.0]);\n    }\n    let m = taps - 1;",
+  "new": "    let m = taps - 1;"
+ },
+ {
+  "label": "the Hamming window is a Hann window",
+  "old": "        let w = 0.54 - 0.46 * (TAU * k as f64 / m as f64).cos();",
+  "new": "        let w = 0.5 - 0.5 * (TAU * k as f64 / m as f64).cos();"
+ },
+ {
+  "label": "the Hamming window's pedestal is transcribed as 0.45",
+  "old": "        let w = 0.54 - 0.46 * (TAU * k as f64 / m as f64).cos();",
+  "new": "        let w = 0.45 - 0.46 * (TAU * k as f64 / m as f64).cos();"
+ },
+ {
+  "label": "the Hamming window's cosine amplitude is transcribed as 0.64",
+  "old": "        let w = 0.54 - 0.46 * (TAU * k as f64 / m as f64).cos();",
+  "new": "        let w = 0.54 - 0.64 * (TAU * k as f64 / m as f64).cos();"
+ },
+ {
+  "label": "the Hamming window spans half a period",
+  "old": "        let w = 0.54 - 0.46 * (TAU * k as f64 / m as f64).cos();",
+  "new": "        let w = 0.54 - 0.46 * (PI * k as f64 / m as f64).cos();"
+ },
+ {
+  "label": "the window is indexed off the tap count rather than the last index",
+  "old": "        let w = 0.54 - 0.46 * (TAU * k as f64 / m as f64).cos();",
+  "new": "        let w = 0.54 - 0.46 * (TAU * k as f64 / taps as f64).cos();"
+ },
+ {
+  "label": "the sinc is sampled at the cutoff rather than at twice it",
+  "old": "        h.push(sinc(2.0 * cutoff * t) * w);",
+  "new": "        h.push(sinc(cutoff * t) * w);"
+ },
+ {
+  "label": "the sinc is never windowed",
+  "old": "        h.push(sinc(2.0 * cutoff * t) * w);",
+  "new": "        h.push(sinc(2.0 * cutoff * t));"
+ },
+ {
+  "label": "the sinc is not centred on the middle tap",
+  "old": "        let t = k as f64 - centre;",
+  "new": "        let t = k as f64;"
+ },
+ {
+  "label": "the centre is half the tap count rather than half the last index",
+  "old": "    let centre = m as f64 / 2.0;",
+  "new": "    let centre = taps as f64 / 2.0;"
+ },
+ {
+  "label": "the windowed sinc is normalised by its tap count rather than by its sum",
+  "old": "        return Err(CodeError::NoEvidence { what: \"a normalisable filter\" });\n    }\n    for v in &mut h {\n        *v /= sum;\n    }",
+  "new": "        return Err(CodeError::NoEvidence { what: \"a normalisable filter\" });\n    }\n    for v in &mut h {\n        *v /= taps as f64;\n    }"
+ },
+ {
+  "label": "a filter whose taps do not sum to a positive number is normalised anyway",
+  "old": "    if !(sum > 0.0) {\n        return Err(CodeError::NoEvidence { what: \"a normalisable filter\" });\n    }",
+  "new": "    if sum < 0.0 {\n        return Err(CodeError::NoEvidence { what: \"a normalisable filter\" });\n    }"
+ },
+ {
+  "label": "the Hann kernel's raised cosine is inverted, so an interior tap vanishes",
+  "old": "        .map(|k| 0.5 * (1.0 - (TAU * (k + 1) as f64 / denom).cos()))",
+  "new": "        .map(|k| 0.5 * (1.0 + (TAU * (k + 1) as f64 / denom).cos()))"
+ },
+ {
+  "label": "the Hann kernel is indexed from zero, so its first tap is zero",
+  "old": "        .map(|k| 0.5 * (1.0 - (TAU * (k + 1) as f64 / denom).cos()))",
+  "new": "        .map(|k| 0.5 * (1.0 - (TAU * k as f64 / denom).cos()))"
+ },
+ {
+  "label": "the Hann kernel's denominator is the tap count, so its last tap is zero",
+  "old": "    let denom = (taps + 1) as f64;",
+  "new": "    let denom = taps as f64;"
+ },
+ {
+  "label": "the Hann kernel is normalised by its tap count rather than by its sum",
+  "old": "    let sum: f64 = h.iter().sum();\n    for v in &mut h {\n        *v /= sum;\n    }",
+  "new": "    let sum: f64 = h.iter().sum();\n    for v in &mut h {\n        *v /= denom;\n    }"
+ },
+ {
+  "label": "a zero-tap Hann kernel is not refused",
+  "old": "pub fn fir_hann(taps: usize) -> Result<Vec<f64>, CodeError> {\n    if taps == 0 {\n        return Err(CodeError::Empty { what: \"filter taps\" });\n    }",
+  "new": "pub fn fir_hann(taps: usize) -> Result<Vec<f64>, CodeError> {"
+ },
+ {
+  "label": "the reconstruction overwrites where two spikes should superpose",
+  "old": "                out[t + k] += h;",
+  "new": "                out[t + k] = h;"
+ },
+ {
+  "label": "the filter's tail is written one sample past the record",
+  "old": "            if t + k < out.len() {",
+  "new": "            if t + k < out.len() + 1 {"
+ },
+ {
+  "label": "the whole filter lands on the spike's own sample",
+  "old": "            if t + k < out.len() {\n                out[t + k] += h;\n            }",
+  "new": "            if t + k < out.len() {\n                out[t] += h;\n            }"
+ },
+ {
+  "label": "the decoder drives the filter from the samples that did not spike",
+  "old": "        if !fired {\n            continue;\n        }",
+  "new": "        if fired {\n            continue;\n        }"
+ },
+ {
+  "label": "counts are multiplied by the window rather than divided by it",
+  "old": "    Ok(counts.iter().map(|&k| k as f64 / window_s).collect())",
+  "new": "    Ok(counts.iter().map(|&k| k as f64 * window_s).collect())"
+ },
+ {
+  "label": "the rate conversion accepts a zero or non-finite window",
+  "old": "    if !(window_s > 0.0) || !window_s.is_finite() {\n        return Err(CodeError::NotPositive { what: \"window_s\", value: window_s });\n    }\n    Ok(counts.iter()",
+  "new": "    if window_s < 0.0 {\n        return Err(CodeError::NotPositive { what: \"window_s\", value: window_s });\n    }\n    Ok(counts.iter()"
+ },
+ {
+  "label": "the grid step spans one interval too many",
+  "old": "    let h = (hi - lo) / (grid - 1) as f64;",
+  "new": "    let h = (hi - lo) / grid as f64;"
+ },
+ {
+  "label": "a two-point grid is accepted by the likelihood search",
+  "old": "    if grid < 3 {",
+  "new": "    if grid < 2 {"
+ },
+ {
+  "label": "the Poisson log-likelihood adds the expected count",
+  "old": "                acc += k as f64 * mu.ln() - mu;",
+  "new": "                acc += k as f64 * mu.ln() + mu;"
+ },
+ {
+  "label": "the log-likelihood does not weight by the observed count",
+  "old": "                acc += k as f64 * mu.ln() - mu;",
+  "new": "                acc += mu.ln() - mu;"
+ },
+ {
+  "label": "the expected count drops the observation window",
+  "old": "            let mu = rate_at(i, x) * window_s;",
+  "new": "            let mu = rate_at(i, x);"
+ },
+ {
+  "label": "a spike from a cell the model says is silent costs the likelihood nothing",
+  "old": "            } else if k > 0 {",
+  "new": "            } else if false {"
+ },
+ {
+  "label": "the maximum is taken as the smallest log-likelihood",
+  "old": "        if acc > best_l {",
+  "new": "        if acc < best_l {"
+ },
+ {
+  "label": "the seam's lower neighbour is the seam itself",
+  "old": "        (grid - 2, 1)",
+  "new": "        (grid - 1, 1)"
+ },
+ {
+  "label": "the circular estimate is snapped to its grid node like a linear one",
+  "old": "        if !wrap {\n            return Ok(x0);\n        }",
+  "new": "        if true {\n            return Ok(x0);\n        }"
+ },
+ {
+  "label": "the parabolic refinement pushes away from the better neighbour",
+  "old": "    let shift = (h * (y1 - y3) / (2.0 * denom)).clamp(-h, h);",
+  "new": "    let shift = (h * (y3 - y1) / (2.0 * denom)).clamp(-h, h);"
+ },
+ {
+  "label": "the parabolic refinement is half the size it should be",
+  "old": "    let shift = (h * (y1 - y3) / (2.0 * denom)).clamp(-h, h);",
+  "new": "    let shift = (h * (y1 - y3) / (4.0 * denom)).clamp(-h, h);"
+ },
+ {
+  "label": "the refinement's denominator is a sum rather than a second difference",
+  "old": "    let denom = y1 - 2.0 * y2 + y3;",
+  "new": "    let denom = y1 + 2.0 * y2 + y3;"
+ },
+ {
+  "label": "the best grid point is read one step along",
+  "old": "    let x0 = lo + h * best as f64;",
+  "new": "    let x0 = lo + h * (best + 1) as f64;"
+ },
+ {
+  "label": "the neighbour-finiteness guard before the parabola is dropped",
+  "old": "    if !y1.is_finite() || !y3.is_finite() {\n        return Ok(x0);\n    }\n",
+  "new": "",
+  "equivalent": "the only non-finite value `logl` can hold is `f64::NEG_INFINITY`: the scan assigns each entry either a finite `acc` or exactly that. And `y2 = logl[best] = best_l` has already been checked finite by the `!best_l.is_finite()` refusal above. So if `y1` or `y3` is non-finite it is −∞, and `denom = y1 − 2·y2 + y3` is then exactly −∞ — a finite `y2` cannot cancel it. The very next guard, `denom == 0.0 || !denom.is_finite()`, is therefore true and returns the same `Ok(x0)` this one would have returned, on exactly the same inputs. No call can make the two paths disagree."
+ },
+ {
+  "label": "the linear estimate is not clamped back into its range",
+  "old": "        Ok((x0 + shift).clamp(lo, hi))",
+  "new": "        Ok(x0 + shift)",
+  "equivalent": "this line is reached only when `wrap` is false and the early return above did not fire, which means `best` is strictly interior: `1 <= best <= grid - 2`. Then `x0 = lo + h·best` lies in `[lo + h, lo + h·(grid - 2)]`, and `shift` is already clamped to `[-h, h]`, so `x0 + shift` lies in `[lo, lo + h·(grid - 1)]` — the interval the clamp would hold it to — before the clamp is applied. The one residue is that `lo + h·(grid - 1)` need not be bit-identical to `hi` once `h = (hi - lo) / (grid - 1)` has been rounded, so the two forms can differ by an ulp of `hi`, and only for an estimate that has ALSO saturated the shift clamp at exactly ±h. That is 1e-16 relative, against the 1e-3 bias bound and the variance ratios this module grades its linear decoder with."
+ },
+ {
+  "label": "an empty range is accepted by the Gaussian population",
+  "old": "        if !(hi > lo) {\n            return Err(CodeError::EmptyRange { lo, hi });\n        }",
+  "new": "        if !(hi >= lo) {\n            return Err(CodeError::EmptyRange { lo, hi });\n        }"
+ },
+ {
+  "label": "a non-positive tuning width is accepted",
+  "old": "        if !(sigma > 0.0) {",
+  "new": "        if false {"
+ },
+ {
+  "label": "a negative baseline rate is accepted",
+  "old": "        if r_base < 0.0 {",
+  "new": "        if false {"
+ },
+ {
+  "label": "a population whose peak is below its baseline is accepted",
+  "old": "        if !(r_max > r_base) {",
+  "new": "        if false {"
+ },
+ {
+  "label": "a single cell has zero spacing rather than the whole range",
+  "old": "        if self.n <= 1 { self.hi - self.lo } else { (self.hi - self.lo) / (self.n - 1) as f64 }",
+  "new": "        if self.n <= 1 { 0.0 } else { (self.hi - self.lo) / (self.n - 1) as f64 }"
+ },
+ {
+  "label": "the spacing divides by the cell count rather than by the gaps between cells",
+  "old": "        if self.n <= 1 { self.hi - self.lo } else { (self.hi - self.lo) / (self.n - 1) as f64 }",
+  "new": "        if self.n <= 1 { self.hi - self.lo } else { (self.hi - self.lo) / self.n as f64 }"
+ },
+ {
+  "label": "a single cell prefers the bottom of the range rather than its middle",
+  "old": "        if self.n == 1 { 0.5 * (self.lo + self.hi) } else { self.lo + self.spacing() * i as f64 }",
+  "new": "        if self.n == 1 { self.lo } else { self.lo + self.spacing() * i as f64 }"
+ },
+ {
+  "label": "the preferred values are offset by one spacing, so cell 0 does not sit on lo",
+  "old": "        if self.n == 1 { 0.5 * (self.lo + self.hi) } else { self.lo + self.spacing() * i as f64 }",
+  "new": "        if self.n == 1 { 0.5 * (self.lo + self.hi) } else { self.lo + self.spacing() * (i + 1) as f64 }"
+ },
+ {
+  "label": "the tuning curve has no baseline under its bell",
+  "old": "        self.r_base + (self.r_max - self.r_base) * (-(d * d) / (2.0 * self.sigma * self.sigma)).exp()",
+  "new": "        self.r_max * (-(d * d) / (2.0 * self.sigma * self.sigma)).exp()"
+ },
+ {
+  "label": "the tuning curve's width is sigma rather than sigma squared",
+  "old": "        self.r_base + (self.r_max - self.r_base) * (-(d * d) / (2.0 * self.sigma * self.sigma)).exp()",
+  "new": "        self.r_base + (self.r_max - self.r_base) * (-(d * d) / (2.0 * self.sigma)).exp()"
+ },
+ {
+  "label": "the tuning curve's exponent drops its factor of two",
+  "old": "        self.r_base + (self.r_max - self.r_base) * (-(d * d) / (2.0 * self.sigma * self.sigma)).exp()",
+  "new": "        self.r_base + (self.r_max - self.r_base) * (-(d * d) / (self.sigma * self.sigma)).exp()"
+ },
+ {
+  "label": "the tuning curve grows away from the preferred value instead of decaying",
+  "old": "        self.r_base + (self.r_max - self.r_base) * (-(d * d) / (2.0 * self.sigma * self.sigma)).exp()",
+  "new": "        self.r_base + (self.r_max - self.r_base) * ((d * d) / (2.0 * self.sigma * self.sigma)).exp()"
+ },
+ {
+  "label": "the tuning curve is a function of the sum of stimulus and preferred value",
+  "old": "        let d = x - self.preferred(i);\n        self.r_base",
+  "new": "        let d = x + self.preferred(i);\n        self.r_base"
+ },
+ {
+  "label": "a non-finite stimulus reaches the tuning curves",
+  "old": "        if !x.is_finite() {\n            return Err(CodeError::NotFinite { what: \"stimulus\", index: 0 });\n        }\n        Ok((0..self.n).map(|i| self.rate_of(i, x)).collect())",
+  "new": "        Ok((0..self.n).map(|i| self.rate_of(i, x)).collect())"
+ },
+ {
+  "label": "the sampled counts ignore the length of the observation",
+  "old": "            out.push(poisson_count(rng, r * window_s).ok_or(CodeError::NotFinite {",
+  "new": "            out.push(poisson_count(rng, r).ok_or(CodeError::NotFinite {"
+ },
+ {
+  "label": "the per-tick spike probability is the survival probability",
+  "old": "        let p: Vec<f64> = rates.iter().map(|r| 1.0 - (-r * dt).exp()).collect();",
+  "new": "        let p: Vec<f64> = rates.iter().map(|r| (-r * dt).exp()).collect();"
+ },
+ {
+  "label": "the per-tick probability is the linear rate-times-tick",
+  "old": "        let p: Vec<f64> = rates.iter().map(|r| 1.0 - (-r * dt).exp()).collect();",
+  "new": "        let p: Vec<f64> = rates.iter().map(|r| r * dt).collect();"
+ },
+ {
+  "label": "every cell's spikes are emitted on the first source",
+  "old": "                    spikes.push(Spike { t, source: i as u32 });",
+  "new": "                    spikes.push(Spike { t, source: 0 });"
+ },
+ {
+  "label": "a rate below baseline is given a negative weight in the centre of mass",
+  "old": "            let w = (r - self.r_base).max(0.0);",
+  "new": "            let w = r - self.r_base;"
+ },
+ {
+  "label": "the centre of mass weights the cell index rather than its preferred value",
+  "old": "            num += w * self.preferred(i);",
+  "new": "            num += w * i as f64;"
+ },
+ {
+  "label": "the centre of mass is normalised by the cell count rather than by the weight",
+  "old": "            den += w;",
+  "new": "            den += 1.0;"
+ },
+ {
+  "label": "a silent population decodes to NaN rather than refusing",
+  "old": "        if !(den > 0.0) {",
+  "new": "        if den < 0.0 {"
+ },
+ {
+  "label": "the Gaussian likelihood search runs over an inverted range",
+  "old": "        ml_on_grid(counts, window_s, self.lo, self.hi, grid, false, |i, x| self.rate_of(i, x))",
+  "new": "        ml_on_grid(counts, window_s, self.hi, self.lo, grid, false, |i, x| self.rate_of(i, x))"
+ },
+ {
+  "label": "the Fisher information divides by the window instead of scaling by it",
+  "old": "        let info = info * window_s;",
+  "new": "        let info = info / window_s;"
+ },
+ {
+  "label": "the Fisher information is not divided by the expected rate",
+  "old": "            info += dlam * dlam / lam;",
+  "new": "            info += dlam * dlam;"
+ },
+ {
+  "label": "the tuning curve's derivative carries the wrong sign",
+  "old": "            let dlam = amp * g * (-d) / s2;",
+  "new": "            let dlam = amp * g * d / s2;",
+  "equivalent": "`dlam` is used on the very next line only as `dlam * dlam`, and (−z)² = z² exactly in IEEE-754 for every finite z, including the signed zeros: (−0.0)·(−0.0) = +0.0 = (+0.0)·(+0.0). Nothing else reads it. No observation of `fisher_information` can depend on which sign the derivative is written with."
+ },
+ {
+  "label": "the Fisher information divides by sigma rather than by its square",
+  "old": "            let dlam = amp * g * (-d) / s2;",
+  "new": "            let dlam = amp * g * (-d) / self.sigma;"
+ },
+ {
+  "label": "the interior's probe count is capped at 400 rather than floored there",
+  "old": "        let steps = 400.max(16 * (self.n - 1));",
+  "new": "        let steps = 400.min(16 * (self.n - 1));"
+ },
+ {
+  "label": "a two-cell population is given an interior",
+  "old": "        if self.n < 3 || !(tol > 0.0) {",
+  "new": "        if self.n < 2 || !(tol > 0.0) {"
+ },
+ {
+  "label": "the interior's probe passes on a signed error, so half the failures count as passes",
+  "old": "                .is_some_and(|xh| (xh - x).abs() <= tol)",
+  "new": "                .is_some_and(|xh| (xh - x) <= tol)"
+ },
+ {
+  "label": "a failing probe does not end the run, so the interior is scanned in from the ends again",
+  "old": "            } else {\n                in_run = false;\n            }",
+  "new": "            } else {\n            }"
+ },
+ {
+  "label": "a single passing probe is reported as a sub-range",
+  "old": "        if best_b > best_a {",
+  "new": "        if best_b >= best_a {"
+ },
+ {
+  "label": "the preferred directions are laid out the other way round the circle",
+  "old": "        wrap_angle(self.offset + TAU * i as f64 / self.n as f64)",
+  "new": "        wrap_angle(self.offset - TAU * i as f64 / self.n as f64)",
+  "equivalent": "the SET of preferred directions is unchanged: {offset − 2πi/n : i = 0..n−1} is {offset + 2π(n−i)/n} = {offset + 2πj/n}, so the mutation only relabels which cell holds which direction. Every decoder here is a symmetric function of the (φ_i, r_i) pairs — the population vector is a sum over cells, the likelihood is a sum over cells, and every test that names a cell reads `p.preferred(i)` or `p.rate_of(i, ·)` and is therefore relabelled with it. What changes is the ORDER of two floating-point summations and the rounding of `rem_euclid`, worth about 1e-16 relative, against tolerances of 1e-12 and 1e-11 in the tests that could see it."
+ },
+ {
+  "label": "a two-cell population is given a population vector",
+  "old": "        if n < 3 {",
+  "new": "        if n < 2 {"
+ },
+ {
+  "label": "the cosine tuning is in anti-phase with the preferred direction",
+  "old": "        self.b0 + self.b1 * (theta - self.preferred(i)).cos()",
+  "new": "        self.b0 - self.b1 * (theta - self.preferred(i)).cos()"
+ },
+ {
+  "label": "the baseline and the modulation depth are swapped",
+  "old": "        self.b0 + self.b1 * (theta - self.preferred(i)).cos()",
+  "new": "        self.b1 + self.b0 * (theta - self.preferred(i)).cos()"
+ },
+ {
+  "label": "the cosine tuning is a function of the sum of the two angles",
+  "old": "        self.b0 + self.b1 * (theta - self.preferred(i)).cos()",
+  "new": "        self.b0 + self.b1 * (theta + self.preferred(i)).cos()"
+ },
+ {
+  "label": "the population vector's two components are swapped",
+  "old": "            x += r * p.cos();\n            y += r * p.sin();",
+  "new": "            x += r * p.sin();\n            y += r * p.cos();"
+ },
+ {
+  "label": "the population vector is not weighted by the firing rates",
+  "old": "            x += r * p.cos();\n            y += r * p.sin();",
+  "new": "            x += p.cos();\n            y += p.sin();"
+ },
+ {
+  "label": "a vanished population vector is still given a direction",
+  "old": "        if len <= 1e-12 * scale.max(1.0) {",
+  "new": "        if len < 0.0 {"
+ },
+ {
+  "label": "the decoded direction is measured from the y axis",
+  "old": "        Ok(wrap_angle(y.atan2(x)))",
+  "new": "        Ok(wrap_angle(x.atan2(y)))"
+ },
+ {
+  "label": "the circular likelihood search covers half a turn",
+  "old": "            ml_on_grid(counts, window_s, 0.0, TAU, grid, true, |i, x| self.rate_of(i, x).max(0.0))?;",
+  "new": "            ml_on_grid(counts, window_s, 0.0, PI, grid, true, |i, x| self.rate_of(i, x).max(0.0))?;"
+ },
+ {
+  "label": "the circular likelihood search is told its range does not wrap",
+  "old": "            ml_on_grid(counts, window_s, 0.0, TAU, grid, true, |i, x| self.rate_of(i, x).max(0.0))?;",
+  "new": "            ml_on_grid(counts, window_s, 0.0, TAU, grid, false, |i, x| self.rate_of(i, x).max(0.0))?;"
+ },
+ {
+  "label": "the circular estimate is returned unwrapped",
+  "old": "        Ok(wrap_angle(theta))",
+  "new": "        Ok(theta)"
+ },
+ {
+  "label": "the sampled rate is clamped to zero from above",
+  "old": "            let lam = (r * window_s).max(0.0);",
+  "new": "            let lam = (r * window_s).min(0.0);"
+ },
+ {
+  "label": "the rank code's capacity counts one cell too few",
+  "old": "        (1..=self.n).map(|k| (k as f64).log2()).sum()",
+  "new": "        (1..self.n).map(|k| (k as f64).log2()).sum()"
+ },
+ {
+  "label": "the rank code's capacity is reported in nats",
+  "old": "        (1..=self.n).map(|k| (k as f64).log2()).sum()",
+  "new": "        (1..=self.n).map(|k| (k as f64).ln()).sum()"
+ },
+ {
+  "label": "a cell with no drive fires",
+  "old": "        let mut idx: Vec<u32> = (0..self.n as u32).filter(|&i| x[i as usize] > 0.0).collect();",
+  "new": "        let mut idx: Vec<u32> = (0..self.n as u32).filter(|&i| x[i as usize] >= 0.0).collect();"
+ },
+ {
+  "label": "the most weakly driven cell fires first",
+  "old": "            x[b as usize].total_cmp(&x[a as usize]).then(a.cmp(&b))",
+  "new": "            x[a as usize].total_cmp(&x[b as usize]).then(a.cmp(&b))"
+ },
+ {
+  "label": "equal drives break by descending cell index",
+  "old": "            x[b as usize].total_cmp(&x[a as usize]).then(a.cmp(&b))",
+  "new": "            x[b as usize].total_cmp(&x[a as usize]).then(b.cmp(&a))"
+ },
+ {
+  "label": "the rank table records the cell index rather than the rank",
+  "old": "            rank[i as usize] = Some(k as u32);\n        }\n        Ok(RankOrder { order: idx, rank })",
+  "new": "            rank[i as usize] = Some(i);\n        }\n        Ok(RankOrder { order: idx, rank })"
+ },
+ {
+  "label": "the order is laid out on a single tick",
+  "old": "            .map(|(k, &i)| Spike { t: first_tick + gap_ticks * k as u64, source: i })",
+  "new": "            .map(|(k, &i)| Spike { t: first_tick, source: i })"
+ },
+ {
+  "label": "the reader keeps each source's last spike rather than its first",
+  "old": "            if i < self.n && first[i].is_none() {\n                first[i] = Some(s.t);\n            }",
+  "new": "            if i < self.n {\n                first[i] = Some(s.t);\n            }"
+ },
+ {
+  "label": "the reader takes the latest arrival as rank zero",
+  "old": "            first[a as usize].cmp(&first[b as usize]).then(a.cmp(&b))",
+  "new": "            first[b as usize].cmp(&first[a as usize]).then(a.cmp(&b))"
+ },
+ {
+  "label": "the reader's tie-break disagrees with the encoder's",
+  "old": "            first[a as usize].cmp(&first[b as usize]).then(a.cmp(&b))",
+  "new": "            first[a as usize].cmp(&first[b as usize]).then(b.cmp(&a))"
+ },
+ {
+  "label": "the reader keeps exactly the cells that never fired",
+  "old": "        let mut idx: Vec<u32> = (0..self.n as u32).filter(|&i| first[i as usize].is_some()).collect();",
+  "new": "        let mut idx: Vec<u32> = (0..self.n as u32).filter(|&i| first[i as usize].is_none()).collect();"
+ },
+ {
+  "label": "a silent cell decodes to full amplitude",
+  "old": "            .map(|r| r.map_or(0.0, |k| self.modulation.powi(k as i32)))",
+  "new": "            .map(|r| r.map_or(1.0, |k| self.modulation.powi(k as i32)))"
+ },
+ {
+  "label": "the amplitude law is off by one rank",
+  "old": "            .map(|r| r.map_or(0.0, |k| self.modulation.powi(k as i32)))",
+  "new": "            .map(|r| r.map_or(0.0, |k| self.modulation.powi(k as i32 + 1)))"
+ },
+ {
+  "label": "the readout desensitises by cell index rather than by arrival rank",
+  "old": "            acc += weights[i as usize] * self.modulation.powi(k as i32);",
+  "new": "            acc += weights[i as usize] * self.modulation.powi(i as i32);"
+ },
+ {
+  "label": "the readout keeps only the last arrival's contribution",
+  "old": "            acc += weights[i as usize] * self.modulation.powi(k as i32);",
+  "new": "            acc = weights[i as usize] * self.modulation.powi(k as i32);"
+ },
+ {
+  "label": "a desensitisation above one is accepted",
+  "old": "        if !modulation.is_finite() || modulation <= 0.0 || modulation > 1.0 {",
+  "new": "        if !modulation.is_finite() || modulation <= 0.0 || modulation > 2.0 {"
+ },
+ {
+  "label": "a rank code over no cells at all is accepted",
+  "old": "        if n == 0 {\n            return Err(CodeError::Empty { what: \"population\" });\n        }\n        if !modulation.is_finite()",
+  "new": "        if !modulation.is_finite()"
+ },
+ {
+  "label": "a zero frequency is accepted by the oscillator",
+  "old": "        if !(f_hz > 0.0) {\n            return Err(CodeError::NotPositive { what: \"f_hz\", value: f_hz });\n        }",
+  "new": "        if f_hz < 0.0 {\n            return Err(CodeError::NotPositive { what: \"f_hz\", value: f_hz });\n        }"
+ },
+ {
+  "label": "a non-finite frequency is reported as non-positive rather than non-finite",
+  "old": "        check_finite(\"oscillator parameter\", &[f_hz, amplitude, phase0])?;",
+  "new": "        check_finite(\"oscillator parameter\", &[amplitude, phase0])?;"
+ },
+ {
+  "label": "the period is the frequency",
+  "old": "        1.0 / self.f_hz\n    }",
+  "new": "        self.f_hz\n    }"
+ },
+ {
+  "label": "the oscillator's reference phase is subtracted rather than added",
+  "old": "        wrap_angle(TAU * self.f_hz * t_s + self.phase0)",
+  "new": "        wrap_angle(TAU * self.f_hz * t_s - self.phase0)"
+ },
+ {
+  "label": "the oscillator advances one radian per period rather than one turn",
+  "old": "        wrap_angle(TAU * self.f_hz * t_s + self.phase0)",
+  "new": "        wrap_angle(self.f_hz * t_s + self.phase0)"
+ },
+ {
+  "label": "the reference waveform is a sine, so its peak is a quarter turn out",
+  "old": "        self.amplitude * (TAU * self.f_hz * t_s + self.phase0).cos()",
+  "new": "        self.amplitude * (TAU * self.f_hz * t_s + self.phase0).sin()"
+ },
+ {
+  "label": "the reference waveform ignores its own amplitude",
+  "old": "        self.amplitude * (TAU * self.f_hz * t_s + self.phase0).cos()",
+  "new": "        (TAU * self.f_hz * t_s + self.phase0).cos()"
+ },
+ {
+  "label": "the aliasing guard multiplies the frequency by the tick instead of inverting it",
+  "old": "        let tpc = 1.0 / (osc.f_hz * dt);",
+  "new": "        let tpc = osc.f_hz * dt;"
+ },
+ {
+  "label": "exactly two ticks per cycle is refused",
+  "old": "        if !(tpc >= 2.0) {",
+  "new": "        if !(tpc > 2.0) {"
+ },
+ {
+  "label": "one tick per cycle is accepted, so an aliased phase is encoded",
+  "old": "        if !(tpc >= 2.0) {",
+  "new": "        if !(tpc >= 1.0) {"
+ },
+ {
+  "label": "the ticks per cycle divide the frequency by the tick",
+  "old": "        1.0 / (self.osc.f_hz * self.dt)\n    }",
+  "new": "        self.osc.f_hz / self.dt\n    }"
+ },
+ {
+  "label": "the phase quantisation is a whole tick rather than half of one",
+  "old": "        0.5 / self.ticks_per_cycle()",
+  "new": "        1.0 / self.ticks_per_cycle()"
+ },
+ {
+  "label": "the encoder adds the reference phase it should remove",
+  "old": "        let frac = (x - self.osc.phase0 / TAU).rem_euclid(1.0);",
+  "new": "        let frac = (x + self.osc.phase0 / TAU).rem_euclid(1.0);"
+ },
+ {
+  "label": "the reference phase is treated as though it were already in turns",
+  "old": "        let frac = (x - self.osc.phase0 / TAU).rem_euclid(1.0);",
+  "new": "        let frac = (x - self.osc.phase0 * TAU).rem_euclid(1.0);"
+ },
+ {
+  "label": "the phase runs backwards within the cycle",
+  "old": "        let t = ((cycle as f64 + frac) * tpc).round();",
+  "new": "        let t = ((cycle as f64 - frac) * tpc).round();"
+ },
+ {
+  "label": "the spike tick is truncated rather than rounded",
+  "old": "        let t = ((cycle as f64 + frac) * tpc).round();",
+  "new": "        let t = ((cycle as f64 + frac) * tpc).floor();"
+ },
+ {
+  "label": "an unrepresentable spike tick is cast rather than refused",
+  "old": "        if !t.is_finite() || t < 0.0 || t >= 9.0e18 {",
+  "new": "        if !t.is_finite() || t < 0.0 {"
+ },
+ {
+  "label": "the decoded phase multiplies by the cycle length rather than dividing",
+  "old": "        let frac = (t as f64 / tpc).rem_euclid(1.0);",
+  "new": "        let frac = (t as f64 * tpc).rem_euclid(1.0);"
+ },
+ {
+  "label": "the decoder removes the reference phase it should add",
+  "old": "        (frac + self.osc.phase0 / TAU).rem_euclid(1.0)",
+  "new": "        (frac - self.osc.phase0 / TAU).rem_euclid(1.0)"
+ },
+ {
+  "label": "a line that never fired decodes to zero rather than to nothing",
+  "old": "        let mut out = vec![None; n];",
+  "new": "        let mut out = vec![Some(0.0); n];"
+ },
+ {
+  "label": "the phase decoder keeps each source's last spike rather than its first",
+  "old": "            if i < n && out[i].is_none() {",
+  "new": "            if i < n {"
+ },
+ {
+  "label": "the burst code's capacity forgets that zero is one of its values",
+  "old": "        (f64::from(self.max_spikes) + 1.0).log2()",
+  "new": "        f64::from(self.max_spikes).log2()"
+ },
+ {
+  "label": "the burst quantisation is a whole step rather than half of one",
+  "old": "        0.5 / f64::from(self.max_spikes)",
+  "new": "        1.0 / f64::from(self.max_spikes)"
+ },
+ {
+  "label": "the stride leaves room for one spike too many",
+  "old": "        u64::from(self.max_spikes - 1) * self.intra_ticks + self.gap_ticks\n    }",
+  "new": "        u64::from(self.max_spikes) * self.intra_ticks + self.gap_ticks\n    }"
+ },
+ {
+  "label": "the stride separates two bursts by an intra-burst interval",
+  "old": "        u64::from(self.max_spikes - 1) * self.intra_ticks + self.gap_ticks\n    }",
+  "new": "        u64::from(self.max_spikes - 1) * self.intra_ticks + self.intra_ticks\n    }"
+ },
+ {
+  "label": "the spike count is truncated rather than rounded to the nearest",
+  "old": "        Ok((x * f64::from(self.max_spikes)).round() as u32)",
+  "new": "        Ok((x * f64::from(self.max_spikes)).floor() as u32)"
+ },
+ {
+  "label": "the spike count is one too many",
+  "old": "        Ok((x * f64::from(self.max_spikes)).round() as u32)",
+  "new": "        Ok((x * f64::from(self.max_spikes)).round() as u32 + 1)"
+ },
+ {
+  "label": "a burst longer than full scale is not saturated",
+  "old": "        (f64::from(k) / f64::from(self.max_spikes)).min(1.0)",
+  "new": "        f64::from(k) / f64::from(self.max_spikes)"
+ },
+ {
+  "label": "the value of a burst inverts its ratio",
+  "old": "        (f64::from(k) / f64::from(self.max_spikes)).min(1.0)",
+  "new": "        (f64::from(self.max_spikes) / f64::from(k)).min(1.0)"
+ },
+ {
+  "label": "the first burst of a sequence is one stride late",
+  "old": "            let base = start_tick + self.stride_ticks() * j as u64;",
+  "new": "            let base = start_tick + self.stride_ticks() * (j as u64 + 1);"
+ },
+ {
+  "label": "the spikes within a sequenced burst are one tick apart",
+  "old": "                spikes.push(Spike { t: base + self.intra_ticks * s, source });",
+  "new": "                spikes.push(Spike { t: base + s, source });"
+ },
+ {
+  "label": "a parallel burst puts all of its spikes on one tick",
+  "old": "                spikes.push(Spike { t: start_tick + self.intra_ticks * s, source: i as u32 });",
+  "new": "                spikes.push(Spike { t: start_tick, source: i as u32 });"
+ },
+ {
+  "label": "two bursts exactly one gap apart are merged into one",
+  "old": "                Some(b) if s.t - b.end < self.gap_ticks => {",
+  "new": "                Some(b) if s.t - b.end <= self.gap_ticks => {"
+ },
+ {
+  "label": "the gap is measured from the burst's start rather than its end",
+  "old": "                Some(b) if s.t - b.end < self.gap_ticks => {",
+  "new": "                Some(b) if s.t - b.start < self.gap_ticks => {"
+ },
+ {
+  "label": "a burst's end never advances past its first spike",
+  "old": "                    b.end = s.t;\n                    b.spikes += 1;",
+  "new": "                    b.spikes += 1;"
+ },
+ {
+  "label": "a burst's spikes are not counted",
+  "old": "                    b.end = s.t;\n                    b.spikes += 1;",
+  "new": "                    b.end = s.t;"
+ },
+ {
+  "label": "a newly detected burst starts with no spikes in it",
+  "old": "                _ => out.push(Burst { start: s.t, end: s.t, spikes: 1 }),",
+  "new": "                _ => out.push(Burst { start: s.t, end: s.t, spikes: 0 }),"
+ },
+ {
+  "label": "the scheduled window is as long as the spike count rather than the burst",
+  "old": "        let span = u64::from(self.max_spikes - 1) * self.intra_ticks;",
+  "new": "        let span = u64::from(self.max_spikes - 1);"
+ },
+ {
+  "label": "a spike exactly on the schedule's first tick is discarded",
+  "old": "            if s.t < start_tick {",
+  "new": "            if s.t <= start_tick {"
+ },
+ {
+  "label": "the scheduled slot is found by the intra-burst interval",
+  "old": "            let slot = (rel / self.stride_ticks()) as usize;",
+  "new": "            let slot = (rel / self.intra_ticks) as usize;"
+ },
+ {
+  "label": "the last spike of a full-scale burst falls outside its own window",
+  "old": "            if slot < count && rel - (slot as u64) * self.stride_ticks() <= span {",
+  "new": "            if slot < count && rel - (slot as u64) * self.stride_ticks() < span {"
+ },
+ {
+  "label": "the scheduled decoder counts one spike per window however many arrive",
+  "old": "                out[slot] += 1;",
+  "new": "                out[slot] = 1;"
+ },
+ {
+  "label": "a burst code with no spikes at full scale is accepted",
+  "old": "        if max_spikes == 0 {",
+  "new": "        if false {"
+ },
+ {
+  "label": "a zero intra-burst interval is accepted",
+  "old": "        if intra_ticks == 0 {",
+  "new": "        if false {"
+ },
+ {
+  "label": "a gap equal to an intra-burst interval is accepted",
+  "old": "        if gap_ticks <= intra_ticks {",
+  "new": "        if gap_ticks < intra_ticks {"
+ },
+ {
+  "label": "the root-mean-square error is a mean square",
+  "old": "    Some((acc / a.len() as f64).sqrt())",
+  "new": "    Some(acc / a.len() as f64)"
+ },
+ {
+  "label": "the root-mean-square error is not averaged over the record",
+  "old": "    Some((acc / a.len() as f64).sqrt())",
+  "new": "    Some(acc.sqrt())"
+ },
+ {
+  "label": "the error accumulates the signed difference rather than its square",
+  "old": "        let d = x - y;\n        acc += d * d;",
+  "new": "        let d = x - y;\n        acc += d;"
+ },
+ {
+  "label": "an empty record is scored rather than refused",
+  "old": "    if a.len() != b.len() || a.is_empty() {",
+  "new": "    if a.len() != b.len() {"
+ },
+ {
+  "label": "a non-finite sample is scored unless both records are non-finite",
+  "old": "        if !x.is_finite() || !y.is_finite() {\n            return None;\n        }",
+  "new": "        if !x.is_finite() && !y.is_finite() {\n            return None;\n        }"
+ },
+ {
+  "label": "the BSA firing test is inverted",
+  "old": "            if e1 <= e2 - self.threshold {",
+  "new": "            if e1 >= e2 - self.threshold {"
+ },
+ {
+  "label": "the BSA threshold makes firing easier rather than harder",
+  "old": "            if e1 <= e2 - self.threshold {",
+  "new": "            if e1 <= e2 + self.threshold {"
+ },
+ {
+  "label": "the error if it fires adds the filter instead of subtracting it",
+  "old": "                e1 += (s[t + k] - self.filter[k]).abs();",
+  "new": "                e1 += (s[t + k] + self.filter[k]).abs();"
+ },
+ {
+  "label": "the error if it does not fire is signed rather than absolute",
+  "old": "                e2 += s[t + k].abs();",
+  "new": "                e2 += s[t + k];"
+ },
+ {
+  "label": "BSA adds the filter to the residual it fired against",
+  "old": "            if e1 <= e2 - self.threshold {\n                out[t] = true;\n                for k in 0..m {\n                    if t + k >= n {\n                        break;\n                    }\n                    s[t + k] -= self.filter[k];",
+  "new": "            if e1 <= e2 - self.threshold {\n                out[t] = true;\n                for k in 0..m {\n                    if t + k >= n {\n                        break;\n                    }\n                    s[t + k] += self.filter[k];"
+ },
+ {
+  "label": "BSA searches against an empty residual rather than the signal",
+  "old": "        let mut s = signal.to_vec();\n        let mut out = vec![false; n];\n        for t in 0..n {\n            let mut e1 = 0.0;",
+  "new": "        let mut s = vec![0.0; n];\n        let mut out = vec![false; n];\n        for t in 0..n {\n            let mut e1 = 0.0;"
+ },
+ {
+  "label": "an empty BSA filter is accepted",
+  "old": "        if filter.is_empty() {\n            return Err(CodeError::Empty { what: \"filter\" });\n        }\n        check_finite(\"filter tap\", &filter)?;\n        check_finite(\"threshold\", &[threshold])?;\n        Ok(Self { filter, threshold })",
+  "new": "        check_finite(\"filter tap\", &filter)?;\n        check_finite(\"threshold\", &[threshold])?;\n        Ok(Self { filter, threshold })"
+ },
+ {
+  "label": "a non-finite BSA filter tap is accepted",
+  "old": "        check_finite(\"filter tap\", &filter)?;\n        check_finite(\"threshold\", &[threshold])?;\n        Ok(Self { filter, threshold })",
+  "new": "        check_finite(\"threshold\", &[threshold])?;\n        Ok(Self { filter, threshold })"
+ },
+ {
+  "label": "the deficit measures how far the residual pokes above the filter",
+  "old": "                deficit += (self.filter[k] - s[t + k]).max(0.0);",
+  "new": "                deficit += (s[t + k] - self.filter[k]).max(0.0);"
+ },
+ {
+  "label": "the deficit lets a covered sample pay for an uncovered one",
+  "old": "                deficit += (self.filter[k] - s[t + k]).max(0.0);",
+  "new": "                deficit += self.filter[k] - s[t + k];"
+ },
+ {
+  "label": "a filter that fits exactly does not fire",
+  "old": "            if deficit <= self.threshold {",
+  "new": "            if deficit < self.threshold {"
+ },
+ {
+  "label": "a negative HSA tolerance is accepted",
+  "old": "        if threshold < 0.0 {",
+  "new": "        if false {"
+ },
+ {
+  "label": "the never-over-reconstruct guarantee is claimed for a relaxed threshold",
+  "old": "        self.threshold == 0.0\n    }",
+  "new": "        self.threshold >= 0.0\n    }"
+ },
+ {
+  "label": "HSA adds the filter to the residual it fired against",
+  "old": "            if deficit <= self.threshold {\n                out[t] = true;\n                for k in 0..m {\n                    if t + k >= n {\n                        break;\n                    }\n                    s[t + k] -= self.filter[k];",
+  "new": "            if deficit <= self.threshold {\n                out[t] = true;\n                for k in 0..m {\n                    if t + k >= n {\n                        break;\n                    }\n                    s[t + k] += self.filter[k];"
+ },
+ {
+  "label": "a zero threshold is accepted",
+  "old": "        if !threshold.is_finite() || threshold <= 0.0 {",
+  "new": "        if !threshold.is_finite() || threshold < 0.0 {"
+ },
+ {
+  "label": "a zero-length moving window is accepted",
+  "old": "        if let ContrastMode::MovingWindow { window } = mode\n            && window == 0\n        {",
+  "new": "        if let ContrastMode::MovingWindow { window } = mode\n            && window == 1\n        {"
+ },
+ {
+  "label": "the statistical threshold is computed from a single sample",
+  "old": "        if signal.len() < 2 {",
+  "new": "        if signal.len() < 1 {"
+ },
+ {
+  "label": "the statistical threshold averages signed differences",
+  "old": "        let d: Vec<f64> = signal.windows(2).map(|w| (w[1] - w[0]).abs()).collect();",
+  "new": "        let d: Vec<f64> = signal.windows(2).map(|w| w[1] - w[0]).collect();"
+ },
+ {
+  "label": "the statistical threshold's spread term is a variance rather than a deviation",
+  "old": "        let th = mean + factor * var.sqrt();",
+  "new": "        let th = mean + factor * var;"
+ },
+ {
+  "label": "the statistical threshold subtracts its spread",
+  "old": "        let th = mean + factor * var.sqrt();",
+  "new": "        let th = mean - factor * var.sqrt();"
+ },
+ {
+  "label": "the factor multiplies the mean rather than the spread",
+  "old": "        let th = mean + factor * var.sqrt();",
+  "new": "        let th = factor * mean + var.sqrt();"
+ },
+ {
+  "label": "a constant signal is given a threshold of zero rather than a refusal",
+  "old": "        if !(th > 0.0) {\n            return Err(CodeError::NoEvidence { what: \"a usable threshold (the signal does not change)\" });\n        }",
+  "new": "        if th < 0.0 {\n            return Err(CodeError::NoEvidence { what: \"a usable threshold (the signal does not change)\" });\n        }"
+ },
+ {
+  "label": "a non-finite sample reaches the threshold statistics",
+  "old": "        check_finite(\"signal sample\", signal)?;\n        check_finite(\"factor\", &[factor])?;",
+  "new": "        check_finite(\"factor\", &[factor])?;"
+ },
+ {
+  "label": "step-forward's baseline jumps to the sample rather than advancing one threshold",
+  "old": "                        base += self.threshold;",
+  "new": "                        base = signal[t];"
+ },
+ {
+  "label": "step-forward's baseline moves up on a falling event",
+  "old": "                        base -= self.threshold;",
+  "new": "                        base += self.threshold;"
+ },
+ {
+  "label": "step-forward's reference starts at zero rather than at the first sample",
+  "old": "                let mut base = signal[0];",
+  "new": "                let mut base = 0.0;"
+ },
+ {
+  "label": "step-forward fires only strictly above its threshold",
+  "old": "                    // is exactly what a synthetic test signal does.\n                    if signal[t] - base >= self.threshold {",
+  "new": "                    // is exactly what a synthetic test signal does.\n                    if signal[t] - base > self.threshold {"
+ },
+ {
+  "label": "a falling step-forward event is reported as a rise",
+  "old": "                        out.push(Event { t: t as u64, address, polarity: Polarity::Off });\n                    }\n                }\n            }\n            ContrastMode::MovingWindow { window } => {",
+  "new": "                        out.push(Event { t: t as u64, address, polarity: Polarity::On });\n                    }\n                }\n            }\n            ContrastMode::MovingWindow { window } => {"
+ },
+ {
+  "label": "the moving-window baseline is a sum rather than a mean",
+  "old": "                    let base = signal[lo..t].iter().sum::<f64>() / (t - lo) as f64;",
+  "new": "                    let base = signal[lo..t].iter().sum::<f64>();"
+ },
+ {
+  "label": "the moving window fires on any rise at all",
+  "old": "                    if signal[t] - base >= self.threshold {\n                        out.push(Event { t: t as u64, address, polarity: Polarity::On });\n                    } else if signal[t] - base <= -self.threshold {\n                        out.push(Event { t: t as u64, address, polarity: Polarity::Off });\n                    }\n                }\n            }\n            ContrastMode::ThresholdBased => {",
+  "new": "                    if signal[t] - base >= 0.0 {\n                        out.push(Event { t: t as u64, address, polarity: Polarity::On });\n                    } else if signal[t] - base <= -self.threshold {\n                        out.push(Event { t: t as u64, address, polarity: Polarity::Off });\n                    }\n                }\n            }\n            ContrastMode::ThresholdBased => {"
+ },
+ {
+  "label": "threshold-based differences against the first sample rather than the previous one",
+  "old": "                    let d = signal[t] - signal[t - 1];",
+  "new": "                    let d = signal[t] - signal[0];"
+ },
+ {
+  "label": "threshold-based encodes from the first sample, which has no predecessor",
+  "old": "            ContrastMode::ThresholdBased => {\n                for t in 1..signal.len() {",
+  "new": "            ContrastMode::ThresholdBased => {\n                for t in 0..signal.len() {"
+ },
+ {
+  "label": "the reconstruction starts from zero rather than from the level it was given",
+  "old": "        let mut out = vec![start; samples];",
+  "new": "        let mut out = vec![0.0; samples];"
+ },
+ {
+  "label": "the reconstruction steps against the polarity of its events",
+  "old": "            step[t] += e.polarity.sign() * self.threshold;",
+  "new": "            step[t] -= e.polarity.sign() * self.threshold;"
+ },
+ {
+  "label": "the reconstruction steps by twice the threshold",
+  "old": "            step[t] += e.polarity.sign() * self.threshold;",
+  "new": "            step[t] += 2.0 * e.polarity.sign() * self.threshold;"
+ },
+ {
+  "label": "several events on one sample overwrite each other instead of summing",
+  "old": "            step[t] += e.polarity.sign() * self.threshold;",
+  "new": "            step[t] = e.polarity.sign() * self.threshold;"
+ },
+ {
+  "label": "the decoder reconstructs from every channel it is handed",
+  "old": "        for e in events.iter().filter(|e| e.address == address) {",
+  "new": "        for e in events.iter() {"
+ },
+ {
+  "label": "the step-forward reconstruction holds instead of accumulating",
+  "old": "                for t in 1..samples {\n                    out[t] = out[t - 1] + step[t];\n                }",
+  "new": "                for t in 1..samples {\n                    out[t] = out[t - 1];\n                }"
+ },
+ {
+  "label": "the accumulator reads the sample it is about to write",
+  "old": "                for t in 1..samples {\n                    out[t] = out[t - 1] + step[t];\n                }",
+  "new": "                for t in 1..samples {\n                    out[t] = out[t] + step[t];\n                }"
+ },
+ {
+  "label": "the moving-window decoder's baseline is a sum rather than a mean",
+  "old": "                    let base = out[lo..t].iter().sum::<f64>() / (t - lo) as f64;",
+  "new": "                    let base = out[lo..t].iter().sum::<f64>();"
+ },
+ {
+  "label": "the empty-record early return is dropped",
+  "old": "        if samples == 0 {\n            return out;\n        }\n",
+  "new": "",
+  "equivalent": "with `samples == 0`, `out` is `vec![start; 0]` and `step` is `vec![0.0; 0]`, both empty. The event loop writes only where `t < samples`, which is false for every event, and each of the two reconstruction loops is `for t in 1..0`, which does not run. So the function returns the same empty vector whether it takes the early return or falls through, and `samples == 0` is the only state in which the removed branch is reachable at all."
+ }
+]

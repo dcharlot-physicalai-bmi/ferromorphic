@@ -1,0 +1,1148 @@
+[
+ {
+  "label": "the IF spelling the text format writes is not the one it parses",
+  "old": "            Self::If => \"IF\",",
+  "new": "            Self::If => \"If\","
+ },
+ {
+  "label": "CubaLIF is written with the reference implementation's capitalisation lost",
+  "old": "            Self::CubaLif => \"CubaLIF\",",
+  "new": "            Self::CubaLif => \"CubaLif\","
+ },
+ {
+  "label": "the two pooling nodes share one spelling",
+  "old": "            Self::SumPool2d => \"SumPool2d\",",
+  "new": "            Self::SumPool2d => \"AvgPool2d\","
+ },
+ {
+  "label": "the reader maps the thresholdless leaky integrator onto the spiking one",
+  "old": "            \"LI\" => Self::Li,",
+  "new": "            \"LI\" => Self::Lif,"
+ },
+ {
+  "label": "an unknown node type is read as an Input rather than refused",
+  "old": "            _ => return None,",
+  "new": "            _ => Self::Input,"
+ },
+ {
+  "label": "a spiking population is typed as emitting a continuous signal",
+  "old": "            Self::Lif(_) | Self::If(_) | Self::CubaLif(_) | Self::Threshold(_) => Signal::Spikes,",
+  "new": "            Self::If(_) | Self::CubaLif(_) | Self::Threshold(_) => Signal::Spikes,"
+ },
+ {
+  "label": "a stateless threshold is not typed as a spike source",
+  "old": "            Self::Lif(_) | Self::If(_) | Self::CubaLif(_) | Self::Threshold(_) => Signal::Spikes,",
+  "new": "            Self::Lif(_) | Self::If(_) | Self::CubaLif(_) => Signal::Spikes,"
+ },
+ {
+  "label": "every weight node and integrator is typed as a spike source",
+  "old": "            | Self::Li(_) => Signal::Continuous,",
+  "new": "            | Self::Li(_) => Signal::Spikes,"
+ },
+ {
+  "label": "a threshold accepts whatever it is given",
+  "old": "            Self::Threshold(_) => Signal::Continuous,\n            _ => Signal::Either,",
+  "new": "            Self::Threshold(_) => Signal::Either,\n            _ => Signal::Either,"
+ },
+ {
+  "label": "the signal check ignores a target that accepts either kind",
+  "old": "                if emitted != Signal::Either && required != Signal::Either && emitted != required {",
+  "new": "                if emitted != Signal::Either && emitted != required {"
+ },
+ {
+  "label": "the signal check fires on agreement rather than on disagreement",
+  "old": "                if emitted != Signal::Either && required != Signal::Either && emitted != required {",
+  "new": "                if emitted != Signal::Either && required != Signal::Either && emitted == required {"
+ },
+ {
+  "label": "the filter span counts every tap rather than the gaps between them",
+  "old": "    let span = dilation.saturating_mul(kernel - 1).saturating_add(1);",
+  "new": "    let span = dilation.saturating_mul(kernel).saturating_add(1);"
+ },
+ {
+  "label": "the filter span drops the tap the gaps hang off",
+  "old": "    let span = dilation.saturating_mul(kernel - 1).saturating_add(1);",
+  "new": "    let span = dilation.saturating_mul(kernel - 1);"
+ },
+ {
+  "label": "the filter span ignores the dilation",
+  "old": "    let span = dilation.saturating_mul(kernel - 1).saturating_add(1);",
+  "new": "    let span = (kernel - 1).saturating_add(1);"
+ },
+ {
+  "label": "padding is added at one end rather than at both",
+  "old": "    let padded = input.saturating_add(padding.saturating_mul(2));",
+  "new": "    let padded = input.saturating_add(padding);"
+ },
+ {
+  "label": "the doubling of the padding wraps instead of saturating",
+  "old": "    let padded = input.saturating_add(padding.saturating_mul(2));",
+  "new": "    let padded = input.saturating_add(padding * 2);"
+ },
+ {
+  "label": "a window that cannot be placed once wraps to an enormous output",
+  "old": "    if padded < span {\n        return 0;\n    }",
+  "new": "    if padded < span && stride == 0 {\n        return 0;\n    }"
+ },
+ {
+  "label": "the output length forgets the first placement of the window",
+  "old": "    (padded - span) / stride + 1",
+  "new": "    (padded - span) / stride"
+ },
+ {
+  "label": "the checked element count starts from zero",
+  "old": "    shape.iter().copied().try_fold(1usize, usize::checked_mul)",
+  "new": "    shape.iter().copied().try_fold(0usize, usize::checked_mul)"
+ },
+ {
+  "label": "the saturating element count wraps to zero after all",
+  "old": "    shape.iter().copied().fold(1usize, usize::saturating_mul)",
+  "new": "    shape.iter().copied().fold(1usize, usize::wrapping_mul)"
+ },
+ {
+  "label": "an Affine requires its output width on its input port",
+  "old": "            Self::Affine(x) => vec![x.cols],\n            Self::Linear(x) => vec![x.cols],",
+  "new": "            Self::Affine(x) => vec![x.rows],\n            Self::Linear(x) => vec![x.cols],"
+ },
+ {
+  "label": "an Affine emits its input width",
+  "old": "            Self::Affine(x) => vec![x.rows],\n            Self::Linear(x) => vec![x.rows],",
+  "new": "            Self::Affine(x) => vec![x.cols],\n            Self::Linear(x) => vec![x.rows],"
+ },
+ {
+  "label": "a one-dimensional convolution emits its input channel count",
+  "old": "                vec![x.out_channels, conv_dim(x.length, x.padding, x.dilation, x.kernel, x.stride)]",
+  "new": "                vec![x.in_channels, conv_dim(x.length, x.padding, x.dilation, x.kernel, x.stride)]"
+ },
+ {
+  "label": "the width axis of a convolution is strided by the height's step",
+  "old": "                conv_dim(x.size[1], x.padding[1], x.dilation[1], x.kernel[1], x.stride[1]),\n            ],\n            Self::SumPool2d(x) | Self::AvgPool2d(x) => vec![",
+  "new": "                conv_dim(x.size[1], x.padding[1], x.dilation[1], x.kernel[1], x.stride[0]),\n            ],\n            Self::SumPool2d(x) | Self::AvgPool2d(x) => vec!["
+ },
+ {
+  "label": "pooling is computed with a dilation of two",
+  "old": "                conv_dim(x.size[0], x.padding[0], 1, x.kernel[0], x.stride[0]),\n                conv_dim(x.size[1], x.padding[1], 1, x.kernel[1], x.stride[1]),",
+  "new": "                conv_dim(x.size[0], x.padding[0], 2, x.kernel[0], x.stride[0]),\n                conv_dim(x.size[1], x.padding[1], 2, x.kernel[1], x.stride[1]),"
+ },
+ {
+  "label": "pooling mixes its channels into the spatial axes",
+  "old": "            Self::SumPool2d(x) | Self::AvgPool2d(x) => vec![\n                x.channels,",
+  "new": "            Self::SumPool2d(x) | Self::AvgPool2d(x) => vec![\n                x.channels * x.kernel[0],"
+ },
+ {
+  "label": "a flatten collapses one axis fewer than it was asked for",
+  "old": "                    out.push(product(&x.size[x.start_dim..=x.end_dim]));",
+  "new": "                    out.push(product(&x.size[x.start_dim..x.end_dim]));"
+ },
+ {
+  "label": "a flatten keeps the first collapsed axis as well as the collapsed run",
+  "old": "                    let mut out: Vec<usize> = x.size[..x.start_dim].to_vec();",
+  "new": "                    let mut out: Vec<usize> = x.size[..=x.start_dim].to_vec();"
+ },
+ {
+  "label": "a flatten repeats the last collapsed axis after the run",
+  "old": "                    out.extend_from_slice(&x.size[x.end_dim + 1..]);",
+  "new": "                    out.extend_from_slice(&x.size[x.end_dim..]);"
+ },
+ {
+  "label": "the malformed-range branch also swallows the start == end case",
+  "old": "                if x.start_dim > x.end_dim || x.end_dim >= x.size.len() {",
+  "new": "                if x.start_dim >= x.end_dim || x.end_dim >= x.size.len() {",
+  "equivalent": "collapsing a single axis is the identity on the shape, so the two branches compute the same vector when start_dim == end_dim. The general branch builds size[..start] ++ [product(size[start..=start])] ++ size[start+1..], and product over a one-element slice is that element, so the result is size itself — exactly what the malformed branch returns by cloning. The only case the `>=` newly captures is start_dim == end_dim, so no input can distinguish them and `flatten_preserves_the_element_count` checks (0, 0) against [2, 3, 4] either way."
+ },
+ {
+  "label": "an affine drops its bias",
+  "old": "        let mut y = self.bias.clone();",
+  "new": "        let mut y = vec![0.0; self.rows];"
+ },
+ {
+  "label": "an affine's row accumulator is overwritten by each term",
+  "old": "            let mut acc = y[i];\n            for j in 0..self.cols {\n                acc += row[j] * x[j];",
+  "new": "            let mut acc = y[i];\n            for j in 0..self.cols {\n                acc = row[j] * x[j];"
+ },
+ {
+  "label": "a linear's row accumulator is overwritten by each term",
+  "old": "            let mut acc = 0.0;\n            for j in 0..self.cols {\n                acc += row[j] * x[j];",
+  "new": "            let mut acc = 0.0;\n            for j in 0..self.cols {\n                acc = row[j] * x[j];"
+ },
+ {
+  "label": "an affine reads its weights column-major",
+  "old": "            let row = &self.weight[i * self.cols..(i + 1) * self.cols];\n            let mut acc = y[i];",
+  "new": "            let row = &self.weight[i..i + self.cols];\n            let mut acc = y[i];"
+ },
+ {
+  "label": "an affine's cell count wraps rather than refusing",
+  "old": "        let cells = self.rows.checked_mul(self.cols)?;\n        if x.len() != self.cols || self.weight.len() != cells || self.bias.len() != self.rows {",
+  "new": "        let cells = self.rows.wrapping_mul(self.cols);\n        if x.len() != self.cols || self.weight.len() != cells || self.bias.len() != self.rows {"
+ },
+ {
+  "label": "an affine accepts an input of any width",
+  "old": "        if x.len() != self.cols || self.weight.len() != cells || self.bias.len() != self.rows {",
+  "new": "        if self.weight.len() != cells || self.bias.len() != self.rows {"
+ },
+ {
+  "label": "a synapse that still filters is reduced away as instantaneous",
+  "old": "        if !self.tau_syn.iter().all(|&t| t == 0.0) {\n            return None;\n        }",
+  "new": "        if !self.tau_syn.iter().all(|&t| t.abs() < 1e-9) {\n            return None;\n        }"
+ },
+ {
+  "label": "the reduction never checks that the synapse is instantaneous",
+  "old": "        if !self.tau_syn.iter().all(|&t| t == 0.0) {\n            return None;\n        }",
+  "new": "        if false {\n            return None;\n        }"
+ },
+ {
+  "label": "the reduction drops the gain instead of folding it into the resistance",
+  "old": "            r.push(self.r[k] * self.w_in[k]);",
+  "new": "            r.push(self.r[k]);"
+ },
+ {
+  "label": "the reduced LIF keeps the synaptic time constant as its membrane one",
+  "old": "            tau: self.tau_mem.clone(),",
+  "new": "            tau: self.tau_syn.clone(),"
+ },
+ {
+  "label": "the reduced LIF rests at its threshold",
+  "old": "            v_leak: self.v_leak.clone(),\n            v_threshold: self.v_threshold.clone(),\n            v_reset: self.v_reset.clone(),\n        })",
+  "new": "            v_leak: self.v_threshold.clone(),\n            v_threshold: self.v_threshold.clone(),\n            v_reset: self.v_reset.clone(),\n        })"
+ },
+ {
+  "label": "an element starts at zero volts rather than at rest",
+  "old": "            i_syn: 0.0,\n            v: self.v_leak[k],",
+  "new": "            i_syn: 0.0,\n            v: 0.0,"
+ },
+ {
+  "label": "an element starts with a synaptic current already flowing",
+  "old": "            i_syn: 0.0,\n            v: self.v_leak[k],",
+  "new": "            i_syn: 1e-9,\n            v: self.v_leak[k],"
+ },
+ {
+  "label": "an element's two time constants are swapped on the way out of the node",
+  "old": "            tau_syn: self.tau_syn[k],\n            tau_mem: self.tau_mem[k],",
+  "new": "            tau_syn: self.tau_mem[k],\n            tau_mem: self.tau_syn[k],"
+ },
+ {
+  "label": "the closed form ignores the input gain",
+  "old": "        let a = s.w_in * u;\n        let em = (-t / s.tau_mem).exp();",
+  "new": "        let a = u;\n        let em = (-t / s.tau_mem).exp();"
+ },
+ {
+  "label": "the closed form's membrane exponential grows",
+  "old": "        let a = s.w_in * u;\n        let em = (-t / s.tau_mem).exp();",
+  "new": "        let a = s.w_in * u;\n        let em = (t / s.tau_mem).exp();"
+ },
+ {
+  "label": "the instantaneous-synapse limit is divided for rather than substituted",
+  "old": "        let es = if s.tau_syn == 0.0 { 0.0 } else { (-t / s.tau_syn).exp() };",
+  "new": "        let es = (-t / s.tau_syn).exp();"
+ },
+ {
+  "label": "the instantaneous-synapse limit substitutes one for its exponential",
+  "old": "        let es = if s.tau_syn == 0.0 { 0.0 } else { (-t / s.tau_syn).exp() };",
+  "new": "        let es = if s.tau_syn == 0.0 { 1.0 } else { (-t / s.tau_syn).exp() };",
+  "equivalent": "at tau_syn == 0 the value substituted here cannot reach the answer, because the only place `es` is used in this function is the cross term, whose factor is tau_syn / (tau_syn - tau_mem) = ±0.0 / -tau_mem = ∓0.0 exactly — tau_mem is guarded strictly positive above. Any FINITE es therefore gives ∓0.0 * (es - em) = ∓0.0, and bracket = 1 - em - (∓0.0) is 1 - em bit for bit, since x - (-0.0) = x + 0.0 = x and x - 0.0 = x for every finite x including 0.0 itself. What the substitution is for is the NaN: exp(-0/0) is NaN and 0 * NaN is NaN, which is the entry above this one and is caught. The step_exact twin is NOT equivalent, because there `es` also multiplies into i_syn."
+ },
+ {
+  "label": "the degenerate alpha branch is never taken",
+  "old": "        let bracket = if (s.tau_syn - s.tau_mem).abs() <= 1e-12 * s.tau_mem {",
+  "new": "        let bracket = if (s.tau_syn - s.tau_mem).abs() < 0.0 {"
+ },
+ {
+  "label": "every closed form is evaluated as the alpha function",
+  "old": "        let bracket = if (s.tau_syn - s.tau_mem).abs() <= 1e-12 * s.tau_mem {",
+  "new": "        let bracket = if true {"
+ },
+ {
+  "label": "the alpha function's linear term is added rather than subtracted",
+  "old": "            1.0 - em - (t / s.tau_mem) * em",
+  "new": "            1.0 - em + (t / s.tau_mem) * em"
+ },
+ {
+  "label": "the alpha function loses its linear term and becomes the LIF response",
+  "old": "            1.0 - em - (t / s.tau_mem) * em",
+  "new": "            1.0 - em"
+ },
+ {
+  "label": "the cross term is scaled by the membrane constant rather than the synaptic one",
+  "old": "            1.0 - em - (s.tau_syn / (s.tau_syn - s.tau_mem)) * (es - em)",
+  "new": "            1.0 - em - (s.tau_mem / (s.tau_syn - s.tau_mem)) * (es - em)"
+ },
+ {
+  "label": "the cross term's two exponentials are subtracted the other way round",
+  "old": "            1.0 - em - (s.tau_syn / (s.tau_syn - s.tau_mem)) * (es - em)",
+  "new": "            1.0 - em - (s.tau_syn / (s.tau_syn - s.tau_mem)) * (em - es)"
+ },
+ {
+  "label": "the closed form's membrane term is added rather than subtracted",
+  "old": "            1.0 - em - (s.tau_syn / (s.tau_syn - s.tau_mem)) * (es - em)",
+  "new": "            1.0 + em - (s.tau_syn / (s.tau_syn - s.tau_mem)) * (es - em)"
+ },
+ {
+  "label": "the closed form forgets the resting potential it starts from",
+  "old": "        Some(s.v_leak + s.r * a * bracket)",
+  "new": "        Some(s.r * a * bracket)"
+ },
+ {
+  "label": "the closed form drops the input from its amplitude",
+  "old": "        Some(s.v_leak + s.r * a * bracket)",
+  "new": "        Some(s.v_leak + s.r * bracket)"
+ },
+ {
+  "label": "the closed form is evaluated for a membrane constant of zero",
+  "old": "        if !t.is_finite() || t < 0.0 || !u.is_finite() || !(s.tau_mem > 0.0) || s.tau_syn < 0.0 {",
+  "new": "        if !t.is_finite() || t < 0.0 || !u.is_finite() || s.tau_mem < 0.0 || s.tau_syn < 0.0 {"
+ },
+ {
+  "label": "a negative step integrates the propagator backwards",
+  "old": "        if !(dt > 0.0)\n            || !dt.is_finite()",
+  "new": "        if dt.is_nan()\n            || !dt.is_finite()"
+ },
+ {
+  "label": "a non-finite input poisons the membrane instead of being refused",
+  "old": "            || !dt.is_finite()\n            || !u.is_finite()",
+  "new": "            || !dt.is_finite()\n            || !u.is_finite() && false"
+ },
+ {
+  "label": "a NaN synaptic time constant slips past the propagator's guard",
+  "old": "            || !(self.tau_syn >= 0.0)",
+  "new": "            || self.tau_syn < 0.0"
+ },
+ {
+  "label": "an infinite synaptic time constant is integrated",
+  "old": "            || !(self.tau_syn >= 0.0)\n            || !self.tau_syn.is_finite()",
+  "new": "            || !(self.tau_syn >= 0.0)"
+ },
+ {
+  "label": "a zero membrane time constant is integrated",
+  "old": "            || !(self.tau_mem > 0.0)",
+  "new": "            || self.tau_mem < 0.0"
+ },
+ {
+  "label": "the propagator's input gain is dropped",
+  "old": "        let a = self.w_in * u;\n        let b = self.i_syn - a;",
+  "new": "        let a = u;\n        let b = self.i_syn - a;"
+ },
+ {
+  "label": "the propagator's transient amplitude is the sum of the current and its steady state",
+  "old": "        let a = self.w_in * u;\n        let b = self.i_syn - a;",
+  "new": "        let a = self.w_in * u;\n        let b = self.i_syn + a;"
+ },
+ {
+  "label": "the propagator's membrane exponential grows",
+  "old": "        let em = (-dt / self.tau_mem).exp();",
+  "new": "        let em = (dt / self.tau_mem).exp();"
+ },
+ {
+  "label": "the propagator divides for the instantaneous-synapse limit rather than substituting it",
+  "old": "        let es = if self.tau_syn == 0.0 { 0.0 } else { (-dt / self.tau_syn).exp() };",
+  "new": "        let es = (-dt / self.tau_syn).exp();"
+ },
+ {
+  "label": "an instantaneous synapse holds its old current instead of tracking the input",
+  "old": "        let es = if self.tau_syn == 0.0 { 0.0 } else { (-dt / self.tau_syn).exp() };",
+  "new": "        let es = if self.tau_syn == 0.0 { 1.0 } else { (-dt / self.tau_syn).exp() };"
+ },
+ {
+  "label": "the propagator's degenerate branch is never taken",
+  "old": "        let cross = if (self.tau_syn - self.tau_mem).abs() <= 1e-12 * self.tau_mem {",
+  "new": "        let cross = if (self.tau_syn - self.tau_mem).abs() < 0.0 {"
+ },
+ {
+  "label": "every step is propagated with the alpha-function cross term",
+  "old": "        let cross = if (self.tau_syn - self.tau_mem).abs() <= 1e-12 * self.tau_mem {",
+  "new": "        let cross = if true {"
+ },
+ {
+  "label": "the degenerate cross term loses its decay",
+  "old": "            (dt / self.tau_mem) * em\n        } else {",
+  "new": "            (dt / self.tau_mem)\n        } else {"
+ },
+ {
+  "label": "the propagator's cross term is scaled by the membrane constant",
+  "old": "            (self.tau_syn / (self.tau_syn - self.tau_mem)) * (es - em)",
+  "new": "            (self.tau_mem / (self.tau_syn - self.tau_mem)) * (es - em)"
+ },
+ {
+  "label": "the propagator's cross term subtracts its exponentials the other way round",
+  "old": "            (self.tau_syn / (self.tau_syn - self.tau_mem)) * (es - em)",
+  "new": "            (self.tau_syn / (self.tau_syn - self.tau_mem)) * (em - es)"
+ },
+ {
+  "label": "the steady state is measured against the synaptic current rather than the input",
+  "old": "        let v_inf = self.v_leak + self.r * a;",
+  "new": "        let v_inf = self.v_leak + self.r * self.i_syn;"
+ },
+ {
+  "label": "the input hyperpolarises the steady state",
+  "old": "        let v_inf = self.v_leak + self.r * a;",
+  "new": "        let v_inf = self.v_leak - self.r * a;"
+ },
+ {
+  "label": "the membrane update is regrouped around v_leak, so the LIF reduction is no longer bit for bit",
+  "old": "        self.v = v_inf + (self.v - v_inf) * em + self.r * b * cross;",
+  "new": "        self.v = self.v_leak + (self.v - self.v_leak) * em + self.r * a * (1.0 - em) + self.r * b * cross;"
+ },
+ {
+  "label": "the membrane never sees the synaptic transient",
+  "old": "        self.v = v_inf + (self.v - v_inf) * em + self.r * b * cross;",
+  "new": "        self.v = v_inf + (self.v - v_inf) * em;"
+ },
+ {
+  "label": "the synaptic transient reaches the membrane without the input resistance",
+  "old": "        self.v = v_inf + (self.v - v_inf) * em + self.r * b * cross;",
+  "new": "        self.v = v_inf + (self.v - v_inf) * em + b * cross;"
+ },
+ {
+  "label": "the membrane relaxes toward its steady state without decaying from where it was",
+  "old": "        self.v = v_inf + (self.v - v_inf) * em + self.r * b * cross;",
+  "new": "        self.v = v_inf + self.r * b * cross;"
+ },
+ {
+  "label": "the synaptic current does not decay over the step",
+  "old": "        self.i_syn = a + b * es;",
+  "new": "        self.i_syn = a + b;"
+ },
+ {
+  "label": "the synaptic current forgets the level it is relaxing to",
+  "old": "        self.i_syn = a + b * es;",
+  "new": "        self.i_syn = b * es;"
+ },
+ {
+  "label": "the two state variables are written in the other order",
+  "old": "        self.v = v_inf + (self.v - v_inf) * em + self.r * b * cross;\n        self.i_syn = a + b * es;",
+  "new": "        self.i_syn = a + b * es;\n        self.v = v_inf + (self.v - v_inf) * em + self.r * b * cross;",
+  "equivalent": "neither statement reads what the other writes. The membrane line reads self.v, v_inf, em, self.r, b and cross; b was captured as self.i_syn - a BEFORE either line, so the membrane does not read the new i_syn. The current line reads a, b and es, and does not read self.v at all. Both orders therefore compute the same two values from the same inputs, bit for bit. The ordering that IS load-bearing in this crate is the alpha kernel's in `synapse`, where g's update reads x at the start of the step."
+ },
+ {
+  "label": "the threshold is crossed non-strictly, as this crate's Lif does",
+  "old": "        if self.v > self.v_threshold {",
+  "new": "        if self.v >= self.v_threshold {"
+ },
+ {
+  "label": "a spike resets the membrane to rest rather than to the reset potential",
+  "old": "        if self.v > self.v_threshold {\n            self.v = self.v_reset;",
+  "new": "        if self.v > self.v_threshold {\n            self.v = self.v_leak;"
+ },
+ {
+  "label": "a spike leaves the membrane above threshold",
+  "old": "        if self.v > self.v_threshold {\n            self.v = self.v_reset;\n            return true;",
+  "new": "        if self.v > self.v_threshold {\n            return true;"
+ },
+ {
+  "label": "a CubaLIF is declared jumpable across quiet ticks",
+  "old": "    const EXACT_OVER_GAPS: bool = false;",
+  "new": "    const EXACT_OVER_GAPS: bool = true;"
+ },
+ {
+  "label": "the trait's bump displaces the synaptic current rather than the membrane",
+  "old": "    fn bump(&mut self, dv: f64) {\n        if dv.is_finite() {\n            self.v += dv;\n        }\n    }",
+  "new": "    fn bump(&mut self, dv: f64) {\n        if dv.is_finite() {\n            self.i_syn += dv;\n        }\n    }"
+ },
+ {
+  "label": "a bump replaces the membrane potential instead of displacing it",
+  "old": "    fn bump(&mut self, dv: f64) {\n        if dv.is_finite() {\n            self.v += dv;\n        }\n    }",
+  "new": "    fn bump(&mut self, dv: f64) {\n        if dv.is_finite() {\n            self.v = dv;\n        }\n    }"
+ },
+ {
+  "label": "the reported potential is the synaptic current",
+  "old": "    fn potential(&self) -> f64 {\n        self.v\n    }",
+  "new": "    fn potential(&self) -> f64 {\n        self.i_syn\n    }"
+ },
+ {
+  "label": "a reset leaves the synaptic current where it was",
+  "old": "    fn reset(&mut self) {\n        self.v = self.v_leak;\n        self.i_syn = 0.0;\n    }",
+  "new": "    fn reset(&mut self) {\n        self.v = self.v_leak;\n    }"
+ },
+ {
+  "label": "a spike arriving at the synapse lands in the membrane instead",
+  "old": "    pub fn bump_current(&mut self, di: f64) {\n        if di.is_finite() {\n            self.i_syn += di;\n        }\n    }",
+  "new": "    pub fn bump_current(&mut self, di: f64) {\n        if di.is_finite() {\n            self.v += di;\n        }\n    }"
+ },
+ {
+  "label": "Kahn's algorithm walks every edge backwards",
+  "old": "            out[a].push(b);\n            indeg[b] += 1;",
+  "new": "            out[b].push(a);\n            indeg[a] += 1;"
+ },
+ {
+  "label": "a node's in-degree counts one edge however many arrive",
+  "old": "            out[a].push(b);\n            indeg[b] += 1;",
+  "new": "            out[a].push(b);\n            indeg[b] = 1;"
+ },
+ {
+  "label": "every graph reports a topological order",
+  "old": "        if order.len() == self.nodes.len() { Some(order) } else { None }",
+  "new": "        if order.len() <= self.nodes.len() { Some(order) } else { None }"
+ },
+ {
+  "label": "a node is ready before all of its inputs have settled",
+  "old": "                indeg[j] -= 1;\n                if indeg[j] == 0 {",
+  "new": "                indeg[j] -= 1;\n                if indeg[j] <= 1 {"
+ },
+ {
+  "label": "the duplicate-name scan never looks at the nodes already read",
+  "old": "            if self.nodes[..k].iter().any(|m| &m.name == name) {",
+  "new": "            if self.nodes[..0].iter().any(|m| &m.name == name) {"
+ },
+ {
+  "label": "a node name may hold whitespace",
+  "old": "        && !s.chars().any(|c| c.is_whitespace() || c == '=' || c == '#' || c.is_control())",
+  "new": "        && !s.chars().any(|c| c == '=' || c == '#' || c.is_control())"
+ },
+ {
+  "label": "a node name may hold the character that separates a key from its value",
+  "old": "        && !s.chars().any(|c| c.is_whitespace() || c == '=' || c == '#' || c.is_control())",
+  "new": "        && !s.chars().any(|c| c.is_whitespace() || c == '#' || c.is_control())"
+ },
+ {
+  "label": "a node name may hold the comment character",
+  "old": "        && !s.chars().any(|c| c.is_whitespace() || c == '=' || c == '#' || c.is_control())",
+  "new": "        && !s.chars().any(|c| c.is_whitespace() || c == '=' || c.is_control())"
+ },
+ {
+  "label": "an empty node name is writable",
+  "old": "    !s.is_empty()\n        && !s.chars().any(",
+  "new": "    true\n        && !s.chars().any("
+ },
+ {
+  "label": "the input-port check reads the source end of the edge",
+  "old": "            if self.nodes[b].node.kind() == Kind::Input {",
+  "new": "            if self.nodes[a].node.kind() == Kind::Input {"
+ },
+ {
+  "label": "the output-port check reads the target end of the edge",
+  "old": "            if self.nodes[a].node.kind() == Kind::Output {",
+  "new": "            if self.nodes[b].node.kind() == Kind::Output {"
+ },
+ {
+  "label": "a dangling edge is reported against the end that is present",
+  "old": "            let Some(b) = self.index_of(&e.to) else {\n                return Err(ValidationError::DanglingEdge {\n                    from: e.from.clone(),\n                    to: e.to.clone(),\n                    missing: e.to.clone(),",
+  "new": "            let Some(b) = self.index_of(&e.to) else {\n                return Err(ValidationError::DanglingEdge {\n                    from: e.from.clone(),\n                    to: e.to.clone(),\n                    missing: e.from.clone(),"
+ },
+ {
+  "label": "shapes are never compared across an edge",
+  "old": "            if emitted != expected {\n                return Err(ValidationError::ShapeMismatch {",
+  "new": "            if false {\n                return Err(ValidationError::ShapeMismatch {"
+ },
+ {
+  "label": "the shape check reads what the source requires rather than what it emits",
+  "old": "            let emitted = self.nodes[a].node.output_shape().unwrap_or_default();",
+  "new": "            let emitted = self.nodes[a].node.input_shape().unwrap_or_default();"
+ },
+ {
+  "label": "the shape check reads what the target emits rather than what it requires",
+  "old": "            let expected = self.nodes[b].node.input_shape().unwrap_or_default();",
+  "new": "            let expected = self.nodes[b].node.output_shape().unwrap_or_default();"
+ },
+ {
+  "label": "cycles are refused exactly when the rules permit them",
+  "old": "        if !rules.allow_cycles && self.topological_order().is_none() {",
+  "new": "        if rules.allow_cycles && self.topological_order().is_none() {"
+ },
+ {
+  "label": "a required Input node is refused when it is present",
+  "old": "        if rules.require_input && !self.nodes.iter().any(|n| n.node.kind() == Kind::Input) {",
+  "new": "        if rules.require_input && self.nodes.iter().any(|n| n.node.kind() == Kind::Input) {"
+ },
+ {
+  "label": "a required Output node is refused when it is present",
+  "old": "        if rules.require_output && !self.nodes.iter().any(|n| n.node.kind() == Kind::Output) {",
+  "new": "        if rules.require_output && self.nodes.iter().any(|n| n.node.kind() == Kind::Output) {"
+ },
+ {
+  "label": "the default rules refuse the recurrence NIR exists to carry",
+  "old": "            allow_cycles: true,\n            require_input: false,\n            require_output: false,",
+  "new": "            allow_cycles: false,\n            require_input: false,\n            require_output: false,"
+ },
+ {
+  "label": "the default rules demand a graph boundary a subgraph does not have",
+  "old": "            allow_cycles: true,\n            require_input: false,\n            require_output: false,",
+  "new": "            allow_cycles: true,\n            require_input: true,\n            require_output: false,"
+ },
+ {
+  "label": "the default rules drop this crate's own signal check",
+  "old": "            require_output: false,\n            check_signal_kind: true,",
+  "new": "            require_output: false,\n            check_signal_kind: false,"
+ },
+ {
+  "label": "the feedforward rules permit a cycle",
+  "old": "    pub fn feedforward() -> Self {\n        Self {\n            allow_cycles: false,",
+  "new": "    pub fn feedforward() -> Self {\n        Self {\n            allow_cycles: true,"
+ },
+ {
+  "label": "the recurrent rules forbid recurrence",
+  "old": "    pub fn recurrent() -> Self {\n        Self {\n            allow_cycles: true,",
+  "new": "    pub fn recurrent() -> Self {\n        Self {\n            allow_cycles: false,"
+ },
+ {
+  "label": "a parameter array shorter than its shape is accepted",
+  "old": "    if v.len() != expected {\n        return Err(ValidationError::RaggedParameter {",
+  "new": "    if v.len() > expected {\n        return Err(ValidationError::RaggedParameter {"
+ },
+ {
+  "label": "a ragged parameter reports the two lengths the wrong way round",
+  "old": "            field,\n            len: v.len(),\n            expected,",
+  "new": "            field,\n            len: expected,\n            expected: v.len(),"
+ },
+ {
+  "label": "a non-finite parameter is not looked for",
+  "old": "    for (index, x) in v.iter().enumerate() {\n        if !x.is_finite() {",
+  "new": "    for (index, x) in v.iter().enumerate() {\n        if !x.is_finite() && false {"
+ },
+ {
+  "label": "an infinite parameter is accepted and only a NaN refused",
+  "old": "    for (index, x) in v.iter().enumerate() {\n        if !x.is_finite() {",
+  "new": "    for (index, x) in v.iter().enumerate() {\n        if x.is_nan() {"
+ },
+ {
+  "label": "a zero-length axis is not looked for",
+  "old": "    for (axis, &d) in shape.iter().enumerate() {\n        if d == 0 {",
+  "new": "    for (axis, &d) in shape.iter().enumerate() {\n        if d == 0 && axis == usize::MAX {"
+ },
+ {
+  "label": "a shape is refused exactly when its element count does fit in a usize",
+  "old": "    if checked_product(shape).is_none() {",
+  "new": "    if checked_product(shape).is_some() {"
+ },
+ {
+  "label": "a shape with no axes at all is accepted",
+  "old": "    if shape.is_empty() {\n        return Err(ValidationError::EmptyDimension { node: node.to_string(), axis: 0 });\n    }",
+  "new": "    if shape.is_empty() && !shape.is_empty() {\n        return Err(ValidationError::EmptyDimension { node: node.to_string(), axis: 0 });\n    }"
+ },
+ {
+  "label": "a time constant of zero is accepted as positive",
+  "old": "    if v.iter().any(|&x| !(x > 0.0)) {",
+  "new": "    if v.iter().any(|&x| x < 0.0) {"
+ },
+ {
+  "label": "a LIF's shape is not checked before its element count is taken",
+  "old": "        Node::Lif(x) => {\n            // `check_shape` before the product: it is what refuses a shape whose element count\n            // does not fit in a `usize`, and `product` saturates rather than reporting.\n            check_shape(name, &x.shape)?;\n            let n = product(&x.shape);",
+  "new": "        Node::Lif(x) => {\n            // `check_shape` before the product: it is what refuses a shape whose element count\n            // does not fit in a `usize`, and `product` saturates rather than reporting.\n            let n = product(&x.shape);"
+ },
+ {
+  "label": "a LIF's resistance is reported under another parameter's name",
+  "old": "            check_array(name, \"r\", &x.r, n)?;\n            check_array(name, \"v_leak\", &x.v_leak, n)?;\n            check_array(name, \"v_threshold\", &x.v_threshold, n)?;\n            check_array(name, \"v_reset\", &x.v_reset, n)?;\n        }\n        Node::CubaLif(x) => {",
+  "new": "            check_array(name, \"r_m\", &x.r, n)?;\n            check_array(name, \"v_leak\", &x.v_leak, n)?;\n            check_array(name, \"v_threshold\", &x.v_threshold, n)?;\n            check_array(name, \"v_reset\", &x.v_reset, n)?;\n        }\n        Node::CubaLif(x) => {"
+ },
+ {
+  "label": "a convolution's filter bank is sized without its kernel",
+  "old": "                .checked_mul(x.in_channels / x.groups)\n                .and_then(|v| v.checked_mul(x.kernel))",
+  "new": "                .checked_mul(x.in_channels / x.groups)"
+ },
+ {
+  "label": "a two-dimensional filter bank is sized on one kernel axis only",
+  "old": "                .and_then(|v| v.checked_mul(x.kernel[0]))\n                .and_then(|v| v.checked_mul(x.kernel[1]))",
+  "new": "                .and_then(|v| v.checked_mul(x.kernel[0]))"
+ },
+ {
+  "label": "a convolution's groups are not divided out of its input channels",
+  "old": "                .checked_mul(x.in_channels / x.groups)\n                .and_then(|v| v.checked_mul(x.kernel))",
+  "new": "                .checked_mul(x.in_channels)\n                .and_then(|v| v.checked_mul(x.kernel))"
+ },
+ {
+  "label": "a bias is checked only when it is the empty one NIR writes for bias=False",
+  "old": "            check_array(name, \"weight\", &x.weight, want)?;\n            if !x.bias.is_empty() {\n                check_array(name, \"bias\", &x.bias, x.out_channels)?;\n            }\n            check_shape(name, &node.input_shape().unwrap_or_default())?;\n            check_shape(name, &node.output_shape().unwrap_or_default())?;\n        }\n        Node::Conv2d(x) => {",
+  "new": "            check_array(name, \"weight\", &x.weight, want)?;\n            if x.bias.is_empty() {\n                check_array(name, \"bias\", &x.bias, x.out_channels)?;\n            }\n            check_shape(name, &node.input_shape().unwrap_or_default())?;\n            check_shape(name, &node.output_shape().unwrap_or_default())?;\n        }\n        Node::Conv2d(x) => {"
+ },
+ {
+  "label": "a one-dimensional convolution's bias is sized by its input channels",
+  "old": "            if !x.bias.is_empty() {\n                check_array(name, \"bias\", &x.bias, x.out_channels)?;\n            }\n            check_shape(name, &node.input_shape().unwrap_or_default())?;\n            check_shape(name, &node.output_shape().unwrap_or_default())?;\n        }\n        Node::Conv2d(x) => {",
+  "new": "            if !x.bias.is_empty() {\n                check_array(name, \"bias\", &x.bias, x.in_channels)?;\n            }\n            check_shape(name, &node.input_shape().unwrap_or_default())?;\n            check_shape(name, &node.output_shape().unwrap_or_default())?;\n        }\n        Node::Conv2d(x) => {"
+ },
+ {
+  "label": "a flatten's two ends are required in the wrong order",
+  "old": "            if x.start_dim > x.end_dim {",
+  "new": "            if x.start_dim < x.end_dim {"
+ },
+ {
+  "label": "a flatten may name an axis past the end of its shape",
+  "old": "            if x.end_dim >= x.size.len() {\n                return Err(bad(\"end_dim\", \"must index the input shape\"));",
+  "new": "            if x.end_dim >= x.size.len() && false {\n                return Err(bad(\"end_dim\", \"must index the input shape\"));"
+ },
+ {
+  "label": "a CubaLIF's instantaneous-synapse limit is refused as out of range",
+  "old": "            if x.tau_syn.iter().any(|&t| t < 0.0) {",
+  "new": "            if x.tau_syn.iter().any(|&t| t <= 0.0) {"
+ },
+ {
+  "label": "a negative synaptic time constant reaches the propagator",
+  "old": "            if x.tau_syn.iter().any(|&t| t < 0.0) {",
+  "new": "            if x.tau_syn.iter().any(|&t| t < f64::NEG_INFINITY) {"
+ },
+ {
+  "label": "a delay is refused for being positive rather than for being negative",
+  "old": "            if x.delay.iter().any(|&d| d < 0.0) {",
+  "new": "            if x.delay.iter().any(|&d| d > 0.0) {"
+ },
+ {
+  "label": "a CubaLIF's membrane constant is not required to be positive",
+  "old": "            check_array(name, \"tau_mem\", &x.tau_mem, n)?;\n            check_positive(name, \"tau_mem\", &x.tau_mem)?;",
+  "new": "            check_array(name, \"tau_mem\", &x.tau_mem, n)?;"
+ },
+ {
+  "label": "the file's magic line names another version",
+  "old": "pub const MAGIC: &str = \"ferromorphic-nir 1\";",
+  "new": "pub const MAGIC: &str = \"ferromorphic-nir 2\";"
+ },
+ {
+  "label": "the float codec's round-trip check is inverted, so every value takes the long form",
+  "old": "    if s.parse::<f64>().map(f64::to_bits) == Ok(x.to_bits()) { s } else { fmt_f64_long(x) }",
+  "new": "    if s.parse::<f64>().map(f64::to_bits) != Ok(x.to_bits()) { s } else { fmt_f64_long(x) }"
+ },
+ {
+  "label": "floats are written in the Display form rather than the shortest round-tripping one",
+  "old": "    let s = format!(\"{x:?}\");",
+  "new": "    let s = format!(\"{x}\");"
+ },
+ {
+  "label": "the long form prints seventeen significant digits rather than eighteen",
+  "old": "    format!(\"{x:.17e}\")",
+  "new": "    format!(\"{x:.16e}\")"
+ },
+ {
+  "label": "a key=value pair is written with no space in front of it",
+  "old": "fn w_usize(out: &mut String, key: &str, v: usize) {\n    out.push(' ');",
+  "new": "fn w_usize(out: &mut String, key: &str, v: usize) {\n    out.push('=');"
+ },
+ {
+  "label": "a float array's first two entries are written without a separator",
+  "old": "fn w_floats(out: &mut String, key: &str, v: &[f64]) {\n    out.push(' ');\n    out.push_str(key);\n    out.push_str(\"=[\");\n    for (k, x) in v.iter().enumerate() {\n        if k > 0 {",
+  "new": "fn w_floats(out: &mut String, key: &str, v: &[f64]) {\n    out.push(' ');\n    out.push_str(key);\n    out.push_str(\"=[\");\n    for (k, x) in v.iter().enumerate() {\n        if k > 1 {"
+ },
+ {
+  "label": "a dimension array is separated by semicolons",
+  "old": "fn w_dims(out: &mut String, key: &str, v: &[usize]) {\n    out.push(' ');\n    out.push_str(key);\n    out.push_str(\"=[\");\n    for (k, d) in v.iter().enumerate() {\n        if k > 0 {\n            out.push(',');",
+  "new": "fn w_dims(out: &mut String, key: &str, v: &[usize]) {\n    out.push(' ');\n    out.push_str(key);\n    out.push_str(\"=[\");\n    for (k, d) in v.iter().enumerate() {\n        if k > 0 {\n            out.push(';');"
+ },
+ {
+  "label": "a repeated parameter on one line is accepted",
+  "old": "            if items.iter().any(|(existing, _, _)| *existing == k) {",
+  "new": "            if items.iter().any(|(existing, _, _)| *existing == v) {"
+ },
+ {
+  "label": "a consumed parameter is not marked as consumed",
+  "old": "            if *k == key {\n                *used = true;",
+  "new": "            if *k == key {\n                *used = false;"
+ },
+ {
+  "label": "every parameter a node does have is reported as surplus",
+  "old": "        for (k, _, used) in &self.items {\n            if !used {",
+  "new": "        for (k, _, used) in &self.items {\n            if *used {"
+ },
+ {
+  "label": "a non-finite float in a file is read rather than refused",
+  "old": "            if !x.is_finite() {\n                return Err(TextError::NonFiniteValue {",
+  "new": "            if !x.is_finite() && false {\n                return Err(TextError::NonFiniteValue {"
+ },
+ {
+  "label": "a fixed-length pair reports the arity it wanted as one",
+  "old": "            Err(TextError::BadArity { line: self.line, key, want: 2, got: v.len() })",
+  "new": "            Err(TextError::BadArity { line: self.line, key, want: 1, got: v.len() })"
+ },
+ {
+  "label": "a two-axis parameter is read with its axes swapped",
+  "old": "        if v.len() == 2 {\n            Ok([v[0], v[1]])",
+  "new": "        if v.len() == 2 {\n            Ok([v[1], v[0]])"
+ },
+ {
+  "label": "an array must be bracketed with parentheses",
+  "old": "        let inner = raw\n            .strip_prefix('[')\n            .and_then(|r| r.strip_suffix(']'))\n            .ok_or_else(|| TextError::BadValue {\n                line: self.line,\n                key,\n                text: raw.to_string(),\n            })?;\n        if inner.is_empty() {\n            return Ok(Vec::new());\n        }\n        let mut v = Vec::new();\n        for part in inner.split(',') {\n            v.push(part.parse::<usize>()",
+  "new": "        let inner = raw\n            .strip_prefix('(')\n            .and_then(|r| r.strip_suffix(']'))\n            .ok_or_else(|| TextError::BadValue {\n                line: self.line,\n                key,\n                text: raw.to_string(),\n            })?;\n        if inner.is_empty() {\n            return Ok(Vec::new());\n        }\n        let mut v = Vec::new();\n        for part in inner.split(',') {\n            v.push(part.parse::<usize>()"
+ },
+ {
+  "label": "line numbers in a parse error are zero-based",
+  "old": "            let line = k + 1;",
+  "new": "            let line = k;"
+ },
+ {
+  "label": "a comment line is parsed as a directive",
+  "old": "            if trimmed.is_empty() || trimmed.starts_with('#') {\n                continue;\n            }",
+  "new": "            if trimmed.is_empty() {\n                continue;\n            }"
+ },
+ {
+  "label": "a blank line ends the file's magic",
+  "old": "            if trimmed.is_empty() || trimmed.starts_with('#') {\n                continue;\n            }",
+  "new": "            if trimmed.starts_with('#') {\n                continue;\n            }"
+ },
+ {
+  "label": "an edge is read with its two ends swapped",
+  "old": "                    g.edges.push(Edge { from: toks[1].to_string(), to: toks[2].to_string() });",
+  "new": "                    g.edges.push(Edge { from: toks[2].to_string(), to: toks[1].to_string() });"
+ },
+ {
+  "label": "a file with no magic line at all is accepted",
+  "old": "        if seen_magic {\n            Ok(g)\n        } else {\n            Err(TextError::WrongMagic { found: String::new() })\n        }",
+  "new": "        if seen_magic {\n            Ok(g)\n        } else {\n            Ok(g)\n        }"
+ },
+ {
+  "label": "the node's type token is read as one of its parameters",
+  "old": "    let mut f = Fields::new(line, kind.name(), &toks[3..])?;",
+  "new": "    let mut f = Fields::new(line, kind.name(), &toks[2..])?;"
+ },
+ {
+  "label": "an unwritable node name in a file is read back in",
+  "old": "    if !name_is_writable(&name) {\n        return Err(TextError::UnwritableName { line, name });\n    }",
+  "new": "    if !name_is_writable(&name) && false {\n        return Err(TextError::UnwritableName { line, name });\n    }"
+ },
+ {
+  "label": "a LIF's time constant is read out of its resistance",
+  "old": "        Kind::Lif => Node::Lif(Lif {\n            shape: f.dims(\"shape\")?,\n            tau: f.floats(\"tau\")?,\n            r: f.floats(\"r\")?,",
+  "new": "        Kind::Lif => Node::Lif(Lif {\n            shape: f.dims(\"shape\")?,\n            tau: f.floats(\"r\")?,\n            r: f.floats(\"r\")?,"
+ },
+ {
+  "label": "a CubaLIF's two time constants are read the wrong way round",
+  "old": "            tau_syn: f.floats(\"tau_syn\")?,\n            tau_mem: f.floats(\"tau_mem\")?,\n            r: f.floats(\"r\")?,\n            v_leak: f.floats(\"v_leak\")?,\n            v_threshold: f.floats(\"v_threshold\")?,\n            v_reset: f.floats(\"v_reset\")?,\n            w_in: f.floats(\"w_in\")?,",
+  "new": "            tau_syn: f.floats(\"tau_mem\")?,\n            tau_mem: f.floats(\"tau_syn\")?,\n            r: f.floats(\"r\")?,\n            v_leak: f.floats(\"v_leak\")?,\n            v_threshold: f.floats(\"v_threshold\")?,\n            v_reset: f.floats(\"v_reset\")?,\n            w_in: f.floats(\"w_in\")?,"
+ },
+ {
+  "label": "every pooling node is read back as the averaging one",
+  "old": "            if kind == Kind::SumPool2d { Node::SumPool2d(p) } else { Node::AvgPool2d(p) }",
+  "new": "            if kind == Kind::AvgPool2d { Node::SumPool2d(p) } else { Node::AvgPool2d(p) }"
+ },
+ {
+  "label": "an Input node is read back as an Output",
+  "old": "        Kind::Input => Node::Input(Input { shape: f.dims(\"shape\")? }),",
+  "new": "        Kind::Input => Node::Output(Output { shape: f.dims(\"shape\")? }),"
+ },
+ {
+  "label": "the magic line is written without the newline that ends it",
+  "old": "        out.push_str(MAGIC);\n        out.push('\\n');",
+  "new": "        out.push_str(MAGIC);"
+ },
+ {
+  "label": "a node line is written with a directive the reader does not know",
+  "old": "            out.push_str(\"node \");",
+  "new": "            out.push_str(\"nodes \");"
+ },
+ {
+  "label": "a LIF line writes its resistance under the time constant's key",
+  "old": "                    w_floats(&mut out, \"tau\", &x.tau);\n                    w_floats(&mut out, \"r\", &x.r);\n                    w_floats(&mut out, \"v_leak\", &x.v_leak);\n                    w_floats(&mut out, \"v_threshold\", &x.v_threshold);",
+  "new": "                    w_floats(&mut out, \"tau\", &x.r);\n                    w_floats(&mut out, \"r\", &x.r);\n                    w_floats(&mut out, \"v_leak\", &x.v_leak);\n                    w_floats(&mut out, \"v_threshold\", &x.v_threshold);"
+ },
+ {
+  "label": "a LIF line writes its resistance before its time constant",
+  "old": "                    w_floats(&mut out, \"tau\", &x.tau);\n                    w_floats(&mut out, \"r\", &x.r);\n                    w_floats(&mut out, \"v_leak\", &x.v_leak);\n                    w_floats(&mut out, \"v_threshold\", &x.v_threshold);",
+  "new": "                    w_floats(&mut out, \"r\", &x.r);\n                    w_floats(&mut out, \"tau\", &x.tau);\n                    w_floats(&mut out, \"v_leak\", &x.v_leak);\n                    w_floats(&mut out, \"v_threshold\", &x.v_threshold);",
+  "equivalent": "the reader consumes parameters BY NAME — `Fields::take` scans the line's items for the key it is asked for — so the order the writer emits them in is not information the format carries. Both round trips in `graph_to_text_to_graph_is_exactly_the_identity` still close: text -> graph is unchanged because every key is still present exactly once, and the text -> text comparison is between two runs of the SAME writer, so both put r first. Nothing else in the module parses a LIF line positionally, and the hand-written fixture texts in the tests are Scale, SumPool2d and Izhikevich lines."
+ },
+ {
+  "label": "a Delay line is written under the Scale key",
+  "old": "                Node::Delay(x) => {\n                    w_dims(&mut out, \"shape\", &x.shape);\n                    w_floats(&mut out, \"delay\", &x.delay);",
+  "new": "                Node::Delay(x) => {\n                    w_dims(&mut out, \"shape\", &x.shape);\n                    w_floats(&mut out, \"scale\", &x.delay);"
+ },
+ {
+  "label": "an Affine line does not write its bias",
+  "old": "                Node::Affine(x) => {\n                    w_usize(&mut out, \"rows\", x.rows);\n                    w_usize(&mut out, \"cols\", x.cols);\n                    w_floats(&mut out, \"weight\", &x.weight);\n                    w_floats(&mut out, \"bias\", &x.bias);",
+  "new": "                Node::Affine(x) => {\n                    w_usize(&mut out, \"rows\", x.rows);\n                    w_usize(&mut out, \"cols\", x.cols);\n                    w_floats(&mut out, \"weight\", &x.weight);"
+ },
+ {
+  "label": "an edge line is written with its two ends swapped",
+  "old": "            out.push_str(\"edge \");\n            out.push_str(&e.from);\n            out.push(' ');\n            out.push_str(&e.to);",
+  "new": "            out.push_str(\"edge \");\n            out.push_str(&e.to);\n            out.push(' ');\n            out.push_str(&e.from);"
+ },
+ {
+  "label": "a CubaLIF is quietly inside the convertible subset",
+  "old": "                Kind::Input | Kind::Output | Kind::Affine | Kind::Linear | Kind::Lif | Kind::Delay\n            ) {",
+  "new": "                Kind::Input | Kind::Output | Kind::Affine | Kind::Linear | Kind::Lif | Kind::Delay | Kind::CubaLif\n            ) {"
+ },
+ {
+  "label": "a Delay node is outside the convertible subset",
+  "old": "                Kind::Input | Kind::Output | Kind::Affine | Kind::Linear | Kind::Lif | Kind::Delay\n            ) {",
+  "new": "                Kind::Input | Kind::Output | Kind::Affine | Kind::Linear | Kind::Lif\n            ) {"
+ },
+ {
+  "label": "the bridge validates against the rules a layer-by-layer consumer needs",
+  "old": "        self.validate(&Rules::default())?;",
+  "new": "        self.validate(&Rules::feedforward())?;"
+ },
+ {
+  "label": "a population's neuron count is the rank of its shape rather than its element count",
+  "old": "            if let Node::Lif(x) = &named.node {\n                let len = product(&x.shape);",
+  "new": "            if let Node::Lif(x) = &named.node {\n                let len = x.shape.len();"
+ },
+ {
+  "label": "each population is laid down at the end of the one before it plus itself",
+  "old": "                blocks.push(Block { node: named.name.clone(), base: total, len });\n                total += len;",
+  "new": "                total += len;\n                blocks.push(Block { node: named.name.clone(), base: total, len });"
+ },
+ {
+  "label": "the running neuron total is replaced by each population's size",
+  "old": "                blocks.push(Block { node: named.name.clone(), base: total, len });\n                total += len;",
+  "new": "                blocks.push(Block { node: named.name.clone(), base: total, len });\n                total = len;"
+ },
+ {
+  "label": "a graph with no LIF node is converted anyway",
+  "old": "        if blocks.is_empty() {\n            return Err(BridgeError::NoNeurons);\n        }",
+  "new": "        if !blocks.is_empty() {\n            return Err(BridgeError::NoNeurons);\n        }"
+ },
+ {
+  "label": "a delay may sit anywhere, since the wiring a Delay ends is no longer allowed",
+  "old": "                    | (Kind::Delay, Kind::Lif)\n            );",
+  "new": "                    | (Kind::Delay, Kind::Output)\n            );"
+ },
+ {
+  "label": "two populations may be wired straight together with no weights between them",
+  "old": "                (Kind::Input, Kind::Lif)\n                    | (Kind::Lif, Kind::Output)",
+  "new": "                (Kind::Input, Kind::Lif)\n                    | (Kind::Lif, Kind::Lif)\n                    | (Kind::Lif, Kind::Output)"
+ },
+ {
+  "label": "an Input boundary records the populations that drive IT",
+  "old": "                Kind::Input => {\n                    for e in self.edges.iter().filter(|e| e.from == named.name) {",
+  "new": "                Kind::Input => {\n                    for e in self.edges.iter().filter(|e| e.to == named.name) {"
+ },
+ {
+  "label": "an Output boundary records the populations it drives",
+  "old": "                Kind::Output => {\n                    for e in self.edges.iter().filter(|e| e.to == named.name) {",
+  "new": "                Kind::Output => {\n                    for e in self.edges.iter().filter(|e| e.from == named.name) {"
+ },
+ {
+  "label": "an Input boundary records the block at the far end of the edge from it",
+  "old": "                        if let Some(bi) = block_of[t] {\n                            inputs.push((named.name.clone(), bi));",
+  "new": "                        if let Some(bi) = block_of[t] {\n                            inputs.push((named.name.clone(), bi + 1));"
+ },
+ {
+  "label": "a weight node may feed as many places as it likes",
+  "old": "                    if ins.len() != 1 || outs.len() != 1 {",
+  "new": "                    if ins.len() != 1 {"
+ },
+ {
+  "label": "a fan-out refusal reports the two edge counts the wrong way round",
+  "old": "                            incoming: ins.len(),\n                            outgoing: outs.len(),",
+  "new": "                            incoming: outs.len(),\n                            outgoing: ins.len(),"
+ },
+ {
+  "label": "the weight matrix is read column-major",
+  "old": "                            let weight = w[row * cols + col];",
+  "new": "                            let weight = w[col * rows + row];"
+ },
+ {
+  "label": "a weight row is read at the column's offset",
+  "old": "                            let weight = w[row * cols + col];",
+  "new": "                            let weight = w[row * cols + row];"
+ },
+ {
+  "label": "presynaptic and postsynaptic ends of every synapse are swapped",
+  "old": "                            let pre = u32::try_from(src_base + col)\n                                .map_err(|_| BridgeError::TooManyNeurons { count: total })?;\n                            let post = u32::try_from(dst_base + row)",
+  "new": "                            let pre = u32::try_from(src_base + row)\n                                .map_err(|_| BridgeError::TooManyNeurons { count: total })?;\n                            let post = u32::try_from(dst_base + col)"
+ },
+ {
+  "label": "the two populations a weight block joins are laid over each other",
+  "old": "                    let src_base = blocks[src_block].base;\n                    let dst_base = blocks[dst_block].base;",
+  "new": "                    let src_base = blocks[src_block].base;\n                    let dst_base = blocks[src_block].base;"
+ },
+ {
+  "label": "an exactly zero weight is stored as a synapse",
+  "old": "                            if weight == 0.0 {\n                                continue; // dropped, and the doc says so\n                            }",
+  "new": "                            if weight != 0.0 {\n                                continue; // dropped, and the doc says so\n                            }"
+ },
+ {
+  "label": "a delayed synapse block is delivered undelayed",
+  "old": "                        let ticks = ticks_of(&self.nodes[mid].name, &d.delay, dt)?;\n                        (after, ticks)",
+  "new": "                        let ticks = ticks_of(&self.nodes[mid].name, &d.delay, dt)?;\n                        (after, vec![0u32; ticks.len()])"
+ },
+ {
+  "label": "a weight block with no Delay in front of it is given one entry per input",
+  "old": "                        (mid, vec![0u32; rows])",
+  "new": "                        (mid, vec![0u32; cols])"
+ },
+ {
+  "label": "a Delay node is never marked as consumed",
+  "old": "                        delay_used[mid] = true;",
+  "new": "                        delay_used[mid] = false;"
+ },
+ {
+  "label": "a Delay node is refused exactly when it was consumed as it should be",
+  "old": "            if named.node.kind() == Kind::Delay && !delay_used[i] {",
+  "new": "            if named.node.kind() == Kind::Delay && delay_used[i] {"
+ },
+ {
+  "label": "the delay array's length is not checked against the block it delays",
+  "old": "                    if delay_ticks.len() != rows {",
+  "new": "                    if delay_ticks.len() != rows && false {",
+  "equivalent": "this guard is unreachable from `to_net`, which is why no test can distinguish the two. `to_net` runs `validate(&Rules::default())` on its first line, and validation step 4 compares the weight node's emitted shape [rows] against the Delay node's required shape, which is its own `shape` field; `check_node` has already required delay.len() == product(shape). The Delay reached here is reached only through the single outgoing edge of this weight node, so product(shape) == rows and delay_ticks.len() == rows always. The guard is defence for a future caller that reaches this code without validating, and it is recorded here so that the argument is on the record rather than assumed."
+ },
+ {
+  "label": "a converted neuron's time constant is its input resistance",
+  "old": "                    tau_m: x.tau[k],\n                    v_rest: x.v_leak[k],",
+  "new": "                    tau_m: x.r[k],\n                    v_rest: x.v_leak[k],"
+ },
+ {
+  "label": "a converted neuron rests at its threshold",
+  "old": "                    tau_m: x.tau[k],\n                    v_rest: x.v_leak[k],",
+  "new": "                    tau_m: x.tau[k],\n                    v_rest: x.v_threshold[k],"
+ },
+ {
+  "label": "a converted neuron's threshold and reset are exchanged",
+  "old": "                    v_th: x.v_threshold[k],\n                    v_reset: x.v_reset[k],",
+  "new": "                    v_th: x.v_reset[k],\n                    v_reset: x.v_threshold[k],"
+ },
+ {
+  "label": "a converted neuron is given a refractory period NIR cannot express",
+  "old": "                    // NIR has no refractory period. Zero is the faithful value, not a default.\n                    t_ref: 0.0,",
+  "new": "                    // NIR has no refractory period. Zero is the faithful value, not a default.\n                    t_ref: 1e-3,"
+ },
+ {
+  "label": "a converted neuron starts on its threshold rather than at rest",
+  "old": "                    t_ref: 0.0,\n                    v: x.v_leak[k],",
+  "new": "                    t_ref: 0.0,\n                    v: x.v_threshold[k],"
+ },
+ {
+  "label": "a converted neuron starts part-way through a refractory period",
+  "old": "                    v: x.v_leak[k],\n                    refractory: 0.0,",
+  "new": "                    v: x.v_leak[k],\n                    refractory: 1e-3,"
+ },
+ {
+  "label": "an Affine's bias is refused for being zero rather than for being non-zero",
+  "old": "            if let Some(index) = x.bias.iter().position(|&b| b != 0.0) {",
+  "new": "            if let Some(index) = x.bias.iter().position(|&b| b == 0.0) {"
+ },
+ {
+  "label": "an Affine's weight matrix is transposed on its way into the network",
+  "old": "        Node::Affine(x) => {\n            if let Some(index) = x.bias.iter().position(|&b| b != 0.0) {\n                return Err(BridgeError::BiasNotRepresentable { name: name.to_string(), index });\n            }\n            Ok((x.rows, x.cols, x.weight.clone()))",
+  "new": "        Node::Affine(x) => {\n            if let Some(index) = x.bias.iter().position(|&b| b != 0.0) {\n                return Err(BridgeError::BiasNotRepresentable { name: name.to_string(), index });\n            }\n            Ok((x.cols, x.rows, x.weight.clone()))"
+ },
+ {
+  "label": "a Linear's weight matrix is transposed on its way into the network",
+  "old": "        Node::Linear(x) => Ok((x.rows, x.cols, x.weight.clone())),",
+  "new": "        Node::Linear(x) => Ok((x.cols, x.rows, x.weight.clone())),"
+ },
+ {
+  "label": "a neuron list shorter than the network is accepted",
+  "old": "        if neurons.len() != net.n {",
+  "new": "        if neurons.len() > net.n {"
+ },
+ {
+  "label": "a refractory period is carried into NIR rather than refused",
+  "old": "            if neuron.t_ref != 0.0 {",
+  "new": "            if neuron.t_ref < 0.0 {"
+ },
+ {
+  "label": "the dense matrix is filled transposed",
+  "old": "                let cell = post as usize * n + pre;",
+  "new": "                let cell = pre * n + post as usize;"
+ },
+ {
+  "label": "the dense matrix's rows are indexed by the network's neuron count plus one",
+  "old": "                let cell = post as usize * n + pre;",
+  "new": "                let cell = post as usize * (n + 1) + pre;"
+ },
+ {
+  "label": "a cell that already holds a synapse is overwritten",
+  "old": "                if filled[cell] {",
+  "new": "                if filled[cell] && false {"
+ },
+ {
+  "label": "two synapses onto one neuron are refused when their delays AGREE",
+  "old": "                    Some(seen) if seen != d => {",
+  "new": "                    Some(seen) if seen == d => {"
+ },
+ {
+  "label": "a split-delay refusal reports the two delays the wrong way round",
+  "old": "                        return Err(BridgeError::SplitDelay { post, a: seen, b: d });",
+  "new": "                        return Err(BridgeError::SplitDelay { post, a: d, b: seen });"
+ },
+ {
+  "label": "every neuron's delay is recorded as zero",
+  "old": "                    None => delay_of[post as usize] = Some(d),",
+  "new": "                    None => delay_of[post as usize] = Some(0),"
+ },
+ {
+  "label": "the delay already recorded for a neuron is written over by the next synapse",
+  "old": "                    Some(seen) if seen != d => {\n                        return Err(BridgeError::SplitDelay { post, a: seen, b: d });\n                    }\n                    Some(_) => {}",
+  "new": "                    Some(seen) if seen != d => {\n                        return Err(BridgeError::SplitDelay { post, a: seen, b: d });\n                    }\n                    Some(_) => delay_of[post as usize] = Some(d),",
+  "equivalent": "the arm that writes is reachable only when the delay it writes is the one already there. The guarded arm above it returns SplitDelay for every `seen != d`, so `Some(_)` is entered only with seen == d, and `delay_of[post] = Some(d)` stores the value the slot already holds. No sequence of synapses can separate the two: either the delays agree and the write is the identity, or they disagree and the function has already returned."
+ },
+ {
+  "label": "a delay-free network is given a Delay node all the same",
+  "old": "        let any_delay = delay_of.iter().any(|d| d.is_some_and(|t| t > 0));",
+  "new": "        let any_delay = delay_of.iter().any(|d| d.is_some_and(|t| t >= 0));"
+ },
+ {
+  "label": "a network with delays is emitted without its Delay node",
+  "old": "        let any_delay = delay_of.iter().any(|d| d.is_some_and(|t| t > 0));",
+  "new": "        let any_delay = delay_of.iter().any(|d| d.is_some_and(|t| t > u32::MAX));"
+ },
+ {
+  "label": "a delay is emitted in ticks rather than in seconds",
+  "old": "                        .map(|d| f64::from(d.unwrap_or(0)) * dt)",
+  "new": "                        .map(|d| f64::from(d.unwrap_or(0)))"
+ },
+ {
+  "label": "a delay is divided by the tick length instead of multiplied by it",
+  "old": "                        .map(|d| f64::from(d.unwrap_or(0)) * dt)",
+  "new": "                        .map(|d| f64::from(d.unwrap_or(0)) / dt)"
+ },
+ {
+  "label": "the rebuilt graph's time constants and resistances are exchanged",
+  "old": "                tau: neurons.iter().map(|x| x.tau_m).collect(),\n                r: neurons.iter().map(|x| x.r_m).collect(),",
+  "new": "                tau: neurons.iter().map(|x| x.r_m).collect(),\n                r: neurons.iter().map(|x| x.tau_m).collect(),"
+ },
+ {
+  "label": "the rebuilt graph's threshold and reset are exchanged",
+  "old": "                v_threshold: neurons.iter().map(|x| x.v_th).collect(),\n                v_reset: neurons.iter().map(|x| x.v_reset).collect(),",
+  "new": "                v_threshold: neurons.iter().map(|x| x.v_reset).collect(),\n                v_reset: neurons.iter().map(|x| x.v_th).collect(),"
+ },
+ {
+  "label": "the rebuilt graph's resting potential is its threshold",
+  "old": "                v_leak: neurons.iter().map(|x| x.v_rest).collect(),",
+  "new": "                v_leak: neurons.iter().map(|x| x.v_th).collect(),"
+ },
+ {
+  "label": "the rebuilt weight node is pushed before the population it reads",
+  "old": "        g.push(\"weights\", Node::Linear(Linear { rows: n, cols: n, weight: dense }));",
+  "new": "        g.nodes.insert(0, Named { name: \"weights\".to_string(), node: Node::Linear(Linear { rows: n, cols: n, weight: dense }) });"
+ },
+ {
+  "label": "the rebuilt delay node is wired in front of the weights rather than behind them",
+  "old": "            g.edge(\"weights\", \"delay\");\n            g.edge(\"delay\", \"neurons\");",
+  "new": "            g.edge(\"delay\", \"weights\");\n            g.edge(\"weights\", \"neurons\");"
+ },
+ {
+  "label": "the rebuilt graph reads its population out of the Output node",
+  "old": "        g.edge(\"neurons\", \"output\");",
+  "new": "        g.edge(\"output\", \"neurons\");"
+ },
+ {
+  "label": "the rebuilt graph drives its weights from the Input boundary",
+  "old": "        g.edge(\"input\", \"neurons\");\n        g.edge(\"neurons\", \"weights\");",
+  "new": "        g.edge(\"input\", \"weights\");\n        g.edge(\"neurons\", \"weights\");"
+ },
+ {
+  "label": "a delay in seconds is multiplied by the tick length rather than divided by it",
+  "old": "        let exact = seconds / dt;",
+  "new": "        let exact = seconds * dt;"
+ },
+ {
+  "label": "a tick count is truncated rather than rounded before it is checked",
+  "old": "        let rounded = exact.round();",
+  "new": "        let rounded = exact.floor();"
+ },
+ {
+  "label": "the whole-ticks tolerance is absolute rather than relative",
+  "old": "        if !(rounded >= 0.0) || (exact - rounded).abs() > 1e-9 * rounded.max(1.0) {",
+  "new": "        if !(rounded >= 0.0) || (exact - rounded).abs() > 1e-9 {"
+ },
+ {
+  "label": "the whole-ticks tolerance is a whole tick wide",
+  "old": "        if !(rounded >= 0.0) || (exact - rounded).abs() > 1e-9 * rounded.max(1.0) {",
+  "new": "        if !(rounded >= 0.0) || (exact - rounded).abs() > 1.0 * rounded.max(1.0) {"
+ },
+ {
+  "label": "the whole-ticks tolerance is tighter than binary floating point allows",
+  "old": "        if !(rounded >= 0.0) || (exact - rounded).abs() > 1e-9 * rounded.max(1.0) {",
+  "new": "        if !(rounded >= 0.0) || (exact - rounded).abs() > 1e-18 * rounded.max(1.0) {"
+ },
+ {
+  "label": "the last tick count a u32 can hold is refused",
+  "old": "        if rounded > f64::from(u32::MAX) {",
+  "new": "        if rounded >= f64::from(u32::MAX) {"
+ },
+ {
+  "label": "a tick count past a u32 saturates rather than being refused",
+  "old": "        if rounded > f64::from(u32::MAX) {",
+  "new": "        if rounded > f64::from(u32::MAX) * 1e6 {"
+ },
+ {
+  "label": "the unrounded quotient is cast to the tick count",
+  "old": "        out.push(rounded as u32);",
+  "new": "        out.push(exact as u32);"
+ }
+]

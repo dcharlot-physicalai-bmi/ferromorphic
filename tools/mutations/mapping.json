@@ -1,0 +1,1329 @@
+[
+ {
+  "label": "the diagonal link is taken where the two displacements disagree in sign",
+  "old": "    if (x > 0 && y > 0) || (x < 0 && y < 0) { ax.max(ay) } else { ax + ay }",
+  "new": "    if x != 0 && y != 0 { ax.max(ay) } else { ax + ay }"
+ },
+ {
+  "label": "the hexagonal distance sums both axes even along a diagonal",
+  "old": "    if (x > 0 && y > 0) || (x < 0 && y < 0) { ax.max(ay) } else { ax + ay }",
+  "new": "    if (x > 0 && y > 0) || (x < 0 && y < 0) { ax + ay } else { ax + ay }"
+ },
+ {
+  "label": "the diagonal covers only the shorter of the two axes",
+  "old": "    if (x > 0 && y > 0) || (x < 0 && y < 0) { ax.max(ay) } else { ax + ay }",
+  "new": "    if (x > 0 && y > 0) || (x < 0 && y < 0) { ax.min(ay) } else { ax + ay }"
+ },
+ {
+  "label": "a zero displacement on one axis counts as sharing the other's sign",
+  "old": "    if (x > 0 && y > 0) || (x < 0 && y < 0) { ax.max(ay) } else { ax + ay }",
+  "new": "    if (x >= 0 && y >= 0) || (x < 0 && y < 0) { ax.max(ay) } else { ax + ay }",
+  "equivalent": "the edit only ADDS cases to the diagonal branch: every (x, y) with x > 0 && y > 0 is still in it, and what joins it is exactly the displacements with x == 0 && y >= 0 or x >= 0 && y == 0. On those the two branches agree identically: with x == 0 we have ax == 0, so ax.max(ay) == ay == 0 + ay == ax + ay, and symmetrically with y == 0. No displacement changes value, so no hop count, route, diameter or tree can differ."
+ },
+ {
+  "label": "a wrapped tie takes the backward direction",
+  "old": "    if fwd <= -back { fwd } else { back }",
+  "new": "    if fwd < -back { fwd } else { back }"
+ },
+ {
+  "label": "a wrapped displacement always goes forward",
+  "old": "    if fwd <= -back { fwd } else { back }",
+  "new": "    if true { fwd } else { back }"
+ },
+ {
+  "label": "a wrapped displacement takes the longer way round",
+  "old": "    if fwd <= -back { fwd } else { back }",
+  "new": "    if fwd <= -back { back } else { fwd }"
+ },
+ {
+  "label": "the empty-ring guard returns a displacement of one",
+  "old": "    if n == 0 {\n        return 0;\n    }\n    let n = i64::from(n);",
+  "new": "    if n == 0 {\n        return 1;\n    }\n    let n = i64::from(n);",
+  "equivalent": "`ring_delta` is reached only from `Fabric::hops` and `Fabric::route` on the `Torus2D` arm, and both of those return before the match when `self.n_cores()` is zero. `n_cores()` for a torus is `u64::from(cols) * u64::from(rows)`, which is zero whenever either dimension is, so a ring of n == 0 cannot be passed in from any public entry point. The doc comment on the function says so in as many words. No test could tell without a caller this crate does not have."
+ },
+ {
+  "label": "a two-dimensional fabric's core count is the sum of its sides",
+  "old": "            | Self::TriangularTorus { cols, rows } => u64::from(cols) * u64::from(rows),",
+  "new": "            | Self::TriangularTorus { cols, rows } => u64::from(cols) + u64::from(rows),"
+ },
+ {
+  "label": "a core's coordinates are transposed",
+  "old": "        Some((core % cols, core / cols))",
+  "new": "        Some((core / cols, core % cols))"
+ },
+ {
+  "label": "coords answers for a core past the end of the fabric",
+  "old": "        if cols == 0 || u64::from(core) >= self.n_cores() {",
+  "new": "        if cols == 0 {"
+ },
+ {
+  "label": "a core is one hop from itself",
+  "old": "        if a == b {\n            return Some(0);\n        }",
+  "new": "        if a == b {\n            return Some(1);\n        }"
+ },
+ {
+  "label": "the hop count's range check admits the first core past the end",
+  "old": "        if u64::from(a) >= n || u64::from(b) >= n {\n            return None;\n        }\n        if a == b {\n            return Some(0);",
+  "new": "        if u64::from(a) > n || u64::from(b) > n {\n            return None;\n        }\n        if a == b {\n            return Some(0);"
+ },
+ {
+  "label": "a crossbar costs two hops between any two cores",
+  "old": "            Self::Crossbar { .. } => Some(1),",
+  "new": "            Self::Crossbar { .. } => Some(2),"
+ },
+ {
+  "label": "the mesh distance is Chebyshev rather than Manhattan",
+  "old": "                Some(u64::from(ax.abs_diff(bx)) + u64::from(ay.abs_diff(by)))",
+  "new": "                Some(u64::from(ax.abs_diff(bx)).max(u64::from(ay.abs_diff(by))))"
+ },
+ {
+  "label": "the mesh distance drops its row term",
+  "old": "                Some(u64::from(ax.abs_diff(bx)) + u64::from(ay.abs_diff(by)))",
+  "new": "                Some(u64::from(ax.abs_diff(bx)))"
+ },
+ {
+  "label": "the torus wraps its rows against the column count",
+  "old": "                let dy = ring_delta(ay, by, rows).unsigned_abs();",
+  "new": "                let dy = ring_delta(ay, by, cols).unsigned_abs();"
+ },
+ {
+  "label": "the torus does not wrap its columns",
+  "old": "                let dx = ring_delta(ax, bx, cols).unsigned_abs();",
+  "new": "                let dx = u64::from(ax.abs_diff(bx));"
+ },
+ {
+  "label": "the triangular torus is measured with the rectangular distance",
+  "old": "            Self::TriangularTorus { .. } => self.tri_vector(a, b).map(|(x, y)| tri_dist(x, y)),",
+  "new": "            Self::TriangularTorus { .. } => self.tri_vector(a, b).map(|(x, y)| x.unsigned_abs() + y.unsigned_abs()),"
+ },
+ {
+  "label": "the wrap representative is chosen by the rectangular distance",
+  "old": "                    tri_dist(x, y),",
+  "new": "                    x.unsigned_abs() + y.unsigned_abs(),"
+ },
+ {
+  "label": "the triangular torus does not wrap its columns",
+  "old": "        for x in [fx, fx - i64::from(cols)] {",
+  "new": "        for x in [fx] {"
+ },
+ {
+  "label": "the triangular torus does not wrap its rows",
+  "old": "            for y in [fy, fy - i64::from(rows)] {",
+  "new": "            for y in [fy] {"
+ },
+ {
+  "label": "the triangular torus reduces its column displacement modulo the row count",
+  "old": "        let fx = (i64::from(bx) - i64::from(ax)).rem_euclid(i64::from(cols));",
+  "new": "        let fx = (i64::from(bx) - i64::from(ax)).rem_euclid(i64::from(rows));"
+ },
+ {
+  "label": "the triangular torus's displacement points from the destination back to the source",
+  "old": "        let fx = (i64::from(bx) - i64::from(ax)).rem_euclid(i64::from(cols));\n        let fy = (i64::from(by) - i64::from(ay)).rem_euclid(i64::from(rows));",
+  "new": "        let fx = (i64::from(ax) - i64::from(bx)).rem_euclid(i64::from(cols));\n        let fy = (i64::from(ay) - i64::from(by)).rem_euclid(i64::from(rows));"
+ },
+ {
+  "label": "the wrap representative kept is the worst of the four",
+  "old": "                if key < best_key {",
+  "new": "                if key > best_key {"
+ },
+ {
+  "label": "a core is listed as its own neighbour",
+  "old": "        v.dedup();\n        v.retain(|&o| o != c);\n        v\n    }",
+  "new": "        v.dedup();\n        v\n    }"
+ },
+ {
+  "label": "one link is counted twice where a wrapped axis folds onto itself",
+  "old": "        v.sort_unstable();\n        v.dedup();\n        v.retain",
+  "new": "        v.sort_unstable();\n        v.retain"
+ },
+ {
+  "label": "the neighbour list is not sorted before it is deduplicated",
+  "old": "        v.sort_unstable();\n        v.dedup();\n        v.retain",
+  "new": "        v.dedup();\n        v.retain"
+ },
+ {
+  "label": "the neighbour list is built for the first core past the end",
+  "old": "        let n = self.n_cores();\n        if u64::from(c) >= n {\n            return Vec::new();\n        }",
+  "new": "        let n = self.n_cores();\n        if u64::from(c) > n {\n            return Vec::new();\n        }"
+ },
+ {
+  "label": "a mesh's edge core steps off the far side of the grid",
+  "old": "                        if nx < 0 || ny < 0 || nx >= i64::from(cols) || ny >= i64::from(rows) {",
+  "new": "                        if nx < 0 || ny < 0 || nx > i64::from(cols) || ny > i64::from(rows) {"
+ },
+ {
+  "label": "a mesh neighbour's row-major index has its axes swapped",
+  "old": "                            Some((ny * i64::from(cols) + nx) as u32)",
+  "new": "                            Some((nx * i64::from(cols) + ny) as u32)"
+ },
+ {
+  "label": "a wrapped neighbour wraps each axis against the other's extent",
+  "old": "            let nx = (x + dx).rem_euclid(i64::from(cols));\n            let ny = (y + dy).rem_euclid(i64::from(rows));",
+  "new": "            let nx = (x + dx).rem_euclid(i64::from(rows));\n            let ny = (y + dy).rem_euclid(i64::from(cols));"
+ },
+ {
+  "label": "a wrapped fabric's neighbours are not wrapped at all",
+  "old": "            let nx = (x + dx).rem_euclid(i64::from(cols));\n            let ny = (y + dy).rem_euclid(i64::from(rows));",
+  "new": "            let nx = x + dx;\n            let ny = y + dy;"
+ },
+ {
+  "label": "the triangular torus is given anti-diagonal links instead of diagonal ones",
+  "old": "const TRI_DIRS: [(i64, i64); 6] = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, -1)];",
+  "new": "const TRI_DIRS: [(i64, i64); 6] = [(1, 0), (-1, 0), (0, 1), (0, -1), (1, -1), (-1, 1)];"
+ },
+ {
+  "label": "a rectangular fabric has no link downward",
+  "old": "const RECT_DIRS: [(i64, i64); 4] = [(1, 0), (-1, 0), (0, 1), (0, -1)];",
+  "new": "const RECT_DIRS: [(i64, i64); 4] = [(1, 0), (-1, 0), (0, 1), (0, 1)];"
+ },
+ {
+  "label": "a rectangular torus is wired with six links per core",
+  "old": "            Self::Torus2D { cols, rows } => wrapped_neighbours(c, cols, rows, &RECT_DIRS),",
+  "new": "            Self::Torus2D { cols, rows } => wrapped_neighbours(c, cols, rows, &TRI_DIRS),"
+ },
+ {
+  "label": "a route from a core to itself is empty rather than one core long",
+  "old": "        if a == b {\n            return Some(vec![a]);\n        }",
+  "new": "        if a == b {\n            return Some(Vec::new());\n        }"
+ },
+ {
+  "label": "a crossbar route visits its source twice",
+  "old": "            Self::Crossbar { .. } => Some(vec![a, b]),",
+  "new": "            Self::Crossbar { .. } => Some(vec![a, a, b]),"
+ },
+ {
+  "label": "a mesh route takes a diagonal link the mesh does not have",
+  "old": "                Some(walk(ax, ay, dx, dy, cols, 0, false))",
+  "new": "                Some(walk(ax, ay, dx, dy, cols, 0, true))"
+ },
+ {
+  "label": "a mesh route wraps as though the fabric were a torus",
+  "old": "                Some(walk(ax, ay, dx, dy, cols, 0, false))",
+  "new": "                Some(walk(ax, ay, dx, dy, cols, cols, false))"
+ },
+ {
+  "label": "a rectangular torus route takes a diagonal link it does not have",
+  "old": "                Some(walk(ax, ay, dx, dy, cols, rows, false))",
+  "new": "                Some(walk(ax, ay, dx, dy, cols, rows, true))"
+ },
+ {
+  "label": "a triangular torus route never takes its diagonal link",
+  "old": "                Some(walk(ax, ay, x, y, cols, rows, true))",
+  "new": "                Some(walk(ax, ay, x, y, cols, rows, false))"
+ },
+ {
+  "label": "a route omits the core it starts from",
+  "old": "    push(x, y, &mut out);\n    let (sx, sy) = (dx.signum(), dy.signum());",
+  "new": "    let (sx, sy) = (dx.signum(), dy.signum());"
+ },
+ {
+  "label": "a route's two step directions are swapped",
+  "old": "    let (sx, sy) = (dx.signum(), dy.signum());",
+  "new": "    let (sx, sy) = (dy.signum(), dx.signum());"
+ },
+ {
+  "label": "a route walks the row displacement along the column axis",
+  "old": "    let (mut rx, mut ry) = (dx.abs(), dy.abs());",
+  "new": "    let (mut rx, mut ry) = (dy.abs(), dx.abs());"
+ },
+ {
+  "label": "the diagonal link is taken when the two displacements disagree in sign",
+  "old": "    if diagonal && sx != 0 && sx == sy {",
+  "new": "    if diagonal && sx != 0 && sx != sy {"
+ },
+ {
+  "label": "the diagonal link is taken whenever the column displacement is non-zero",
+  "old": "    if diagonal && sx != 0 && sx == sy {",
+  "new": "    if diagonal && sx != 0 {"
+ },
+ {
+  "label": "the diagonal run is the longer of the two displacements",
+  "old": "        let k = rx.min(ry);",
+  "new": "        let k = rx.max(ry);"
+ },
+ {
+  "label": "the diagonal run is charged to the column axis only",
+  "old": "        rx -= k;\n        ry -= k;",
+  "new": "        rx -= k;"
+ },
+ {
+  "label": "the route walks its rows before its columns",
+  "old": "    for _ in 0..rx {\n        x += sx;\n        push(x, y, &mut out);\n    }\n    for _ in 0..ry {\n        y += sy;\n        push(x, y, &mut out);\n    }\n    out",
+  "new": "    for _ in 0..ry {\n        y += sy;\n        push(x, y, &mut out);\n    }\n    for _ in 0..rx {\n        x += sx;\n        push(x, y, &mut out);\n    }\n    out"
+ },
+ {
+  "label": "a route on a wrapped fabric is never wrapped back into range",
+  "old": "        let (px, py) = if ri == 0 { (x, y) } else { (x.rem_euclid(ci), y.rem_euclid(ri)) };",
+  "new": "        let (px, py) = (x, y);"
+ },
+ {
+  "label": "a wrapped route wraps each axis against the other's extent",
+  "old": "        let (px, py) = if ri == 0 { (x, y) } else { (x.rem_euclid(ci), y.rem_euclid(ri)) };",
+  "new": "        let (px, py) = if ri == 0 { (x, y) } else { (x.rem_euclid(ri), y.rem_euclid(ci)) };"
+ },
+ {
+  "label": "a route's core index is column-major",
+  "old": "        out.push((py * ci + px) as u32);",
+  "new": "        out.push((px * ci + py) as u32);"
+ },
+ {
+  "label": "an empty fabric is given a diameter",
+  "old": "        let n = self.n_cores();\n        if n == 0 {\n            return None;\n        }",
+  "new": "        let n = self.n_cores();\n        if n == 1 {\n            return None;\n        }"
+ },
+ {
+  "label": "a one-core crossbar has a diameter of one",
+  "old": "            Self::Crossbar { .. } => Some(u64::from(n > 1)),",
+  "new": "            Self::Crossbar { .. } => Some(1),"
+ },
+ {
+  "label": "the mesh diameter counts cores rather than links",
+  "old": "            Self::Mesh2D { cols, rows } => Some(u64::from(cols - 1) + u64::from(rows - 1)),",
+  "new": "            Self::Mesh2D { cols, rows } => Some(u64::from(cols) + u64::from(rows)),"
+ },
+ {
+  "label": "the rectangular torus is given the mesh's diameter",
+  "old": "            Self::Torus2D { cols, rows } => Some(u64::from(cols / 2) + u64::from(rows / 2)),",
+  "new": "            Self::Torus2D { cols, rows } => Some(u64::from(cols - 1) + u64::from(rows - 1)),"
+ },
+ {
+  "label": "the rectangular torus halves the sum of its sides instead of halving each side",
+  "old": "            Self::Torus2D { cols, rows } => Some(u64::from(cols / 2) + u64::from(rows / 2)),",
+  "new": "            Self::Torus2D { cols, rows } => Some(u64::from((cols + rows) / 2)),"
+ },
+ {
+  "label": "the triangular torus refuses the sweep it can afford and runs the one it cannot",
+  "old": "                if n > u64::from(u32::MAX) {\n                    return None;\n                }",
+  "new": "                if n < u64::from(u32::MAX) {\n                    return None;\n                }"
+ },
+ {
+  "label": "the triangular torus's diameter is the distance to the last core rather than the worst",
+  "old": "                        worst = worst.max(h);",
+  "new": "                        worst = h;"
+ },
+ {
+  "label": "the triangular torus's sweep skips core zero",
+  "old": "                let mut worst = 0u64;\n                for b in 0..n {",
+  "new": "                let mut worst = 0u64;\n                for b in 1..n {",
+  "equivalent": "The sweep is `worst = worst.max(hops(0, b))` over a `worst` initialised to 0, and the term it drops is b == 0, whose value is `hops(0, 0) == 0` by the equality branch at the top of `hops`. Removing a zero from a maximum over non-negative integers that already starts at zero cannot change it, for any fabric of any size. Every other representative is still visited."
+ },
+ {
+  "label": "the multicast saving is the cost ratio rather than what it saves",
+  "old": "        Some(1.0 - self.hops as f64 / self.unicast_hops as f64)",
+  "new": "        Some(self.hops as f64 / self.unicast_hops as f64)"
+ },
+ {
+  "label": "the multicast saving inverts its ratio",
+  "old": "        Some(1.0 - self.hops as f64 / self.unicast_hops as f64)",
+  "new": "        Some(1.0 - self.unicast_hops as f64 / self.hops as f64)"
+ },
+ {
+  "label": "a tree with nothing to send reports a saving of NaN",
+  "old": "        if self.unicast_hops == 0 {\n            return None;\n        }\n        Some(1.0 - self.hops",
+  "new": "        Some(1.0 - self.hops"
+ },
+ {
+  "label": "chips are assigned by interleaving cores rather than by row-major blocks",
+  "old": "        Some(self.edges.iter().filter(|&&(a, b)| a / cores_per_chip != b / cores_per_chip).count() as u64)",
+  "new": "        Some(self.edges.iter().filter(|&&(a, b)| a % cores_per_chip != b % cores_per_chip).count() as u64)"
+ },
+ {
+  "label": "a chip crossing is a link whose ends share a chip",
+  "old": "        Some(self.edges.iter().filter(|&&(a, b)| a / cores_per_chip != b / cores_per_chip).count() as u64)",
+  "new": "        Some(self.edges.iter().filter(|&&(a, b)| a / cores_per_chip == b / cores_per_chip).count() as u64)"
+ },
+ {
+  "label": "a chip that holds no cores reports zero crossings rather than none",
+  "old": "        if cores_per_chip == 0 {\n            return None;\n        }",
+  "new": "        if cores_per_chip == 0 {\n            return Some(0);\n        }"
+ },
+ {
+  "label": "the unicast baseline is one hop per destination core whatever the distance",
+  "old": "        unicast_hops += fabric.hops(root, dst).unwrap_or(0);",
+  "new": "        unicast_hops += 1;"
+ },
+ {
+  "label": "the unicast baseline keeps only the last destination's distance",
+  "old": "        unicast_hops += fabric.hops(root, dst).unwrap_or(0);",
+  "new": "        unicast_hops = fabric.hops(root, dst).unwrap_or(0);"
+ },
+ {
+  "label": "a destination core reached by several targets is counted several times",
+  "old": "    d.sort_unstable();\n    d.dedup();",
+  "new": "    d.sort_unstable();"
+ },
+ {
+  "label": "the root is not part of its own delivery tree",
+  "old": "    let mut cores: Vec<u32> = vec![root];",
+  "new": "    let mut cores: Vec<u32> = Vec::new();"
+ },
+ {
+  "label": "a tree's cost is the cores it touches rather than the links it uses",
+  "old": "    let hops = edges.len() as u64;",
+  "new": "    let hops = cores.len() as u64;"
+ },
+ {
+  "label": "a link shared by two routes is charged twice",
+  "old": "    edges.sort_unstable();\n    edges.dedup();",
+  "new": "    edges.sort_unstable();"
+ },
+ {
+  "label": "a tree is required to have as many links as it has cores",
+  "old": "    if edges.len() + 1 != cores.len() {",
+  "new": "    if edges.len() != cores.len() {"
+ },
+ {
+  "label": "the union is never checked for being a tree",
+  "old": "    if edges.len() + 1 != cores.len() {",
+  "new": "    if false {",
+  "equivalent": "`Fabric` is a closed enum and every one of its four variants routes prefix-closed: the crossbar trivially, the mesh and rectangular torus by dimension-order routing, and the triangular torus by a displacement that is a function of the endpoint pair alone. `the_union_of_routes_from_one_source_is_a_tree_on_every_fabric` exercises that for every root of eleven fabrics, including the folded 2-wide and 2x2 cases, and the guard has never fired. No test in this module could tell, because telling would need a fabric whose routing is not prefix-closed and no such variant exists."
+ },
+ {
+  "label": "the destination range check admits the first core past the fabric",
+  "old": "        if u64::from(c) >= n {\n            return Err(MapError::CoreNotOnFabric { core: c, n_cores: n });",
+  "new": "        if u64::from(c) > n {\n            return Err(MapError::CoreNotOnFabric { core: c, n_cores: n });"
+ },
+ {
+  "label": "a link is stored with the direction it was traversed in",
+  "old": "            edges.push((w[0].min(w[1]), w[0].max(w[1])));",
+  "new": "            edges.push((w[0], w[1]));",
+  "equivalent": "The normalisation exists so that the same piece of wire seen from two directions dedups to one entry. In a union of routes that all leave one root, no link is ever traversed in both directions: two routes crossing the same link in opposite senses would close a cycle, and the `edges.len() + 1 != cores.len()` guard below refuses exactly that before returning. So for every tree this function actually returns, each link appears with one fixed orientation and the min/max is the identity on the set of pairs. Both fields that read the edge list — `hops`, which is `edges.len()`, and `crossings`, whose predicate is symmetric in a and b — are unchanged."
+ },
+ {
+  "label": "a destination on the source's own core is routed to rather than skipped",
+  "old": "        if dst == root {\n            continue;\n        }",
+  "new": "        let _ = dst;",
+  "equivalent": "With the `continue` gone the root is routed to itself: `fabric.route(root, root)` returns `vec![root]` from the equality branch, whose `windows(2)` is empty, so no edge is pushed; `fabric.hops(root, root)` is 0, so `unicast_hops` gains nothing; and `cores.extend_from_slice` adds `root`, which is already the first element and is removed again by the `dedup` below. Every field of the returned `McastTree` is bit-identical."
+ },
+ {
+  "label": "the unlimited core limits state a neuron cap",
+  "old": "        Self { neurons_per_core: None, synapses_per_core: None, max_fan_in: None };",
+  "new": "        Self { neurons_per_core: Some(256), synapses_per_core: None, max_fan_in: None };"
+ },
+ {
+  "label": "a part's fan-in wall is read from its neuron count",
+  "old": "            max_fan_in: part.max_fan_in.value,",
+  "new": "            max_fan_in: part.neurons_per_core.value,"
+ },
+ {
+  "label": "a part's neuron count is read from its fan-in wall",
+  "old": "            neurons_per_core: part.neurons_per_core.value,",
+  "new": "            neurons_per_core: part.max_fan_in.value,"
+ },
+ {
+  "label": "a synapse is charged to the presynaptic core",
+  "old": "            let d = deg[i] as u64;",
+  "new": "            let d = (net.offset[i + 1] - net.offset[i]) as u64;"
+ },
+ {
+  "label": "a core's neuron count is not accumulated",
+  "old": "            l.neurons += 1;",
+  "new": "            l.neurons = 1;"
+ },
+ {
+  "label": "a core's synapse storage is not accumulated",
+  "old": "            l.synapses += d;",
+  "new": "            l.synapses = d;"
+ },
+ {
+  "label": "the worst fan-in on a core is the last neuron at the maximum rather than the first",
+  "old": "                Some((_, best)) if best >= d => {}",
+  "new": "                Some((_, best)) if best > d => {}"
+ },
+ {
+  "label": "the worst fan-in on a core is the smallest",
+  "old": "                Some((_, best)) if best >= d => {}",
+  "new": "                Some((_, best)) if best <= d => {}"
+ },
+ {
+  "label": "an empty core reports a neuron with no inputs rather than no maximum",
+  "old": "                worst_fan_in: None,",
+  "new": "                worst_fan_in: Some((0, 0)),"
+ },
+ {
+  "label": "every neuron counts as a fresh core",
+  "old": "            if !seen[c as usize] {",
+  "new": "            if true {"
+ },
+ {
+  "label": "the used-core count stops at one",
+  "old": "                used += 1;",
+  "new": "                used = 1;"
+ },
+ {
+  "label": "a capacity overflow is measured as the headroom instead",
+  "old": "                used.saturating_sub(cap)",
+  "new": "                cap.saturating_sub(used)"
+ },
+ {
+  "label": "a capacity overflow wraps instead of saturating",
+  "old": "                used.saturating_sub(cap)",
+  "new": "                used - cap"
+ },
+ {
+  "label": "a fan-in overflow is measured backwards",
+  "old": "            Self::FanIn { fan_in, cap, .. } => fan_in.saturating_sub(cap),",
+  "new": "            Self::FanIn { fan_in, cap, .. } => cap.saturating_sub(fan_in),"
+ },
+ {
+  "label": "the fan-in wall is reported as relieved by repartitioning",
+  "old": "            Self::Neurons { .. } | Self::Synapses { .. } => true,\n            Self::FanIn { .. } => false,",
+  "new": "            Self::Neurons { .. } | Self::Synapses { .. } => true,\n            Self::FanIn { .. } => true,"
+ },
+ {
+  "label": "the fan-in wall is the least severe violation",
+  "old": "            Self::FanIn { .. } => 0,\n            Self::Synapses { .. } => 1,\n            Self::Neurons { .. } => 2,",
+  "new": "            Self::FanIn { .. } => 2,\n            Self::Synapses { .. } => 1,\n            Self::Neurons { .. } => 0,"
+ },
+ {
+  "label": "an overfull core outranks an overfull synapse memory",
+  "old": "            Self::FanIn { .. } => 0,\n            Self::Synapses { .. } => 1,\n            Self::Neurons { .. } => 2,",
+  "new": "            Self::FanIn { .. } => 0,\n            Self::Synapses { .. } => 2,\n            Self::Neurons { .. } => 1,"
+ },
+ {
+  "label": "the two capacity constraints answer each other's names",
+  "old": "            Self::Neurons { .. } => \"neurons per core\",\n            Self::Synapses { .. } => \"synapses per core\",",
+  "new": "            Self::Neurons { .. } => \"synapses per core\",\n            Self::Synapses { .. } => \"neurons per core\","
+ },
+ {
+  "label": "a core that holds nothing reports a utilisation of NaN",
+  "old": "        if self.cap == 0 {\n            return None;\n        }\n        Some(self.worst_used as f64 / self.cap as f64)",
+  "new": "        Some(self.worst_used as f64 / self.cap as f64)"
+ },
+ {
+  "label": "utilisation inverts its ratio",
+  "old": "        Some(self.worst_used as f64 / self.cap as f64)",
+  "new": "        Some(self.cap as f64 / self.worst_used as f64)"
+ },
+ {
+  "label": "the spare capacity is measured backwards",
+  "old": "        self.cap.saturating_sub(self.worst_used)",
+  "new": "        self.worst_used.saturating_sub(self.cap)"
+ },
+ {
+  "label": "the binding constraint is the least severe one",
+  "old": "        self.binds.first()",
+  "new": "        self.binds.last()"
+ },
+ {
+  "label": "a placement with nothing binding is reported as repartitionable",
+  "old": "        !self.binds.is_empty() && self.binds.iter().all(CoreBind::relieved_by_repartitioning)",
+  "new": "        self.binds.iter().all(CoreBind::relieved_by_repartitioning)"
+ },
+ {
+  "label": "one relievable violation among several makes the whole placement repartitionable",
+  "old": "        !self.binds.is_empty() && self.binds.iter().all(CoreBind::relieved_by_repartitioning)",
+  "new": "        !self.binds.is_empty() && self.binds.iter().any(CoreBind::relieved_by_repartitioning)"
+ },
+ {
+  "label": "the unchecked constraints are listed in the wrong order",
+  "old": "        if limits.synapses_per_core.is_none() {\n            unchecked.push(\"synapses per core\");\n        }\n        if limits.neurons_per_core.is_none() {\n            unchecked.push(\"neurons per core\");\n        }",
+  "new": "        if limits.neurons_per_core.is_none() {\n            unchecked.push(\"neurons per core\");\n        }\n        if limits.synapses_per_core.is_none() {\n            unchecked.push(\"synapses per core\");\n        }"
+ },
+ {
+  "label": "a network with no neurons passes every limit",
+  "old": "            return Ok(Feasibility { verdict: None, binds, headroom, unchecked });",
+  "new": "            return Ok(Feasibility { verdict: Some(true), binds, headroom, unchecked });"
+ },
+ {
+  "label": "an empty network is checked as though it had cores carrying load",
+  "old": "        if self.neurons == 0 {",
+  "new": "        if false {"
+ },
+ {
+  "label": "a neuron exactly at the fan-in wall is refused",
+  "old": "                if d > cap {",
+  "new": "                if d >= cap {"
+ },
+ {
+  "label": "the fan-in headroom reports the least-loaded neuron",
+  "old": "                if worst.is_none_or(|(_, w, _)| d > w) {",
+  "new": "                if worst.is_none_or(|(_, w, _)| d < w) {"
+ },
+ {
+  "label": "a constraint that bound also reports headroom",
+  "old": "            if let (true, Some((_, w, c))) = (binds.is_empty(), worst) {",
+  "new": "            if let (true, Some((_, w, c))) = (true, worst) {"
+ },
+ {
+  "label": "a core exactly at its synapse capacity is refused",
+  "old": "                if l.synapses > cap {",
+  "new": "                if l.synapses >= cap {"
+ },
+ {
+  "label": "the synapse headroom reports the emptiest core",
+  "old": "                let worst = loads.iter().max_by_key(|l| (l.synapses, core::cmp::Reverse(l.core)));",
+  "new": "                let worst = loads.iter().min_by_key(|l| (l.synapses, core::cmp::Reverse(l.core)));"
+ },
+ {
+  "label": "a tie for the worst synapse load goes to the highest core index",
+  "old": "                let worst = loads.iter().max_by_key(|l| (l.synapses, core::cmp::Reverse(l.core)));",
+  "new": "                let worst = loads.iter().max_by_key(|l| (l.synapses, l.core));"
+ },
+ {
+  "label": "the synapse headroom reports the neuron count",
+  "old": "                    worst_used: worst.map_or(0, |l| l.synapses),",
+  "new": "                    worst_used: worst.map_or(0, |l| l.neurons),"
+ },
+ {
+  "label": "a core exactly at its neuron capacity is refused",
+  "old": "                if l.neurons > cap {",
+  "new": "                if l.neurons >= cap {"
+ },
+ {
+  "label": "the neuron headroom reports the emptiest core",
+  "old": "                let worst = loads.iter().max_by_key(|l| (l.neurons, core::cmp::Reverse(l.core)));",
+  "new": "                let worst = loads.iter().min_by_key(|l| (l.neurons, core::cmp::Reverse(l.core)));"
+ },
+ {
+  "label": "violations are ordered by index before severity",
+  "old": "            (b.precedence(), second)",
+  "new": "            (second, b.precedence())"
+ },
+ {
+  "label": "a placement with nothing checked passes and one with headroom does not",
+  "old": "        let verdict = if !binds.is_empty() {\n            Some(false)\n        } else if headroom.is_empty() {\n            None\n        } else {\n            Some(true)\n        };",
+  "new": "        let verdict = if !binds.is_empty() {\n            Some(false)\n        } else if headroom.is_empty() {\n            Some(true)\n        } else {\n            None\n        };"
+ },
+ {
+  "label": "a placement that binds is reported as placing",
+  "old": "        let verdict = if !binds.is_empty() {\n            Some(false)",
+  "new": "        let verdict = if !binds.is_empty() {\n            Some(true)"
+ },
+ {
+  "label": "a core index equal to the core count is accepted",
+  "old": "            if c >= n_cores {",
+  "new": "            if c > n_cores {"
+ },
+ {
+  "label": "the per-core bookkeeping bound excludes the count it states",
+  "old": "        if n_cores > MAX_CORES {",
+  "new": "        if n_cores >= MAX_CORES {"
+ },
+ {
+  "label": "the bookkeeping bound is a twentieth of what its doc claims",
+  "old": "pub const MAX_CORES: u32 = 1 << 24;",
+  "new": "pub const MAX_CORES: u32 = 1 << 20;"
+ },
+ {
+  "label": "the cut counts the synapses that do not cross",
+  "old": "                if self.core_of[net.post[k] as usize] != cp {",
+  "new": "                if self.core_of[net.post[k] as usize] == cp {"
+ },
+ {
+  "label": "every synapse is measured against core zero rather than against its own source",
+  "old": "            let cp = self.core_of[pre];",
+  "new": "            let cp = 0;"
+ },
+ {
+  "label": "the cut is not accumulated",
+  "old": "                    cut += 1;",
+  "new": "                    cut = 1;"
+ },
+ {
+  "label": "one neuron's synapse block overlaps the previous neuron's",
+  "old": "            let (a, b) = (net.offset[pre], net.offset[pre + 1]);",
+  "new": "            let (a, b) = (net.offset[pre].saturating_sub(1), net.offset[pre + 1]);"
+ },
+ {
+  "label": "the cut fraction inverts its ratio",
+  "old": "        Ok(Some(cut as f64 / net.n_syn as f64))",
+  "new": "        Ok(Some(net.n_syn as f64 / cut as f64))"
+ },
+ {
+  "label": "a network with no synapses reports a cut fraction of NaN",
+  "old": "        if net.n_syn == 0 {\n            return Ok(None);\n        }",
+  "new": "        if false {\n            return Ok(None);\n        }"
+ },
+ {
+  "label": "the degenerate placement spans one core per neuron",
+  "old": "        Self::new(net, vec![0; net.n], 1)",
+  "new": "        Self::new(net, vec![0; net.n], net.n.max(1) as u32)"
+ },
+ {
+  "label": "a self-synapse is counted but never filled in",
+  "old": "                if post == pre {\n                    continue;\n                }\n                count[pre + 1] += 1;",
+  "new": "                count[pre + 1] += 1;"
+ },
+ {
+  "label": "a self-synapse is filled in but never counted",
+  "old": "                if post == pre {\n                    continue;\n                }\n                nbr[fill[pre]] = post as u32;",
+  "new": "                nbr[fill[pre]] = post as u32;"
+ },
+ {
+  "label": "both ends of an undirected edge are charged to the presynaptic neuron",
+  "old": "                count[post + 1] += 1;",
+  "new": "                count[pre + 1] += 1;"
+ },
+ {
+  "label": "the adjacency offsets are degrees rather than a prefix sum",
+  "old": "        for i in 0..net.n {\n            count[i + 1] += count[i];\n        }",
+  "new": "        for i in 0..net.n {\n            count[i + 1] += 0;\n        }"
+ },
+ {
+  "label": "the neighbour lists are left unsorted for the binary search that reads them",
+  "old": "        for v in 0..net.n {\n            nbr[offset[v]..offset[v + 1]].sort_unstable();\n        }",
+  "new": "        for v in 0..net.n {\n            let _ = v;\n        }"
+ },
+ {
+  "label": "the postsynaptic neuron is listed as its own neighbour instead of the presynaptic one",
+  "old": "                nbr[fill[post]] = pre as u32;\n                fill[post] += 1;",
+  "new": "                nbr[fill[post]] = post as u32;\n                fill[post] += 1;"
+ },
+ {
+  "label": "a neuron's neighbour slice is empty",
+  "old": "        &self.nbr[self.offset[v]..self.offset[v + 1]]",
+  "new": "        &self.nbr[self.offset[v]..self.offset[v]]"
+ },
+ {
+  "label": "two parallel synapses count as one shared edge",
+  "old": "        (hi - lo) as i64",
+  "new": "        1"
+ },
+ {
+  "label": "the multiplicity's two search bounds are the same",
+  "old": "        let hi = s.partition_point(|&x| x <= v);",
+  "new": "        let hi = s.partition_point(|&x| x < v);"
+ },
+ {
+  "label": "the streaming plan reports no cut before refinement",
+  "old": "        cut_before_refinement: cut,",
+  "new": "        cut_before_refinement: 0,"
+ },
+ {
+  "label": "the streaming plan claims to have been refined",
+  "old": "        method: Method::Greedy,",
+  "new": "        method: Method::KernighanLin,"
+ },
+ {
+  "label": "the refinement working set limit is ten times what its doc states",
+  "old": "pub const REFINEMENT_CELL_LIMIT: u64 = 8_000_000;",
+  "new": "pub const REFINEMENT_CELL_LIMIT: u64 = 80_000_000;"
+ },
+ {
+  "label": "the refinement working set is sized by the sum rather than the product",
+  "old": "    let cells = net.n as u64 * u64::from(n_cores);",
+  "new": "    let cells = net.n as u64 + u64::from(n_cores);"
+ },
+ {
+  "label": "the refiner's neighbour counts are indexed by the neighbour rather than the neuron",
+  "old": "            cnt[v * k + core_of[u as usize] as usize] += 1;",
+  "new": "            cnt[u as usize * k + core_of[v] as usize] += 1;"
+ },
+ {
+  "label": "the refiner's neighbour counts are presence rather than counts",
+  "old": "            cnt[v * k + core_of[u as usize] as usize] += 1;",
+  "new": "            cnt[v * k + core_of[u as usize] as usize] = 1;"
+ },
+ {
+  "label": "the refiner's per-core synapse load is not accumulated",
+  "old": "        syn[core_of[v] as usize] += in_deg[v];",
+  "new": "        syn[core_of[v] as usize] = in_deg[v];"
+ },
+ {
+  "label": "the refinement gain keeps only the last pass",
+  "old": "        total_gain += gain;",
+  "new": "        total_gain = gain;"
+ },
+ {
+  "label": "the exchange count keeps only the last pass",
+  "old": "        swaps_kept += kept;",
+  "new": "        swaps_kept = kept;"
+ },
+ {
+  "label": "refinement never stops early",
+  "old": "        if gain <= 0 {\n            break;\n        }",
+  "new": "        if gain < 0 {\n            break;\n        }"
+ },
+ {
+  "label": "refinement runs exactly one pass whatever it gained",
+  "old": "        if gain <= 0 {\n            break;\n        }",
+  "new": "        break;"
+ },
+ {
+  "label": "the refinement gain is not clamped at zero",
+  "old": "        refinement_gain: total_gain.max(0) as u64,",
+  "new": "        refinement_gain: total_gain as u64,",
+  "equivalent": "`kl_pass` returns `best_cum`, which is initialised to `0i64` and is only ever assigned inside `if cum > best_cum`, so it is the maximum of 0 and the cumulative gains and can never be negative. `total_gain` is a sum of those return values, so it is non-negative too, and `.max(0)` is the identity on every value that can reach it. The clamp is dead code, not a correction."
+ },
+ {
+  "label": "the plan reports a starting cut one higher than the streaming pass measured",
+  "old": "    let cut_before_refinement = base.cut;",
+  "new": "    let cut_before_refinement = base.cut + 1;"
+ },
+ {
+  "label": "a partition over zero cores is attempted rather than refused",
+  "old": "    if n_cores == 0 {\n        return Err(MapError::NoCores);\n    }",
+  "new": "    if false {\n        return Err(MapError::NoCores);\n    }"
+ },
+ {
+  "label": "a neuron capacity of zero is accepted",
+  "old": "    if limits.neurons_per_core == Some(0) {",
+  "new": "    if limits.neurons_per_core == Some(1) {"
+ },
+ {
+  "label": "the two zero-capacity errors name each other's limit",
+  "old": "        return Err(MapError::ZeroCapacity { which: \"neurons per core\" });\n    }\n    if limits.synapses_per_core == Some(0) {\n        return Err(MapError::ZeroCapacity { which: \"synapses per core\" });",
+  "new": "        return Err(MapError::ZeroCapacity { which: \"synapses per core\" });\n    }\n    if limits.synapses_per_core == Some(0) {\n        return Err(MapError::ZeroCapacity { which: \"neurons per core\" });"
+ },
+ {
+  "label": "the streaming pass refuses the core count its own constant allows",
+  "old": "    }\n    if n_cores > MAX_CORES {",
+  "new": "    }\n    if n_cores >= MAX_CORES {"
+ },
+ {
+  "label": "a network that exactly fills the machine is refused",
+  "old": "        if (net.n as u64) > capacity {",
+  "new": "        if (net.n as u64) >= capacity {"
+ },
+ {
+  "label": "the machine's neuron capacity is the sum of its two factors",
+  "old": "        let capacity = u64::from(npc) * u64::from(n_cores);",
+  "new": "        let capacity = u64::from(npc) + u64::from(n_cores);"
+ },
+ {
+  "label": "the machine's synapse capacity is the sum of its two factors",
+  "old": "        let capacity = cap.saturating_mul(u64::from(n_cores));",
+  "new": "        let capacity = cap.saturating_add(u64::from(n_cores));"
+ },
+ {
+  "label": "a network whose synapses exactly fill the machine is refused",
+  "old": "        if synapses > capacity {",
+  "new": "        if synapses >= capacity {"
+ },
+ {
+  "label": "a neuron whose fan-in exactly fills a core is refused",
+  "old": "        for (i, &d) in deg.iter().enumerate() {\n            if d > cap {",
+  "new": "        for (i, &d) in deg.iter().enumerate() {\n            if d >= cap {"
+ },
+ {
+  "label": "the per-neuron wall is tested before the whole-machine arithmetic",
+  "old": "        let synapses: u64 = deg.iter().sum();\n        let capacity = cap.saturating_mul(u64::from(n_cores));\n        if synapses > capacity {\n            return Err(MapError::NotEnoughSynapseRoom {\n                synapses,\n                n_cores,\n                synapses_per_core: cap,\n                capacity,\n            });\n        }\n        for (i, &d) in deg.iter().enumerate() {\n            if d > cap {\n                return Err(MapError::FanInExceedsCore { neuron: i, fan_in: d, cap });\n            }\n        }",
+  "new": "        for (i, &d) in deg.iter().enumerate() {\n            if d > cap {\n                return Err(MapError::FanInExceedsCore { neuron: i, fan_in: d, cap });\n            }\n        }\n        let synapses: u64 = deg.iter().sum();\n        let capacity = cap.saturating_mul(u64::from(n_cores));\n        if synapses > capacity {\n            return Err(MapError::NotEnoughSynapseRoom {\n                synapses,\n                n_cores,\n                synapses_per_core: cap,\n                capacity,\n            });\n        }"
+ },
+ {
+  "label": "the Fennel alpha drops its square root of the core count",
+  "old": "    // Fennel's alpha at gamma = 1.5: sqrt(k) * m / n^1.5, with m the undirected edge count.\n    let n_f = net.n as f64;\n    let alpha = (k as f64).sqrt() * net.n_syn as f64 / (n_f * n_f.sqrt());",
+  "new": "    // Fennel's alpha at gamma = 1.5: sqrt(k) * m / n^1.5, with m the undirected edge count.\n    let n_f = net.n as f64;\n    let alpha = net.n_syn as f64 / (n_f * n_f.sqrt());"
+ },
+ {
+  "label": "the Fennel alpha scales with the core count rather than its square root",
+  "old": "    // Fennel's alpha at gamma = 1.5: sqrt(k) * m / n^1.5, with m the undirected edge count.\n    let n_f = net.n as f64;\n    let alpha = (k as f64).sqrt() * net.n_syn as f64 / (n_f * n_f.sqrt());",
+  "new": "    // Fennel's alpha at gamma = 1.5: sqrt(k) * m / n^1.5, with m the undirected edge count.\n    let n_f = net.n as f64;\n    let alpha = k as f64 * net.n_syn as f64 / (n_f * n_f.sqrt());"
+ },
+ {
+  "label": "the Fennel alpha normalises by the square of the neuron count",
+  "old": "    // Fennel's alpha at gamma = 1.5: sqrt(k) * m / n^1.5, with m the undirected edge count.\n    let n_f = net.n as f64;\n    let alpha = (k as f64).sqrt() * net.n_syn as f64 / (n_f * n_f.sqrt());",
+  "new": "    // Fennel's alpha at gamma = 1.5: sqrt(k) * m / n^1.5, with m the undirected edge count.\n    let n_f = net.n as f64;\n    let alpha = (k as f64).sqrt() * net.n_syn as f64 / (n_f * n_f);"
+ },
+ {
+  "label": "the Fennel alpha uses the neuron count where the paper uses the edge count",
+  "old": "    // Fennel's alpha at gamma = 1.5: sqrt(k) * m / n^1.5, with m the undirected edge count.\n    let n_f = net.n as f64;\n    let alpha = (k as f64).sqrt() * net.n_syn as f64 / (n_f * n_f.sqrt());",
+  "new": "    // Fennel's alpha at gamma = 1.5: sqrt(k) * m / n^1.5, with m the undirected edge count.\n    let n_f = net.n as f64;\n    let alpha = (k as f64).sqrt() * net.n as f64 / (n_f * n_f.sqrt());"
+ },
+ {
+  "label": "the balance penalty is half the paper's gamma, as it first shipped",
+  "old": "            let s = score[c] as f64 - alpha * 1.5 * (neurons[c] as f64).sqrt();",
+  "new": "            let s = score[c] as f64 - alpha * 0.75 * (neurons[c] as f64).sqrt();"
+ },
+ {
+  "label": "the balance penalty is linear in occupancy",
+  "old": "            let s = score[c] as f64 - alpha * 1.5 * (neurons[c] as f64).sqrt();",
+  "new": "            let s = score[c] as f64 - alpha * 1.5 * (neurons[c] as f64);"
+ },
+ {
+  "label": "the balance penalty rewards the fuller core",
+  "old": "            let s = score[c] as f64 - alpha * 1.5 * (neurons[c] as f64).sqrt();",
+  "new": "            let s = score[c] as f64 + alpha * 1.5 * (neurons[c] as f64).sqrt();"
+ },
+ {
+  "label": "the balance penalty is multiplicative, as in LDG rather than Fennel",
+  "old": "            let s = score[c] as f64 - alpha * 1.5 * (neurons[c] as f64).sqrt();",
+  "new": "            let s = score[c] as f64 / (1.0 + alpha * 1.5 * (neurons[c] as f64).sqrt());"
+ },
+ {
+  "label": "the stream order is shuffled upward, which is the biased Fisher-Yates",
+  "old": "    // because `Rng` is.\n    for i in (1..order.len()).rev() {",
+  "new": "    // because `Rng` is.\n    for i in 1..order.len() {"
+ },
+ {
+  "label": "the shuffle never swaps an element with itself",
+  "old": "    for i in (1..order.len()).rev() {\n        let j = rng.below((i + 1) as u32) as usize;",
+  "new": "    for i in (1..order.len()).rev() {\n        let j = rng.below(i as u32) as usize;"
+ },
+ {
+  "label": "a tie in the stream goes to the fuller core",
+  "old": "                            && (neurons[c], c) < (neurons[bc], bc));",
+  "new": "                            && (neurons[c], c) > (neurons[bc], bc));"
+ },
+ {
+  "label": "an exact tie in the stream counts as an improvement",
+  "old": "                    let better = s > bs",
+  "new": "                    let better = s >= bs"
+ },
+ {
+  "label": "a core exactly at its neuron capacity is still eligible",
+  "old": "            if limits.neurons_per_core.is_some_and(|npc| neurons[c] >= u64::from(npc)) {",
+  "new": "            if limits.neurons_per_core.is_some_and(|npc| neurons[c] > u64::from(npc)) {"
+ },
+ {
+  "label": "eligibility ignores the storage the arriving neuron needs",
+  "old": "            if limits.synapses_per_core.is_some_and(|cap| syn[c] + d > cap) {",
+  "new": "            if limits.synapses_per_core.is_some_and(|cap| syn[c] > cap) {"
+ },
+ {
+  "label": "the synapse capacity never makes a core ineligible",
+  "old": "            if limits.synapses_per_core.is_some_and(|cap| syn[c] + d > cap) {",
+  "new": "            if limits.synapses_per_core.is_some_and(|cap| { let _ = cap; false }) {"
+ },
+ {
+  "label": "the streaming occupancy is not accumulated",
+  "old": "        neurons[c] += 1;",
+  "new": "        neurons[c] = 1;"
+ },
+ {
+  "label": "the streaming synapse load is not accumulated",
+  "old": "        syn[c] += d;",
+  "new": "        syn[c] = d;"
+ },
+ {
+  "label": "the per-core neighbour score is reset to one between neurons",
+  "old": "            score[c] = 0;",
+  "new": "            score[c] = 1;"
+ },
+ {
+  "label": "the neighbour score is presence rather than a count",
+  "old": "                score[ci] += 1;",
+  "new": "                score[ci] = 1;"
+ },
+ {
+  "label": "every neighbour marks its core as touched, however often",
+  "old": "                if score[ci] == 0 {\n                    touched.push(ci);\n                }",
+  "new": "                touched.push(ci);",
+  "equivalent": "`touched` exists only so that the next neuron's `for &c in &touched { score[c] = 0; }` clears exactly the entries this neuron wrote. Pushing a core index more than once makes that loop assign 0 to the same slot twice, which is idempotent, and `touched.clear()` empties it either way. No score, no placement and no allocation-visible behaviour changes; only the length of a scratch vector does, and nothing reads it."
+ },
+ {
+  "label": "a neuron's own storage requirement is taken as zero",
+  "old": "        let d = deg[v];",
+  "new": "        let d = 0;"
+ },
+ {
+  "label": "an unplaced neuron is read as sitting on core zero",
+  "old": "    let mut core_of = vec![u32::MAX; net.n];",
+  "new": "    let mut core_of = vec![0u32; net.n];"
+ },
+ {
+  "label": "the empty-network shortcut is removed",
+  "old": "    if net.n == 0 {\n        return Ok(Vec::new());\n    }",
+  "new": "    if false {\n        return Ok(Vec::new());\n    }",
+  "equivalent": "With `net.n == 0` the fall-through reaches the same answer by the same route. `deg` is empty, so the synapse sum is 0 and no whole-machine check fires; `Adjacency::build` on a zero-neuron net allocates a one-element `count` and an empty `nbr`; `alpha` evaluates to sqrt(k)*0/(0*sqrt(0)) = 0/0 = NaN but is never read, because `order` is empty, the Fisher-Yates loop `(1..0).rev()` does not run, and the assignment loop `for &v in &order` does not run either. The function returns `Ok(core_of)` where `core_of` is `vec![u32::MAX; 0]`, which is the same empty vector the shortcut returned."
+ },
+ {
+  "label": "a boundary neuron must have an edge into every other core",
+  "old": "                (0..k).any(|c| c != own && cnt[v * k + c] > 0)",
+  "new": "                (0..k).all(|c| c != own && cnt[v * k + c] > 0)"
+ },
+ {
+  "label": "a neuron with every edge inside its own core counts as a boundary neuron",
+  "old": "                (0..k).any(|c| c != own && cnt[v * k + c] > 0)",
+  "new": "                (0..k).any(|c| cnt[v * k + c] > 0)"
+ },
+ {
+  "label": "a neuron already exchanged this pass can be exchanged again",
+  "old": "                if locked[v] {\n                    return false;\n                }",
+  "new": "                if locked[v] {\n                    let _ = v;\n                }"
+ },
+ {
+  "label": "a pass may attempt twice as many exchanges as it has neurons to lock",
+  "old": "    let max_steps = n / 2;",
+  "new": "    let max_steps = n;",
+  "equivalent": "Each accepted step locks both of its neurons, and the boundary set filters locked neurons out, so after ceil(n/2) steps no unlocked pair on different cores remains and `best` is `None`, which breaks the loop. Raising the bound from n/2 to n therefore adds only iterations that break immediately: with n even the n/2-th step leaves nothing unlocked, and with n odd one neuron is left, which cannot form a pair by itself. No exchange, gain, prefix or rewind changes."
+ },
+ {
+  "label": "a pass makes one exchange and stops",
+  "old": "    let max_steps = n / 2;",
+  "new": "    let max_steps = 1;"
+ },
+ {
+  "label": "the exchange gain forgets that the two neurons' shared edges stay cut",
+  "old": "                let g = d_u + d_v - 2 * adj.multiplicity(u, v as u32);",
+  "new": "                let g = d_u + d_v;"
+ },
+ {
+  "label": "the shared-edge correction is counted once rather than for both directions",
+  "old": "                let g = d_u + d_v - 2 * adj.multiplicity(u, v as u32);",
+  "new": "                let g = d_u + d_v - adj.multiplicity(u, v as u32);"
+ },
+ {
+  "label": "the shared-edge correction is added to the gain",
+  "old": "                let g = d_u + d_v - 2 * adj.multiplicity(u, v as u32);",
+  "new": "                let g = d_u + d_v + 2 * adj.multiplicity(u, v as u32);"
+ },
+ {
+  "label": "one neuron's half of the gain is measured backwards",
+  "old": "                let d_u = cnt[u * k + cv] - cnt[u * k + cu];",
+  "new": "                let d_u = cnt[u * k + cu] - cnt[u * k + cv];"
+ },
+ {
+  "label": "both halves of the gain are read from the same neuron's row",
+  "old": "                let d_v = cnt[v * k + cu] - cnt[v * k + cv];",
+  "new": "                let d_v = cnt[u * k + cu] - cnt[u * k + cv];"
+ },
+ {
+  "label": "the pass picks the worst available exchange",
+  "old": "                if best.is_none_or(|(bu, bv, bg)| g > bg || (g == bg && (u, v) < (bu, bv))) {",
+  "new": "                if best.is_none_or(|(bu, bv, bg)| g < bg || (g == bg && (u, v) < (bu, bv))) {"
+ },
+ {
+  "label": "a tie between two exchanges goes to the higher pair",
+  "old": "                if best.is_none_or(|(bu, bv, bg)| g > bg || (g == bg && (u, v) < (bu, bv))) {",
+  "new": "                if best.is_none_or(|(bu, bv, bg)| g > bg || (g == bg && (u, v) > (bu, bv))) {"
+ },
+ {
+  "label": "an exchange is refused only when it overfills both cores",
+  "old": "                    if after_u > cap || after_v > cap {",
+  "new": "                    if after_u > cap && after_v > cap {"
+ },
+ {
+  "label": "the refiner's synapse capacity guard never refuses anything",
+  "old": "                    if after_u > cap || after_v > cap {",
+  "new": "                    if false {"
+ },
+ {
+  "label": "an exchange's synapse move is applied in the wrong direction",
+  "old": "                    let after_u = syn[cu] - in_deg[u] + in_deg[v];",
+  "new": "                    let after_u = syn[cu] + in_deg[u] - in_deg[v];"
+ },
+ {
+  "label": "the rewind undoes every exchange the pass made",
+  "old": "    for i in (best_k..applied.len()).rev() {",
+  "new": "    for i in (0..applied.len()).rev() {"
+ },
+ {
+  "label": "the rewind keeps every exchange, including the negative tail",
+  "old": "    for i in (best_k..applied.len()).rev() {",
+  "new": "    for i in (best_k..best_k).rev() {"
+ },
+ {
+  "label": "the rewind undoes the tail in the order it was applied",
+  "old": "    for i in (best_k..applied.len()).rev() {",
+  "new": "    for i in best_k..applied.len() {",
+  "equivalent": "Every exchange in `applied` locks both of its neurons and the boundary set excludes locked neurons, so the pairs are pairwise disjoint in neurons. `kl_exchange` reads and writes only `core_of[u]`, `core_of[v]`, the `cnt` rows of u's and v's neighbours at columns cu and cv, and `syn[cu]`, `syn[cv]` — all derived from `core_of[u]` and `core_of[v]` alone, never from a neighbour's current core. Two undo operations on disjoint neuron pairs therefore commute: the `cnt` updates are additions of the same +-1 deltas whichever order they land in, and the `syn` updates are additions of the same in-degree differences. The state after undoing the tail is identical in either direction."
+ },
+ {
+  "label": "a prefix with negative cumulative gain can be kept",
+  "old": "    let mut best_cum = 0i64;",
+  "new": "    let mut best_cum = i64::MIN;"
+ },
+ {
+  "label": "the running gain is not cumulative",
+  "old": "        cum += g;",
+  "new": "        cum = g;"
+ },
+ {
+  "label": "the kept prefix is one exchange short",
+  "old": "            best_k = i + 1;",
+  "new": "            best_k = i;"
+ },
+ {
+  "label": "a prefix that ties the best is preferred to the shorter one",
+  "old": "        if cum > best_cum {",
+  "new": "        if cum >= best_cum {"
+ },
+ {
+  "label": "the pass reports the gain of every exchange rather than of the prefix it kept",
+  "old": "    (best_cum, best_k as u64)",
+  "new": "    (cum, best_k as u64)"
+ },
+ {
+  "label": "an exchange moves the first neuron's neighbours the wrong way",
+  "old": "    for &x in adj.of(u) {\n        let xi = x as usize;\n        cnt[xi * k + cu] -= 1;\n        cnt[xi * k + cv] += 1;\n    }",
+  "new": "    for &x in adj.of(u) {\n        let xi = x as usize;\n        cnt[xi * k + cu] += 1;\n        cnt[xi * k + cv] -= 1;\n    }"
+ },
+ {
+  "label": "an exchange updates the first neuron's neighbours twice and the second's not at all",
+  "old": "    for &x in adj.of(v) {",
+  "new": "    for &x in adj.of(u) {"
+ },
+ {
+  "label": "an exchange moves only one of its two neurons",
+  "old": "    core_of[u] = cv as u32;\n    core_of[v] = cu as u32;",
+  "new": "    core_of[u] = cv as u32;\n    core_of[v] = cv as u32;"
+ },
+ {
+  "label": "an exchange moves the synapse storage the wrong way",
+  "old": "    syn[cu] += in_deg[v] - in_deg[u];\n    syn[cv] += in_deg[u] - in_deg[v];",
+  "new": "    syn[cu] += in_deg[u] - in_deg[v];\n    syn[cv] += in_deg[v] - in_deg[u];"
+ },
+ {
+  "label": "the delivery count drops the on-core half",
+  "old": "        self.on_core_deliveries + self.off_core_deliveries",
+  "new": "        self.off_core_deliveries"
+ },
+ {
+  "label": "hops per spike is measured against the unicast baseline",
+  "old": "        Some(self.multicast_hops as f64 / self.spikes as f64)",
+  "new": "        Some(self.unicast_hops as f64 / self.spikes as f64)"
+ },
+ {
+  "label": "hops per spike inverts its ratio",
+  "old": "        Some(self.multicast_hops as f64 / self.spikes as f64)",
+  "new": "        Some(self.spikes as f64 / self.multicast_hops as f64)"
+ },
+ {
+  "label": "a run with no spikes reports hops per spike as NaN",
+  "old": "        if self.spikes == 0 {\n            return None;\n        }\n        Some(self.multicast_hops as f64 / self.spikes as f64)",
+  "new": "        Some(self.multicast_hops as f64 / self.spikes as f64)"
+ },
+ {
+  "label": "hops per synaptic operation counts deliveries in its numerator",
+  "old": "        Some(self.multicast_hops as f64 / ledger.syn_ops as f64)",
+  "new": "        Some(self.deliveries() as f64 / ledger.syn_ops as f64)"
+ },
+ {
+  "label": "hops per synaptic operation guards on its own hop count rather than the ledger's",
+  "old": "        if ledger.syn_ops == 0 {\n            return None;\n        }",
+  "new": "        if self.multicast_hops == 0 {\n            return None;\n        }"
+ },
+ {
+  "label": "the workload's multicast saving inverts its ratio",
+  "old": "        Some(1.0 - self.multicast_hops as f64 / self.unicast_hops as f64)",
+  "new": "        Some(1.0 - self.unicast_hops as f64 / self.multicast_hops as f64)"
+ },
+ {
+  "label": "the multicast saving reports the cost rather than the saving",
+  "old": "        Some(1.0 - self.multicast_hops as f64 / self.unicast_hops as f64)",
+  "new": "        Some(self.multicast_hops as f64 / self.unicast_hops as f64)"
+ },
+ {
+  "label": "a term with no work is refused rather than costing nothing",
+  "old": "            if count == 0 {\n                return Some(0.0);\n            }",
+  "new": "            if count == 0 {\n                return None;\n            }"
+ },
+ {
+  "label": "the on-chip term is charged for every hop including the crossings",
+  "old": "            Some(x) => (self.multicast_hops.saturating_sub(x), x, true),",
+  "new": "            Some(x) => (self.multicast_hops, x, true),"
+ },
+ {
+  "label": "the on-chip and chip-crossing hop counts are swapped",
+  "old": "            Some(x) => (self.multicast_hops.saturating_sub(x), x, true),",
+  "new": "            Some(x) => (x, self.multicast_hops.saturating_sub(x), true),"
+ },
+ {
+  "label": "an unstated chip size charges every hop as on-chip",
+  "old": "            None => (0, 0, false),",
+  "new": "            None => (self.multicast_hops, 0, false),"
+ },
+ {
+  "label": "an unstated chip size is unpriced even when nothing crossed the fabric",
+  "old": "        if !split_known && self.multicast_hops > 0 {",
+  "new": "        if !split_known {"
+ },
+ {
+  "label": "the total ignores an unstated chip split",
+  "old": "            (Some(a), Some(b), Some(c)) if split_known || self.multicast_hops == 0 => Some(a + b + c),",
+  "new": "            (Some(a), Some(b), Some(c)) => Some(a + b + c),"
+ },
+ {
+  "label": "a workload with nothing on the fabric is refused a total",
+  "old": "            (Some(a), Some(b), Some(c)) if split_known || self.multicast_hops == 0 => Some(a + b + c),",
+  "new": "            (Some(a), Some(b), Some(c)) if split_known => Some(a + b + c),"
+ },
+ {
+  "label": "packet injection is charged per firing neuron rather than per spike",
+  "old": "        let injection = charge(self.spikes, p.e_packet_inject, \"packet injection\");",
+  "new": "        let injection = charge(self.sources, p.e_packet_inject, \"packet injection\");"
+ },
+ {
+  "label": "the bill names its unpriced terms out of order",
+  "old": "        let on_chip = charge(on_chip_hops, p.e_hop_on_chip, \"on-chip hop\");\n        let crossings = charge(crossing_hops, p.e_hop_chip_crossing, \"chip-crossing hop\");",
+  "new": "        let crossings = charge(crossing_hops, p.e_hop_chip_crossing, \"chip-crossing hop\");\n        let on_chip = charge(on_chip_hops, p.e_hop_on_chip, \"on-chip hop\");"
+ },
+ {
+  "label": "a bill that priced nothing still carries the table's evidence grade",
+  "old": "        let evidence = if any { p.evidence } else { Evidence::Unstated };",
+  "new": "        let evidence = p.evidence;"
+ },
+ {
+  "label": "a bill that priced nothing claims measured evidence",
+  "old": "        let evidence = if any { p.evidence } else { Evidence::Unstated };",
+  "new": "        let evidence = if any { p.evidence } else { Evidence::Measured };"
+ },
+ {
+  "label": "an infinite price is accepted as a price",
+  "old": "                Some(e) if e.is_finite() => {",
+  "new": "                Some(e) => {"
+ },
+ {
+  "label": "a table with no prices claims to be complete",
+  "old": "        self.e_hop_on_chip.is_some()\n            && self.e_hop_chip_crossing.is_some()\n            && self.e_packet_inject.is_some()",
+  "new": "        true"
+ },
+ {
+  "label": "the unpriced terms are listed out of the order a bill lists them",
+  "old": "        if self.e_hop_on_chip.is_none() {\n            v.push(\"on-chip hop\");\n        }\n        if self.e_hop_chip_crossing.is_none() {\n            v.push(\"chip-crossing hop\");\n        }",
+  "new": "        if self.e_hop_chip_crossing.is_none() {\n            v.push(\"chip-crossing hop\");\n        }\n        if self.e_hop_on_chip.is_none() {\n            v.push(\"on-chip hop\");\n        }"
+ },
+ {
+  "label": "the unpriced list names the terms that do have a price",
+  "old": "        if self.e_hop_on_chip.is_none() {\n            v.push(\"on-chip hop\");\n        }",
+  "new": "        if self.e_hop_on_chip.is_some() {\n            v.push(\"on-chip hop\");\n        }"
+ },
+ {
+  "label": "the deliberately empty table gains an on-chip hop price",
+  "old": "pub const UNSTATED_FABRIC: HopPrices = HopPrices {\n    e_hop_on_chip: None,",
+  "new": "pub const UNSTATED_FABRIC: HopPrices = HopPrices {\n    e_hop_on_chip: Some(1e-12),"
+ },
+ {
+  "label": "SpiNNaker's fabric gains an unsourced chip-crossing price",
+  "old": "pub const SPINNAKER_FABRIC: HopPrices = HopPrices {\n    e_hop_on_chip: None,\n    e_hop_chip_crossing: None,",
+  "new": "pub const SPINNAKER_FABRIC: HopPrices = HopPrices {\n    e_hop_on_chip: None,\n    e_hop_chip_crossing: Some(1e-9),"
+ },
+ {
+  "label": "Loihi's mesh gains an unsourced packet injection price",
+  "old": "pub const LOIHI_FABRIC: HopPrices = HopPrices {\n    e_hop_on_chip: None,\n    e_hop_chip_crossing: None,\n    e_packet_inject: None,",
+  "new": "pub const LOIHI_FABRIC: HopPrices = HopPrices {\n    e_hop_on_chip: None,\n    e_hop_chip_crossing: None,\n    e_packet_inject: Some(1e-13),"
+ },
+ {
+  "label": "the SpiNNaker citation carries the Science page range two lines away",
+  "old": "             Furber, Galluppi, Temple and Plana, Proceedings of the IEEE 102(5):652-665, 2014, or \\",
+  "new": "             Furber, Galluppi, Temple and Plana, Proceedings of the IEEE 102(5):652-673, 2014, or \\"
+ },
+ {
+  "label": "Loihi's absence claim is attributed to the TrueNorth authors",
+  "old": "    source: \"Loihi: Davies et al., IEEE Micro 38(1):82-99, 2018, prices a synaptic operation \\",
+  "new": "    source: \"Loihi: Merolla et al., IEEE Micro 38(1):82-99, 2018, prices a synaptic operation \\"
+ },
+ {
+  "label": "SpiNNaker's unpriced table is graded as measured",
+  "old": "             separate the router from the ARM cores, which is the separation this field needs.\",\n    evidence: Evidence::Unstated,",
+  "new": "             separate the router from the ARM cores, which is the separation this field needs.\",\n    evidence: Evidence::Measured,"
+ },
+ {
+  "label": "the catalogue lists SpiNNaker twice and Loihi not at all",
+  "old": "    (\"loihi\", LOIHI_FABRIC),",
+  "new": "    (\"loihi\", SPINNAKER_FABRIC),"
+ },
+ {
+  "label": "the catalogue loses a row",
+  "old": "pub const FABRIC_CATALOGUE: [(&str, HopPrices); 3] = [\n    (\"unstated\", UNSTATED_FABRIC),\n    (\"spinnaker\", SPINNAKER_FABRIC),\n    (\"loihi\", LOIHI_FABRIC),\n];",
+  "new": "pub const FABRIC_CATALOGUE: [(&str, HopPrices); 2] = [\n    (\"unstated\", UNSTATED_FABRIC),\n    (\"spinnaker\", SPINNAKER_FABRIC),\n];"
+ },
+ {
+  "label": "a partition built against another network is indexed into anyway",
+  "old": "    if partition.neurons != net.n {",
+  "new": "    if false {"
+ },
+ {
+  "label": "a spike count of the wrong length is indexed into anyway",
+  "old": "    if spikes_per_neuron.len() != net.n {",
+  "new": "    if false {"
+ },
+ {
+  "label": "a chip that holds no cores is accepted",
+  "old": "    if cores_per_chip == Some(0) {",
+  "new": "    if cores_per_chip == Some(1) {"
+ },
+ {
+  "label": "a partition that exactly fills the fabric is refused",
+  "old": "    if u64::from(partition.n_cores) > n_fabric {",
+  "new": "    if u64::from(partition.n_cores) >= n_fabric {"
+ },
+ {
+  "label": "the refused core is named one past the highest the partition uses",
+  "old": "            core: partition.n_cores - 1,",
+  "new": "            core: partition.n_cores,"
+ },
+ {
+  "label": "an unstated chip size reports zero crossings rather than none",
+  "old": "        chip_crossings: cores_per_chip.map(|_| 0),",
+  "new": "        chip_crossings: Some(0),"
+ },
+ {
+  "label": "a neuron that never fired counts as a source",
+  "old": "        if s == 0 {\n            continue;\n        }",
+  "new": "        if false {\n            continue;\n        }"
+ },
+ {
+  "label": "a spike from a neuron with no targets is not counted as a spike",
+  "old": "            out.spikes = out.spikes.checked_add(s).ok_or_else(|| overflow(\"spikes\"))?;\n            continue;",
+  "new": "            continue;"
+ },
+ {
+  "label": "on-core and off-core deliveries are swapped",
+  "old": "            if c == src {\n                on_core += 1;\n            } else {\n                off_core += 1;\n            }",
+  "new": "            if c == src {\n                off_core += 1;\n            } else {\n                on_core += 1;\n            }"
+ },
+ {
+  "label": "a destination on the source's own core is left out of the tree",
+  "old": "            dests.push(c);",
+  "new": "            if c != src {\n                dests.push(c);\n            }",
+  "equivalent": "`multicast_tree` skips any destination equal to the root with `if dst == root { continue; }` before routing, so a core index equal to `src` contributes no edge, no unicast hop and no entry to `cores` beyond the root that is already there. Filtering the same indices out one level earlier removes exactly the elements the callee already discards. The on-core and off-core delivery counters are incremented above this line and are untouched."
+ },
+ {
+  "label": "the multicast hop count accumulates the unicast baseline",
+  "old": "        out.multicast_hops = acc(out.multicast_hops, tree.hops, \"multicast hops\")?;",
+  "new": "        out.multicast_hops = acc(out.multicast_hops, tree.unicast_hops, \"multicast hops\")?;"
+ },
+ {
+  "label": "a tree's cost is charged once rather than once per spike",
+  "old": "            s.checked_mul(x).and_then(|p| cur.checked_add(p)).ok_or_else(|| overflow(what))",
+  "new": "            cur.checked_add(x).ok_or_else(|| overflow(what))"
+ },
+ {
+  "label": "the hop counters are not accumulated across neurons",
+  "old": "            s.checked_mul(x).and_then(|p| cur.checked_add(p)).ok_or_else(|| overflow(what))",
+  "new": "            s.checked_mul(x).ok_or_else(|| overflow(what))"
+ },
+ {
+  "label": "the hop counts wrap in release rather than being refused",
+  "old": "            s.checked_mul(x).and_then(|p| cur.checked_add(p)).ok_or_else(|| overflow(what))",
+  "new": "            {\n                let _ = what;\n                Ok(cur.wrapping_add(s.wrapping_mul(x)))\n            }"
+ },
+ {
+  "label": "on-core deliveries accumulate the off-core count",
+  "old": "        out.on_core_deliveries = acc(out.on_core_deliveries, on_core, \"on-core deliveries\")?;",
+  "new": "        out.on_core_deliveries = acc(out.on_core_deliveries, off_core, \"on-core deliveries\")?;"
+ },
+ {
+  "label": "chip crossings are counted against one core per chip whatever the caller stated",
+  "old": "            (out.chip_crossings, cores_per_chip.and_then(|c| tree.crossings(c)))",
+  "new": "            (out.chip_crossings, tree.crossings(1))"
+ },
+ {
+  "label": "the source count is not accumulated",
+  "old": "        out.sources += 1;",
+  "new": "        out.sources = 1;"
+ },
+ {
+  "label": "a tree's required link count is one more than its cores",
+  "old": "                cores.saturating_sub(1)",
+  "new": "                cores.saturating_add(1)"
+ },
+ {
+  "label": "a violation prints an overflow of zero",
+  "old": "        let over = self.overflow();",
+  "new": "        let over = 0;"
+ },
+ {
+  "label": "the two partitioning methods print each other's names",
+  "old": "            Self::Greedy => \"streaming greedy\",\n            Self::KernighanLin => \"streaming greedy + Kernighan-Lin\",",
+  "new": "            Self::Greedy => \"streaming greedy + Kernighan-Lin\",\n            Self::KernighanLin => \"streaming greedy\","
+ },
+ {
+  "label": "a plan prints the cores it was offered rather than the cores it used",
+  "old": "            self.partition.used_cores(),",
+  "new": "            self.partition.n_cores,"
+ },
+ {
+  "label": "a placement with nothing checked prints as passing",
+  "old": "            None => \"NO VERDICT: no limit was stated that could be checked\",",
+  "new": "            None => \"PLACES (on the limits stated)\","
+ },
+ {
+  "label": "a utilisation is printed as a fraction under a percent sign",
+  "old": "                    u * 100.0",
+  "new": "                    u"
+ }
+]

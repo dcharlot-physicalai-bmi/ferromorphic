@@ -1822,7 +1822,7 @@ fn integrate<F: Fn(f64) -> f64>(f: &F, a: f64, b: f64, rel: f64) -> f64 {
 mod tests {
     use super::{
         AdEx, EXP_ARG_LIMIT, Eif, FiringPattern, Flow, ModelError, Qif, Theta, canonical_flow,
-        exp_offset_roots, try_step, wrap_pi,
+        exp_offset_roots, integrate, try_step, wrap_pi,
     };
     use crate::neuron::Neuron;
 
@@ -2003,10 +2003,20 @@ mod tests {
         // Everything above the truncation is worth under 1e-20 s per volt, so the whole excursion
         // from this reset to the cutoff is less than a femtosecond: the answer is t_ref and a
         // remainder no interval can carry.
-        assert!(t < 1e-15, "the remainder above the truncation priced at {t} s");
+        //
+        // EXACTLY zero, and the difference between that and "small" is the truncation's UNITS.
+        // FOUND BY MUTATION: writing the truncation as `v_t + 50` in volts rather than
+        // `v_t + 50·Δ_T` puts it 50 V above the soft threshold, where it never binds for any
+        // membrane; `top` then becomes `v_peak`, the quadrature runs from this reset all the way
+        // to 0 mV and prices that stretch at 1.7e-21 s. No tolerance this test could carry would
+        // separate the two — 1.7e-21 s is four decades below one ulp of the 2 ms `t_ref` checked
+        // below, so it does not even change that sum. What separates them is that `integrate`
+        // returns exactly 0.0 for an EMPTY interval, and a truncation below the reset is what
+        // makes this one empty.
+        assert_eq!(t, 0.0, "the stretch above the truncation priced at {t} s, not empty");
         let with_ref = Eif { t_ref: 2e-3, ..e };
         let held = with_ref.isi(i).expect("above rheobase");
-        assert!((held - 2e-3).abs() < 1e-15, "t_ref is not carried: {held}");
+        assert_eq!(held, 2e-3, "t_ref is not carried: {held}");
         assert!((with_ref.rate(i).expect("above rheobase") - 1.0 / held).abs() < 1e-9);
         // And the stepper agrees that a cell reset that far up fires again immediately.
         let mut n = e;
@@ -3176,5 +3186,599 @@ mod tests {
         coarse.step(10.0 * dt, 0.0);
         let gap = (fine.theta - coarse.theta).abs();
         assert!(gap > 1e-9, "the Theta composed to {gap} rad; EXACT_OVER_GAPS may be understated");
+    }
+
+    // ----- The closed forms the spike time itself is read off -----
+
+    /// The divergence time ABOVE rheobase is `(π/2 - φ₀)/√η` — the phase that is left DIVIDED by
+    /// the frequency, not multiplied by it.
+    ///
+    /// Why the suite could not see it: `Flow::Diverged`'s `at` is thrown away by both of its
+    /// callers. `Qif::step` resets at the end of the tick whatever `at` says, and
+    /// `Theta::spikes_by` only asks whether the flow diverged. The one test that reads the number,
+    /// `the_divergence_time_is_accurate_next_to_the_unstable_fixed_point`, sweeps `η < 0` only,
+    /// where it is produced by an entirely different branch — so the `η > 0` answer, which is the
+    /// spike time of every firing quadratic cell, had never been read by anything.
+    ///
+    /// Two references, neither of them the expression under test. From `y₀ = 0` the time to `+∞`
+    /// is `∫₀^∞ dy/(y² + η) = π/(2√η)`, elementary. And from any `y₀`, advancing to a hair before
+    /// the divergence leaves `y` enormous, where `dy/ds = y² + η` is `y²` to a part in `(√η/y)²`
+    /// and the time still to run is `1/y` — the spike time measured from the far end, which is
+    /// the same reference the `η < 0` test uses and shares no algebra with the `tan` form.
+    #[test]
+    fn the_divergence_time_above_rheobase_is_the_phase_left_over_the_frequency() {
+        for &eta in &[0.25f64, 1.0, 0.083_333, 4.0, 1e-4] {
+            let b = eta.sqrt();
+            // From the origin, half a turn of the phase is left and the time is π/(2√η).
+            let Flow::Diverged { at } = canonical_flow(0.0, eta, 1e9) else {
+                panic!("η {eta}: above rheobase the flow diverges from every start")
+            };
+            let want = 0.5 * PI / b;
+            assert!((at - want).abs() <= 1e-15 * want, "η {eta}: {at} s vs π/(2√η) = {want}");
+            // And a full turn, `-∞` to `+∞`, is `π/√η` — which is what `Theta::isi` returns in
+            // seconds, so the two forms have to agree without either knowing about the other.
+            let Flow::Diverged { at } = canonical_flow(-1e12, eta, 1e9) else {
+                panic!("η {eta}: a start deep below still diverges")
+            };
+            assert!(
+                (at - PI / b).abs() <= 1e-6 * PI / b,
+                "η {eta}: a whole turn took {at} vs π/√η = {}",
+                PI / b
+            );
+            for &y0 in &[-3.0f64, -0.5, 0.0, 0.7, 12.0] {
+                let Flow::Diverged { at } = canonical_flow(y0, eta, 1e9) else {
+                    panic!("η {eta}, y0 {y0}: above rheobase everything diverges")
+                };
+                assert!(at > 0.0, "η {eta}, y0 {y0}: divergence at {at}");
+                // A hair before it, where `1/y` is the time left.
+                let h = at * (1.0 - 1e-6);
+                let Flow::Finite(y1) = canonical_flow(y0, eta, h) else {
+                    panic!("η {eta}, y0 {y0}: it diverged before its own divergence time")
+                };
+                assert!(y1 > 1e3 * b.max(1.0), "η {eta}, y0 {y0}: {y1} is not deep in the escape");
+                let left = at - h;
+                assert!(
+                    (left - 1.0 / y1).abs() <= 1e-6 * left,
+                    "η {eta}, y0 {y0}: {left} left by the closed form, {} by 1/y",
+                    1.0 / y1
+                );
+            }
+        }
+    }
+
+    /// At rheobase exactly — `η = 0`, where the two fixed points have merged at the origin — a
+    /// start above the merged point still escapes, at `s = 1/y₀`.
+    ///
+    /// Why the suite could not see it: the `η == 0` branch is entered by one existing test,
+    /// `the_theta_closed_form_and_the_qif_flow_agree_to_floating_point` at 375 pA, and its
+    /// `Flow::Diverged => continue` skips exactly the case this covers. `Qif::default` cannot
+    /// reach the branch at all — its +30 mV cutoff clips the trajectory at `y = 5.83`, and a tick
+    /// only meets the pole once `h >= 1/y₀`, which at the default 0.1 ms tick needs `y₀ >= 200`,
+    /// thirty-four times the cutoff's own `y`.
+    ///
+    /// `dy/ds = y²` separates to `y = y₀/(1 - y₀s)`, so the escape is at `1/y₀` with no rounding
+    /// in it. Deleting the branch does not merely lose the spike: the same expression evaluated
+    /// past its own pole returns the NEGATIVE continuation, so the cell is reported far below rest
+    /// at the moment it should have fired, and never fires again.
+    #[test]
+    fn at_rheobase_a_start_above_the_merged_fixed_point_still_diverges() {
+        for &y0 in &[4.0f64, 1.0, 0.5, 0.125, 1e3] {
+            let want = 1.0 / y0;
+            for &h in &[want, want * 1.5, 1e6] {
+                let Flow::Diverged { at } = canonical_flow(y0, 0.0, h) else {
+                    panic!("y0 {y0}, h {h}: at rheobase a positive start escapes")
+                };
+                assert_eq!(at, want, "y0 {y0}: escape at {at}, want 1/y0 = {want}");
+            }
+            // A part in 1e6 before it, where `1/y` is the time left — the same asymptotic
+            // reference the other two branches are held to.
+            let h = want * (1.0 - 1e-6);
+            let Flow::Finite(y1) = canonical_flow(y0, 0.0, h) else {
+                panic!("y0 {y0}: it diverged before its own divergence time")
+            };
+            let left = want - h;
+            assert!(
+                (left - 1.0 / y1).abs() <= 1e-6 * left,
+                "y0 {y0}: {left} left by the closed form, {} by 1/y",
+                1.0 / y1
+            );
+        }
+        // At or below the merged point nothing escapes, however long the step.
+        for &y0 in &[0.0f64, -1e-9, -0.5, -100.0] {
+            let long = canonical_flow(y0, 0.0, 1e12);
+            assert!(matches!(long, Flow::Finite(_)), "y0 {y0} escaped at rheobase: {long:?}");
+        }
+        // Through the public surface. 375 pA lands on η = 0 to the bit, so this is the branch and
+        // not a neighbour of it, and the cutoff is pushed out so a tick can reach the pole.
+        let q = Qif::default();
+        let i = q.rheobase();
+        assert_eq!(q.eta(i), 0.0, "375 pA must be η = 0 exactly, got {}", q.eta(i));
+        let wide = Qif { v_peak: 1e9, v_reset: -1e9, t_ref: 0.0, ..q };
+        let mut n = wide;
+        n.set_canonical_y(0.5);
+        let t = spike_times(&mut n, 1e-3, 200, i);
+        assert_eq!(t.len(), 1, "at rheobase a start above the merged point gave {t:?}");
+        // And the circle agrees, from its own formula: at rheobase a cell spikes at most once, and
+        // whether it spikes at all is which side of the merged point it started on.
+        let hot = Theta { theta: 2.0 * (0.5f64).atan(), ..Theta::default() };
+        assert_eq!(hot.spikes_by(i, 100.0).expect("finite"), 1, "the escape produced no spike");
+        let cold = Theta { theta: 2.0 * (-0.5f64).atan(), ..Theta::default() };
+        assert_eq!(cold.spikes_by(i, 100.0).expect("finite"), 0, "a start below it fired");
+    }
+
+    /// Deep inside the stable fixed point `e^{2as}` overflows, and the limit the flow returns
+    /// there is the STABLE point `-a` — not the unstable one the trajectory is running away from.
+    ///
+    /// Why the suite could not see it: the arm needs `0 < y₀ < a`, so that `u₀ < 0`, TOGETHER
+    /// with `2ah > 709.78`. At the default 20 ms membrane constant and `a = 1/2` that is a step of
+    /// 14.2 SECONDS; every test in this module steps in microseconds or milliseconds, so `u` was
+    /// always finite and the `!u.is_finite()` arm was never taken by anything.
+    ///
+    /// The value is not a convention. `y = a(1 + u)/(1 - u)` tends to `-a` as `u -> -∞`, and the
+    /// finite arm is already there: at `2ah` from 100 to 709 the quotient is `-a` to the bit,
+    /// because `1 ± u` rounds to `±u` once `|u|` passes `2^53`. So the overflow arm is the same
+    /// number continued, and returning `+a` would park a decaying cell on the fixed point it is
+    /// leaving — reported, through `Qif::potential`, as a membrane resting at `v_c`.
+    #[test]
+    fn a_coordinate_whose_exponential_overflows_settles_on_the_stable_fixed_point() {
+        assert!(710.0f64.exp().is_infinite(), "the premise: e^710 overflows an f64");
+        assert!(600.0f64.exp().is_finite(), "the premise: e^600 does not");
+        for &eta in &[-0.25f64, -1.0, -4.0] {
+            let a = (-eta).sqrt();
+            for &frac in &[0.8f64, 0.5, 0.01, 1e-12] {
+                let y0 = a * frac;
+                assert!(y0 > 0.0 && y0 < a, "η {eta}: the start must be between the two points");
+                for &arg in &[100.0f64, 600.0, 709.0, 710.0, 1e4, 1e300] {
+                    let h = arg / (2.0 * a);
+                    assert_eq!(
+                        canonical_flow(y0, eta, h),
+                        Flow::Finite(-a),
+                        "η {eta}, y0 {y0}, 2ah {arg}: it did not settle on the stable point"
+                    );
+                }
+            }
+        }
+        // And through the public surface, where this arm decides which fixed point a quiet cell
+        // is reported to be sitting on. The two zero-current fixed points of the default are rest
+        // and `v_c`, and they are 15 mV apart.
+        let base = Qif::default();
+        let (stable, unstable) = base.fixed_points(0.0).expect("below rheobase");
+        assert_eq!(stable, base.v_rest, "at zero current the stable point is rest");
+        assert_eq!(unstable, base.v_c, "and the unstable one is v_c");
+        for &secs in &[2.0f64, 14.0, 14.2, 20.0, 100.0, 1e6] {
+            let mut q = base;
+            q.set_canonical_y(0.4);
+            assert!(q.v > stable && q.v < unstable, "the start must sit between the two points");
+            assert!(!q.step(secs, 0.0), "a decay to rest is not a spike");
+            assert_eq!(q.v, base.v_rest, "{secs} s of quiet left the membrane at {} V", q.v);
+        }
+    }
+
+    // ----- Guards and arms nothing had reached -----
+
+    /// Both constructors document TWO orderings, and the suite checked one of each.
+    ///
+    /// `the_constructors_refuse_parameters_with_no_model_behind_them` takes `v_c <= v_rest` from
+    /// `Qif::new` and `v_peak <= v_reset` from `Eif::new`, which leaves `Qif::new`'s
+    /// `v_peak <= v_reset` and `Eif::new`'s `v_peak <= v_t` with nothing behind them at all. Both
+    /// boundaries are checked AT equality as well as below it, because both are written `<=`, and
+    /// both are approached with the other ordering of the same constructor satisfied, so the
+    /// refusal that answers is the one being tested.
+    #[test]
+    fn both_constructors_refuse_both_of_the_orderings_they_document() {
+        // Quadratic: a cutoff at or below the reset, with `v_c > v_rest` throughout.
+        for &(peak, reset) in &[(-70e-3, -65e-3), (-65e-3, -65e-3)] {
+            let built = Qif::new(20e-3, -65e-3, -50e-3, 10e6, peak, reset, 0.0);
+            assert!(
+                matches!(
+                    built,
+                    Err(ModelError::Disordered { what: "v_peak <= v_reset", lower, upper })
+                        if lower == reset && upper == peak
+                ),
+                "Qif::new took a cutoff of {peak} V against a reset of {reset} V: {built:?}"
+            );
+        }
+        // Exponential: a cutoff at or below the SOFT THRESHOLD. The reset is 10 mV under both, so
+        // `v_peak <= v_reset` is satisfied and cannot be the refusal that answers.
+        for &peak in &[-55e-3, -50e-3] {
+            let built = Eif::new(200e-12, 10e-9, -70e-3, -50e-3, 2e-3, peak, -60e-3, 0.0);
+            assert!(
+                matches!(built, Err(ModelError::Disordered { what: "v_peak <= v_t", .. })),
+                "Eif::new took a cutoff of {peak} V against a -50 mV soft threshold: {built:?}"
+            );
+        }
+        // One millivolt the other side of each boundary is accepted, so what is being refused is
+        // the ordering and not the parameter set around it.
+        assert!(Qif::new(20e-3, -65e-3, -50e-3, 10e6, -64e-3, -65e-3, 0.0).is_ok());
+        assert!(Eif::new(200e-12, 10e-9, -70e-3, -50e-3, 2e-3, -49e-3, -60e-3, 0.0).is_ok());
+    }
+
+    /// A synaptic kick that lands above the cutoff IS the spike, at the moment it lands — and an
+    /// input arriving later in the same tick does not un-fire it.
+    ///
+    /// `Qif::step`'s pre-flow arm carries a comment saying it is reachable by `bump`, and nothing
+    /// reached it. `a_quiet_interval_can_make_a_bistable_qif_fire` kicks to −35 mV, 65 mV below
+    /// the +30 mV cutoff, and lets the flow do the firing. Even a kick PAST the cutoff hides the
+    /// arm whenever the tick's input is quiet or excitatory, because the flow then carries the
+    /// membrane further up and the post-flow test reports the same spike on the same tick. What
+    /// separates them is a tick whose input pulls the membrane back down: at −200 nA the canonical
+    /// input is η = −133.6, the stable fixed point is at y = −11.56, and 0.2 ms of that takes y
+    /// from 6.50 to 5.53 — below the cutoff's y = 5.83. The spike happened before the current did.
+    #[test]
+    fn a_synaptic_kick_across_the_cutoff_is_a_spike_at_the_moment_it_lands() {
+        let mut q = Qif::default();
+        q.bump(105e-3);
+        assert!(q.v >= q.v_peak, "the premise is a kick that lands above the cutoff: {} V", q.v);
+        // The premise's other half: the tick that follows would, on its own, carry the membrane
+        // back below the cutoff. Checked on a copy whose cutoff is out of the way.
+        let mut carried = Qif { v_peak: 1e9, ..Qif::default() };
+        carried.bump(105e-3);
+        assert!(!carried.step(2e-4, -200e-9), "the premise needs a tick with no divergence in it");
+        assert!(
+            carried.v < q.v_peak,
+            "the premise is a tick that ENDS below the cutoff, and it ended at {} V",
+            carried.v
+        );
+        // And the kick is still the spike.
+        assert!(q.step(2e-4, -200e-9), "a kick across the cutoff was not a spike");
+        assert_eq!(q.v, q.v_reset, "the spike left {} V, want the reset", q.v);
+        assert_eq!(q.refractory_left(), q.t_ref, "the spike started no refractory period");
+    }
+
+    /// A quadratic cell refuses synaptic input while it is refractory.
+    ///
+    /// `Qif::bump` is reached by two tests and neither cell is refractory when they call it: both
+    /// kick a cell that has not fired. The guard is hidden a second time by `Qif::step`, which
+    /// rewrites `self.v = self.v_reset` on every refractory tick — so a bump that DID land would
+    /// be erased before any spike count could notice, and only reading `potential()` between the
+    /// two calls can tell. The kick below is 200 mV, which would clear the cutoff outright.
+    #[test]
+    fn a_quadratic_cell_refuses_synaptic_input_while_it_is_refractory() {
+        let mut q = Qif::default();
+        q.bump(105e-3);
+        assert!(q.step(1e-4, 0.0), "the kick across the cutoff was not a spike");
+        assert!(q.refractory_left() > 0.0, "this check is vacuous unless the cell is refractory");
+        let held = q.potential();
+        assert_eq!(held, q.v_reset, "a spike leaves the membrane at the reset");
+        q.bump(200e-3);
+        assert_eq!(q.potential(), held, "a bump reached a refractory cell: {} V", q.potential());
+        assert!(!q.step(1e-4, 0.0), "the refused bump still produced a spike");
+        assert_eq!(q.potential(), q.v_reset, "the refractory tick left {} V", q.potential());
+    }
+
+    /// `Eif::default` is the `AdEx` literature's reference membrane, transcribed, and its doc
+    /// lists every number it carries. The one with nothing behind it was "no refractory period".
+    ///
+    /// Why the suite could not see it: `Eif::lif_limit` COPIES `t_ref`, so
+    /// `the_eif_relaxes_onto_the_lif_as_delta_t_shrinks` moves both sides of its comparison
+    /// together; `the_eif_interval_matches_the_quadrature` and
+    /// `the_eif_interval_survives_a_reset_above_the_truncated_upstroke` set a `t_ref` of their
+    /// own; and `the_eif_rate_converges_onto_the_square_root_law` works a whisker above rheobase,
+    /// where the interval is tens of milliseconds and a 5 ms floor is inside the gap it is
+    /// already asserting. A floor on the rate only shows where the interval is SHORT.
+    #[test]
+    fn the_reference_membrane_has_no_refractory_period_and_its_rate_says_so() {
+        let e = Eif::default();
+        assert_eq!((e.c, e.g_l, e.e_l), (200e-12, 10e-9, -70e-3), "the reference membrane moved");
+        assert_eq!((e.v_t, e.delta_t), (-50e-3, 2e-3), "the soft threshold or its width moved");
+        assert_eq!((e.v_peak, e.v_reset), (0.0, -58e-3), "the cutoff or the reset moved");
+        assert_eq!(e.t_ref, 0.0, "the doc says no refractory period and it carries {}", e.t_ref);
+        assert!((e.tau_m() - 20e-3).abs() < 1e-18, "C/g_L is {} s, not 20 ms", e.tau_m());
+        // What "no refractory period" means is that the rate is bounded by the membrane and by
+        // nothing else, so it can be pushed past any floor a `t_ref` would impose. This
+        // implementation measures 10,527 Hz at 50 nA, where 1/(5 ms) is 200 Hz.
+        let fast = e.rate(50e-9).expect("above rheobase");
+        assert!(fast > 1e4, "50 nA gives {fast} Hz, which no longer clears a 5 ms floor");
+        // And the stepper agrees: 1,999 spikes in 0.2 s of a 10 µs clock, against the 40 that
+        // 5 ms of dead time would allow.
+        let mut n = e;
+        let t = spike_times(&mut n, 1e-5, 20_000, 50e-9);
+        assert!(t.len() > 1_000, "50 nA over 0.2 s gave {} spikes", t.len());
+        assert_eq!(n.refractory_left(), 0.0, "a spike left {} s of dead time", n.refractory_left());
+    }
+
+    /// A membrane already above its cutoff when `step` is called reports the spike on that tick.
+    ///
+    /// The arm is reachable only through `bump`, and no test in this module had ever bumped an
+    /// `Eif` at all. It is hidden twice over: it performs the reset and starts the refractory
+    /// period whether or not it returns `true`, so every piece of STATE a test could read is
+    /// identical either way. Only the returned bool differs, and the bool is the spike.
+    #[test]
+    fn a_membrane_kicked_past_its_cutoff_reports_the_spike_on_that_tick() {
+        let mut e = Eif { t_ref: 2e-3, ..Eif::default() };
+        e.bump(100e-3);
+        assert!(e.v >= e.v_peak, "the premise is a kick that lands above the cutoff: {} V", e.v);
+        assert!(e.step(1e-4, 0.0), "a membrane above its cutoff did not report its spike");
+        assert_eq!(e.v, e.v_reset, "the spike left {} V, want the reset", e.v);
+        assert_eq!(e.refractory_left(), e.t_ref, "the spike started no refractory period");
+        // And what a caller counts: one kick, one spike, and what follows is the refractory
+        // period rather than a second spike.
+        let mut n = Eif { t_ref: 2e-3, ..Eif::default() };
+        n.bump(100e-3);
+        let t = spike_times(&mut n, 1e-4, 10, 0.0);
+        assert_eq!(t, vec![0.0], "one kick across the cutoff gave {t:?}");
+    }
+
+    /// A membrane that has gone non-finite inside a substep is caught and reset, not carried — and
+    /// the `!is_finite()` half of that test is not redundant with `EXP_ARG_LIMIT`.
+    ///
+    /// The clamp bounds the EXPONENTIAL term. Nothing bounds the leak term `-g_L(V - E_L)/C`,
+    /// which is linear in `V`: this implementation measures `drift(-1e306)` at 5e307 and
+    /// `drift(-1e307)` at `inf`. One Runge-Kutta stage at `+inf` and the next at `-inf` make the
+    /// combination a `NaN`, and `NaN >= v_peak` is FALSE, so the `v >= v_peak` half of the test
+    /// cannot see it. A `NaN` membrane is not loud — `step` keeps returning `false`, the cell
+    /// reports zero spikes for ever, and `EXP_ARG_LIMIT`'s own doc says so.
+    ///
+    /// Why the suite could not see it: `a_violent_drive_leaves_no_model_non_finite` drives ±1 mA
+    /// at 1 ms ticks and reaches 1e17 V, which is finite, above the cutoff, and caught by the
+    /// OTHER half of the same condition. Nothing in this module had produced a `NaN` here.
+    #[test]
+    fn a_membrane_driven_non_finite_inside_a_substep_is_recovered_not_carried() {
+        let e = Eif::default();
+        assert!(e.drift(-1e306, 0.0).is_finite(), "the premise: the leak still fits at -1e306 V");
+        assert!(!e.drift(-1e307, 0.0).is_finite(), "the premise: and it does not at -1e307 V");
+        let mut kicked = Eif::default();
+        kicked.bump(-1e307);
+        assert!(kicked.v < kicked.v_peak, "the kick has to leave the membrane BELOW the cutoff");
+        assert!(kicked.step(1e-4, 0.0), "the non-finite membrane was not reported");
+        assert_eq!(kicked.v, kicked.v_reset, "it was left at {} V", kicked.v);
+        // `Neuron::step` has no error channel — that is what `try_step` is for — so a non-finite
+        // INPUT reaches the stages directly, and this guard is the whole of what stands between
+        // a caller who skipped the boundary and a model that is silent for ever afterwards.
+        let mut fed = Eif::default();
+        assert!(fed.step(1e-4, f64::NAN), "a NaN current left the membrane unreported");
+        assert_eq!(fed.v, fed.v_reset, "a NaN current left the membrane at {} V", fed.v);
+        let t = spike_times(&mut fed, 1e-5, 20_000, 400e-12);
+        assert!(t.len() > 3, "after a NaN input the cell gave {} spikes in 0.2 s", t.len());
+    }
+
+    /// A tick coarse enough that one substep carries the membrane past the cutoff still reports
+    /// the spike, because the cutoff is tested INSIDE the substep loop and not after it.
+    ///
+    /// The comment on that ordering says a second substep from above the cutoff "would leave a
+    /// number no reader could interpret", and nothing held it. The reason is that for every tick
+    /// a simulation would use, the substeps after a crossing keep CLIMBING — the clamped
+    /// exponential term is 5.2e20 V/s against a leak term that does not match it until about
+    /// 1e19 V — so the membrane is still above the cutoff when the loop ends and the spike is
+    /// reported either way. Only a substep long enough to throw a Runge-Kutta stage past that
+    /// balance turns the combination negative and ends the tick below the cutoff.
+    ///
+    /// What is pinned is measured and narrower than a law, and saying so is the point. Across the
+    /// 561 currents from 200 pA to 3 nA and the ten ticks from 100 ms to 325 ms — 5 to 16.25
+    /// membrane constants, every one of them longer than the interval it contains — this model
+    /// reports the spike every time. With the cutoff tested after the loop it reports SILENCE at
+    /// 675, 685 and 690 pA on the 300 ms tick and at 590, 615, 635 and 640 pA on the 325 ms one,
+    /// leaving the membrane at −1.5e19 V.
+    ///
+    /// The sweep is not sitting on a cliff, which is the other thing worth measuring: every tick
+    /// in it still reports the spike at all 561 currents when the tick itself is moved by ±2%.
+    /// The model's own cliff is at 346 ms, where it starts losing spikes with the cutoff in
+    /// either place — that is what `EXACT_OVER_GAPS` being false is about, and it is why the
+    /// sweep stops 20 ms below it.
+    #[test]
+    fn a_coarse_tick_that_crosses_the_cutoff_still_reports_its_spike() {
+        let proto = Eif::default();
+        let ticks = [0.1, 125e-3, 0.15, 175e-3, 0.2, 225e-3, 0.25, 275e-3, 0.3, 325e-3];
+        for pa in (200..=3000).step_by(5) {
+            let i = f64::from(pa) * 1e-12;
+            let interval = proto.isi(i).expect("above rheobase");
+            for &dt in &ticks {
+                assert!(dt > interval, "{dt} s is shorter than the {interval} s at {pa} pA");
+                let mut n = Eif { v: proto.v_reset, ..proto };
+                assert!(
+                    n.step(dt, i),
+                    "{dt} s at {pa} pA reported no spike, and it holds {} intervals",
+                    dt / interval
+                );
+                assert_eq!(n.v, n.v_reset, "{dt} s at {pa} pA left the membrane at {} V", n.v);
+            }
+        }
+    }
+
+    // ----- The adaptive cell's dead code, and the taxonomy's fourth knob -----
+
+    /// The adaptation keeps relaxing through the refractory period, and it does it exactly.
+    ///
+    /// `AdEx::step`'s refractory arm holds `V` at the reset and advances `w` in closed form, with
+    /// a comment saying why: freezing it would make the effective adaptation time constant depend
+    /// on the firing rate, which the model does not say. The arm is DEAD CODE under the whole
+    /// suite — every `FiringPattern` ships `t_ref: 0.0` and no other test builds an `AdEx` with a
+    /// refractory period at all — so `w` could be set to anything there and nothing would fail.
+    ///
+    /// With `V` clamped at the reset, `dw/dt = (a(V_reset - E_L) - w)/τ_w` is linear with a
+    /// constant right-hand side and `w` relaxes onto `w∞ = a(V_reset - E_L)` exactly. The
+    /// reference is that closed form over the WHOLE stretch against 1,500 compositions of the
+    /// one-tick factor: the same function evaluated once instead of 1,500 times. 1,500 roundings
+    /// of a product are worth at most `1500·2⁻⁵² ≈ 3.3e-13` of relative error and this
+    /// implementation measures 2.2e-14, so the tolerance below is that arithmetic and not a knob.
+    #[test]
+    fn the_adaptation_keeps_relaxing_through_the_refractory_period() {
+        let membrane = Eif { t_ref: 20e-3, ..Eif::default() };
+        let (a, tau_w) = (2e-9, 20e-3);
+        let mut n = AdEx::new(membrane, a, tau_w, 100e-12).expect("valid adaptation");
+        let mut k = 0u32;
+        while !n.step(1e-5, 500e-12) {
+            k += 1;
+            assert!(k < 100_000, "the cell never fired, so there is no refractory period to test");
+        }
+        assert_eq!(n.refractory_left(), membrane.t_ref, "the spike started no refractory period");
+        let w0 = n.w;
+        let w_inf = a * (membrane.v_reset - membrane.e_l);
+        assert!(w0 > w_inf, "the premise is an adaptation ABOVE its clamped steady state");
+        let dt = 1e-5;
+        let steps = 1_500u32;
+        for _ in 0..steps {
+            assert!(n.refractory_left() > 0.0, "the stretch must stay inside the dead time");
+            assert!(!n.step(dt, 500e-12), "a refractory tick reported a spike");
+        }
+        assert!(n.refractory_left() > 0.0, "the stretch ran past the end of the dead time");
+        let t = f64::from(steps) * dt;
+        let want = w_inf + (w0 - w_inf) * (-t / tau_w).exp();
+        assert!(
+            (n.w - want).abs() <= 1e-12 * want.abs(),
+            "after {t} s of refractory the adaptation is {} A, closed form {want} A",
+            n.w
+        );
+        // And the relaxation is not decorative: 15 ms is 0.75 τ_w, which closes just over half
+        // the gap. A frozen `w` — one set straight to `w∞` — would already be at the far end.
+        let closed = (w0 - n.w) / (w0 - w_inf);
+        assert!(closed > 0.4 && closed < 0.7, "the stretch closed {closed} of the gap to w∞");
+    }
+
+    /// A synaptic kick to an adaptive cell moves the membrane the way it points.
+    ///
+    /// `AdEx::bump` forwards to the membrane's `bump` and does nothing else, and no test in this
+    /// module calls it — the taxonomy is driven by a constant current and the subthreshold check
+    /// sets its state by hand. A sign error there is invisible everywhere else, because `w` is
+    /// untouched by a bump and no named pattern ever receives one.
+    #[test]
+    fn a_synaptic_kick_to_an_adaptive_cell_moves_the_membrane_the_way_it_points() {
+        for dv in [5e-3, -3e-3, 40e-3] {
+            let mut n = AdEx::default();
+            let before = n.potential();
+            let w_before = n.w;
+            n.bump(dv);
+            // Equality and not a tolerance: `bump` is `v += dv`, and the right-hand side here is
+            // that same addition in that same order, so the two are the same `f64`.
+            assert_eq!(n.potential(), before + dv, "a {dv} V kick landed at {} V", n.potential());
+            assert_eq!(n.w, w_before, "a kick moved the adaptation current");
+        }
+        // And the sign is a spike or not a spike.
+        let mut up = AdEx::default();
+        up.bump(100e-3);
+        assert!(up.potential() >= up.eif.v_peak, "the kick must land above the cutoff");
+        assert!(up.step(1e-4, 0.0), "a kick across the cutoff was not a spike");
+        let mut down = AdEx::default();
+        down.bump(-100e-3);
+        assert!(!down.step(1e-4, 0.0), "a hyperpolarising kick fired the cell");
+        assert!(
+            down.potential() < down.eif.e_l,
+            "a hyperpolarising kick left the membrane at {} V, above rest",
+            down.potential()
+        );
+    }
+
+    /// Each named pattern resets where its own doc puts it, relative to the soft threshold.
+    ///
+    /// The reset is the taxonomy's fourth knob and two variants make a claim about it in words:
+    /// `FiringPattern::InitialBurst`'s "the reset sits at `V_T`" and
+    /// `FiringPattern::RegularBursting`'s "the reset sits **above** `V_T`". Neither was tested,
+    /// and the per-variant pattern tests cannot see the difference because they are written on
+    /// RATIOS — `the_initial_burst_pattern_starts_fast_then_settles` asks only that the opening
+    /// interval be under half the settled one, and dropping the initial-burst reset from −50 mV
+    /// to −58 mV moves it from 3.42 ms to 8.27 ms against a settled 64 ms, which is still
+    /// comfortably under half.
+    #[test]
+    fn each_named_pattern_resets_where_its_own_doc_puts_it() {
+        for p in FiringPattern::ALL {
+            assert_eq!(p.model().eif.v_t, -50e-3, "{} moved the soft threshold", p.label());
+        }
+        let at = FiringPattern::InitialBurst.model().eif;
+        assert_eq!(at.v_reset, at.v_t, "the initial burst resets to {} V, not to V_T", at.v_reset);
+        let above = FiringPattern::RegularBursting.model().eif;
+        assert!(above.v_reset > above.v_t, "regular bursting resets to {} V", above.v_reset);
+        for p in [FiringPattern::Tonic, FiringPattern::Adapting] {
+            let m = p.model().eif;
+            assert!(m.v_reset < m.v_t, "{} resets to {} V, not below V_T", p.label(), m.v_reset);
+        }
+        // What the reset at `V_T` buys, measured. The leak alone cannot fire this cell at all —
+        // under its own 400 pA drive the leak's steady state is E_L + I/g_L = −35.8 mV, 36 mV
+        // below the cutoff — so an opening interval shorter than ONE membrane time constant is
+        // the exponential term doing the work, which is the sentence the variant's doc writes.
+        // This implementation measures 3.42 ms against a 7.22 ms membrane constant; with the
+        // reset at −58 mV it measures 8.27 ms and the sentence stops being true.
+        let p = FiringPattern::InitialBurst;
+        let cell = p.model().eif;
+        let steady = cell.e_l + p.drive() / cell.g_l;
+        assert!(steady < cell.v_peak - 20e-3, "the leak's own steady state is {steady} V");
+        let mut n = p.model();
+        let iv = intervals(&spike_times(&mut n, 1e-5, 100_000, p.drive()));
+        assert!(iv.len() >= 6, "only {} intervals: {iv:?}", iv.len());
+        assert!(
+            iv[0] < cell.tau_m(),
+            "the opening interval is {} s against a {} s membrane constant",
+            iv[0],
+            cell.tau_m()
+        );
+    }
+
+    /// The taxonomy's membranes carry no absolute refractory period, so every interval in every
+    /// named pattern is produced by the `(V, w)` dynamics and by nothing else.
+    ///
+    /// Why the suite could not see it: every per-variant assertion is a RATIO or a SHAPE —
+    /// intervals lengthening, a bimodal gap in the sorted intervals, silence in the second half of
+    /// the run — and a constant floor added to every interval moves all of them together. This
+    /// implementation measures the cost of a 2 ms floor: the tonic cell's shortest interval at its
+    /// own drive goes from 8.93 ms to 10.95 ms and its count over a 2 s run from 208 spikes to
+    /// 173, and not one existing assertion reads either number.
+    #[test]
+    fn the_taxonomy_membranes_carry_no_refractory_period() {
+        for p in FiringPattern::ALL {
+            assert_eq!(
+                p.model().eif.t_ref,
+                0.0,
+                "{} carries {} s of dead time",
+                p.label(),
+                p.model().eif.t_ref
+            );
+            // And behaviourally, which is what the constant means: the tick after a spike is a
+            // tick of ordinary integration, with no clamp holding the membrane at the reset.
+            let mut n = p.model();
+            let mut k = 0u32;
+            while !n.step(1e-5, p.drive()) {
+                k += 1;
+                assert!(k < 200_000, "{} never fired at its own drive", p.label());
+            }
+            assert_eq!(n.refractory_left(), 0.0, "{} left dead time after a spike", p.label());
+            let landed = n.potential();
+            assert_eq!(landed, n.eif.v_reset, "{} did not land on its reset", p.label());
+            n.step(1e-5, p.drive());
+            assert!(
+                n.potential() != landed,
+                "{} was held at {landed} V on the tick after its spike",
+                p.label()
+            );
+        }
+    }
+
+    // ----- The quadrature under the exponential model's interval -----
+
+    /// The Richardson extrapolation, which is the difference between fourth order and sixth.
+    ///
+    /// `adaptive` accepts a panel when the two half-panels agree to the tolerance and then returns
+    /// `left + right + err/15` — the correction that cancels the leading `h⁴` term of Simpson's
+    /// rule and leaves `h⁶`. Dropping the `err/15` still lands well inside what `Eif::isi` asks
+    /// for, which is why `the_interval_quadrature_holds_to_the_band_its_doc_claims` cannot see it:
+    /// that test runs the quadrature at a relative tolerance of 1e-12 and then asserts 1e-9, four
+    /// decades of slack, so the term it is checking is never the binding one.
+    ///
+    /// Here the quadrature is pointed at two integrals whose answers are exact and asked for a
+    /// LOOSE tolerance, where the correction is the whole story. What is asserted is two decades
+    /// of margin over the tolerance requested, a weak reading of `h⁴ -> h⁶`; this implementation
+    /// measures far more than that — at a requested 1e-3 the extrapolated answer is off by 5.0e-7
+    /// against the un-extrapolated pair's 2.2e-5, and at a requested 1e-12 it is exact to the last
+    /// bit against the pair's 3.1e-13.
+    #[test]
+    fn the_quadrature_extrapolation_buys_the_two_decades_its_name_claims() {
+        let e_to_x = |x: f64| x.exp();
+        let want = std::f64::consts::E - 1.0;
+        for &rel in &[1e-3f64, 1e-6, 1e-8, 1e-10, 1e-12] {
+            let got = integrate(&e_to_x, 0.0, 1.0, rel);
+            let err = (got - want).abs() / want;
+            assert!(err <= 0.01 * rel, "∫e^x asked for {rel} and landed at {err}");
+        }
+        // A peaked integrand too, where the accepted panels are not all the same width: Runge's
+        // function, whose integral over [0, 1] is atan(5)/5.
+        let runge = |x: f64| (1.0 + 25.0 * x * x).recip();
+        let want = 5.0f64.atan() / 5.0;
+        for &rel in &[1e-6f64, 1e-9, 1e-12] {
+            let got = integrate(&runge, 0.0, 1.0, rel);
+            let err = (got - want).abs() / want;
+            assert!(err <= 0.01 * rel, "∫1/(1+25x²) asked for {rel} and landed at {err}");
+        }
+        // And an empty or inverted interval is priced at zero exactly, which is the property
+        // `Eif::isi` leans on for a reset above its own truncation.
+        assert_eq!(integrate(&e_to_x, 1.0, 1.0, 1e-12), 0.0);
+        assert_eq!(integrate(&e_to_x, 1.0, 0.0, 1e-12), 0.0);
     }
 }

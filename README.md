@@ -310,13 +310,13 @@ be reproduced cannot be checked against anything, including itself.
 auditor in 0.5.0 and 0.6.0, the ten of the third wave by hand in 0.8.0 (156 mutations, 36
 survivors, every one now caught — see below), and everything since mutated as it was written.
 
-**What of that is RE-RUNNABLE, which is a different question and the one that matters.** The
-repository holds 1,598 recorded mutations across 49 of the 71 modules. The other 22 were audited
-by the adversarial auditor of 0.5.0 and 0.6.0, whose edits were never written down — so that audit
-cannot be re-run against today's code, and its verdict is a historical claim about the code as it
-stood then, not a property of the code as it stands now. Counting those modules under "audited by
-mutation" without saying this would be exactly the confusion the harness exists to prevent, and
-the twenty-two are named below.
+**What of that is RE-RUNNABLE, which is a different question and the one that matters.** As of
+2026-09-21, **all seventy-one**. The repository holds **5,826 recorded mutations, at least one
+list per module**, and every one of them can be applied to today's source by
+`python3 tools/mutate.py`. For six releases that sentence had an exception in it: thirty-six
+modules were audited in 0.5.0 and 0.6.0 by an adversarial auditor that never wrote its edits down,
+so their verdict was a historical claim about the code as it stood then rather than a property of
+the code as it stands now. Closing that gap is what the backfill below was for, and it is closed.
 
 Every one of the 999 mutations recorded before this release was re-run in full against 0.18.0:
 **985 caught, 14 equivalent by their stated arguments, none survived, none stale.** That is the
@@ -853,15 +853,79 @@ The rest, briefly:
   loop keeps the half without the root. It is sign comparisons now, and the fixture scales a root
   into that range.
 
+### The backfill, finished (2026-09-21)
+
+Twenty-two modules had no recorded list. Writing them by hand was running at two modules a session,
+so this round used **one reader per module in parallel**, each with the same brief: read the module
+and its tests, aim one mutation at every claim the docs make, verify every anchor occurs exactly
+once, and **write nothing into the repository** — return the list as data. That last rule is not
+politeness. An earlier subagent asked to draft a list had instead run the harness against the live
+tree, and a kill between mutate and restore left a live mutant in `src/`.
+
+**4,228 new mutations.** Eight anchors in `vision` came back ambiguous — the same statement appears
+in the production path and again in the test module's independent reimplementation of it — and were
+widened by hand. Nothing else needed fixing.
+
+Then the audits, six at a time against slim copies. **The survivor rate is 12 to 13 per cent**,
+several times the rate the crate's hand-written waves were finding. That number is the honest size
+of what an audit that does not write its edits down leaves behind.
+
+Repairs run the same way: one agent per module, each in its own crate copy, iterating until its
+module's full list comes back with zero survivors. What they found, in the first eleven:
+
+- **`convert::Reset::spikes_in` read an OVERFLOWED interval as saturation.** It returns `ticks`
+  when the inter-spike interval `ceil(1/z)` is not finite — but the only way that happens for an
+  activation the method has already accepted is that `1/z` overflowed, at `z` below about
+  5.6e-309, and an infinite interval means the unit **never** fires. Measured: at `z = 1e-320` over
+  1000 ticks the method returned `Some(1000)`, one spike on every tick, where the membrane gains
+  1e-320 of a threshold per tick and the answer is `Some(0)`. The module's own asymptotic form for
+  the same rule, `Reset::rate_limit`, returned `Some(0.0)` on that input — so the exact count and
+  the asymptote disagreed by the full dynamic range, and the documented `floor(T / ceil(1/z))`
+  sided with the asymptote.
+- **`olfaction::Epl::new` named the wrong parameter.** A caller who set `recall_cycles: 0` was
+  handed `field: "learn_cycles"` and sent to look at a parameter that was already correct, which
+  defeats the only reason the field is in the error.
+- **`compress::softmax_t`'s `# Errors` was missing a variant it really returns.** At a temperature
+  of 1e-308 — finite and strictly positive, so the function accepts it — a logit of 1e10 overflows,
+  the shift becomes `inf - inf`, and the sum is `NaN`. Refusing is right, and now documented, with
+  the reason: once two logits have both overflowed, a uniform distribution and a one-hot are the
+  same pair of infinities.
+- **Two recorded equivalence arguments turned out to be FALSE and were retracted.** Both argued
+  from the fixtures rather than from the arithmetic — `compress`'s said in so many words "every
+  fixture in this module has a positive scaled maximum" — and both fell to a fixture the repair
+  agent built specifically to break them. A retracted equivalence is the audit record getting
+  stricter, and the merge script now accepts a retraction while still refusing any edit that
+  changes an entry's label, `old` or `new`.
+
+Two things about the harness came out of the same week, and both were reachable rather than
+theoretical:
+
+- **A killed test run was being counted as a catch.** `mutate.py` read "non-zero exit and no test
+  result line" as `caught`. On a shared machine a sibling process's `pkill -f "cargo test"` turns
+  every mutation it interrupts into a mutation this repository believes is covered — the one
+  failure mode a mutation harness must not have. A signal-terminated child is now `KILLED`, which
+  counts as a failure of the run, not as coverage.
+- **A killed harness left a live mutant behind.** Python does not unwind `finally` for a signal it
+  does not handle, so a `SIGTERM` between mutate and restore left the edit in place; the in-flight
+  marker repaired it at the next start, but only for the same `--root` and only if someone ran it
+  again. The harness now handles `SIGTERM`, `SIGINT` and `SIGHUP`, restores, and exits `128 + n` so
+  a killed sweep can still be told from a finished one. **Read the exit code, not the tail** — six
+  of this backfill's audits were killed partway through by exactly that command, and their logs
+  look like completed runs.
+
+`slim.py` gained one line for the same reason: it wrote `pub mod` for every module it kept but not
+the crate's `pub use` re-exports, so a doc example that writes `ferromorphic::Rng::new(1)` did not
+compile in a slim copy — invisible to the harness, which runs `cargo test --release --lib` and does
+not build doc tests.
+
 ### Re-running the audit
 
 The harness and every mutation THIS repository has recorded are in it: `tools/mutate.py` and one
-list per module in `tools/mutations/` — 49 modules of the 71. The 22 without a list are `attention`, `bayes`, `cochlea`, `coding`, `compress`, `continual`, `control`, `convert`, `device`, `eprop`, `exponential`, `fusion`, `hardware`, `mapping`, `meanfield`, `nir`, `olfaction`, `reservoir`, `spikeconv`, `tasks`, `topology`, `vision`:
-audited in 0.5.0 and 0.6.0 by an adversarial auditor that did not record its edits. Writing their
-lists is outstanding work, and until it is done the claim anyone can check by running the harness
-is about those 49. `python3 tools/mutate.py nef` applies each recorded edit to
+list per module in `tools/mutations/`, for **all seventy-one modules**. There is no longer a
+subset to name: the claim anyone can check by running the harness is the whole crate.
+`python3 tools/mutate.py nef` applies each recorded edit to
 `src/nef.rs` in turn, runs that module's tests, restores the file and prints `caught`, `SURVIVED`,
-or — for the twenty-three mutations no test could distinguish, each with its stated reason —
+or — for the mutations no test could distinguish, each with its stated reason —
 `equivalent`.
 It prints the number of tests that ran unmutated first, because a test that has vanished looks
 exactly like a test that passes.

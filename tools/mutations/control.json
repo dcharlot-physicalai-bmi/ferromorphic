@@ -1,0 +1,781 @@
+[
+ {
+  "label": "a non-finite quantity is accepted everywhere",
+  "old": "    if value.is_finite() { Ok(()) } else { Err(ControlError::NotFinite { what, value }) }",
+  "new": "    let _ = (what, value);\n    Ok(())"
+ },
+ {
+  "label": "the positivity check no longer screens for finiteness first",
+  "old": "    need_finite(what, value)?;\n    // `!(value > 0.0)` rather than",
+  "new": "    // `!(value > 0.0)` rather than"
+ },
+ {
+  "label": "a quantity that must be strictly positive may be zero",
+  "old": "    if !(value > 0.0) { Err(ControlError::NotPositive { what, value }) } else { Ok(()) }",
+  "new": "    if !(value >= 0.0) { Err(ControlError::NotPositive { what, value }) } else { Ok(()) }"
+ },
+ {
+  "label": "the encoder's accumulator is overwritten each step rather than accumulated",
+  "old": "        self.acc += self.gain * x.max(0.0) * dt;",
+  "new": "        self.acc = self.gain * x.max(0.0) * dt;"
+ },
+ {
+  "label": "the charge deposited in a step does not depend on the length of the step",
+  "old": "        self.acc += self.gain * x.max(0.0) * dt;",
+  "new": "        self.acc += self.gain * x;"
+ },
+ {
+  "label": "the encoder is not rectified and a negative input discharges it",
+  "old": "        self.acc += self.gain * x.max(0.0) * dt;",
+  "new": "        self.acc += self.gain * x * dt;"
+ },
+ {
+  "label": "the accumulator is emptied on a spike instead of having its threshold subtracted",
+  "old": "        self.acc -= n;\n        self.spikes = total;",
+  "new": "        self.acc = 0.0;\n        self.spikes = total;"
+ },
+ {
+  "label": "the running spike counter is replaced by this step's own count",
+  "old": "        self.acc -= n;\n        self.spikes = total;",
+  "new": "        self.acc -= n;\n        self.spikes = count;"
+ },
+ {
+  "label": "a step emitting more spikes than u64 can hold is not refused",
+  "old": "        if !(n < U64_EXACT) {\n            self.acc = 0.0;\n            return Err(ControlError::NotFinite { what: \"spikes in one step (past u64)\", value: n });\n        }",
+  "new": "        if false {\n            self.acc = 0.0;\n            return Err(ControlError::NotFinite { what: \"spikes in one step (past u64)\", value: n });\n        }"
+ },
+ {
+  "label": "a refused total leaves the accumulator charged past its threshold",
+  "old": "            self.acc = 0.0;\n            return Err(ControlError::NotFinite { what: \"total spike count (past u64)\", value: n });",
+  "new": "            return Err(ControlError::NotFinite { what: \"total spike count (past u64)\", value: n });"
+ },
+ {
+  "label": "the exact-cast bound is transcribed as 1e18 instead of 2^64",
+  "old": "const U64_EXACT: f64 = 18_446_744_073_709_551_616.0;",
+  "new": "const U64_EXACT: f64 = 1_000_000_000_000_000_000.0;"
+ },
+ {
+  "label": "the spike count in a step truncates towards zero rather than flooring",
+  "old": "        let n = self.acc.floor();",
+  "new": "        let n = self.acc.trunc();",
+  "equivalent": "the accumulator is never negative, so the two functions agree on every value it can hold. `acc` starts at 0.0, every increment is `gain * max(x, 0) * dt` with `gain` validated strictly positive at construction and `dt` validated strictly positive on entry, and the only decrement subtracts `n = floor(acc) <= acc`, which leaves `acc` in [0, 1). `floor` and `trunc` are the same function on a non-negative finite argument, and on the NaN this line can also see (an infinite product) both return NaN, which the `n < U64_EXACT` line below refuses either way."
+ },
+ {
+  "label": "the closed-form count is not rectified",
+  "old": "        let n = (self.gain * x.max(0.0) * t).floor();",
+  "new": "        let n = (self.gain * x * t).floor();",
+  "equivalent": "both forms return 0 for every negative input, so nothing downstream can separate them. With `gain > 0` and `t > 0` a negative `x` makes the product negative, `floor` of a negative number is negative, `!(n < U64_EXACT)` is therefore false, and `n as u64` is a saturating cast that yields 0 — exactly what the rectified form computes as floor(gain * 0 * t) = 0. A non-finite `x` is refused by `need_finite` on the line above, before either form is evaluated."
+ },
+ {
+  "label": "the closed-form count rounds up rather than down",
+  "old": "        let n = (self.gain * x.max(0.0) * t).floor();",
+  "new": "        let n = (self.gain * x.max(0.0) * t).ceil();"
+ },
+ {
+  "label": "the instantaneous rate is not rectified",
+  "old": "        self.gain * x.max(0.0)\n    }\n\n    /// Empty the accumulator and the spike counter.",
+  "new": "        self.gain * x\n    }\n\n    /// Empty the accumulator and the spike counter."
+ },
+ {
+  "label": "resetting the encoder leaves its spike counter standing",
+  "old": "    pub fn reset(&mut self) {\n        self.acc = 0.0;\n        self.spikes = 0;\n    }",
+  "new": "    pub fn reset(&mut self) {\n        self.acc = 0.0;\n    }"
+ },
+ {
+  "label": "the recorded-run bound is doubled to a gigabyte of samples",
+  "old": "pub const MAX_RUN_STEPS: usize = 1 << 25;",
+  "new": "pub const MAX_RUN_STEPS: usize = 1 << 26;"
+ },
+ {
+  "label": "both channels of the push-pull pair are driven by the same sign",
+  "old": "        Ok((self.pos.step(dt, x)?, self.neg.step(dt, -x)?))",
+  "new": "        Ok((self.pos.step(dt, x)?, self.neg.step(dt, x)?))"
+ },
+ {
+  "label": "the pair's spike total drops the negative channel",
+  "old": "        self.pos.spikes + self.neg.spikes",
+  "new": "        self.pos.spikes"
+ },
+ {
+  "label": "the synaptic trace grows instead of decaying",
+  "old": "        self.x *= (-dt / self.tau).exp();\n        if n > 0 {",
+  "new": "        self.x *= (dt / self.tau).exp();\n        if n > 0 {"
+ },
+ {
+  "label": "a spike deposits one rather than one over tau, so the trace has no unit DC gain",
+  "old": "            self.x += n as f64 / self.tau;",
+  "new": "            self.x += n as f64;"
+ },
+ {
+  "label": "the trace is overwritten by each deposit rather than accumulating it",
+  "old": "            self.x += n as f64 / self.tau;",
+  "new": "            self.x = n as f64 / self.tau;"
+ },
+ {
+  "label": "a spike arriving during a step is decayed by that step's own interval",
+  "old": "        self.x *= (-dt / self.tau).exp();\n        if n > 0 {\n            self.x += n as f64 / self.tau;\n        }\n        Ok(self.x)",
+  "new": "        if n > 0 {\n            self.x += n as f64 / self.tau;\n        }\n        self.x *= (-dt / self.tau).exp();\n        Ok(self.x)"
+ },
+ {
+  "label": "resetting a trace leaves it charged",
+  "old": "    /// Empty the trace.\n    pub fn reset(&mut self) {\n        self.x = 0.0;\n    }",
+  "new": "    /// Empty the trace.\n    pub fn reset(&mut self) {}"
+ },
+ {
+  "label": "the proportional preset multiplies by the encoder gain where it should divide",
+  "old": "            a_p: kp / gain,\n            a_i: 0.0,",
+  "new": "            a_p: kp * gain,\n            a_i: 0.0,"
+ },
+ {
+  "label": "the proportional preset clamps the actuator instead of leaving it free",
+  "old": "            tau_slow: 10e-3,\n            u_limit: f64::INFINITY,",
+  "new": "            tau_slow: 10e-3,\n            u_limit: 0.01,"
+ },
+ {
+  "label": "the integral mapping multiplies by the encoder gain where it should divide",
+  "old": "            a_i: ki / gain,",
+  "new": "            a_i: ki * gain,"
+ },
+ {
+  "label": "the derivative mapping sums the two time constants instead of differencing them",
+  "old": "            a_d: kd / (gain * (tau_slow - tau_fast)),",
+  "new": "            a_d: kd / (gain * (tau_slow + tau_fast)),"
+ },
+ {
+  "label": "a zero or negative actuator limit is accepted",
+  "old": "        if !(spec.u_limit > 0.0) {\n            return Err(ControlError::NotPositive { what: \"u_limit\", value: spec.u_limit });\n        }",
+  "new": "        if false {\n            return Err(ControlError::NotPositive { what: \"u_limit\", value: spec.u_limit });\n        }"
+ },
+ {
+  "label": "equal derivative time constants, which disable the D term, are accepted",
+  "old": "        if !(spec.tau_fast < spec.tau_slow) {",
+  "new": "        if !(spec.tau_fast <= spec.tau_slow) {"
+ },
+ {
+  "label": "the ordering check runs before the finiteness checks the doc says come first",
+  "old": "        need_finite(\"a_p\", spec.a_p)?;\n        need_finite(\"a_i\", spec.a_i)?;\n        need_finite(\"a_d\", spec.a_d)?;",
+  "new": "        if !(spec.tau_fast < spec.tau_slow) {\n            return Err(ControlError::NotOrdered { fast: spec.tau_fast, slow: spec.tau_slow });\n        }\n        need_finite(\"a_p\", spec.a_p)?;\n        need_finite(\"a_i\", spec.a_i)?;\n        need_finite(\"a_d\", spec.a_d)?;"
+ },
+ {
+  "label": "the negative proportional arm is built with the fast derivative time constant",
+  "old": "            p_pos: Trace::new(spec.tau_p)?,\n            p_neg: Trace::new(spec.tau_p)?,",
+  "new": "            p_pos: Trace::new(spec.tau_p)?,\n            p_neg: Trace::new(spec.tau_fast)?,"
+ },
+ {
+  "label": "the derivative's fast arm is built with the slow time constant, so the high-pass is dead",
+  "old": "            d_fast_pos: Trace::new(spec.tau_fast)?,\n            d_fast_neg: Trace::new(spec.tau_fast)?,",
+  "new": "            d_fast_pos: Trace::new(spec.tau_slow)?,\n            d_fast_neg: Trace::new(spec.tau_slow)?,"
+ },
+ {
+  "label": "the error encoder is built at unit gain rather than the spec's",
+  "old": "            enc: SignedEncoder::new(spec.gain)?,",
+  "new": "            enc: SignedEncoder::new(1.0)?,"
+ },
+ {
+  "label": "the proportional gain divides by the encoder gain",
+  "old": "        self.spec.a_p * self.spec.gain\n    }",
+  "new": "        self.spec.a_p / self.spec.gain\n    }"
+ },
+ {
+  "label": "the integral gain ignores the encoder gain",
+  "old": "        self.spec.a_i * self.spec.gain",
+  "new": "        self.spec.a_i"
+ },
+ {
+  "label": "the derivative gain's time-constant difference is reversed",
+  "old": "        self.spec.a_d * self.spec.gain * (self.spec.tau_slow - self.spec.tau_fast)",
+  "new": "        self.spec.a_d * self.spec.gain * (self.spec.tau_fast - self.spec.tau_slow)"
+ },
+ {
+  "label": "the error is encoded with its sign inverted",
+  "old": "        let (np, nn) = self.enc.step(dt, e)?;",
+  "new": "        let (np, nn) = self.enc.step(dt, -e)?;"
+ },
+ {
+  "label": "the proportional branch sums its two channels rather than differencing them",
+  "old": "        let p = self.spec.a_p * (self.p_pos.step(dt, np)? - self.p_neg.step(dt, nn)?);",
+  "new": "        let p = self.spec.a_p * (self.p_pos.step(dt, np)? + self.p_neg.step(dt, nn)?);"
+ },
+ {
+  "label": "the derivative synapse is a low-pass rather than a high-pass",
+  "old": "        let d = self.spec.a_d * (fast - slow);",
+  "new": "        let d = self.spec.a_d * (slow - fast);"
+ },
+ {
+  "label": "the integrator only accumulates when both channels fire in the same tick",
+  "old": "        if np > 0 || nn > 0 {\n            self.integral += self.spec.a_i * (np as f64 - nn as f64);\n        }",
+  "new": "        if np > 0 && nn > 0 {\n            self.integral += self.spec.a_i * (np as f64 - nn as f64);\n        }"
+ },
+ {
+  "label": "the integrator is overwritten each tick rather than accumulating",
+  "old": "            self.integral += self.spec.a_i * (np as f64 - nn as f64);",
+  "new": "            self.integral = self.spec.a_i * (np as f64 - nn as f64);"
+ },
+ {
+  "label": "anti-windup tests a command with no integral term in it",
+  "old": "        let raw = p + self.integral + d;",
+  "new": "        let raw = p + d;"
+ },
+ {
+  "label": "anti-windup freezes the integrator whenever the actuator saturates, in either direction",
+  "old": "        if u != raw && (u - raw).signum() == (before - self.integral).signum() {",
+  "new": "        if u != raw {"
+ },
+ {
+  "label": "a frozen integrator is emptied rather than restored to its previous value",
+  "old": "            self.integral = before;",
+  "new": "            self.integral = 0.0;"
+ },
+ {
+  "label": "the elapsed clock is overwritten each tick rather than accumulated",
+  "old": "        self.elapsed_s += dt;\n        self.ticks += 1;",
+  "new": "        self.elapsed_s = dt;\n        self.ticks += 1;"
+ },
+ {
+  "label": "the tick counter is overwritten each tick rather than accumulated",
+  "old": "        self.elapsed_s += dt;\n        self.ticks += 1;",
+  "new": "        self.elapsed_s += dt;\n        self.ticks = 1;"
+ },
+ {
+  "label": "the command is returned without the actuator clamp",
+  "old": "        Ok(clamp_sym(p + self.integral + d, self.spec.u_limit))",
+  "new": "        Ok(p + self.integral + d)"
+ },
+ {
+  "label": "the budget charges one synapse per spike rather than the three the architecture claims",
+  "old": "        ControlBudget::new(self.spikes(), self.elapsed_s, self.ticks, 2, 3, mode)",
+  "new": "        ControlBudget::new(self.spikes(), self.elapsed_s, self.ticks, 2, 1, mode)"
+ },
+ {
+  "label": "resetting the controller leaves the integrator charged",
+  "old": "        self.integral = 0.0;\n        self.elapsed_s = 0.0;\n        self.ticks = 0;",
+  "new": "        self.elapsed_s = 0.0;\n        self.ticks = 0;"
+ },
+ {
+  "label": "reset skips the derivative's slow negative arm",
+  "old": "            &mut self.d_slow_pos,\n            &mut self.d_slow_neg,\n        ] {",
+  "new": "            &mut self.d_slow_pos,\n        ] {"
+ },
+ {
+  "label": "the symmetric clamp does not hold its upper bound",
+  "old": "    if x > limit {\n        limit\n    } else if x < -limit {",
+  "new": "    if x > limit {\n        x\n    } else if x < -limit {"
+ },
+ {
+  "label": "the symmetric clamp's lower bound is the positive limit",
+  "old": "    } else if x < -limit {\n        -limit\n    } else {",
+  "new": "    } else if x < -limit {\n        limit\n    } else {"
+ },
+ {
+  "label": "the plant's DC gain is added to the input rather than multiplying it",
+  "old": "        let y_inf = self.k * u;\n        self.y = y_inf",
+  "new": "        let y_inf = self.k + u;\n        self.y = y_inf"
+ },
+ {
+  "label": "the plant's exponential update has its two ends swapped",
+  "old": "        self.y = y_inf + (self.y - y_inf) * (-dt / self.tau).exp();",
+  "new": "        self.y = y_inf + (y_inf - self.y) * (-dt / self.tau).exp();"
+ },
+ {
+  "label": "the plant's closed form relaxes from its asymptote back to the initial condition",
+  "old": "        let y_inf = self.k * u;\n        y_inf + (y0 - y_inf) * (-t / self.tau).exp()",
+  "new": "        let y_inf = self.k * u;\n        y0 + (y_inf - y0) * (-t / self.tau).exp()"
+ },
+ {
+  "label": "the standing-offset denominator subtracts the loop gain",
+  "old": "        let denom = 1.0 + self.k * kp;",
+  "new": "        let denom = 1.0 - self.k * kp;"
+ },
+ {
+  "label": "the standing offset multiplies by the loop denominator instead of dividing",
+  "old": "        Some(setpoint / denom)",
+  "new": "        Some(setpoint * denom)"
+ },
+ {
+  "label": "a loop with no equilibrium is given a number rather than a refusal",
+  "old": "        if denom == 0.0 || !denom.is_finite() {",
+  "new": "        if !denom.is_finite() {"
+ },
+ {
+  "label": "the settling time drops the plant's time constant",
+  "old": "        Some(self.tau * (1.0 / frac).ln())",
+  "new": "        Some((1.0 / frac).ln())"
+ },
+ {
+  "label": "the settling-time guard accepts a fraction of one or more",
+  "old": "        if !(frac > 0.0 && frac < 1.0) {",
+  "new": "        if !(frac > 0.0) {"
+ },
+ {
+  "label": "a plant the input cannot move is accepted",
+  "old": "        if k == 0.0 {\n            return Err(ControlError::NotPositive { what: \"|k| (a plant u cannot move)\", value: k });\n        }",
+  "new": "        if false {\n            return Err(ControlError::NotPositive { what: \"|k| (a plant u cannot move)\", value: k });\n        }"
+ },
+ {
+  "label": "standard gravity is transcribed as 9.81",
+  "old": "            gravity: 9.80665,",
+  "new": "            gravity: 9.81,"
+ },
+ {
+  "label": "the moment of inertia is linear in the length rather than quadratic",
+  "old": "        self.mass_kg * self.length_m * self.length_m",
+  "new": "        self.mass_kg * self.length_m"
+ },
+ {
+  "label": "the kinetic energy drops its factor of a half",
+  "old": "        0.5 * self.inertia() * self.omega * self.omega",
+  "new": "        self.inertia() * self.omega * self.omega"
+ },
+ {
+  "label": "the potential energy is measured from the top rather than from hanging down",
+  "old": "            + self.mass_kg * self.gravity * self.length_m * (1.0 - self.theta.cos())",
+  "new": "            + self.mass_kg * self.gravity * self.length_m * (1.0 + self.theta.cos())"
+ },
+ {
+  "label": "the restoring torque is linearised to the small-angle form",
+  "old": "        -(self.gravity / self.length_m) * theta.sin() - (self.damping / self.inertia()) * omega",
+  "new": "        -(self.gravity / self.length_m) * theta - (self.damping / self.inertia()) * omega"
+ },
+ {
+  "label": "gravity pushes the pendulum away from the bottom",
+  "old": "        -(self.gravity / self.length_m) * theta.sin() - (self.damping / self.inertia()) * omega",
+  "new": "        (self.gravity / self.length_m) * theta.sin() - (self.damping / self.inertia()) * omega"
+ },
+ {
+  "label": "damping adds energy instead of removing it",
+  "old": "        -(self.gravity / self.length_m) * theta.sin() - (self.damping / self.inertia()) * omega",
+  "new": "        -(self.gravity / self.length_m) * theta.sin() + (self.damping / self.inertia()) * omega"
+ },
+ {
+  "label": "the applied torque is not divided by the moment of inertia",
+  "old": "            + torque_nm / self.inertia()",
+  "new": "            + torque_nm"
+ },
+ {
+  "label": "the pendulum's Runge-Kutta weights are all one",
+  "old": "        self.theta += dt / 6.0 * (k1t + 2.0 * k2t + 2.0 * k3t + k4t);",
+  "new": "        self.theta += dt / 6.0 * (k1t + k2t + k3t + k4t);"
+ },
+ {
+  "label": "the small-angle period is half a turn rather than a whole one",
+  "old": "        TAU * (self.length_m / self.gravity).sqrt()",
+  "new": "        PI * (self.length_m / self.gravity).sqrt()"
+ },
+ {
+  "label": "the exact period's prefactor is two quarter-swings rather than four",
+  "old": "        Ok(4.0 * (self.length_m / self.gravity).sqrt() * big_k)",
+  "new": "        Ok(2.0 * (self.length_m / self.gravity).sqrt() * big_k)"
+ },
+ {
+  "label": "the elliptic integral is handed the parameter where it wants the modulus",
+  "old": "        let k = (0.5 * theta0.abs()).sin();",
+  "new": "        let k = (0.5 * theta0.abs()).sin() * (0.5 * theta0.abs()).sin();"
+ },
+ {
+  "label": "a damped pendulum is given a period",
+  "old": "        if self.damping != 0.0 {",
+  "new": "        if self.damping < 0.0 {"
+ },
+ {
+  "label": "the libration bound is loosened from pi to a full turn",
+  "old": "        if theta0.abs() >= PI {",
+  "new": "        if theta0.abs() >= TAU {"
+ },
+ {
+  "label": "the zero-amplitude limit reports no period at all",
+  "old": "            return Ok(self.small_angle_period());",
+  "new": "            return Ok(0.0);"
+ },
+ {
+  "label": "a non-finite modulus is integrated rather than refused",
+  "old": "    if !k.is_finite() || k.abs() >= 1.0 {",
+  "new": "    if k.abs() >= 1.0 {"
+ },
+ {
+  "label": "the arithmetic-geometric mean starts from the modulus where it wants the parameter",
+  "old": "    let mut b = (1.0 - k * k).sqrt();",
+  "new": "    let mut b = (1.0 - k).sqrt();"
+ },
+ {
+  "label": "the arithmetic mean is not halved",
+  "old": "        let a_next = 0.5 * (a + b);",
+  "new": "        let a_next = a + b;"
+ },
+ {
+  "label": "the geometric mean reads the already-updated a",
+  "old": "        let a_next = 0.5 * (a + b);\n        b = (a * b).sqrt();\n        a = a_next;",
+  "new": "        let a_next = 0.5 * (a + b);\n        a = a_next;\n        b = (a * b).sqrt();"
+ },
+ {
+  "label": "the mean's convergence tolerance is loosened to a part in a thousand",
+  "old": "        if (a - b).abs() <= 1e-17 * a {",
+  "new": "        if (a - b).abs() <= 1e-3 * a {"
+ },
+ {
+  "label": "the iteration cap stops the mean after two rounds",
+  "old": "    for _ in 0..40 {",
+  "new": "    for _ in 0..2 {"
+ },
+ {
+  "label": "the elliptic integral drops the half in pi over two-agm",
+  "old": "    Some(PI / (2.0 * a))",
+  "new": "    Some(PI / a)"
+ },
+ {
+  "label": "the oscillator is constructed at the symmetric state it can never leave",
+  "old": "        Ok(Self { tau_r, tau_a, beta, w, s, x: [0.1 * s, -0.1 * s], v: [0.0, 0.0] })",
+  "new": "        Ok(Self { tau_r, tau_a, beta, w, s, x: [0.1 * s, 0.1 * s], v: [0.0, 0.0] })"
+ },
+ {
+  "label": "the reported output is not rectified",
+  "old": "        [self.x[0].max(0.0), self.x[1].max(0.0)]",
+  "new": "        [self.x[0], self.x[1]]"
+ },
+ {
+  "label": "the antagonist drive is the wrong way round",
+  "old": "        scale * (y[0] - y[1])",
+  "new": "        scale * (y[1] - y[0])"
+ },
+ {
+  "label": "the vector field is not rectified, so the oscillator is linear",
+  "old": "        let y = [x[0].max(0.0), x[1].max(0.0)];",
+  "new": "        let y = [x[0], x[1]];"
+ },
+ {
+  "label": "a unit inhibits itself rather than its partner",
+  "old": "            (-x[0] - self.beta * v[0] - self.w * y[1] + self.s) / self.tau_r,",
+  "new": "            (-x[0] - self.beta * v[0] - self.w * y[0] + self.s) / self.tau_r,"
+ },
+ {
+  "label": "the mutual inhibition excites",
+  "old": "            (-x[0] - self.beta * v[0] - self.w * y[1] + self.s) / self.tau_r,",
+  "new": "            (-x[0] - self.beta * v[0] + self.w * y[1] + self.s) / self.tau_r,"
+ },
+ {
+  "label": "the second unit's membrane relaxes on the adaptation time constant",
+  "old": "            (-x[1] - self.beta * v[1] - self.w * y[0] + self.s) / self.tau_r,\n        ];",
+  "new": "            (-x[1] - self.beta * v[1] - self.w * y[0] + self.s) / self.tau_a,\n        ];"
+ },
+ {
+  "label": "each unit's fatigue is driven by its partner's output",
+  "old": "        let dv = [(-v[0] + y[0]) / self.tau_a, (-v[1] + y[1]) / self.tau_a];",
+  "new": "        let dv = [(-v[0] + y[1]) / self.tau_a, (-v[1] + y[0]) / self.tau_a];"
+ },
+ {
+  "label": "the oscillator's Runge-Kutta weights sum to four rather than six",
+  "old": "            self.x[i] += dt / 6.0 * (a1x[i] + 2.0 * a2x[i] + 2.0 * a3x[i] + a4x[i]);",
+  "new": "            self.x[i] += dt / 6.0 * (a1x[i] + a2x[i] + a3x[i] + a4x[i]);"
+ },
+ {
+  "label": "the measured period includes the transient the doc says is discarded",
+  "old": "        measure_period(&a[steps / 2..], dt)",
+  "new": "        measure_period(&a, dt)"
+ },
+ {
+  "label": "the symmetric equilibrium subtracts the mutual inhibition",
+  "old": "        let d = 1.0 + self.beta + self.w;",
+  "new": "        let d = 1.0 + self.beta - self.w;"
+ },
+ {
+  "label": "the onset threshold inverts its time-constant ratio",
+  "old": "        1.0 + self.tau_r / self.tau_a",
+  "new": "        1.0 + self.tau_a / self.tau_r"
+ },
+ {
+  "label": "the antisymmetric determinant adds the mutual inhibition",
+  "old": "        let det = 1.0 + self.beta - self.w;",
+  "new": "        let det = 1.0 + self.beta + self.w;"
+ },
+ {
+  "label": "a non-positive determinant still reports a period",
+  "old": "        let det = 1.0 + self.beta - self.w;\n        if !(det > 0.0) {\n            return None;\n        }",
+  "new": "        let det = 1.0 + self.beta - self.w;"
+ },
+ {
+  "label": "the onset period drops its square root",
+  "old": "        Some(TAU * (self.tau_r * self.tau_a / det).sqrt())",
+  "new": "        Some(TAU * (self.tau_r * self.tau_a / det))"
+ },
+ {
+  "label": "the oscillation predicate drops its upper bound",
+  "old": "        self.w > self.onset_threshold() && self.w < 1.0 + self.beta",
+  "new": "        self.w > self.onset_threshold()"
+ },
+ {
+  "label": "the half-centre's refractory period is transcribed as 20 ms",
+  "old": "        let lif = crate::neuron::Lif { t_ref: 2e-3, ..crate::neuron::Lif::default() };",
+  "new": "        let lif = crate::neuron::Lif { t_ref: 20e-3, ..crate::neuron::Lif::default() };"
+ },
+ {
+  "label": "the left side's threshold adaptation is ten times too fast",
+  "old": "        let mut left = crate::neuron::AdaptiveLif::new(lif, 150e-3, 1.5e-3);",
+  "new": "        let mut left = crate::neuron::AdaptiveLif::new(lif, 15e-3, 1.5e-3);"
+ },
+ {
+  "label": "nothing breaks the half-centre's symmetry",
+  "old": "        left.lif.v += 3e-3;",
+  "new": "        left.lif.v += 0.0;"
+ },
+ {
+  "label": "the inhibitory synapse is ten times too slow",
+  "old": "            inhibition: [Trace::new(30e-3)?, Trace::new(30e-3)?],",
+  "new": "            inhibition: [Trace::new(300e-3)?, Trace::new(300e-3)?],"
+ },
+ {
+  "label": "the tonic drive is a tenth of a nanoamp",
+  "old": "            drive_a: 3e-9,",
+  "new": "            drive_a: 3e-10,"
+ },
+ {
+  "label": "the inhibitory weight is ten times too small",
+  "old": "            w_inh: 4e-11,",
+  "new": "            w_inh: 4e-12,"
+ },
+ {
+  "label": "the contralateral synapse excites rather than inhibits",
+  "old": "            let inhibited = self.drive_a - self.w_inh * self.inhibition[i].value();",
+  "new": "            let inhibited = self.drive_a + self.w_inh * self.inhibition[i].value();"
+ },
+ {
+  "label": "each side reads the trace it feeds rather than the one that inhibits it",
+  "old": "            let inhibited = self.drive_a - self.w_inh * self.inhibition[i].value();",
+  "new": "            let inhibited = self.drive_a - self.w_inh * self.inhibition[1 - i].value();"
+ },
+ {
+  "label": "a spike deposits into the trace that inhibits its own side",
+  "old": "            self.inhibition[i].step(dt, u64::from(fired[1 - i]))?;",
+  "new": "            self.inhibition[i].step(dt, u64::from(fired[i]))?;"
+ },
+ {
+  "label": "inhibition is delivered inside the tick that produced it",
+  "old": "        let mut fired = [false; 2];\n        for i in 0..2 {\n            let inhibited = self.drive_a - self.w_inh * self.inhibition[i].value();\n            fired[i] = self.side[i].step(dt, inhibited);\n        }\n        // Deposit AFTER both sides have stepped, so neither side sees the other's spike within the\n        // same tick. Delivering in-tick would make the result depend on the order of the loop,\n        // which is the silent kind of asymmetry that turns a symmetric model into a biased one.\n        for i in 0..2 {\n            self.inhibition[i].step(dt, u64::from(fired[1 - i]))?;\n        }",
+  "new": "        let mut fired = [false; 2];\n        for i in 0..2 {\n            let inhibited = self.drive_a - self.w_inh * self.inhibition[i].value();\n            fired[i] = self.side[i].step(dt, inhibited);\n            self.inhibition[i].step(dt, u64::from(fired[1 - i]))?;\n        }"
+ },
+ {
+  "label": "each envelope is labelled with the side it inhibits rather than the side that made it",
+  "old": "                env[i].push(self.inhibition[1 - i].value());",
+  "new": "                env[i].push(self.inhibition[i].value());"
+ },
+ {
+  "label": "the per-side spike counts are overwritten rather than accumulated",
+  "old": "                spikes[i] += u64::from(fired[i]);",
+  "new": "                spikes[i] = u64::from(fired[i]);"
+ },
+ {
+  "label": "the run's phase is reported the other way round",
+  "old": "        phase_difference(&self.left[half..], &self.right[half..], self.dt)",
+  "new": "        phase_difference(&self.right[half..], &self.left[half..], self.dt)"
+ },
+ {
+  "label": "the frequency is the period",
+  "old": "        1.0 / self.period_s",
+  "new": "        self.period_s"
+ },
+ {
+  "label": "the relative jitter is inverted",
+  "old": "        self.jitter_s / self.period_s",
+  "new": "        self.period_s / self.jitter_s"
+ },
+ {
+  "label": "the degenerate-signal guard is removed",
+  "old": "    if !(hi > lo) {\n        return Vec::new();\n    }",
+  "new": "    if false {\n        return Vec::new();\n    }",
+  "equivalent": "the guard cannot change any result, because the crossing test below already refuses every case it exists for. When the samples are constant, hi == lo == mid, and `a < mid` is false for every sample, so no crossing is pushed. When the slice is empty, hi and lo keep their initial NEG_INFINITY and INFINITY, mid is NaN, and the loop `for i in 1..samples.len()` does not run at all. In both cases the function returns an empty vector with or without the early return, and an empty vector is what `measure_period` turns into TooFewCycles either way."
+ },
+ {
+  "label": "crossings are measured against the minimum rather than the mid-level",
+  "old": "    let mid = 0.5 * (lo + hi);",
+  "new": "    let mid = lo;"
+ },
+ {
+  "label": "the measurement counts downward crossings",
+  "old": "        if a < mid && b >= mid {",
+  "new": "        if a > mid && b <= mid {"
+ },
+ {
+  "label": "the sub-sample offset is measured from the far end of the interval",
+  "old": "            let frac = (mid - a) / (b - a);",
+  "new": "            let frac = (b - mid) / (b - a);"
+ },
+ {
+  "label": "the crossing is snapped to the sample grid",
+  "old": "            out.push((i - 1) as f64 * dt + frac * dt);",
+  "new": "            out.push((i - 1) as f64 * dt);"
+ },
+ {
+  "label": "every crossing is placed one whole sample late",
+  "old": "            out.push((i - 1) as f64 * dt + frac * dt);",
+  "new": "            out.push(i as f64 * dt + frac * dt);",
+  "equivalent": "every consumer of this list reads only DIFFERENCES of crossing times, and a constant offset of one sample cancels out of all of them. `measure_period` maps the list to `w[1] - w[0]` and then to deviations from their own mean; `phase_difference` takes `t - t0` between two lists built by this same function, and its wrap-around branch takes `xb[last] + period - t0`, also a difference. The `t >= t0` comparison that selects b's crossing shifts both sides by the same dt. No quantity this module reports is an absolute crossing instant."
+ },
+ {
+  "label": "a single interval is enough to report a period",
+  "old": "    if xs.len() < 3 {",
+  "new": "    if xs.len() < 1 {"
+ },
+ {
+  "label": "the mean interval is normalised by the crossing count rather than the interval count",
+  "old": "    let mean = intervals.iter().sum::<f64>() / intervals.len() as f64;",
+  "new": "    let mean = intervals.iter().sum::<f64>() / xs.len() as f64;"
+ },
+ {
+  "label": "the jitter is the smallest deviation rather than the largest",
+  "old": "    let jitter = intervals.iter().map(|&i| (i - mean).abs()).fold(0.0, f64::max);",
+  "new": "    let jitter = intervals.iter().map(|&i| (i - mean).abs()).fold(0.0, f64::min);"
+ },
+ {
+  "label": "the period-mismatch tolerance is loosened to half a period",
+  "old": "    if (pa.period_s - pb.period_s).abs() > 0.05 * pa.period_s {",
+  "new": "    if (pa.period_s - pb.period_s).abs() > 0.5 * pa.period_s {"
+ },
+ {
+  "label": "the lag is taken to the last b-crossing before the reference rather than the first one after",
+  "old": "    let lag = match xb.iter().find(|&&t| t >= t0) {",
+  "new": "    let lag = match xb.iter().find(|&&t| t <= t0) {"
+ },
+ {
+  "label": "the Riccati quadratic's linear coefficient adds the transition term",
+  "old": "        let b = r - a2 * r - q;",
+  "new": "        let b = r + a2 * r - q;"
+ },
+ {
+  "label": "the positive root of the Riccati quadratic takes the wrong sign of b",
+  "old": "        0.5 * (-b + (b * b + 4.0 * q * r).sqrt())",
+  "new": "        0.5 * (b + (b * b + 4.0 * q * r).sqrt())"
+ },
+ {
+  "label": "the discriminant subtracts the product of the two variances",
+  "old": "        0.5 * (-b + (b * b + 4.0 * q * r).sqrt())",
+  "new": "        0.5 * (-b + (b * b - 4.0 * q * r).sqrt())"
+ },
+ {
+  "label": "the steady-state gain divides by the measurement noise alone",
+  "old": "        let d = p + self.r;\n        if d <= 0.0 { None } else { Some(p / d) }",
+  "new": "        let d = self.r;\n        if d <= 0.0 { None } else { Some(p / d) }"
+ },
+ {
+  "label": "a zero innovation variance yields a NaN gain rather than a refusal",
+  "old": "        if d <= 0.0 { None } else { Some(p / d) }",
+  "new": "        if d < 0.0 { None } else { Some(p / d) }"
+ },
+ {
+  "label": "prediction leaves the state estimate where it was",
+  "old": "        self.x *= self.a;\n        self.p = self.a * self.a * self.p + self.q;",
+  "new": "        self.p = self.a * self.a * self.p + self.q;"
+ },
+ {
+  "label": "the prior variance is propagated through one factor of a rather than two",
+  "old": "        self.x *= self.a;\n        self.p = self.a * self.a * self.p + self.q;",
+  "new": "        self.x *= self.a;\n        self.p = self.a * self.p + self.q;"
+ },
+ {
+  "label": "prediction adds no process noise",
+  "old": "        self.x *= self.a;\n        self.p = self.a * self.a * self.p + self.q;",
+  "new": "        self.x *= self.a;\n        self.p = self.a * self.a * self.p;"
+ },
+ {
+  "label": "the innovation variance is the product of the two variances",
+  "old": "        let s = self.p + self.r;",
+  "new": "        let s = self.p * self.r;"
+ },
+ {
+  "label": "the gain is the measurement noise over the innovation variance",
+  "old": "        let k = self.p / s;",
+  "new": "        let k = self.r / s;"
+ },
+ {
+  "label": "the update folds in the measurement rather than the innovation",
+  "old": "        self.x += k * (z - self.x);",
+  "new": "        self.x += k * z;"
+ },
+ {
+  "label": "the posterior variance is scaled by the gain rather than by its complement",
+  "old": "        self.p *= 1.0 - k;",
+  "new": "        self.p *= k;"
+ },
+ {
+  "label": "a zero innovation variance is accepted by the update",
+  "old": "        if !(s > 0.0) {",
+  "new": "        if s < 0.0 {"
+ },
+ {
+  "label": "the filter measures before it predicts",
+  "old": "        self.predict();\n        self.update(z)",
+  "new": "        let out = self.update(z);\n        self.predict();\n        out"
+ },
+ {
+  "label": "the measurement variance is the Fisher information rather than its reciprocal",
+  "old": "        let r = 1.0 / info;",
+  "new": "        let r = info;"
+ },
+ {
+  "label": "the filter is built with the process and measurement variances swapped",
+  "old": "        let filter = ScalarKalman::new(a, q, r, x0, r)?;",
+  "new": "        let filter = ScalarKalman::new(a, r, q, x0, r)?;"
+ },
+ {
+  "label": "the Fisher information is evaluated at the initial estimate rather than the fixed reference",
+  "old": "        let info = pop.fisher_information(reference_x, window_s)?;",
+  "new": "        let info = pop.fisher_information(x0, window_s)?;"
+ },
+ {
+  "label": "the counts are converted to rates over a one-second window",
+  "old": "        let rates = rates_from_counts(counts, self.window_s)?;",
+  "new": "        let rates = rates_from_counts(counts, 1.0)?;"
+ },
+ {
+  "label": "the spike tally counts observations rather than spikes",
+  "old": "        self.spikes += counts.iter().sum::<u64>();",
+  "new": "        self.spikes += 1;"
+ },
+ {
+  "label": "the estimator folds in a measurement without predicting first",
+  "old": "        self.filter.step(z)",
+  "new": "        self.filter.update(z)"
+ },
+ {
+  "label": "the run duration truncates instead of rounding to the nearest nanosecond",
+  "old": "            (duration_s * 1e9).round().max(0.0) as u64",
+  "new": "            (duration_s * 1e9).floor().max(0.0) as u64"
+ },
+ {
+  "label": "the duration is converted back with the wrong power of ten",
+  "old": "        self.duration_ns as f64 * 1e-9",
+  "new": "        self.duration_ns as f64 * 1e-6"
+ },
+ {
+  "label": "a run of zero length reports a rate",
+  "old": "        if self.duration_ns == 0 {\n            return None;\n        }",
+  "new": "        if false {\n            return None;\n        }"
+ },
+ {
+  "label": "spikes per second multiplies by the duration",
+  "old": "        Some(self.spikes as f64 / self.duration_s())",
+  "new": "        Some(self.spikes as f64 * self.duration_s())"
+ },
+ {
+  "label": "a spike is charged one synaptic operation rather than one per synapse",
+  "old": "        let syn = self.spikes.saturating_mul(self.synapses_per_spike);",
+  "new": "        let syn = self.spikes;"
+ },
+ {
+  "label": "the driven updates take the larger of the spike and tick counts",
+  "old": "        let driven = self.spikes.min(self.ticks.saturating_mul(self.neurons));",
+  "new": "        let driven = self.spikes.max(self.ticks.saturating_mul(self.neurons));"
+ },
+ {
+  "label": "the clocked and event-driven idle counts are swapped",
+  "old": "            Mode::Clocked => total.saturating_sub(driven),\n            Mode::EventDriven => 0,",
+  "new": "            Mode::Clocked => 0,\n            Mode::EventDriven => total.saturating_sub(driven),"
+ },
+ {
+  "label": "the weight fetch a synaptic operation needs is not charged",
+  "old": "            syn_fetches: syn,",
+  "new": "            syn_fetches: 0,"
+ },
+ {
+  "label": "the routed spikes are not counted",
+  "old": "            spikes_out: self.spikes,",
+  "new": "            spikes_out: 0,"
+ }
+]

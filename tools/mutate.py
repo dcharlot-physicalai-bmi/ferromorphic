@@ -17,6 +17,10 @@ a verdict:
     COMPILE-ERROR  the edit does not compile; it says nothing either way — fix the mutation
     NOT-APPLIED    the `old` text is not in the file exactly once; the list has gone stale
     TIMEOUT        the tests did not finish; look at it by hand, do not count it as caught
+    KILLED         a signal stopped the test run; it says nothing either way — run it again
+
+A run that is KILLED exits 128 + the signal (143 for SIGTERM) and restores the file on its way out.
+Read the exit code, not the tail: a truncated sweep and a finished one print the same kind of lines.
 
 Rules the harness exists to enforce:
   - One mutation in flight at a time, and the file is restored even if the harness is killed: the
@@ -27,7 +31,7 @@ Rules the harness exists to enforce:
   - A repair is not kept until the mutation it exists to catch has been re-run and comes back
     `caught`. Two repairs in 0.8.0 failed that re-run.
 """
-import argparse, glob, io, json, os, re, shutil, subprocess, sys, time
+import argparse, glob, io, json, os, re, shutil, signal, subprocess, sys, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_ROOT = os.path.dirname(HERE)
@@ -47,6 +51,14 @@ def run_tests(root, module, timeout, names=None):
     except subprocess.TimeoutExpired:
         return "TIMEOUT", None
     ran = re.search(r"test result: \w+\. (\d+) passed; (\d+) failed", p.stdout)
+    # A TEST RUN THAT WAS KILLED IS NOT A CATCH. `subprocess` reports a signal-terminated child
+    # with a negative return code, and without this line the fall-through below reads "non-zero
+    # exit, no test result" as `caught` — so a sibling process's `pkill -f "cargo test"` would
+    # turn every mutation it interrupted into a mutation this repository believes is covered.
+    # That is the one failure mode a mutation harness must not have, and it was reachable: two
+    # agents sharing this machine ran exactly that command.
+    if p.returncode < 0 and ran is None:
+        return "KILLED", None
     if "could not compile" in p.stderr and ran is None:
         # A `const { assert!(..) }` that the edit falsifies fails the BUILD, with E0080 and the
         # assertion's own message. That is the strongest catch there is — the mutant cannot be
@@ -70,6 +82,24 @@ def main():
     ap.add_argument("--skip", type=int, default=0, help="skip the first N mutations of each list (run only what was added since)")
     ap.add_argument("--timeout", type=int, default=900, help="seconds per test run")
     args = ap.parse_args()
+
+    # A SIGTERM is not hypothetical on a shared machine: six of this repository's module audits
+    # were killed mid-run by a sibling process's `pkill -f mutate.py`, and Python does not unwind
+    # `finally` blocks for a signal it does not handle, so each kill LEFT A LIVE MUTANT in `src/`.
+    # The in-flight marker below repairs that at the next start, but only for the same `--root` and
+    # only if someone runs it again. Handling the signal restores the file immediately instead, and
+    # exits 143 so the caller can still tell a killed run from a finished one.
+    def _restore_and_die(signum, _frame):
+        mark = os.path.join(args.root, "target", "mutate", "inflight.json")
+        if os.path.exists(mark):
+            info = json.load(open(mark))
+            shutil.copyfile(info["backup"], info["path"])
+            os.remove(mark)
+            print(f"RESTORED on signal {signum}: {info['path']} ({info['label']})", flush=True)
+        sys.exit(128 + signum)
+
+    for _sig in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP):
+        signal.signal(_sig, _restore_and_die)
 
     state = os.path.join(args.root, "target", "mutate")
     os.makedirs(state, exist_ok=True)

@@ -1462,6 +1462,13 @@ pub struct PathStats {
 
 impl PathStats {
     /// Whether every ordered pair is reachable, i.e. the network is strongly connected.
+    ///
+    /// **A network with fewer than two neurons has no ordered pair and is reported `false`, not
+    /// vacuously `true`.** Graph theory calls the one-vertex graph strongly connected; this is the
+    /// same refusal [`clustering_coefficient`] makes when no neuron has two neighbours and
+    /// [`PathStats::mean_hops`] makes when nothing is reachable, and for the same reason — the
+    /// quantity a caller is about to compute from it is a mean over pairs, and there are none.
+    /// `a_network_with_no_ordered_pair_is_not_reported_strongly_connected` pins it.
     #[must_use]
     pub fn is_strongly_connected(&self) -> bool {
         self.pairs > 0 && self.reachable == self.pairs
@@ -3353,5 +3360,667 @@ mod tests {
         assert!(e.to_string().contains("5000000000"), "{e}");
         let v = DaleViolation::Mixed { neuron: 7, positive: 3, negative: 2 };
         assert!(v.to_string().contains("neuron 7"), "{v}");
+    }
+
+    /// (survivor 1) [`Wiring::excitatory_only`] declares **no** inhibitory neuron, at any size, and
+    /// every synapse a network built with it carries is exactly `w`.
+    ///
+    /// The suite could not see this because every `exc(w)` fixture in this module asserts a count,
+    /// a distance, a clustering coefficient or a hop, and not one of them reads a weight. Setting
+    /// that constructor's `inhibitory_fraction` to [`CORTICAL_INHIBITORY_FRACTION`] therefore left
+    /// the whole module green: the trailing fifth of the neurons became "inhibitory" carrying
+    /// `w_inh = 0.0`, which [`crate::net::NetBuilder`] accepts, so the graph kept its shape and
+    /// only its weights went to zero — and [`dale_signs`] would have read that fifth as
+    /// [`Sign::Silent`].
+    #[test]
+    fn the_excitatory_only_wiring_declares_no_inhibitory_neuron_at_any_size() {
+        let w = exc(2.5e-3);
+        assert_eq!(w.inhibitory_fraction, 0.0, "excitatory_only carried an inhibitory fraction");
+        assert_eq!(w.w_inh, 0.0);
+        for n in [1usize, 2, 5, 10, 135, 1000] {
+            assert_eq!(w.n_inhibitory(n), 0, "n = {n}: excitatory_only grew an inhibitory block");
+            for i in [0, n - 1] {
+                assert_eq!(w.sign_of(n, i), Sign::Excitatory, "n = {n}, neuron {i}");
+                assert_eq!(w.weight_of(n, i), 2.5e-3, "n = {n}, neuron {i}");
+            }
+            // The whole point of the constructor, stated as the arithmetic its doc states: with no
+            // inhibitory population every neuron counts as excitatory, so the drive is
+            // `p * (n-1)/n * (n * w_exc)` with no cancelling term. Written in that order, and
+            // asserted as equality rather than within a tolerance, because at `p = 1.0` — where
+            // multiplication by one is exact — it is the same two multiplications the method
+            // itself performs on the same numbers.
+            let drive = w.expected_drive(n, 1.0);
+            let closed_form = ((n - 1) as f64 / n as f64) * (n as f64 * 2.5e-3);
+            assert_eq!(drive, closed_form, "n = {n}: expected drive {drive}");
+        }
+        // And in a built network, which is where the mistake would have been felt.
+        let net = erdos_renyi_gnp(50, 0.4, &w, 3).unwrap();
+        assert!(net.n_syn > 0, "the fixture built no synapse");
+        assert!(
+            net.w.iter().all(|x| *x == 2.5e-3),
+            "a synapse left an excitatory_only wiring carrying something other than w"
+        );
+        assert_eq!(dale_signs(&net).unwrap(), vec![Sign::Excitatory; 50]);
+    }
+
+    /// (survivor 2) A non-finite weight is refused by [`Wiring::validate`] **itself**, naming the
+    /// field, rather than by [`crate::net::NetBuilder`] downstream.
+    ///
+    /// The hole was the shape of the old assertion — `erdos_renyi_gnp(10, 0.5, &bad, 0).is_err()`.
+    /// `NetBuilder::connect` refuses a non-finite weight on its own with
+    /// `NetError::NonFiniteWeight`, which `From<NetError>` folds into [`TopologyError::Net`], so
+    /// that call is `Err` whether or not `Wiring::validate` ever calls `is_finite`. Deleting the
+    /// finiteness test from `validate` left every assertion in the module green. `NaN != NaN`, so
+    /// the variant is matched and its payload read rather than compared for equality.
+    #[test]
+    fn a_non_finite_weight_is_refused_by_the_wiring_and_not_by_the_builder() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let w = Wiring { w_exc: bad, ..Wiring::default() };
+            match w.validate().unwrap_err() {
+                TopologyError::Weight { name, value } => {
+                    assert_eq!(name, "w_exc", "w_exc = {bad} was blamed on {name}");
+                    assert!(!value.is_finite(), "the error reported a finite {value} for {bad}");
+                }
+                e => panic!("w_exc = {bad} gave {e:?} instead of a Weight error"),
+            }
+            let w = Wiring { w_inh: bad, ..Wiring::default() };
+            match w.validate().unwrap_err() {
+                TopologyError::Weight { name, value } => {
+                    assert_eq!(name, "w_inh", "w_inh = {bad} was blamed on {name}");
+                    assert!(!value.is_finite(), "the error reported a finite {value} for {bad}");
+                }
+                e => panic!("w_inh = {bad} gave {e:?} instead of a Weight error"),
+            }
+            // The generator reports the wiring's refusal, not the builder's: a `Net` error here
+            // means the bad weight travelled all the way to a synapse before anyone looked at it.
+            let w = Wiring { w_exc: bad, ..Wiring::default() };
+            let e = erdos_renyi_gnp(10, 0.5, &w, 0).unwrap_err();
+            assert!(
+                matches!(e, TopologyError::Weight { name: "w_exc", .. }),
+                "w_exc = {bad} reached the builder and came back as {e:?}"
+            );
+        }
+    }
+
+    /// (survivor 3) [`Wiring::weight_for`] gives a [`Sign::Silent`] neuron weight **zero**, whatever
+    /// the wiring's two live weights are.
+    ///
+    /// No built network can show this, which is why it survived: the only caller that can reach the
+    /// `Silent` arm is [`distance_dependent_signed`], and there [`MaassC::c_for`] has already given
+    /// a `Silent` endpoint probability zero, so the weight is computed and then never attached to a
+    /// synapse. The arm is reachable only through the public method, so that is where it is pinned.
+    /// Both fixtures have a **non-zero** `w_exc`, or returning `w_exc` for `Silent` would be the
+    /// same number as returning zero and the assertion could not fail.
+    #[test]
+    fn a_silent_neuron_is_given_no_weight_by_any_wiring() {
+        for w in [Wiring::default(), exc(7e-3), Wiring::balanced(2e-3, 4)] {
+            assert_ne!(w.w_exc, 0.0, "the fixture's w_exc is zero, so this assertion is blind");
+            assert_eq!(w.weight_for(Sign::Silent), 0.0, "{w:?} gave a Silent neuron a weight");
+            assert_eq!(w.weight_for(Sign::Excitatory), w.w_exc, "{w:?}");
+            assert_eq!(w.weight_for(Sign::Inhibitory), w.w_inh, "{w:?}");
+        }
+        // The three-way table is the same one [`Sign::as_f64`] reports, and the product of the two
+        // is what a caller uses to sign a drive: zero times anything stays zero.
+        assert_eq!(Sign::Silent.as_f64() * Wiring::default().w_exc, 0.0);
+    }
+
+    /// (survivor 4) [`shuffled_partition`] draws its swap partner from `0..=i`, **including `i`**,
+    /// so every position is equally likely to end up holding the inhibitory neuron.
+    ///
+    /// Narrowing that range to `0..i` is Sattolo's algorithm, which is uniform over the `(n-1)!`
+    /// **cyclic** permutations rather than all `n!` orders — and a cyclic permutation has no fixed
+    /// point, so the element that started at the last index can never stay there. Nothing in the
+    /// suite measured uniformity: `a_shuffled_partition_is_a_seeded_permutation_of_the_contiguous_one`
+    /// checks the inhibitory *count*, that a seed repeats, and that two seeds differ, all of which
+    /// Sattolo's satisfies exactly.
+    ///
+    /// The instrument is `n = 4` at a quarter inhibitory, where the partition holds exactly one
+    /// inhibitory neuron and its position is directly observable. Over 1,000 seeds each position
+    /// should hold it `1000 / 4 = 250` times, `sd = sqrt(1000 * 0.25 * 0.75) = 13.69`; the band is
+    /// four of those. This implementation measures 251, 252, 235 and 262. Sattolo's measures 351,
+    /// 333, 316 and **0** — the last position starved by construction, at 18 sigma.
+    #[test]
+    fn the_partition_shuffle_can_leave_the_inhibitory_neuron_where_it_started() {
+        let trials = 1000usize;
+        let mut at = [0usize; 4];
+        for seed in 0..trials as u64 {
+            let p = shuffled_partition(4, 0.25, seed).unwrap();
+            let inh: Vec<usize> =
+                (0..4).filter(|&i| p[i] == Sign::Inhibitory).collect();
+            assert_eq!(inh.len(), 1, "seed {seed}: round(0.25 * 4) is one inhibitory neuron");
+            at[inh[0]] += 1;
+        }
+        let sd = (trials as f64 * 0.25 * 0.75).sqrt();
+        for (i, &count) in at.iter().enumerate() {
+            let z = (count as f64 - trials as f64 / 4.0) / sd;
+            assert!(z.abs() < 4.0, "position {i} held the inhibitory neuron {count} times, {z:.1} sigma from 250 (all four: {at:?})");
+        }
+        // The same statement at its smallest: with two neurons and one of them inhibitory, the
+        // single swap is `i = 1, j in 0..=1`, so both orders have to appear. Sattolo's `j in 0..1`
+        // is the constant 0 and produces `[I, E]` for every seed there is.
+        let mut orders: BTreeSet<String> = BTreeSet::new();
+        for seed in 0..64u64 {
+            let p = shuffled_partition(2, 0.5, seed).unwrap();
+            orders.insert(p.iter().map(|s| if *s == Sign::Inhibitory { 'I' } else { 'E' }).collect());
+        }
+        assert_eq!(orders.len(), 2, "the n = 2 shuffle reached only {orders:?}");
+    }
+
+    /// (survivor 5) [`shuffled_partition`]'s stream is pinned by a **golden vector**, because its
+    /// direction is not visible in any distribution.
+    ///
+    /// Fisher-Yates run upward — `for i in 1..len` with the partner still drawn from `0..=i` — is
+    /// *also* uniform over all `n!` orders; enumerating `n = 3` gives all six permutations once
+    /// each either way round. So no uniformity test, no count test and no "two seeds differ" test
+    /// can separate the two walks. What separates them is the stream, and the stream is the
+    /// promise: "the same seed gives the same partition on every platform".
+    /// `every_generator_is_deterministic_by_seed` builds each generator twice and compares, which
+    /// can see nondeterminism and cannot see a change of algorithm.
+    ///
+    /// The vector below is this implementation's output, recorded here so a future change to the
+    /// walk has to be deliberate — the same instrument
+    /// `the_contiguous_partition_is_the_shuffled_path_with_a_block_input` uses on the Maass column.
+    /// Measured: `n = 12` at a quarter inhibitory, seed 7, is `EEIEEIEEEEIE`. The upward walk gives
+    /// `EEEIEIEEEEIE` and Sattolo's gives `EIIEEEIEEEEE` on the same seed.
+    #[test]
+    fn the_partition_shuffle_reproduces_a_recorded_stream_and_not_merely_itself() {
+        let letters = |p: &[Sign]| -> String {
+            p.iter().map(|s| if *s == Sign::Inhibitory { 'I' } else { 'E' }).collect()
+        };
+        assert_eq!(letters(&shuffled_partition(12, 0.25, 7).unwrap()), "EEIEEIEEEEIE");
+        assert_eq!(letters(&shuffled_partition(8, 0.25, 7).unwrap()), "EEEEEEII");
+        // A second seed, so the vector pins the stream and not one lucky draw.
+        assert_eq!(letters(&shuffled_partition(12, 0.25, 8).unwrap()), "IEEIEEEIEEEE");
+        // The first 24 neurons of the 135-neuron Maass column at seed 4, the partition the
+        // distance-dependent tests hand to `distance_dependent_signed`.
+        let column = shuffled_partition(135, CORTICAL_INHIBITORY_FRACTION, 4).unwrap();
+        assert_eq!(&letters(&column)[..24], "EIEEIIEEEEEEEEEEIIEEEEEE");
+        assert_eq!(column.iter().filter(|s| **s == Sign::Inhibitory).count(), 27);
+    }
+
+    /// (survivor 6) `G(n, m)` draws Floyd's algorithm over the **top** of the code space, so the
+    /// `m` chosen codes are a uniform subset of all `n(n-1)` ordered pairs.
+    ///
+    /// Running the loop over `0..m` instead of `(space - m)..space` still returns `m` distinct
+    /// codes and still emits no self-loop, so `gnm_returns_exactly_m_distinct_synapses_and_no_self_loops`
+    /// cannot see it — but every code then lands below `m`, and since a code decodes as
+    /// `a = code / (n - 1)`, only the first `ceil(m / (n - 1))` neurons can ever be presynaptic.
+    /// At `n = 50, m = 100` that is three rows out of fifty.
+    ///
+    /// Each synapse's code is recovered here — `pre * (n - 1) + r` with `r` the post index past the
+    /// skipped diagonal — and two statistics of the `m` codes are checked against sampling without
+    /// replacement from `0..space`. The mean of `m` draws has expectation `(space - 1) / 2` and
+    /// variance `(space^2 - 1) / 12 / m * (space - m) / (space - 1)`; the count in the top half is
+    /// hypergeometric with mean `m / 2` and variance `m / 4 * (space - m) / (space - 1)`. Both
+    /// bands are four sigma. This implementation measures the mean 0.59 sigma high at seed 5;
+    /// drawing from the floor puts it 17 sigma low and empties the top half entirely.
+    #[test]
+    fn gnm_samples_the_whole_pair_space_and_not_only_its_floor() {
+        let (n, m) = (50usize, 100usize);
+        let space = (n as u64) * (n as u64 - 1);
+        for seed in [5u64, 11, 23] {
+            let net = erdos_renyi_gnm(n, m, &exc(1e-3), seed).unwrap();
+            assert_eq!(net.n_syn, m);
+            let mut codes: Vec<u64> = Vec::with_capacity(m);
+            for pre in 0..net.n {
+                for (post, _, _) in net.out_of(pre) {
+                    let r = if (post as usize) < pre { u64::from(post) } else { u64::from(post) - 1 };
+                    codes.push(pre as u64 * (n as u64 - 1) + r);
+                }
+            }
+            assert_eq!(codes.len(), m);
+            let mean = codes.iter().sum::<u64>() as f64 / m as f64;
+            let expected = (space - 1) as f64 / 2.0;
+            let finite_population = (space - m as u64) as f64 / (space - 1) as f64;
+            let sd_mean = ((((space * space) as f64 - 1.0) / 12.0) / m as f64 * finite_population).sqrt();
+            let z = (mean - expected) / sd_mean;
+            assert!(z.abs() < 4.0, "seed {seed}: code mean {mean:.1} is {z:.1} sigma from {expected:.1}");
+            let top = codes.iter().filter(|c| **c >= space / 2).count();
+            let sd_top = (m as f64 / 4.0 * finite_population).sqrt();
+            let z_top = (top as f64 - m as f64 / 2.0) / sd_top;
+            assert!(z_top.abs() < 4.0, "seed {seed}: {top} of {m} codes in the top half, {z_top:.1} sigma from 50");
+            // And the presynaptic side reaches past the first few rows, which is the visible
+            // consequence: a floor-drawn sample cannot name a neuron above `m / (n - 1)`.
+            let rows: BTreeSet<u64> = codes.iter().map(|c| c / (n as u64 - 1)).collect();
+            assert!(rows.len() > n / 2, "seed {seed}: only {} of {n} neurons were presynaptic", rows.len());
+        }
+    }
+
+    /// (survivor 7) Every node of [`barabasi_albert`]'s seed clique enters the repeated-endpoint
+    /// array **once per incident edge**, so every one of them can be attached to.
+    ///
+    /// The array is the urn that makes attachment degree-weighted, and pushing one end of each seed
+    /// edge twice keeps its *length* at two per edge — which is why
+    /// `barabasi_albert_has_exactly_the_predicted_edge_count` stays green — while leaving the
+    /// highest-numbered seed node out of it altogether. That node is then never drawn, never gains
+    /// an edge, and keeps the clique degree `m` forever, and the degree tests average over the
+    /// whole network where one starved node is invisible.
+    ///
+    /// The sharpest instrument is the smallest graph the generator builds: `n = 3, m = 1` is the
+    /// single seed edge `0 - 1` and one arriving node that draws exactly one target. With the urn
+    /// `[0, 1]` the target is 0 or 1 with equal probability; with `[0, 0]` it is 0 every time.
+    /// Over 400 seeds this implementation measures 196 and 204, `sd = sqrt(400 * 0.25) = 10`.
+    #[test]
+    fn every_seed_clique_node_enters_the_preferential_attachment_urn() {
+        let trials = 400usize;
+        let mut to_one = 0usize;
+        for seed in 0..trials as u64 {
+            let net = barabasi_albert(3, 1, &exc(1e-3), seed).unwrap();
+            let neighbours = undirected_degrees(&net);
+            assert_eq!(neighbours[2], 1, "seed {seed}: the arriving node did not get m = 1 edge");
+            // Node 2's only neighbour, read off the reciprocal pair it was given.
+            let target = net.out_of(2).map(|(post, _, _)| post).next().unwrap();
+            if target == 1 {
+                to_one += 1;
+            }
+        }
+        let sd = (trials as f64 * 0.25).sqrt();
+        let z = (to_one as f64 - trials as f64 / 2.0) / sd;
+        assert!(
+            z.abs() < 4.0,
+            "the arriving node chose the second seed node {to_one} times of {trials}, {z:.1} sigma from 200"
+        );
+        // At a larger seed clique the same claim reads as a degree: the last seed node is drawn
+        // like any other, so it leaves the clique degree behind. Starved, it would sit at exactly m.
+        for &(n, m) in &[(400usize, 3usize), (200, 2)] {
+            for seed in [1u64, 2, 3] {
+                let deg = undirected_degrees(&barabasi_albert(n, m, &exc(1e-3), seed).unwrap());
+                assert!(
+                    deg[m] > m,
+                    "n = {n}, m = {m}, seed {seed}: the last seed node kept its clique degree {}",
+                    deg[m]
+                );
+            }
+        }
+    }
+
+    /// (survivor 8) [`barabasi_albert`] refuses a network too small for its seed clique **by name**.
+    ///
+    /// Deleting the guard does not make the call succeed — the seed loop runs over `0..=m`, and
+    /// `NetBuilder::connect` then refuses an index past `n` with `NetError::OutOfRange`, which
+    /// arrives as [`TopologyError::Net`]. So `is_err()` holds either way and says nothing about
+    /// whether the generator checked its own precondition. The variant and its payload are what
+    /// separate a stated refusal from an accident downstream.
+    #[test]
+    fn barabasi_albert_refuses_a_network_too_small_for_its_seed_clique() {
+        assert_eq!(
+            barabasi_albert(4, 4, &exc(1e-3), 0).unwrap_err(),
+            TopologyError::TooSmall {
+                n: 4,
+                needed: 5,
+                what: "barabasi_albert needs n >= m + 1 for the seed clique",
+            }
+        );
+        assert_eq!(
+            barabasi_albert(2, 7, &exc(1e-3), 0).unwrap_err(),
+            TopologyError::TooSmall {
+                n: 2,
+                needed: 8,
+                what: "barabasi_albert needs n >= m + 1 for the seed clique",
+            }
+        );
+        // The boundary is where it says it is: `n == m + 1` is the bare seed clique and builds.
+        let clique = barabasi_albert(5, 4, &exc(1e-3), 0).unwrap();
+        assert_eq!(clique.n_syn, 2 * (4 * 5 / 2), "n = m + 1 is the complete graph on m + 1 nodes");
+        assert_eq!(undirected_degrees(&clique), vec![4; 5]);
+    }
+
+    /// (survivor 9) [`Grid3::validate`] refuses a spacing of **zero**, not merely a negative one.
+    ///
+    /// No fixture passed zero, and the doc's phrase is "finite and strictly positive". A zero
+    /// spacing is the case that matters: it puts every neuron at the origin, so every pairwise
+    /// distance is `0`, the Gaussian `exp(-(0 / lambda)^2)` is `1`, and the distance-dependent
+    /// generator emits a complete graph at probability `C` while still calling itself
+    /// distance-dependent. Loosening `<= 0.0` to `< 0.0` is the one-character version of that.
+    #[test]
+    fn a_zero_lattice_spacing_is_refused_rather_than_collapsing_every_distance() {
+        for bad in [0.0, -0.0, -50e-6, f64::NAN, f64::INFINITY] {
+            let g = Grid3::new(4, 4, 2, bad);
+            match g.validate().unwrap_err() {
+                TopologyError::Length { name, value } => {
+                    assert_eq!(name, "Grid3::spacing", "spacing = {bad} was blamed on {name}");
+                    assert!(!value.is_finite() || value <= 0.0, "the error reported {value}");
+                }
+                e => panic!("spacing = {bad} gave {e:?} instead of a Length error"),
+            }
+            assert!(matches!(
+                distance_dependent(&g, &MAASS_2002, 1e-4, &Wiring::default(), 0).unwrap_err(),
+                TopologyError::Length { name: "Grid3::spacing", .. }
+            ));
+        }
+        // What a zero spacing would have produced, had it been let through: every distance zero.
+        let flat = Grid3::new(4, 4, 2, 0.0);
+        assert_eq!(flat.distance(0, 31), Some(0.0), "a zero spacing collapses the lattice");
+        assert!(Grid3::new(4, 4, 2, f64::MIN_POSITIVE).validate().is_ok(), "a tiny spacing is legal");
+    }
+
+    /// (survivor 10) [`MaassC::uniform`] sets **all four** pair types to the same factor, including
+    /// inhibitory-to-inhibitory.
+    ///
+    /// Every call site of `uniform` in this module hands it an all-excitatory partition or reads
+    /// only the `Silent` arms, so the `ii` field it writes is never consulted and zeroing it
+    /// changed nothing. The exact consequence is the point of the constructor: because `c_for`
+    /// returns the same number for every non-`Silent` pair, and
+    /// [`distance_dependent_signed`] draws once per ordered pair in a fixed order whatever the
+    /// probability is, the **set of synapses is identical for every partition** — only the weights
+    /// move. That equality is exact, so it is asserted as equality.
+    #[test]
+    fn a_uniform_scale_factor_is_the_same_factor_for_all_four_pair_types() {
+        for c in [0.37, 1.0, 0.0] {
+            let u = MaassC::uniform(c);
+            assert_eq!(u.c_for(Sign::Excitatory, Sign::Excitatory), c);
+            assert_eq!(u.c_for(Sign::Excitatory, Sign::Inhibitory), c);
+            assert_eq!(u.c_for(Sign::Inhibitory, Sign::Excitatory), c);
+            assert_eq!(u.c_for(Sign::Inhibitory, Sign::Inhibitory), c, "the II term is not uniform");
+            assert_eq!(u, MaassC { ee: c, ei: c, ie: c, ii: c });
+        }
+        let g = Grid3::new(6, 6, 1, 50e-6);
+        let n = g.len();
+        let w = Wiring::default();
+        let uniform = MaassC::uniform(0.4);
+        let lambda = g.lambda_of(2.0);
+        let all_exc = vec![Sign::Excitatory; n];
+        let mixed = shuffled_partition(n, 0.5, 2).unwrap();
+        let a = distance_dependent_signed(&g, &uniform, lambda, &w, &all_exc, 9).unwrap();
+        let b = distance_dependent_signed(&g, &uniform, lambda, &w, &mixed, 9).unwrap();
+        assert!(a.n_syn > 0, "the fixture built no synapse");
+        assert_eq!(a.n_syn, b.n_syn, "a uniform C made the synapse count depend on the partition");
+        assert_eq!(a.offset, b.offset, "the two graphs differ in shape");
+        assert_eq!(a.post, b.post, "the two graphs differ in which pairs they connect");
+        assert_eq!(a.delay, b.delay);
+        // Not vacuous: the mixed partition really does contain inhibitory-to-inhibitory synapses,
+        // which are the ones a zeroed `ii` would have removed.
+        let ii = (0..n)
+            .filter(|&pre| mixed[pre] == Sign::Inhibitory)
+            .flat_map(|pre| b.out_of(pre))
+            .filter(|(post, _, _)| mixed[*post as usize] == Sign::Inhibitory)
+            .count();
+        assert!(ii > 0, "the fixture has no inhibitory-to-inhibitory pair to be sensitive to");
+    }
+
+    /// (survivor 11) [`MaassC::validate`] checks each field against **itself** and names the one it
+    /// refused.
+    ///
+    /// Only `ee` was ever exercised, so `check_probability("MaassC::ii", self.ie)` — the right name
+    /// against the wrong field — passed the suite while letting an out-of-range `ii` through into
+    /// the generator, where it becomes a probability above one and silently a complete graph.
+    /// Each of the four is bad in turn, alone, with the other three legal.
+    #[test]
+    fn each_maass_scale_factor_is_validated_against_its_own_field() {
+        let good = MAASS_2002;
+        let cases: [(&str, MaassC); 4] = [
+            ("MaassC::ee", MaassC { ee: 1.5, ..good }),
+            ("MaassC::ei", MaassC { ei: -0.1, ..good }),
+            ("MaassC::ie", MaassC { ie: f64::NAN, ..good }),
+            ("MaassC::ii", MaassC { ii: 1.5, ..good }),
+        ];
+        for (field, c) in cases {
+            match c.validate().unwrap_err() {
+                TopologyError::Probability { name, value } => {
+                    assert_eq!(name, field, "{c:?} was blamed on {name} instead of {field}");
+                    assert!(
+                        value.is_nan() || !(0.0..=1.0).contains(&value),
+                        "{field}: the error reported the legal value {value}"
+                    );
+                }
+                e => panic!("{c:?} gave {e:?} instead of a Probability error"),
+            }
+            let g = Grid3::new(4, 4, 1, 50e-6);
+            assert!(matches!(
+                distance_dependent(&g, &c, 1e-4, &Wiring::default(), 0).unwrap_err(),
+                TopologyError::Probability { .. }
+            ));
+        }
+        assert!(good.validate().is_ok());
+        assert!(MaassC::uniform(1.0).validate().is_ok());
+        assert!(MaassC::uniform(0.0).validate().is_ok());
+    }
+
+    /// (survivor 12) [`distance_dependent_signed`] validates `lambda` **itself**, because it is a
+    /// public entry point and not only a delegate.
+    ///
+    /// The check is written twice on purpose — [`distance_dependent`] validates before it allocates
+    /// `wiring.signs(n)` — and only the outer copy was ever called, so loosening the inner
+    /// `lambda <= 0.0` to `< 0.0` was invisible. A zero `lambda` is not harmless: `dist / 0.0` is
+    /// `+inf` for every distinct pair, `exp(-inf)` is zero, and the generator returns a network
+    /// with **no synapses at all** and no error, which is the failure a caller is least likely to
+    /// notice.
+    #[test]
+    fn the_signed_entry_point_validates_its_own_lambda() {
+        let g = Grid3::maass_column(50e-6);
+        let w = Wiring::default();
+        let signs = shuffled_partition(g.len(), CORTICAL_INHIBITORY_FRACTION, 1).unwrap();
+        for bad in [0.0, -0.0, -1e-4, f64::NAN, f64::INFINITY] {
+            match distance_dependent_signed(&g, &MAASS_2002, bad, &w, &signs, 1).unwrap_err() {
+                TopologyError::Length { name, value } => {
+                    assert_eq!(name, "lambda", "lambda = {bad} was blamed on {name}");
+                    assert!(!value.is_finite() || value <= 0.0, "the error reported {value}");
+                }
+                e => panic!("lambda = {bad} gave {e:?} instead of a Length error"),
+            }
+            // And through the outer entry point, which has always refused it.
+            assert!(matches!(
+                distance_dependent(&g, &MAASS_2002, bad, &w, 1).unwrap_err(),
+                TopologyError::Length { name: "lambda", .. }
+            ));
+        }
+        // The smallest positive lambda is legal and builds: the boundary is at zero, not above it.
+        assert!(distance_dependent_signed(&g, &MAASS_2002, 1e-9, &w, &signs, 1).is_ok());
+    }
+
+    /// (survivor 13) Every [`feedforward`] synapse carries **its own** presynaptic neuron's weight,
+    /// not neuron zero's.
+    ///
+    /// The hole is named in the function's own doc and is exactly why the suite could not see it:
+    /// `Wiring` puts the inhibitory population in the **trailing** index block, and in a layered
+    /// network that block is the output layer, which projects nowhere. So with `Wiring::default`'s
+    /// 20% there is no inhibitory neuron that emits anything, and every other feedforward fixture
+    /// uses `excitatory_only`, where all the weights are the same number anyway. Reading
+    /// `wiring.weight_of(n, 0)` instead of `wiring.weight_of(n, a)` was invisible in both.
+    ///
+    /// A half-inhibitory wiring on `[4, 4, 4]` moves the boundary into the hidden layer: `n = 12`,
+    /// `round(0.5 * 12) = 6` inhibitory, so neurons `6` and `7` are inhibitory *and* sit in layer 1,
+    /// where they project into layer 2.
+    #[test]
+    fn a_feedforward_hidden_layer_neuron_carries_its_own_sign() {
+        let w = Wiring { w_exc: 1e-3, w_inh: -4e-3, delay: 1, inhibitory_fraction: 0.5 };
+        let net = feedforward(&[4, 4, 4], 1.0, &w, 1).unwrap();
+        assert_eq!(net.n, 12);
+        assert_eq!(net.n_syn, 4 * 4 + 4 * 4);
+        assert_eq!(layer_ranges(&[4, 4, 4]), vec![0..4, 4..8, 8..12]);
+        for pre in 0..12usize {
+            let expected = if pre < 6 { 1e-3 } else { -4e-3 };
+            for (post, weight, _) in net.out_of(pre) {
+                assert_eq!(weight, expected, "neuron {pre} -> {post} carried {weight}");
+            }
+        }
+        // Both signs are actually present among the emitting neurons, or the assertion above would
+        // hold for a wiring that had lost the distinction entirely.
+        assert_eq!(net.out_of(4).count(), 4, "an excitatory hidden neuron projects forward");
+        assert_eq!(net.out_of(6).count(), 4, "an inhibitory hidden neuron projects forward");
+        let signs = dale_signs(&net).unwrap();
+        assert_eq!(signs[4], Sign::Excitatory);
+        assert_eq!(signs[6], Sign::Inhibitory, "neuron 6 is in layer 1 and inhibitory");
+        assert_eq!(signs[8], Sign::Silent, "the output layer emits nothing, which is the old hole");
+        assert!(dale_check(&net, &w.signs(12)).is_ok());
+    }
+
+    /// (survivor 14) [`undirected_neighbours`] drops a **self-loop**, so a unit that excites itself
+    /// is not its own neighbour.
+    ///
+    /// The only network in this module that has a self-loop is [`winner_take_all`] with
+    /// `w_self > 0`, and the suite reads that one with [`dale_signs`] and a simulation — never with
+    /// a degree or a clustering measure. Deleting the guard costs each such neuron one spurious
+    /// neighbour, which is visible three ways at once on a four-unit competition: the undirected
+    /// degree goes from 3 to 4, the neuron appears in its own adjacency list, and the clustering
+    /// coefficient goes from exactly 1 to `2 * 8 / (4 * 3) = 4 / 3` — a fraction of neighbour pairs
+    /// above one, which is not a number this statistic can take.
+    #[test]
+    fn the_undirected_reading_drops_a_self_loop() {
+        let wta = winner_take_all(4, -1e-3, 1e-3, 1).unwrap();
+        assert_eq!(wta.n_syn, 4 + 4 * 3, "four self-synapses and twelve lateral ones");
+        assert_eq!(undirected_degrees(&wta), vec![3; 4], "a unit counted itself as a neighbour");
+        let adj = super::undirected_neighbours(&wta);
+        for (v, near) in adj.iter().enumerate() {
+            assert!(!near.contains(&(v as u32)), "neuron {v} is in its own neighbour list");
+            assert_eq!(near.len(), 3, "neuron {v} has neighbours {near:?}");
+        }
+        assert_eq!(
+            clustering_coefficient(&wta),
+            Some(1.0),
+            "the four units are a complete graph once the self-loops are dropped"
+        );
+        // Without a self-loop the same competition reads identically, which is what "dropped" means.
+        let plain = winner_take_all(4, -1e-3, 0.0, 1).unwrap();
+        assert_eq!(plain.n_syn, 4 * 3);
+        assert_eq!(undirected_degrees(&plain), undirected_degrees(&wta));
+        assert_eq!(clustering_coefficient(&plain), clustering_coefficient(&wta));
+    }
+
+    /// (survivor 15) [`clustering_coefficient`] divides by the number of neurons it **counted**,
+    /// not by the number in the network.
+    ///
+    /// The function's doc spends a paragraph on this — a neuron of degree below two is skipped, not
+    /// scored zero, because scoring it zero "turns a connectivity statistic into a density
+    /// statistic". Nothing asserted it, because no fixture in the suite **mixes** the two
+    /// populations: every graph whose clustering is asserted has every neuron countable (the ring
+    /// lattice, `G(n, p)`, the complete graph) or none of them (four isolated neurons, which
+    /// returns `None`), and `sum / counted` and `sum / net.n` agree exactly whenever `counted == n`.
+    ///
+    /// A triangle plus two isolated neurons separates them with no arithmetic slack at all: three
+    /// neurons of degree 2 each score `2 * 1 / (2 * 1) = 1`, so the answer is `3 / 3 = 1` exactly,
+    /// and dividing by the neuron count gives `3 / 5 = 0.6`. Both are exact in binary, so this is
+    /// asserted as equality rather than within a tolerance.
+    #[test]
+    fn clustering_averages_over_the_neurons_it_is_defined_for() {
+        let mut b = NetBuilder::new(5);
+        for &(u, v) in &[(0u32, 1u32), (1, 2), (2, 0)] {
+            b.connect(u, v, 1e-3, 1).unwrap();
+            b.connect(v, u, 1e-3, 1).unwrap();
+        }
+        let triangle_plus_two = b.build();
+        assert_eq!(undirected_degrees(&triangle_plus_two), vec![2, 2, 2, 0, 0]);
+        assert_eq!(
+            clustering_coefficient(&triangle_plus_two),
+            Some(1.0),
+            "the two isolated neurons were averaged in as zeros"
+        );
+        // A second shape where the counted neurons do not all score the same, so the numerator is
+        // not a whole number of neurons either: a triangle sharing one vertex with a path.
+        // Neighbourhoods: 0 {1, 2, 3}, 1 {0, 2}, 2 {0, 1}, 3 {0, 4}, 4 {3}, 5 {}.
+        // C_0 = 2 * 1 / (3 * 2) = 1/3, C_1 = C_2 = 1, C_3 = 0; neuron 4 has one neighbour and
+        // neuron 5 none, so counted = 4 and the mean is (1/3 + 1 + 1 + 0) / 4 = 7 / 12.
+        let mut b = NetBuilder::new(6);
+        for &(u, v) in &[(0u32, 1u32), (1, 2), (2, 0), (0, 3), (3, 4)] {
+            b.connect(u, v, 1e-3, 1).unwrap();
+            b.connect(v, u, 1e-3, 1).unwrap();
+        }
+        let kite = b.build();
+        assert_eq!(undirected_degrees(&kite), vec![3, 2, 2, 2, 1, 0]);
+        let c = clustering_coefficient(&kite).unwrap();
+        assert!((c - 7.0 / 12.0).abs() < 1e-15, "clustering {c} is not 7/12; averaged over 6 it is {}", 7.0 / 3.0 / 6.0);
+    }
+
+    /// (survivor 16) A network with **no ordered pair** is not reported strongly connected.
+    ///
+    /// `pairs > 0 && reachable == pairs` is the guard, and dropping it makes the empty network —
+    /// and the one-neuron network — vacuously "strongly connected", since `0 == 0`. The suite could
+    /// not see that, because the only path it took to the predicate was
+    /// [`characteristic_path_length`], which returns `mean_hops`, and `mean_hops` is already `None`
+    /// when nothing is reachable. So the answer was `None` either way and the guard was decorative.
+    ///
+    /// Graph theory would call the one-vertex graph strongly connected; this module refuses instead,
+    /// for the same reason [`clustering_coefficient`] returns `None` when no neuron has two
+    /// neighbours — the quantity the caller is about to take a mean of does not exist. That choice
+    /// is now in [`PathStats::is_strongly_connected`]'s doc as well as here.
+    #[test]
+    fn a_network_with_no_ordered_pair_is_not_reported_strongly_connected() {
+        for n in [0usize, 1] {
+            let net = NetBuilder::new(n).build();
+            let stats = path_stats(&net);
+            assert_eq!(stats.pairs, 0, "n = {n} has no ordered pair of distinct neurons");
+            assert!(!stats.is_strongly_connected(), "n = {n} was called strongly connected");
+            assert_eq!(characteristic_path_length(&net), None, "n = {n}");
+        }
+        assert!(
+            !PathStats { pairs: 0, reachable: 0, mean_hops: None, diameter: None }
+                .is_strongly_connected()
+        );
+        // The predicate still says yes where it should: two neurons joined both ways.
+        let mut b = NetBuilder::new(2);
+        b.connect(0, 1, 1e-3, 1).unwrap();
+        b.connect(1, 0, 1e-3, 1).unwrap();
+        let pair = b.build();
+        assert!(path_stats(&pair).is_strongly_connected());
+        assert_eq!(characteristic_path_length(&pair), Some(1.0));
+        // And no when one direction is missing, which is the case the `reachable == pairs` half
+        // catches and the `pairs > 0` half does not.
+        let mut b = NetBuilder::new(2);
+        b.connect(0, 1, 1e-3, 1).unwrap();
+        let one_way = b.build();
+        assert_eq!(path_stats(&one_way).reachable, 1);
+        assert!(!path_stats(&one_way).is_strongly_connected());
+    }
+
+    /// (survivor 17) `below_u64` **applies** its rejection zone, rather than computing one and
+    /// returning `v % n` regardless.
+    ///
+    /// `unbiased_zone_holds_whole_residue_classes` tests the zone function; nothing tested the loop
+    /// that uses it. At the sizes this crate normally reaches the residual bias of skipping the
+    /// rejection is about `2.3e-10`, which no sample mean can see — so the instrument has to be an
+    /// `n` where rejection is common. `n = 3 * 2^62` is one: the largest multiple of `n` below
+    /// `2^64` is `n` itself, so a quarter of all 64-bit draws are rejected, and the codes those
+    /// draws would have folded onto are exactly `[0, 2^62)`.
+    ///
+    /// That makes the difference a factor of `3 / 2` on a measurable event. A correct draw is
+    /// uniform on `[0, n)`, so `P(v < 2^62) = 2^62 / (3 * 2^62) = 1 / 3` exactly. Accepting every
+    /// draw gives `[0, 2^62)` twice the density of the rest and `P = 1 / 2` exactly. Over 20,000
+    /// draws that is 6,667 against 10,000, `sd = sqrt(20000 * (1/3) * (2/3)) = 66.7`: this
+    /// implementation measures 6,613, and skipping the rejection would measure 50 sigma away.
+    ///
+    /// Such an `n` is reachable rather than hypothetical: [`check_n`] admits `n` up to `u32::MAX`
+    /// and `erdos_renyi_gnm`'s pair space `n(n - 1)` passes `3 * 2^62` at about 3.72 billion
+    /// neurons, which is inside that limit.
+    #[test]
+    fn the_sixty_four_bit_draw_applies_its_rejection_zone() {
+        let n = 3u64 << 62;
+        assert_eq!(super::unbiased_zone(n), n - 1, "the zone should hold exactly one residue class");
+        let trials = 20_000usize;
+        let mut rng = Rng::new(31);
+        let mut low = 0usize;
+        for _ in 0..trials {
+            let v = super::below_u64(&mut rng, n);
+            assert!(v < n, "draw {v} escaped [0, {n})");
+            if v < (1u64 << 62) {
+                low += 1;
+            }
+        }
+        let expected = trials as f64 / 3.0;
+        let sd = (trials as f64 * (1.0 / 3.0) * (2.0 / 3.0)).sqrt();
+        let z = (low as f64 - expected) / sd;
+        assert!(
+            z.abs() < 4.0,
+            "{low} of {trials} draws fell in the bottom third, {z:.1} sigma from {expected:.0} — accepting every draw would give {}",
+            trials / 2
+        );
+        // The mechanism, directly: a rejected draw costs two more `next_u32` calls, so at this `n`
+        // some seeds consume four or six where an accept-everything loop always consumes two.
+        let mut extra = 0usize;
+        for seed in 0..12u64 {
+            let mut after = Rng::new(seed);
+            let _ = super::below_u64(&mut after, n);
+            let mut walk = Rng::new(seed);
+            let mut steps = 0usize;
+            while walk != after {
+                walk.next_u32();
+                steps += 1;
+                assert!(steps < 200, "seed {seed}: the draw did not land on a reachable state");
+            }
+            assert_eq!(steps % 2, 0, "seed {seed} consumed {steps} halves of a 64-bit draw");
+            if steps > 2 {
+                extra += 1;
+            }
+        }
+        assert!(extra > 0, "no seed of the first twelve rejected a draw at n = 3 * 2^62");
     }
 }

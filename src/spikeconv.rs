@@ -2153,7 +2153,7 @@ mod tests {
     use super::{
         avg_pool, channel_moments, identity_path_gain, max_pool_values, out_dim, Conv2d, Conv2dSpec,
         ConvError, Init, MaxPolicy, PoolSpec, ResidualBlock, ResidualStyle, SpikingConv2d,
-        SpikingMaxPool, TdBn, Tensor3,
+        SpikingMaxPool, TdBn, Tensor3, MAX_TAP_SWEEP,
     };
     use crate::metrics::{ActivationKind, SynOps};
     use crate::neuron::{Lif, Neuron};
@@ -3493,12 +3493,38 @@ mod tests {
 
     /// The tap sweep is bounded: a padding of 5e7 on a 1x1 input answers `None` at once instead of
     /// spending seconds, and a `SpikingMaxPool` whose window cannot fit is refused at construction.
+    ///
+    /// ⛔ THE FIXTURE BELOW LEFT `pad_w` AT 0, AND THAT MADE THIS TEST VACUOUS. With `pad_w = 0` a
+    /// 3-tap kernel does not fit a 1-element row at all, so `out_shape` returned `None` on the
+    /// WIDTH axis before `in_bounds_taps` ever reached the sweep bound — deleting the bound
+    /// entirely left the assertion green. `pad_w = 1` makes the width axis fit exactly, so the
+    /// only thing left that can refuse is the bound this test is named after.
     #[test]
     fn unbounded_geometry_is_refused_rather_than_swept() {
         let mut spec = Conv2dSpec::new(1, 1, 3, 3).expect("valid");
         spec.pad_h = 50_000_000;
+        spec.pad_w = 1;
         let c = Conv2d::zeros(spec).expect("valid");
+        assert_eq!(spec.out_shape(1, 1), Some((99_999_999, 1)), "both axes must admit a window");
         assert_eq!(c.in_bounds_taps(1, 1), None);
+
+        // The bound is `outputs * taps` on ONE axis, and it is where the constant says: a geometry
+        // whose row sweep is 67_108_863 iterations is answered and one of 67_108_869 is refused,
+        // either side of MAX_TAP_SWEEP = 2^26. Both are the same 1x1 input and the same 3x3 kernel;
+        // only the padding moves. A bound read off the wrong quantity — the tap count, the output
+        // count alone, the product over both axes — lands somewhere else entirely.
+        assert_eq!(MAX_TAP_SWEEP, 1 << 26);
+        let mut inside = Conv2dSpec::new(1, 1, 3, 3).expect("valid");
+        inside.pad_h = 11_184_811;
+        inside.pad_w = 1;
+        let o_n = inside.out_shape(1, 1).expect("fits").0;
+        assert_eq!(o_n as u64 * 3, MAX_TAP_SWEEP - 1);
+        // Three row taps land on the single real element, one column tap does: 3 * 1 * 1 * 1.
+        assert_eq!(Conv2d::zeros(inside).expect("valid").in_bounds_taps(1, 1), Some(3));
+        let mut outside = inside;
+        outside.pad_h = 11_184_812;
+        assert_eq!(outside.out_shape(1, 1).expect("fits").0 as u64 * 3, MAX_TAP_SWEEP + 5);
+        assert_eq!(Conv2d::zeros(outside).expect("valid").in_bounds_taps(1, 1), None);
         let mut small = Conv2dSpec::new(1, 1, 3, 3).expect("valid");
         small.pad_h = 1;
         small.pad_w = 1;
@@ -3529,5 +3555,495 @@ mod tests {
         let conv = Conv2d::new(spec, vec![1e16, -1e16, 1.0], vec![0.0]).expect("valid");
         let out = conv.forward(&t(3, 1, 1, &[1.0, 1.0, 1.0])).expect("valid");
         assert_eq!(out.data, vec![1.0], "the accumulation order is channel-major, bit for bit");
+    }
+
+    /// The spike count counts the units that FIRED, not the units that stayed silent.
+    ///
+    /// `the_remaining_public_surface_behaves` asserts `count_nonzero() == 3` on
+    /// `[0, 1, 1, 0, 0, 1]` — a map with exactly three spikes AND exactly three silences, so
+    /// counting the wrong side of the predicate gives the same 3. Every tensor here has a
+    /// different number of each, and one of them is graded, because "non-zero" and "equal to one"
+    /// are the same predicate on a binary map and only differ off it.
+    #[test]
+    fn the_spike_count_counts_the_firing_units_not_the_silent_ones() {
+        assert_eq!(t(1, 1, 3, &[0., 1., 1.]).count_nonzero(), 2);
+        assert_eq!(t(1, 1, 3, &[1., 0., 0.]).count_nonzero(), 1);
+        assert_eq!(t(1, 1, 4, &[1., 1., 1., 0.]).count_nonzero(), 3);
+        assert_eq!(Tensor3::zeros(2, 2, 2).expect("valid").count_nonzero(), 0);
+        assert_eq!(Tensor3::filled(2, 2, 2, 1.0).expect("valid").count_nonzero(), 8);
+        // A graded map: the count is of non-zero elements, not of elements equal to one, and a
+        // negative element is a non-zero one.
+        assert_eq!(t(1, 1, 4, &[0.5, 0., -1., 0.]).count_nonzero(), 2);
+    }
+
+    /// `same_padding` pads each axis by ITS OWN kernel, which is the whole reason `Conv2dSpec`
+    /// carries per-axis fields.
+    ///
+    /// Every other call in this module passes `kernel_h == kernel_w` — the one asymmetric call,
+    /// `same_padding(1, 1, 2, 3)`, is refused for the even row kernel before the column padding is
+    /// ever computed — so `pad_w` could be derived from `kernel_h` and every test stayed green.
+    /// A `3x5` kernel is the spiking audio-spectrogram front end the `Conv2dSpec` doc names.
+    #[test]
+    fn same_padding_pads_each_axis_by_its_own_kernel() {
+        let tall = Conv2dSpec::same_padding(1, 1, 5, 3).expect("valid");
+        assert_eq!((tall.pad_h, tall.pad_w), (2, 1));
+        let wide = Conv2dSpec::same_padding(1, 1, 3, 5).expect("valid");
+        assert_eq!((wide.pad_h, wide.pad_w), (1, 2));
+        assert_eq!(wide.fan_in(), 15);
+
+        // And the name is kept on a NON-SQUARE map, so a swap of the two paddings shows up as a
+        // shape change rather than cancelling against a square input.
+        assert_eq!(tall.out_shape(7, 9), Some((7, 9)));
+        assert_eq!(wide.out_shape(7, 9), Some((7, 9)));
+        // The two specs really are different objects: swapping the kernel axes swaps the padding.
+        assert_ne!(tall.pad_w, wide.pad_w);
+
+        // Run one of them, so the claim is about a convolution and not only about a struct field.
+        let c = Conv2d::zeros(wide).expect("valid");
+        let out = c.forward(&Tensor3::zeros(1, 7, 9).expect("valid")).expect("fits");
+        assert_eq!(out.shape(), (1, 7, 9));
+    }
+
+    /// A non-finite weight or bias is refused by `Conv2d::new`, at the boundary, naming which one
+    /// and where.
+    ///
+    /// Every kernel in this module arrives through `Conv2d::zeros`, `Conv2d::init` or a literal
+    /// list of finite numbers, so the constructor's own finiteness check had no fixture at all —
+    /// only the per-step re-check in `SpikingConv2d::step` did, and that is a different call.
+    #[test]
+    fn a_non_finite_weight_or_bias_is_refused_at_construction() {
+        let spec = Conv2dSpec::new(1, 1, 2, 2).expect("valid");
+        assert!(matches!(
+            Conv2d::new(spec, vec![1.0, f64::NAN, 1.0, 1.0], vec![0.0]),
+            Err(ConvError::NonFinite { what: "conv weight", index: 1, .. })
+        ));
+        assert!(matches!(
+            Conv2d::new(spec, vec![1.0, 1.0, 1.0, f64::INFINITY], vec![0.0]),
+            Err(ConvError::NonFinite { what: "conv weight", index: 3, .. })
+        ));
+        assert!(matches!(
+            Conv2d::new(spec, vec![1.0; 4], vec![f64::NEG_INFINITY]),
+            Err(ConvError::NonFinite { what: "conv bias", index: 0, .. })
+        ));
+        // The same four weights, finite, are accepted — so the refusals above are about the value
+        // and not about the shape.
+        assert!(Conv2d::new(spec, vec![1.0; 4], vec![0.0]).is_ok());
+    }
+
+    /// The initialiser's stream is the seed's own.
+    ///
+    /// `Conv2d::init` had NO golden vector: the zero-width case pins an all-zero kernel, which is
+    /// the one width at which the generator cannot be seen at all, and the two second-moment
+    /// checks are Monte Carlo over redrawn seeds, which any seed mapping reproduces. So the seed
+    /// could be mixed with a constant on its way to `Rng::new` and every test stayed green, while
+    /// "the same seed gives the same kernel on every platform" quietly became false for anyone
+    /// comparing against a stream they started themselves.
+    ///
+    /// The first assertion recomputes the draw from a stream this test starts, at BIT equality —
+    /// `(2u - 1) * sigma * sqrt(3)` is the same operations in the same order, so there is no error
+    /// term to allow for. The two literals after it are MEASURED: they are what this
+    /// implementation's generator produces for this seed, recorded so that a change to the stream
+    /// is a visible regression rather than a silent one.
+    #[test]
+    fn the_initialiser_draws_its_weights_from_the_seed_it_was_handed() {
+        let spec = Conv2dSpec::new(1, 2, 2, 2).expect("valid");
+        let seed = 20_260_920_u64;
+        let c = Conv2d::init(spec, Init::Fixed { std_dev: 1.0 }, seed).expect("valid");
+        assert_eq!(c.weights.len(), 8);
+        assert_eq!(c.bias, vec![0.0; 2], "biases are zero in every case");
+
+        // `Init::Fixed { std_dev: 1.0 }`, so the target sigma is 1 and the uniform half-width is
+        // sqrt(3) exactly. ⛔ Written on its own line rather than as `sigma * 3.0_f64.sqrt()`:
+        // that spelling is character for character the implementation's, and a mutation harness
+        // that finds its anchor text twice cannot apply the edit at all.
+        let half = 3.0_f64.sqrt();
+        let mut stream = crate::rng::Rng::new(seed);
+        let want: Vec<f64> = (0..8).map(|_| (2.0 * stream.next_f64() - 1.0) * half).collect();
+        assert_eq!(c.weights, want, "the kernel is this seed's stream, draw for draw");
+
+        assert_eq!(c.weights[0].to_bits(), 0xbfd2_ec40_f65e_8faf);
+        assert_eq!(c.weights[7].to_bits(), 0x3feb_54f5_2bca_1b75);
+
+        // The same seed gives the same kernel; a neighbouring seed does not. Neither statement
+        // alone can see a seed that was mixed with a constant — both hold for any injection — so
+        // they are here for what they do say, and the two assertions above carry the claim.
+        let again = Conv2d::init(spec, Init::Fixed { std_dev: 1.0 }, seed).expect("valid");
+        assert_eq!(again.weights, c.weights);
+        let neighbour = Conv2d::init(spec, Init::Fixed { std_dev: 1.0 }, seed + 1).expect("valid");
+        assert_ne!(neighbour.weights, c.weights);
+
+        // A non-unit width scales the whole kernel by exactly that width, which is what makes the
+        // `sqrt(3)` above the only constant in the draw.
+        let half = Conv2d::init(spec, Init::Fixed { std_dev: 0.5 }, seed).expect("valid");
+        for (h, w) in half.weights.iter().zip(&c.weights) {
+            assert_eq!(*h, 0.5 * w);
+        }
+    }
+
+    /// Both tap counts carry every factor they name, on a convolution that is asymmetric in all
+    /// four of them.
+    ///
+    /// ⛔ EVERY tap-count fixture in this module was `conv1`: one input channel, one output
+    /// channel, a square input and identical kernel, padding, stride and dilation on both axes.
+    /// A factor of 1 dropped from a product is invisible, and a row sweep handed the column
+    /// geometry reads the same numbers back. Here `C_in = 2`, `C_out = 3`, the kernel is `3x2`,
+    /// the padding is 1 on rows and 0 on columns, and the input is `4x5`, so each of those four
+    /// mistakes gives a different answer.
+    ///
+    /// Hand-computed. `out_h = (4 + 2 - 3) + 1 = 4`, `out_w = (5 + 0 - 2) + 1 = 4`.
+    /// Padded: `fan_in * C_out * out_h * out_w = (2*3*2) * 3 * 4 * 4 = 576`.
+    /// In bounds, separably: rows `2 + 3 + 3 + 2 = 10`, columns `2 + 2 + 2 + 2 = 8`, so
+    /// `10 * 8 * 2 * 3 = 480`.
+    #[test]
+    fn both_tap_counts_carry_every_factor_of_an_asymmetric_convolution() {
+        let mut spec = Conv2dSpec::new(2, 3, 3, 2).expect("valid");
+        spec.pad_h = 1;
+        spec.pad_w = 0;
+        assert_eq!(spec.fan_in(), 12);
+        assert_eq!(spec.n_weights(), 36);
+        assert_eq!(spec.out_shape(4, 5), Some((4, 4)));
+        let c = Conv2d::new(spec, vec![1.0; 36], vec![0.0; 3]).expect("valid");
+
+        assert_eq!(c.padded_taps(4, 5), Some(576));
+        assert_eq!(c.in_bounds_taps(4, 5), Some(480));
+
+        // The convolution loop counts the same in-bounds taps, one at a time, with no
+        // factorisation and no channel arithmetic — the independent route to the same number.
+        let input = Tensor3::filled(2, 4, 5, 1.0).expect("valid");
+        let (out, dense, effective) = c.convolve(&input).expect("fits");
+        assert_eq!(dense, 480);
+        assert_eq!(effective, 480, "every weight and every input element is non-zero here");
+        assert_eq!(out.shape(), (3, 4, 4));
+
+        // Each factor, removed one at a time, lands somewhere else: 192 without the output
+        // channels, 240 without the input channels, 336 with the row sweep handed the column
+        // geometry (7 row taps instead of 10). None of them is 576 or 480.
+        assert_ne!(c.padded_taps(4, 5), Some(192));
+        assert_ne!(c.in_bounds_taps(4, 5), Some(240));
+        assert_ne!(c.in_bounds_taps(4, 5), Some(336));
+
+        // And the padded figure overstates the real connections by 20% here — the gap the
+        // `padded_taps` doc is about, on a shape where it is neither zero nor the 65% of the
+        // square fixture.
+        let overstatement = 576.0 / 480.0;
+        assert_eq!(overstatement, 1.2);
+    }
+
+    /// A non-finite element in a convolution's INPUT is refused rather than multiplied into every
+    /// output of its window.
+    ///
+    /// Every tensor in this module reaches a convolution through `Tensor3::new`, which refuses a
+    /// `NaN` first, so `convolve`'s own check had no fixture. A `Tensor3::zeros` whose public
+    /// `data` is written afterwards is the path a real pipeline takes — it is how the layer's
+    /// weight re-check is reached too — and one `NaN` there poisons every output position whose
+    /// window contains it, with `Ok` on the call.
+    #[test]
+    fn a_non_finite_convolution_input_is_refused_rather_than_propagated() {
+        let c = conv1(&[1.0; 4], 2, 2, 0, 1, 1);
+        let mut poisoned = Tensor3::zeros(1, 3, 3).expect("valid");
+        poisoned.data[5] = f64::NAN;
+        assert!(matches!(
+            c.forward(&poisoned),
+            Err(ConvError::NonFinite { what: "conv input", index: 5, .. })
+        ));
+        poisoned.data[5] = f64::INFINITY;
+        assert!(matches!(
+            c.forward(&poisoned),
+            Err(ConvError::NonFinite { what: "conv input", index: 5, .. })
+        ));
+        // The same tensor with a finite element there is accepted, so the refusal is about the
+        // value. Four windows of four unit taps over a single 1.0 at the centre: every output is 1.
+        poisoned.data[5] = 1.0;
+        assert_eq!(c.forward(&poisoned).expect("fits").data, vec![0., 1., 0., 1.]);
+        // The synaptic-operation path goes through the same convolution and refuses it too.
+        poisoned.data[5] = f64::NAN;
+        assert!(matches!(
+            c.synops(&poisoned, ActivationKind::RealValued),
+            Err(ConvError::NonFinite { what: "conv input", .. })
+        ));
+    }
+
+    /// `PoolSpec::out_shape` does not dilate its window, and agrees with the shape the pooling
+    /// functions actually produce.
+    ///
+    /// ⛔ `PoolSpec::out_shape` is called from NOWHERE inside this module — `avg_pool`,
+    /// `max_pool_values` and `SpikingMaxPool` all go through `require_out_shape` — so it was dead
+    /// to every test and could have said anything. A window has no dilation (the `PoolSpec` doc
+    /// says why), and a dilation of 2 on the row axis of a 3-tap window turns an extent of 3 into
+    /// an extent of 5: on a 5-row input that is 1 output row instead of 3.
+    #[test]
+    fn the_pool_shape_formula_does_not_dilate_its_window() {
+        let spec = PoolSpec { kernel_h: 3, kernel_w: 2, stride_h: 1, stride_w: 1, pad_h: 0, pad_w: 0 };
+        assert_eq!(spec.out_shape(5, 4), Some((3, 3)));
+        assert_eq!(spec.require_out_shape(5, 4).expect("fits"), (3, 3));
+        // The number the pooling functions actually produce, which is what the formula claims to
+        // predict. The axes are deliberately unequal, so a transposed answer is a different one.
+        let input = Tensor3::filled(1, 5, 4, 1.0).expect("valid");
+        let pooled = avg_pool(&input, &spec, false).expect("fits");
+        assert_eq!((pooled.height, pooled.width), spec.out_shape(5, 4).expect("fits"));
+        assert_eq!(max_pool_values(&input, &spec).expect("fits").shape(), (1, 3, 3));
+
+        // With padding and a stride the two routes still agree, and `None` is returned for the
+        // window that cannot fit rather than a clamped answer.
+        let padded = PoolSpec { kernel_h: 3, kernel_w: 2, stride_h: 2, stride_w: 1, pad_h: 1, pad_w: 0 };
+        assert_eq!(padded.out_shape(5, 4), Some((3, 3)));
+        let too_big = PoolSpec { kernel_h: 6, kernel_w: 2, stride_h: 1, stride_w: 1, pad_h: 0, pad_w: 0 };
+        assert_eq!(too_big.out_shape(5, 4), None);
+    }
+
+    /// Each channel is scaled by ITS OWN gain and shifted by its own shift, in training and at
+    /// inference.
+    ///
+    /// `the_epsilon_gain_and_shift_terms_each_move_the_answer` is the only test that sets either,
+    /// and it sets them on a ONE-channel layer, where `gain[c]` and `gain[0]` are the same number.
+    /// The two-channel fixture leaves both at their defaults, where the gain is 1 and the shift is
+    /// 0 and neither term is visible. So "learnable scale per channel" was untested as a per-
+    /// channel claim.
+    ///
+    /// Exact arithmetic, no tolerance. Channel 0 is `1, -1`: mean 0, population variance 1.
+    /// Channel 1 is `6, 2`: mean 4, population variance 4. With `eps = 0` and `alpha * v_th = 1`
+    /// both channels normalise to exactly `+/-1`, so the outputs are exactly `gain +/- shift`.
+    #[test]
+    fn tdbn_scales_and_shifts_each_channel_by_its_own_parameter() {
+        let mut bn = TdBn::new(2, 1.0).expect("valid");
+        bn.eps = 0.0;
+        bn.gain = vec![2.0, 3.0];
+        bn.shift = vec![0.5, -0.5];
+        let frames = vec![t(2, 1, 2, &[1., -1., 6., 2.])];
+        let out = bn.train_forward(&frames).expect("valid");
+        assert_eq!(out[0].data, vec![2.5, -1.5, 2.5, -3.5]);
+        // Channel 1 under channel 0's gain would be 1.5 and -2.5; under channel 0's shift, 3.5 and
+        // -2.5. Neither is in the vector above.
+        assert_ne!(out[0].data[2], 1.5);
+        assert_ne!(out[0].data[2], 3.5);
+
+        // The same per-channel parameters at inference, against running statistics set by hand so
+        // the two paths are compared on the same numbers rather than on each other's output.
+        let mut ev = TdBn::new(2, 1.0).expect("valid");
+        ev.eps = 0.0;
+        ev.gain = vec![2.0, 3.0];
+        ev.shift = vec![0.5, -0.5];
+        ev.running_mean = vec![0.0, 4.0];
+        ev.running_var = vec![1.0, 4.0];
+        let got = ev.eval_forward(&t(2, 1, 2, &[1., -1., 6., 2.])).expect("valid");
+        assert_eq!(got.data, vec![2.5, -1.5, 2.5, -3.5]);
+    }
+
+    /// A map whose channel count is not the layer's is refused rather than read past the end of
+    /// its own buffer.
+    ///
+    /// The `"tdBN input channels"` arm had no fixture: the truncated-input test reaches the LENGTH
+    /// check one line further down instead, because a short `data` fails `dims_len` first. A map
+    /// with the right length and the wrong shape — one channel of `1x4` handed to a two-channel
+    /// layer — passes the length check and reaches this one.
+    #[test]
+    fn tdbn_refuses_a_map_whose_channel_count_is_not_its_own() {
+        let bn = TdBn::new(2, 1.0).expect("valid");
+        let one_channel = t(1, 1, 4, &[1., 2., 3., 4.]);
+        assert_eq!(one_channel.data.len(), 4, "the length check cannot be what refuses this");
+        assert!(matches!(
+            bn.eval_forward(&one_channel),
+            Err(ConvError::ShapeMismatch { what: "tdBN input channels", .. })
+        ));
+        // Three channels of the same total length is refused for the same reason, in the other
+        // direction.
+        let three = t(3, 1, 2, &[1., 2., 3., 4., 5., 6.]);
+        assert!(matches!(
+            bn.eval_forward(&three),
+            Err(ConvError::ShapeMismatch { what: "tdBN input channels", .. })
+        ));
+        // And the shape it WAS built for is accepted, so the refusals are about the channel count.
+        assert!(bn.eval_forward(&t(2, 1, 2, &[1., 2., 3., 4.])).is_ok());
+    }
+
+    /// A layer is handed an input of the wrong shape and refuses it by name.
+    ///
+    /// The `"spiking conv input"` arm had no fixture either. `a_layer_whose_public_spec_was_changed`
+    /// reaches the UNITS guard, which is a different check three lines later, and
+    /// `bad_inputs_are_refused_by_name` exercises `Conv2d::forward`'s channel check, which is
+    /// inside the convolution. With this guard removed a `4x4` frame through a layer built for
+    /// `3x3` returns `Ok` and a `3x3` map assembled from the wrong nine of its sixteen drives.
+    #[test]
+    fn a_spiking_layer_refuses_an_input_of_the_wrong_shape() {
+        let spec = Conv2dSpec::same_padding(1, 1, 3, 3).expect("valid");
+        let mut l = SpikingConv2d::new(Conv2d::zeros(spec).expect("valid"), 3, 3, Lif::default(), 1e-3)
+            .expect("valid");
+        assert!(l.step(&Tensor3::zeros(1, 3, 3).expect("valid"), ActivationKind::Spiking).is_ok());
+
+        // Bigger in both axes: every downstream check still passes, so only this guard can refuse.
+        assert!(matches!(
+            l.step(&Tensor3::zeros(1, 4, 4).expect("valid"), ActivationKind::Spiking),
+            Err(ConvError::ShapeMismatch { what: "spiking conv input", .. })
+        ));
+        // Smaller, and transposed, and with the wrong channel count — each named by the LAYER's
+        // guard rather than by the convolution's, which is a different message with a different
+        // shape pair in it.
+        assert!(matches!(
+            l.step(&Tensor3::zeros(1, 2, 2).expect("valid"), ActivationKind::Spiking),
+            Err(ConvError::ShapeMismatch { what: "spiking conv input", .. })
+        ));
+        let mut wide = SpikingConv2d::new(Conv2d::zeros(spec).expect("valid"), 3, 5, Lif::default(), 1e-3)
+            .expect("valid");
+        assert!(matches!(
+            wide.step(&Tensor3::zeros(1, 5, 3).expect("valid"), ActivationKind::Spiking),
+            Err(ConvError::ShapeMismatch { what: "spiking conv input", .. })
+        ));
+        assert!(matches!(
+            l.step(&Tensor3::zeros(2, 3, 3).expect("valid"), ActivationKind::Spiking),
+            Err(ConvError::ShapeMismatch { what: "spiking conv input", .. })
+        ));
+    }
+
+    /// A bias poisoned after construction is refused at the next step, and so are the block's
+    /// second convolution's WEIGHTS.
+    ///
+    /// `a_weight_poisoned_after_construction_is_refused_at_the_next_step` poisons the layer's
+    /// `weights` and the block's second `bias` — which leaves the layer's own `bias` check and the
+    /// block's own `weights` check, the other diagonal of the same four, with no fixture at all.
+    /// A `NaN` bias is the worse of the two: it reaches the accumulator as its STARTING value, so
+    /// it poisons every output position whether or not a single input spike arrived.
+    #[test]
+    fn a_bias_poisoned_after_construction_is_refused_at_the_next_step() {
+        let spec = Conv2dSpec::same_padding(1, 1, 3, 3).expect("valid");
+        let mut l = SpikingConv2d::new(Conv2d::zeros(spec).expect("valid"), 3, 3, Lif::default(), 1e-3)
+            .expect("valid");
+        let x = Tensor3::zeros(1, 3, 3).expect("valid");
+        assert!(l.step(&x, ActivationKind::Spiking).is_ok());
+        l.conv.bias[0] = f64::NAN;
+        assert!(matches!(
+            l.step(&x, ActivationKind::Spiking),
+            Err(ConvError::NonFinite { what: "conv bias", index: 0, .. })
+        ));
+
+        let mut b = ResidualBlock::new(
+            Conv2d::zeros(spec).expect("valid"),
+            Conv2d::zeros(spec).expect("valid"),
+            3,
+            3,
+            Lif::default(),
+            1e-3,
+            ResidualStyle::SewAdd,
+            0.0,
+        )
+        .expect("valid");
+        assert!(b.step(&x, ActivationKind::Spiking).is_ok());
+        b.second.weights[4] = f64::NAN;
+        assert!(matches!(
+            b.step(&x, ActivationKind::Spiking),
+            Err(ConvError::NonFinite { what: "conv weights", index: 4, .. })
+        ));
+        // The weights are checked BEFORE the bias, so a block with both poisoned names the
+        // weights — which is what makes the assertion above about the weight check and not about
+        // whichever check happens to be reached.
+        b.second.bias[0] = f64::NAN;
+        assert!(matches!(
+            b.step(&x, ActivationKind::Spiking),
+            Err(ConvError::NonFinite { what: "conv weights", .. })
+        ));
+    }
+
+    /// ⛔ THE `SEW` STRUCTURE ITSELF: the second convolution reads the FIRST STAGE'S SPIKES, not
+    /// the block's input. `out = g(SN(F(x)), x)`, and `F` is two convolutions deep.
+    ///
+    /// Not one existing fixture could tell the two apart. In `a_live_residual_block...` the first
+    /// stage's spikes EQUAL the input — every driven unit fires, so `s1 == x` element for element
+    /// — and in every other block fixture the second kernel is all zeros, where `convolve(x)` and
+    /// `convolve(&s1)` give the same drive AND the same effective count. Feeding the second stage
+    /// the block's input rather than the branch's output is the difference between a residual
+    /// block and two independent convolutions sharing an adder, and it was invisible.
+    ///
+    /// The first convolution here is an INVERTER: weight `-20 mV`, bias `+20 mV`, so a unit whose
+    /// input spiked is driven by exactly `0` and one whose input was silent is driven by `20 mV`
+    /// and fires. On `x = [1, 0, 1, 1]` the branch's first stage emits `s1 = [0, 1, 0, 0]`, which
+    /// shares not one element with `x`.
+    #[test]
+    fn the_second_convolution_reads_the_first_stages_spikes_not_the_blocks_input() {
+        let spec = Conv2dSpec::new(1, 1, 1, 1).expect("valid");
+        let inverter = || Conv2d::new(spec, vec![-20e-3], vec![20e-3]).expect("valid");
+        let hot = || Conv2d::new(spec, vec![20e-3], vec![0.0]).expect("valid");
+        let x = t(1, 2, 2, &[1., 0., 1., 1.]);
+
+        // The first stage, run on its own, so the fixture's premise is measured rather than
+        // assumed: its spikes are the complement of the input, not a copy of it.
+        let mut stage_one =
+            SpikingConv2d::new(inverter(), 2, 2, Lif::default(), 1e-3).expect("valid");
+        let s1 = stage_one.step(&x, ActivationKind::Spiking).expect("fits");
+        assert_eq!(s1.data, vec![0., 1., 0., 0.]);
+        assert_ne!(s1.data, x.data, "the two candidate inputs must differ, or this proves nothing");
+
+        let mut b = ResidualBlock::new(
+            inverter(),
+            hot(),
+            2,
+            2,
+            Lif::default(),
+            1e-3,
+            ResidualStyle::SewAdd,
+            0.0,
+        )
+        .expect("shape preserving");
+        let out = b.step(&x, ActivationKind::Spiking).expect("fits");
+        // Branch spike where s1 fired, plus the shortcut: [0,1,0,0] + [1,0,1,1] = [1,1,1,1].
+        // Fed the block's input instead, the branch would be [1,0,1,1] and the sum [2,0,2,2].
+        assert_eq!(out.data, vec![1., 1., 1., 1.]);
+
+        // The second stage's accounting says the same thing in integers: ONE of its four taps had
+        // a non-zero activation, because `s1` carries one spike. Fed `x` it would be three.
+        assert_eq!((b.ops.dense, b.ops.effective_acs), (4, 1));
+        assert_eq!(b.ledger.syn_ops, 1);
+        assert_eq!(b.ledger.syn_fetches, 1);
+        assert_eq!(b.ledger.spikes_out, 1);
+        assert_eq!((b.ledger.neuron_updates_driven, b.ledger.neuron_updates_idle), (1, 3));
+        // The first stage saw three effective taps on the same input, which is the count the
+        // second stage would have reported had it been handed `x`.
+        assert_eq!(b.first.ops.effective_acs, 3);
+        assert_eq!(b.first.ledger.spikes_out, 1);
+    }
+
+    /// The naive shortcut drives a unit only where the shortcut SPIKED — `g * x`, not `g`.
+    ///
+    /// `the_naive_residual_cannot_be_the_identity_even_with_a_tuned_gain` runs on a `1x1` map whose
+    /// shortcut is `1.0` at every timestep, and `g * 1` is the same number as `g`. So dropping the
+    /// shortcut from the product left the naive block firing everywhere on every timestep with
+    /// every test green — a block that ignores its own input and calls itself a residual
+    /// connection.
+    ///
+    /// Both convolutions are silent here, so the drive is the shortcut term alone: `20 mV` where
+    /// the input spiked and exactly `0` where it did not, which is also the difference between a
+    /// driven neuron update and an idle one.
+    #[test]
+    fn the_naive_shortcut_drives_only_the_units_whose_shortcut_spiked() {
+        let spec = Conv2dSpec::new(1, 1, 1, 1).expect("valid");
+        let mut b = ResidualBlock::new(
+            Conv2d::zeros(spec).expect("valid"),
+            Conv2d::zeros(spec).expect("valid"),
+            2,
+            2,
+            Lif::default(),
+            1e-3,
+            ResidualStyle::Naive,
+            20e-3,
+        )
+        .expect("shape preserving");
+        let x = t(1, 2, 2, &[1., 0., 1., 1.]);
+        let out = b.step(&x, ActivationKind::Spiking).expect("fits");
+        assert_eq!(out.data, vec![1., 0., 1., 1.], "the silent shortcut leaves its unit silent");
+        assert_eq!(b.ledger.spikes_out, 3);
+        assert_eq!((b.ledger.neuron_updates_driven, b.ledger.neuron_updates_idle), (3, 1));
+        // A gain of zero silences the whole block, which is the other end of the same product and
+        // is not reachable from a drive that ignores the shortcut.
+        let mut off = ResidualBlock::new(
+            Conv2d::zeros(spec).expect("valid"),
+            Conv2d::zeros(spec).expect("valid"),
+            2,
+            2,
+            Lif::default(),
+            1e-3,
+            ResidualStyle::Naive,
+            0.0,
+        )
+        .expect("shape preserving");
+        assert_eq!(off.step(&x, ActivationKind::Spiking).expect("fits").data, vec![0.0; 4]);
+        assert_eq!(off.ledger.neuron_updates_idle, 4);
     }
 }

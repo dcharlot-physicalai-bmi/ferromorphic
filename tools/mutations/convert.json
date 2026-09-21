@@ -1,0 +1,786 @@
+[
+ {
+  "label": "a non-finite activation is counted as zero spikes rather than refused",
+  "old": "        if !z.is_finite() {\n            return None;\n        }\n        if z <= 0.0 {\n            return Some(0);\n        }",
+  "new": "        if z <= 0.0 {\n            return Some(0);\n        }"
+ },
+ {
+  "label": "an activation of exactly zero is treated as a firing one",
+  "old": "        if z <= 0.0 {\n            return Some(0);\n        }",
+  "new": "        if z < 0.0 {\n            return Some(0);\n        }"
+ },
+ {
+  "label": "the exact spike count rounds up rather than down",
+  "old": "                if n >= t { ticks } else { n.floor() as u64 }",
+  "new": "                if n >= t { ticks } else { n.ceil() as u64 }"
+ },
+ {
+  "label": "the one-spike-per-tick cap is dropped from the closed form",
+  "old": "                if n >= t { ticks } else { n.floor() as u64 }",
+  "new": "                if false { ticks } else { n.floor() as u64 }"
+ },
+ {
+  "label": "reset-to-zero's inter-spike interval rounds down",
+  "old": "                let k = (1.0 / z).ceil();",
+  "new": "                let k = (1.0 / z).floor();"
+ },
+ {
+  "label": "reset-to-zero fires once per tick for every activation",
+  "old": "                if !k.is_finite() || k < 1.0 {",
+  "new": "                if k >= 1.0 {"
+ },
+ {
+  "label": "reset-to-zero counts one spike too many",
+  "old": "                    ticks / (k as u64).max(1)",
+  "new": "                    ticks / (k as u64).max(1) + 1"
+ },
+ {
+  "label": "a non-finite activation is given a rate limit instead of a refusal",
+  "old": "        if !z.is_finite() {\n            return None;\n        }\n        if z <= 0.0 {\n            return Some(0.0);\n        }\n        Some(match self {",
+  "new": "        if z <= 0.0 {\n            return Some(0.0);\n        }\n        Some(match self {"
+ },
+ {
+  "label": "the quiet region of the rate limit starts strictly below zero",
+  "old": "        if z <= 0.0 {\n            return Some(0.0);\n        }\n        Some(match self {",
+  "new": "        if z < 0.0 {\n            return Some(0.0);\n        }\n        Some(match self {"
+ },
+ {
+  "label": "reset by subtraction is not capped at one spike per tick",
+  "old": "            Self::BySubtraction => z.min(1.0),",
+  "new": "            Self::BySubtraction => z,"
+ },
+ {
+  "label": "reset-to-zero's limit rounds its interval down",
+  "old": "            Self::ToZero => 1.0 / (1.0 / z).ceil().max(1.0),",
+  "new": "            Self::ToZero => 1.0 / (1.0 / z).floor().max(1.0),"
+ },
+ {
+  "label": "reset-to-zero converges to the activation, so the 2015 bias disappears",
+  "old": "            Self::ToZero => 1.0 / (1.0 / z).ceil().max(1.0),",
+  "new": "            Self::ToZero => z,"
+ },
+ {
+  "label": "the interval's floor of one tick is dropped",
+  "old": "            Self::ToZero => 1.0 / (1.0 / z).ceil().max(1.0),",
+  "new": "            Self::ToZero => 1.0 / (1.0 / z).ceil(),",
+  "equivalent": "the branch is reached only for a finite z > 0, because a non-finite z returned None and a z <= 0.0 returned Some(0.0) above it. For every finite z > 0 the quotient 1.0 / z is strictly positive — the smallest positive f64, 5e-324, gives 1/z = inf and the largest, 1.8e308, gives 5.6e-309, still greater than zero — so its ceiling is at least 1.0 and `.max(1.0)` returns its argument unchanged in every case the guard can see. The clamp is unreachable, so no input distinguishes the two forms."
+ },
+ {
+  "label": "a fresh neuron starts at threshold rather than at zero",
+  "old": "        Self { c, v_th, v: 0.0, reset, floor_at_zero: false }",
+  "new": "        Self { c, v_th, v: v_th, reset, floor_at_zero: false }"
+ },
+ {
+  "label": "every neuron is built with the zero floor switched on",
+  "old": "        Self { c, v_th, v: 0.0, reset, floor_at_zero: false }",
+  "new": "        Self { c, v_th, v: 0.0, reset, floor_at_zero: true }"
+ },
+ {
+  "label": "the constructor swaps the capacitance and the threshold",
+  "old": "        Self { c, v_th, v: 0.0, reset, floor_at_zero: false }",
+  "new": "        Self { c: v_th, v_th: c, v: 0.0, reset, floor_at_zero: false }"
+ },
+ {
+  "label": "the gain drops the threshold",
+  "old": "        self.c * self.v_th / dt\n    }",
+  "new": "        self.c / dt\n    }"
+ },
+ {
+  "label": "the activation map drops the threshold",
+  "old": "        i * dt / (self.c * self.v_th)",
+  "new": "        i * dt / self.c"
+ },
+ {
+  "label": "the closed-form rate drops the threshold",
+  "old": "        Some(i / (self.c * self.v_th))",
+  "new": "        Some(i / self.c)"
+ },
+ {
+  "label": "a non-finite current is given a firing rate instead of a refusal",
+  "old": "        if !i.is_finite() {\n            return None;\n        }\n        if i <= 0.0 {",
+  "new": "        if i <= 0.0 {"
+ },
+ {
+  "label": "the non-spiking integrator overwrites the membrane instead of adding to it",
+  "old": "    pub fn accumulate(&mut self, dt: f64, i: f64) {\n        self.v += i * dt / self.c;",
+  "new": "    pub fn accumulate(&mut self, dt: f64, i: f64) {\n        self.v = i * dt / self.c;"
+ },
+ {
+  "label": "the model claims to be exact across quiet gaps",
+  "old": "    const EXACT_OVER_GAPS: bool = false;",
+  "new": "    const EXACT_OVER_GAPS: bool = true;"
+ },
+ {
+  "label": "the clocked step overwrites the membrane rather than integrating",
+  "old": "    fn step(&mut self, dt: f64, i: f64) -> bool {\n        self.v += i * dt / self.c;",
+  "new": "    fn step(&mut self, dt: f64, i: f64) -> bool {\n        self.v = i * dt / self.c;"
+ },
+ {
+  "label": "the zero floor is applied whatever the flag says",
+  "old": "        if self.floor_at_zero && self.v < 0.0 {",
+  "new": "        if self.v < 0.0 {"
+ },
+ {
+  "label": "a membrane exactly at threshold does not fire",
+  "old": "        if self.v >= self.v_th {",
+  "new": "        if self.v > self.v_th {"
+ },
+ {
+  "label": "reset to zero subtracts the threshold instead of clearing",
+  "old": "                Reset::ToZero => self.v = 0.0,",
+  "new": "                Reset::ToZero => self.v -= self.v_th,"
+ },
+ {
+  "label": "reset by subtraction clears the membrane and throws the overshoot away",
+  "old": "                Reset::BySubtraction => self.v -= self.v_th,",
+  "new": "                Reset::BySubtraction => self.v = 0.0,"
+ },
+ {
+  "label": "an arriving bump replaces the membrane instead of adding to it",
+  "old": "    fn bump(&mut self, dv: f64) {\n        self.v += dv;",
+  "new": "    fn bump(&mut self, dv: f64) {\n        self.v = dv;"
+ },
+ {
+  "label": "a reset leaves the membrane sitting at threshold",
+  "old": "    fn reset(&mut self) {\n        self.v = 0.0;\n    }",
+  "new": "    fn reset(&mut self) {\n        self.v = self.v_th;\n    }"
+ },
+ {
+  "label": "a layer with no inputs is accepted as long as it has units",
+  "old": "        if n_in == 0 || n_out == 0 {",
+  "new": "        if n_in == 0 && n_out == 0 {"
+ },
+ {
+  "label": "a layer with more weights than its shape is accepted",
+  "old": "        if w.len() != n_in * n_out {",
+  "new": "        if w.len() < n_in * n_out {"
+ },
+ {
+  "label": "the bias count is not checked at all",
+  "old": "        if b.len() != n_out {\n            return Err(ConvertError::BiasCount { expected: n_out, got: b.len() });",
+  "new": "        if false {\n            return Err(ConvertError::BiasCount { expected: n_out, got: b.len() });"
+ },
+ {
+  "label": "the weight scan reads the matrix column-major",
+  "old": "                if !w[u * n_in + j].is_finite() {",
+  "new": "                if !w[j * n_out + u].is_finite() {"
+ },
+ {
+  "label": "only the first row is scanned for a non-finite weight",
+  "old": "                if !w[u * n_in + j].is_finite() {",
+  "new": "                if !w[j].is_finite() {"
+ },
+ {
+  "label": "only the first unit's bias is checked for finiteness",
+  "old": "            if !b[u].is_finite() {",
+  "new": "            if !b[0].is_finite() {"
+ },
+ {
+  "label": "an input of the wrong length is accepted by the layer",
+  "old": "        if x.len() != self.n_in {",
+  "new": "        if false {"
+ },
+ {
+  "label": "a non-finite input component reaches the arithmetic",
+  "old": "        if x.len() != self.n_in {\n            return Err(ConvertError::InputLength { expected: self.n_in, got: x.len() });\n        }\n        for (j, v) in x.iter().enumerate() {\n            if !v.is_finite() {",
+  "new": "        if x.len() != self.n_in {\n            return Err(ConvertError::InputLength { expected: self.n_in, got: x.len() });\n        }\n        for (j, v) in x.iter().enumerate() {\n            if false {"
+ },
+ {
+  "label": "the pre-activation drops the bias",
+  "old": "            let mut acc = self.b[u];\n            for j in 0..self.n_in {",
+  "new": "            let mut acc = 0.0;\n            for j in 0..self.n_in {"
+ },
+ {
+  "label": "the pre-activation overwrites its accumulator on every input",
+  "old": "                acc += row[j] * x[j];",
+  "new": "                acc = row[j] * x[j];"
+ },
+ {
+  "label": "the pre-activation reads the input vector backwards",
+  "old": "                acc += row[j] * x[j];",
+  "new": "                acc += row[j] * x[self.n_in - 1 - j];"
+ },
+ {
+  "label": "the pre-activation's weight rows overlap by one input each",
+  "old": "            let row = &self.w[u * self.n_in..(u + 1) * self.n_in];\n            let mut acc = self.b[u];\n            for j in 0..self.n_in {",
+  "new": "            let row = &self.w[u..u + self.n_in];\n            let mut acc = self.b[u];\n            for j in 0..self.n_in {"
+ },
+ {
+  "label": "the rectifier keeps the negative half and discards the positive one",
+  "old": "            *v = v.max(0.0);",
+  "new": "            *v = v.min(0.0);"
+ },
+ {
+  "label": "a layer with no live unit reports a bound of minus infinity rather than zero",
+  "old": "        let mut best = 0.0f64;",
+  "new": "        let mut best = f64::NEG_INFINITY;"
+ },
+ {
+  "label": "the model-based bound sums the negative weights too",
+  "old": "                if wv > 0.0 {",
+  "new": "                if wv != 0.0 {"
+ },
+ {
+  "label": "the model-based bound drops the input bound it is derived under",
+  "old": "                    acc += wv * input_max;",
+  "new": "                    acc += wv;"
+ },
+ {
+  "label": "the model-based bound keeps the smallest unit rather than the largest",
+  "old": "            if acc > best {\n                best = acc;\n            }",
+  "new": "            if acc < best {\n                best = acc;\n            }"
+ },
+ {
+  "label": "the model-based bound drops the bias",
+  "old": "            let mut acc = self.b[u];\n            for &wv in row {",
+  "new": "            let mut acc = 0.0;\n            for &wv in row {"
+ },
+ {
+  "label": "the weight rescale inverts its ratio",
+  "old": "        let f = lambda_prev / lambda;",
+  "new": "        let f = lambda / lambda_prev;"
+ },
+ {
+  "label": "the bias is normalised by the previous layer's scale",
+  "old": "        for v in &mut self.b {\n            *v /= lambda;\n        }",
+  "new": "        for v in &mut self.b {\n            *v /= lambda_prev;\n        }"
+ },
+ {
+  "label": "undoing the scales uses the same ratio as applying them",
+  "old": "        let f = lambda / lambda_prev;",
+  "new": "        let f = lambda_prev / lambda;"
+ },
+ {
+  "label": "a network with no layers is built rather than refused",
+  "old": "        if layers.is_empty() {\n            return Err(ConvertError::NoLayers);\n        }",
+  "new": "        if false {\n            return Err(ConvertError::NoLayers);\n        }"
+ },
+ {
+  "label": "two layers chain as long as the second is not the narrower one",
+  "old": "            if layers[l].n_in != layers[l - 1].n_out {",
+  "new": "            if layers[l].n_in < layers[l - 1].n_out {"
+ },
+ {
+  "label": "the network's output count is its first layer's",
+  "old": "        self.layers.last().map_or(0, |l| l.n_out)",
+  "new": "        self.layers.first().map_or(0, |l| l.n_out)"
+ },
+ {
+  "label": "the source network counts its biases as synapses",
+  "old": "    pub fn n_synapses(&self) -> u64 {\n        self.layers.iter().map(|l| (l.n_in * l.n_out) as u64).sum()\n    }\n\n    /// The network's output.",
+  "new": "    pub fn n_synapses(&self) -> u64 {\n        self.layers.iter().map(|l| (l.n_in * l.n_out + l.n_out) as u64).sum()\n    }\n\n    /// The network's output."
+ },
+ {
+  "label": "a layer's activation is recorded before the layer runs",
+  "old": "            cur = l.forward(&cur)?;\n            out.push(cur.clone());",
+  "new": "            out.push(cur.clone());\n            cur = l.forward(&cur)?;"
+ },
+ {
+  "label": "the model-based bound is propagated from the input scale at every layer",
+  "old": "                    let prev = lam[l];",
+  "new": "                    let prev = lam[0];"
+ },
+ {
+  "label": "a layer the sample never activates is divided by anyway",
+  "old": "                    let s = layer.max_possible_activation(prev);\n                    if !(s.is_finite() && s > 0.0) {\n                        return Err(ConvertError::DegenerateScale { layer: l + 1, lambda: s });\n                    }\n                    lam.push(s);",
+  "new": "                    let s = layer.max_possible_activation(prev);\n                    lam.push(s);"
+ },
+ {
+  "label": "a percentile of zero is accepted by the scale computation",
+  "old": "                if !(p.is_finite() && p > 0.0 && p <= 100.0) {",
+  "new": "                if !(p.is_finite() && p >= 0.0 && p <= 100.0) {"
+ },
+ {
+  "label": "data-based normalisation with no samples falls through instead of refusing",
+  "old": "                if samples.is_empty() {\n                    return Err(ConvertError::NoSamples);\n                }",
+  "new": "                if false {\n                    return Err(ConvertError::NoSamples);\n                }"
+ },
+ {
+  "label": "the input scale is fixed at one",
+  "old": "                lam.push(s0);",
+  "new": "                lam.push(1.0);"
+ },
+ {
+  "label": "each layer's percentile is taken over the first sample alone",
+  "old": "                    for (l, a) in acts.iter().enumerate() {\n                        pools[l].extend_from_slice(a);\n                    }",
+  "new": "                    for (l, a) in acts.iter().enumerate() {\n                        if pools[l].is_empty() {\n                            pools[l].extend_from_slice(a);\n                        }\n                    }"
+ },
+ {
+  "label": "the scales are applied with the layer's own scale on the input side",
+  "old": "            self.layers[l].apply_scales(lambdas[l], lambdas[l + 1]);",
+  "new": "            self.layers[l].apply_scales(lambdas[l + 1], lambdas[l]);"
+ },
+ {
+  "label": "undoing a normalisation applies it a second time",
+  "old": "            self.layers[l].undo_scales(lambdas[l], lambdas[l + 1]);",
+  "new": "            self.layers[l].apply_scales(lambdas[l], lambdas[l + 1]);"
+ },
+ {
+  "label": "normalise computes the scales and never applies them",
+  "old": "        let lam = self.scales(norm, samples)?;\n        self.apply_scales(&lam)?;\n        Ok(lam)",
+  "new": "        let lam = self.scales(norm, samples)?;\n        Ok(lam)"
+ },
+ {
+  "label": "a scale list is checked against the layer count without the input's own scale",
+  "old": "    if lambdas.len() != n_layers + 1 {",
+  "new": "    if lambdas.len() != n_layers {"
+ },
+ {
+  "label": "a scale of exactly zero is accepted",
+  "old": "        if !(v.is_finite() && v > 0.0) {",
+  "new": "        if !(v.is_finite() && v >= 0.0) {"
+ },
+ {
+  "label": "the input scale is not checked",
+  "old": "    for (l, &v) in lambdas.iter().enumerate() {",
+  "new": "    for (l, &v) in lambdas.iter().skip(1).enumerate() {"
+ },
+ {
+  "label": "an empty pool is given a percentile",
+  "old": "    if values.is_empty() || !p.is_finite() || p < 0.0 || p > 100.0 {",
+  "new": "    if !p.is_finite() || p < 0.0 || p > 100.0 {"
+ },
+ {
+  "label": "a percentile above a hundred is accepted",
+  "old": "    if values.is_empty() || !p.is_finite() || p < 0.0 || p > 100.0 {",
+  "new": "    if values.is_empty() || !p.is_finite() || p < 0.0 {"
+ },
+ {
+  "label": "a NaN percentile is ranked rather than refused",
+  "old": "    if values.is_empty() || !p.is_finite() || p < 0.0 || p > 100.0 {",
+  "new": "    if values.is_empty() || p < 0.0 || p > 100.0 {"
+ },
+ {
+  "label": "a pool containing a NaN is ordered and interpolated anyway",
+  "old": "    if values.iter().any(|v| !v.is_finite()) {\n        return None;\n    }",
+  "new": "    if false {\n        return None;\n    }"
+ },
+ {
+  "label": "the pool is sorted into descending order",
+  "old": "    values.sort_unstable_by(f64::total_cmp);",
+  "new": "    values.sort_unstable_by(|a, b| b.total_cmp(a));"
+ },
+ {
+  "label": "the rank spans the length rather than the gaps between order statistics",
+  "old": "    let rank = p / 100.0 * (n - 1) as f64;",
+  "new": "    let rank = p / 100.0 * n as f64;"
+ },
+ {
+  "label": "the interpolation runs backwards between the two order statistics",
+  "old": "    let frac = rank - lo;",
+  "new": "    let frac = hi - rank;"
+ },
+ {
+  "label": "the percentile truncates to the lower order statistic",
+  "old": "    Some(values[li] + (values[hi_i] - values[li]) * frac)",
+  "new": "    Some(values[li])"
+ },
+ {
+  "label": "a single value's percentile is reported as zero",
+  "old": "    if n == 1 {\n        return Some(values[0]);\n    }",
+  "new": "    if n == 1 {\n        return Some(0.0);\n    }"
+ },
+ {
+  "label": "the upper index is not clamped to the last order statistic",
+  "old": "    let (li, hi_i) = (lo as usize, (hi as usize).min(n - 1));",
+  "new": "    let (li, hi_i) = (lo as usize, hi as usize);",
+  "equivalent": "the guard above returns None unless 0 <= p <= 100, and n >= 2 here because n == 1 returned already, so rank = p/100 * (n - 1) lies in [0, n - 1]. At p = 100 the factor p/100.0 is exactly 1.0 and the product is exactly (n - 1) as f64, which is exact for any n a Vec can hold, so rank <= n - 1 with no rounding above it and hi = rank.ceil() <= n - 1 in every reachable case. The clamp can never bind, so no pool and no percentile distinguishes the two forms."
+ },
+ {
+  "label": "the default tick is ten milliseconds",
+  "old": "            dt: 1e-3,\n            v_th: 1.0,",
+  "new": "            dt: 1e-2,\n            v_th: 1.0,"
+ },
+ {
+  "label": "the default threshold is a tenth of a volt",
+  "old": "            dt: 1e-3,\n            v_th: 1.0,",
+  "new": "            dt: 1e-3,\n            v_th: 0.1,"
+ },
+ {
+  "label": "the default capacitance is a microfarad rather than a nanofarad",
+  "old": "            c: 1e-9,\n            reset: Reset::BySubtraction,",
+  "new": "            c: 1e-6,\n            reset: Reset::BySubtraction,"
+ },
+ {
+  "label": "the default reset is the 2015 reset-to-zero",
+  "old": "            reset: Reset::BySubtraction,\n            input: InputCoding::Analog,",
+  "new": "            reset: Reset::ToZero,\n            input: InputCoding::Analog,"
+ },
+ {
+  "label": "the default input coding is Poisson",
+  "old": "            input: InputCoding::Analog,\n            readout: Readout::SpikeCount,",
+  "new": "            input: InputCoding::Poisson { seed: 0 },\n            readout: Readout::SpikeCount,"
+ },
+ {
+  "label": "the default readout is the membrane potential",
+  "old": "            readout: Readout::SpikeCount,\n            norm: Norm::DataBased { percentile: 99.9 },",
+  "new": "            readout: Readout::MembranePotential,\n            norm: Norm::DataBased { percentile: 99.9 },"
+ },
+ {
+  "label": "the default normalisation is the 2015 maximum rather than the robust percentile",
+  "old": "            norm: Norm::DataBased { percentile: 99.9 },\n            floor_at_zero: false,",
+  "new": "            norm: Norm::DataBased { percentile: 100.0 },\n            floor_at_zero: false,"
+ },
+ {
+  "label": "the default turns the zero floor on",
+  "old": "            norm: Norm::DataBased { percentile: 99.9 },\n            floor_at_zero: false,",
+  "new": "            norm: Norm::DataBased { percentile: 99.9 },\n            floor_at_zero: true,"
+ },
+ {
+  "label": "validate reports the threshold's name against the capacitance's value",
+  "old": "        for (name, value) in [(\"dt\", self.dt), (\"v_th\", self.v_th), (\"c\", self.c)] {",
+  "new": "        for (name, value) in [(\"dt\", self.dt), (\"v_th\", self.c), (\"c\", self.v_th)] {"
+ },
+ {
+  "label": "validate accepts a physical parameter of exactly zero",
+  "old": "        for (name, value) in [(\"dt\", self.dt), (\"v_th\", self.v_th), (\"c\", self.c)] {\n            if !(value.is_finite() && value > 0.0) {",
+  "new": "        for (name, value) in [(\"dt\", self.dt), (\"v_th\", self.v_th), (\"c\", self.c)] {\n            if !(value.is_finite() && value >= 0.0) {"
+ },
+ {
+  "label": "validate accepts a percentile of zero",
+  "old": "            && !(p.is_finite() && p > 0.0 && p <= 100.0)",
+  "new": "            && !(p.is_finite() && p >= 0.0 && p <= 100.0)"
+ },
+ {
+  "label": "the config's gain drops the threshold",
+  "old": "        self.c * self.v_th / self.dt",
+  "new": "        self.c / self.dt"
+ },
+ {
+  "label": "the conversion does not validate its parameters",
+  "old": "        cfg.validate()?;\n        let mut normed = ann.clone();",
+  "new": "        let mut normed = ann.clone();"
+ },
+ {
+  "label": "the converted neurons ignore the config's zero floor",
+  "old": "                n.floor_at_zero = cfg.floor_at_zero;",
+  "new": "                n.floor_at_zero = false;"
+ },
+ {
+  "label": "the converted layer's shape is transposed",
+  "old": "                    n_in: l.n_in,\n                    n_out: l.n_out,",
+  "new": "                    n_in: l.n_out,\n                    n_out: l.n_in,"
+ },
+ {
+  "label": "the spike counters are sized by the input count",
+  "old": "                    counts: vec![0; l.n_out],",
+  "new": "                    counts: vec![0; l.n_in],"
+ },
+ {
+  "label": "the conversion seeds its stream one past the configured seed",
+  "old": "        Ok(Self { layers, cfg, lambdas, ledger: Ledger::default(), rng: Rng::new(seed), ticks: 0 })",
+  "new": "        Ok(Self { layers, cfg, lambdas, ledger: Ledger::default(), rng: Rng::new(seed + 1), ticks: 0 })"
+ },
+ {
+  "label": "the readout is scaled back by the input scale rather than the output scale",
+  "old": "        self.lambdas.last().copied().unwrap_or(1.0)",
+  "new": "        self.lambdas.first().copied().unwrap_or(1.0)"
+ },
+ {
+  "label": "a synapse is counted once for every two, as an undirected graph would",
+  "old": "    pub fn n_synapses(&self) -> u64 {\n        self.layers.iter().map(|l| (l.n_in * l.n_out) as u64).sum()\n    }\n\n    /// Spikes emitted by every layer since the last reset.",
+  "new": "    pub fn n_synapses(&self) -> u64 {\n        self.layers.iter().map(|l| (l.n_in * l.n_out / 2) as u64).sum()\n    }\n\n    /// Spikes emitted by every layer since the last reset."
+ },
+ {
+  "label": "the network's spike total is its busiest layer's rather than the sum",
+  "old": "        self.layers.iter().map(|l| l.counts.iter().sum::<u64>()).sum()",
+  "new": "        self.layers.iter().map(|l| l.counts.iter().sum::<u64>()).max().unwrap_or(0)"
+ },
+ {
+  "label": "the tick counter is reported one short",
+  "old": "    pub fn ticks_elapsed(&self) -> u64 {\n        self.ticks\n    }",
+  "new": "    pub fn ticks_elapsed(&self) -> u64 {\n        self.ticks.saturating_sub(1)\n    }"
+ },
+ {
+  "label": "the membranes are not cleared between runs",
+  "old": "            for n in &mut l.neurons {\n                n.reset();\n            }",
+  "new": "            for n in &mut l.neurons {\n                let _ = n;\n            }"
+ },
+ {
+  "label": "the spike counts survive a reset",
+  "old": "            l.counts.fill(0);",
+  "new": "            l.counts.fill(1);"
+ },
+ {
+  "label": "the ledger carries over from the previous run",
+  "old": "        self.ledger = Ledger::default();\n        self.ticks = 0;",
+  "new": "        self.ticks = 0;"
+ },
+ {
+  "label": "the tick counter is not rewound",
+  "old": "        self.ledger = Ledger::default();\n        self.ticks = 0;",
+  "new": "        self.ledger = Ledger::default();"
+ },
+ {
+  "label": "the reset rewinds the input stream to one past its seed",
+  "old": "        self.rng = Rng::new(seed);",
+  "new": "        self.rng = Rng::new(seed + 1);"
+ },
+ {
+  "label": "the scale count is checked against one more layer than there is",
+  "old": "        check_scales(&self.lambdas, self.layers.len())?;",
+  "new": "        check_scales(&self.lambdas, self.layers.len() + 1)?;"
+ },
+ {
+  "label": "a layer emptied of units is accepted",
+  "old": "            if l.n_in == 0 || l.n_out == 0 {",
+  "new": "            if l.n_in == 0 {"
+ },
+ {
+  "label": "the chain check skips the second layer",
+  "old": "            if li > 0 && l.n_in != self.layers[li - 1].n_out {",
+  "new": "            if li > 1 && l.n_in != self.layers[li - 1].n_out {"
+ },
+ {
+  "label": "the tick's bias count is checked against the inputs",
+  "old": "            if l.b.len() != l.n_out {\n                return Err(ConvertError::BiasCount { expected: l.n_out, got: l.b.len() });",
+  "new": "            if l.b.len() != l.n_in {\n                return Err(ConvertError::BiasCount { expected: l.n_out, got: l.b.len() });"
+ },
+ {
+  "label": "a state array longer than the layer is accepted",
+  "old": "                if got != l.n_out {",
+  "new": "                if got < l.n_out {"
+ },
+ {
+  "label": "the two state fields are named the wrong way round",
+  "old": "            for (field, got) in [(\"neurons\", l.neurons.len()), (\"counts\", l.counts.len())] {",
+  "new": "            for (field, got) in [(\"counts\", l.neurons.len()), (\"neurons\", l.counts.len())] {"
+ },
+ {
+  "label": "the structure check is skipped before a tick",
+  "old": "        self.check_structure()?;\n        let n_in = self.layers[0].n_in;",
+  "new": "        let n_in = self.layers[0].n_in;"
+ },
+ {
+  "label": "the input length is checked against the last layer's input count",
+  "old": "        let n_in = self.layers[0].n_in;",
+  "new": "        let n_in = self.layers[self.layers.len() - 1].n_in;"
+ },
+ {
+  "label": "a non-finite input reaches the drive",
+  "old": "        for (j, v) in x.iter().enumerate() {\n            if !v.is_finite() {\n                return Err(ConvertError::NonFiniteInput { index: j });\n            }\n        }\n\n        let gain = self.cfg.gain();",
+  "new": "        for (j, v) in x.iter().enumerate() {\n            if false {\n                return Err(ConvertError::NonFiniteInput { index: j });\n            }\n        }\n\n        let gain = self.cfg.gain();"
+ },
+ {
+  "label": "the input scale is the first layer's output scale",
+  "old": "        let scale_in = self.lambdas[0];",
+  "new": "        let scale_in = self.lambdas[1];"
+ },
+ {
+  "label": "the analog drive is multiplied by the input scale rather than divided",
+  "old": "            InputCoding::Analog => x.iter().map(|v| v / scale_in).collect(),",
+  "new": "            InputCoding::Analog => x.iter().map(|v| v * scale_in).collect(),"
+ },
+ {
+  "label": "the Bernoulli draw is inverted",
+  "old": "                    if self.rng.next_f64() < p { 1.0 } else { 0.0 }",
+  "new": "                    if self.rng.next_f64() > p { 1.0 } else { 0.0 }"
+ },
+ {
+  "label": "the Poisson drive is not normalised by the input scale",
+  "old": "                    let p = v / scale_in;",
+  "new": "                    let p = *v;"
+ },
+ {
+  "label": "the last layer is never recognised as last",
+  "old": "            let last = li + 1 == n_layers;",
+  "new": "            let last = li == n_layers;"
+ },
+ {
+  "label": "every layer is silenced under the membrane readout, not just the last",
+  "old": "            let silent = last && matches!(readout, Readout::MembranePotential);",
+  "new": "            let silent = matches!(readout, Readout::MembranePotential);"
+ },
+ {
+  "label": "every input is counted as a delivery whether or not it carried anything",
+  "old": "            let active = drive.iter().filter(|v| **v != 0.0).count() as u64;",
+  "new": "            let active = drive.len() as u64;"
+ },
+ {
+  "label": "a delivery is counted once per layer rather than once per unit",
+  "old": "            self.ledger.syn_ops += active * layer.n_out as u64;",
+  "new": "            self.ledger.syn_ops += active;"
+ },
+ {
+  "label": "the delivery counter is overwritten on every tick",
+  "old": "            self.ledger.syn_ops += active * layer.n_out as u64;",
+  "new": "            self.ledger.syn_ops = active * layer.n_out as u64;"
+ },
+ {
+  "label": "the fetch counter counts the layer's inputs rather than its deliveries",
+  "old": "            self.ledger.syn_fetches += active * layer.n_out as u64;",
+  "new": "            self.ledger.syn_fetches += active * layer.n_in as u64;"
+ },
+ {
+  "label": "the idle and driven update counters are swapped",
+  "old": "            if active == 0 {\n                self.ledger.neuron_updates_idle += layer.n_out as u64;\n            } else {\n                self.ledger.neuron_updates_driven += layer.n_out as u64;\n            }",
+  "new": "            if active == 0 {\n                self.ledger.neuron_updates_driven += layer.n_out as u64;\n            } else {\n                self.ledger.neuron_updates_idle += layer.n_out as u64;\n            }"
+ },
+ {
+  "label": "the driven updates are overwritten rather than accumulated",
+  "old": "                self.ledger.neuron_updates_driven += layer.n_out as u64;",
+  "new": "                self.ledger.neuron_updates_driven = layer.n_out as u64;"
+ },
+ {
+  "label": "the tick's weight rows overlap by one input each",
+  "old": "                let row = &layer.w[u * layer.n_in..(u + 1) * layer.n_in];",
+  "new": "                let row = &layer.w[u..u + layer.n_in];"
+ },
+ {
+  "label": "the bias is dropped from the tick's drive",
+  "old": "                let mut z = layer.b[u];",
+  "new": "                let mut z = 0.0;"
+ },
+ {
+  "label": "the tick's accumulator is overwritten by each input",
+  "old": "                        z += row[j] * drive[j];",
+  "new": "                        z = row[j] * drive[j];"
+ },
+ {
+  "label": "a silent input is multiplied through anyway",
+  "old": "                    if drive[j] != 0.0 {\n                        z += row[j] * drive[j];\n                    }",
+  "new": "                    if true {\n                        z += row[j] * drive[j];\n                    }",
+  "equivalent": "the skipped term is row[j] * drive[j] with drive[j] exactly 0.0. For a finite weight that product is +0.0 or -0.0, and adding either to z leaves z bit-identical except when z is -0.0, where -0.0 + 0.0 = +0.0 — and +0.0 and -0.0 produce the same current z * gain, the same membrane update v += i * dt / c and the same comparison against v_th, so the two forms give the same spike train, the same counts and the same ledger for every network this crate can build: DenseRelu::new refuses a non-finite weight and apply_scales scales by a finite, strictly positive ratio. The one state that would differ is an INFINITE weight, where inf * 0.0 is NaN and the mutant poisons the membrane while the original skips the term; that state is unreachable through any constructor and can only be written into the public SpikingLayer::w, which check_structure does not re-check for finiteness. The branch is an arithmetic no-op kept for speed, and the gap in check_structure is a separate finding."
+ },
+ {
+  "label": "the drive current drops the gain",
+  "old": "                let i = z * gain;",
+  "new": "                let i = z;"
+ },
+ {
+  "label": "the silenced layer spikes and the spiking layers accumulate",
+  "old": "                if silent {\n                    layer.neurons[u].accumulate(dt, i);",
+  "new": "                if !silent {\n                    layer.neurons[u].accumulate(dt, i);"
+ },
+ {
+  "label": "a spike is emitted but not counted",
+  "old": "                    out[u] = true;\n                    layer.counts[u] += 1;",
+  "new": "                    out[u] = true;"
+ },
+ {
+  "label": "a spike is counted but not forwarded to the next layer",
+  "old": "                    out[u] = true;\n                    layer.counts[u] += 1;",
+  "new": "                    layer.counts[u] += 1;"
+ },
+ {
+  "label": "the emitted-spike counter is overwritten each tick",
+  "old": "            self.ledger.spikes_out += fired;",
+  "new": "            self.ledger.spikes_out = fired;"
+ },
+ {
+  "label": "the tick counter does not advance",
+  "old": "            if last {\n                self.ticks += 1;\n                return Ok(out);\n            }",
+  "new": "            if last {\n                return Ok(out);\n            }"
+ },
+ {
+  "label": "the next layer is driven by the units that did NOT fire",
+  "old": "            drive = out.iter().map(|&b| if b { 1.0 } else { 0.0 }).collect();",
+  "new": "            drive = out.iter().map(|&b| if b { 0.0 } else { 1.0 }).collect();"
+ },
+ {
+  "label": "a run of zero ticks divides by zero rather than refusing",
+  "old": "        if ticks == 0 {\n            return Err(ConvertError::NoTicks);\n        }",
+  "new": "        if false {\n            return Err(ConvertError::NoTicks);\n        }"
+ },
+ {
+  "label": "a run does not reset the network first",
+  "old": "        self.reset_state();\n        for _ in 0..ticks {",
+  "new": "        for _ in 0..ticks {"
+ },
+ {
+  "label": "the decode is not billed as a host readout",
+  "old": "        self.ledger.reads += 1;",
+  "new": "        self.ledger.reads += 0;"
+ },
+ {
+  "label": "the readout is taken from the first layer",
+  "old": "        let last = &self.layers[self.layers.len() - 1];",
+  "new": "        let last = &self.layers[0];"
+ },
+ {
+  "label": "the spike-count readout is not divided by the ticks",
+  "old": "            Readout::SpikeCount => last.counts.iter().map(|&c| c as f64 / t * scale).collect(),",
+  "new": "            Readout::SpikeCount => last.counts.iter().map(|&c| c as f64 * scale).collect(),"
+ },
+ {
+  "label": "the spike-count readout is not scaled back into the source network's units",
+  "old": "            Readout::SpikeCount => last.counts.iter().map(|&c| c as f64 / t * scale).collect(),",
+  "new": "            Readout::SpikeCount => last.counts.iter().map(|&c| c as f64 / t).collect(),"
+ },
+ {
+  "label": "the membrane readout drops the threshold from its divisor",
+  "old": "                last.neurons.iter().map(|n| n.v / (self.cfg.v_th * t) * scale).collect()",
+  "new": "                last.neurons.iter().map(|n| n.v / t * scale).collect()"
+ },
+ {
+  "label": "the membrane readout is not averaged over the ticks",
+  "old": "                last.neurons.iter().map(|n| n.v / (self.cfg.v_th * t) * scale).collect()",
+  "new": "                last.neurons.iter().map(|n| n.v / self.cfg.v_th * scale).collect()"
+ },
+ {
+  "label": "the error is the last unit's rather than the sum over units",
+  "old": "            acc += (got[k] - want[k]).abs();\n        }\n        out.ticks.push(t);",
+  "new": "            acc = (got[k] - want[k]).abs();\n        }\n        out.ticks.push(t);"
+ },
+ {
+  "label": "the error is signed rather than absolute",
+  "old": "            acc += (got[k] - want[k]).abs();\n        }\n        out.ticks.push(t);",
+  "new": "            acc += got[k] - want[k];\n        }\n        out.ticks.push(t);"
+ },
+ {
+  "label": "the error curve is not divided by the output scale",
+  "old": "        out.mean_abs_error.push(acc / want.len() as f64 / scale);",
+  "new": "        out.mean_abs_error.push(acc / want.len() as f64);"
+ },
+ {
+  "label": "the error curve is a sum over units rather than a mean",
+  "old": "        out.mean_abs_error.push(acc / want.len() as f64 / scale);",
+  "new": "        out.mean_abs_error.push(acc / scale);"
+ },
+ {
+  "label": "a zero error is fitted rather than dropped",
+  "old": "            if *t > 0 && e.is_finite() && *e > 0.0 {",
+  "new": "            if *t > 0 && e.is_finite() && *e >= 0.0 {"
+ },
+ {
+  "label": "a fit through one point is allowed",
+  "old": "        if xs.len() < 2 {\n            return None;\n        }",
+  "new": "        if xs.len() < 1 {\n            return None;\n        }",
+  "equivalent": "the `den == 0.0` guard below still refuses both cases the length check exists for. With exactly one usable point mx = xs[0], so the single term (xs[0] - mx) * (xs[0] - mx) is 0.0 and den is 0.0. With no usable points the sums are 0.0 / 0.0 = NaN for mx and my, the loop body never runs, and den keeps its initial 0.0. Both return None, so the answer is unchanged for every curve; only the line that refuses it moves."
+ },
+ {
+  "label": "the fit regresses the ticks on the error instead of the error on the ticks",
+  "old": "                xs.push((*t as f64).ln());\n                ys.push(e.ln());",
+  "new": "                xs.push(e.ln());\n                ys.push((*t as f64).ln());"
+ },
+ {
+  "label": "the slope is normalised by the error's variance rather than the ticks'",
+  "old": "            den += (xs[k] - mx) * (xs[k] - mx);",
+  "new": "            den += (ys[k] - my) * (ys[k] - my);"
+ },
+ {
+  "label": "the fitted slope is inverted",
+  "old": "        Some(num / den)",
+  "new": "        Some(den / num)"
+ },
+ {
+  "label": "the means are taken over one fewer point than was fitted",
+  "old": "        let n = xs.len() as f64;",
+  "new": "        let n = (xs.len() - 1) as f64;"
+ },
+ {
+  "label": "a curve with no spread in its tick counts is fitted anyway",
+  "old": "        if den == 0.0 {\n            return None;\n        }",
+  "new": "        if false {\n            return None;\n        }"
+ },
+ {
+  "label": "the error at a tick count is read off the first measurement",
+  "old": "        self.ticks.iter().position(|&t| t == ticks).map(|k| self.mean_abs_error[k])",
+  "new": "        self.ticks.iter().position(|&t| t == ticks).map(|_| self.mean_abs_error[0])"
+ },
+ {
+  "label": "a tick count is matched by anything at or above it",
+  "old": "        self.ticks.iter().position(|&t| t == ticks).map(|k| self.mean_abs_error[k])",
+  "new": "        self.ticks.iter().position(|&t| t >= ticks).map(|k| self.mean_abs_error[k])"
+ }
+]

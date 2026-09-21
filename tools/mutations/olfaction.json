@@ -1,0 +1,707 @@
+[
+ {
+  "label": "the cosine accepts two vectors of different lengths",
+  "old": "pub fn cosine_similarity(a: &[f64], b: &[f64]) -> Option<f64> {\n    if a.len() != b.len() || a.is_empty() {",
+  "new": "pub fn cosine_similarity(a: &[f64], b: &[f64]) -> Option<f64> {\n    if a.is_empty() {"
+ },
+ {
+  "label": "the cosine's empty-vector guard is dropped",
+  "old": "pub fn cosine_similarity(a: &[f64], b: &[f64]) -> Option<f64> {\n    if a.len() != b.len() || a.is_empty() {",
+  "new": "pub fn cosine_similarity(a: &[f64], b: &[f64]) -> Option<f64> {\n    if a.len() != b.len() {",
+  "equivalent": "the guard is unreachable. With the lengths equal and both vectors empty the accumulation loop runs zero times, so na stays 0.0 and the `na <= 0.0 || nb <= 0.0` test four lines later returns None anyway; with the lengths unequal the first clause still returns None. Every input therefore gets the same answer it got before, and only the line the answer came from changes."
+ },
+ {
+  "label": "the cosine's non-finite guard only inspects the first vector",
+  "old": "        if !a[k].is_finite() || !b[k].is_finite() {\n            return None;\n        }\n        dot += a[k] * b[k];\n        na += a[k] * a[k];\n        nb += b[k] * b[k];\n    }\n    if na <= 0.0 || nb <= 0.0 {",
+  "new": "        if !a[k].is_finite() {\n            return None;\n        }\n        dot += a[k] * b[k];\n        na += a[k] * a[k];\n        nb += b[k] * b[k];\n    }\n    if na <= 0.0 || nb <= 0.0 {"
+ },
+ {
+  "label": "the zero-vector refusal only looks at the first vector",
+  "old": "    if na <= 0.0 || nb <= 0.0 {",
+  "new": "    if na <= 0.0 {"
+ },
+ {
+  "label": "the cosine divides by one norm only",
+  "old": "    Some(dot / (na.sqrt() * nb.sqrt()))",
+  "new": "    Some(dot / na.sqrt())"
+ },
+ {
+  "label": "tanimoto accepts a non-finite channel",
+  "old": "        if !a[k].is_finite() || !b[k].is_finite() {\n            return None;\n        }\n        dot += a[k] * b[k];\n        na += a[k] * a[k];\n        nb += b[k] * b[k];\n    }\n    let den = na + nb - dot;",
+  "new": "        if false {\n            return None;\n        }\n        dot += a[k] * b[k];\n        na += a[k] * a[k];\n        nb += b[k] * b[k];\n    }\n    let den = na + nb - dot;"
+ },
+ {
+  "label": "the tanimoto denominator adds the intersection instead of removing it",
+  "old": "    let den = na + nb - dot;",
+  "new": "    let den = na + nb + dot;"
+ },
+ {
+  "label": "an odour with no channels is no longer refused",
+  "old": "        if channels.is_empty() {\n            return Err(OlfactionError::EmptyOdour);",
+  "new": "        if false {\n            return Err(OlfactionError::EmptyOdour);"
+ },
+ {
+  "label": "an infinite channel passes the finiteness check",
+  "old": "            if !c.is_finite() {\n                return Err(OlfactionError::NotFinite { index });",
+  "new": "            if c.is_nan() {\n                return Err(OlfactionError::NotFinite { index });"
+ },
+ {
+  "label": "only channels below minus one count as negative",
+  "old": "            if c < 0.0 {\n                return Err(OlfactionError::Negative { index });",
+  "new": "            if c < -1.0 {\n                return Err(OlfactionError::Negative { index });"
+ },
+ {
+  "label": "the odour's total is the last channel rather than the sum",
+  "old": "            total += c;",
+  "new": "            total = c;"
+ },
+ {
+  "label": "an all-zero odour is accepted as a direction",
+  "old": "        if total <= 0.0 {\n            return Err(OlfactionError::ZeroOdour);",
+  "new": "        if total < 0.0 {\n            return Err(OlfactionError::ZeroOdour);"
+ },
+ {
+  "label": "an occlusion against a background of a different width is not refused",
+  "old": "        if target.len() != background.len() {\n            return Err(OlfactionError::Width {",
+  "new": "        if false {\n            return Err(OlfactionError::Width {"
+ },
+ {
+  "label": "the width refusal reports the two widths the wrong way round",
+  "old": "            return Err(OlfactionError::Width {\n                expected: target.len(),\n                found: background.len(),\n            });",
+  "new": "            return Err(OlfactionError::Width {\n                expected: background.len(),\n                found: target.len(),\n            });"
+ },
+ {
+  "label": "a NaN occlusion fraction slips past the range check",
+  "old": "                if !(fraction >= 0.0) || fraction > 1.0 {",
+  "new": "                if fraction < 0.0 || fraction > 1.0 {"
+ },
+ {
+  "label": "a fraction above one is accepted and silently clipped",
+  "old": "                if !(fraction >= 0.0) || fraction > 1.0 {",
+  "new": "                if !(fraction >= 0.0) || fraction > 2.0 {"
+ },
+ {
+  "label": "the number of occluded channels is truncated rather than rounded",
+  "old": "                let k = (fraction * n as f64).round() as usize;",
+  "new": "                let k = (fraction * n as f64).floor() as usize;"
+ },
+ {
+  "label": "the occlusion always hits the first k channels",
+  "old": "                    idx.swap(i, j);",
+  "new": "                    idx.swap(j, j);"
+ },
+ {
+  "label": "dropout writes the background and the interferent writes zero",
+  "old": "                    out[i] = match *self {\n                        Self::Interferent { .. } => background.channels[i],\n                        _ => 0.0,\n                    };",
+  "new": "                    out[i] = match *self {\n                        Self::Interferent { .. } => 0.0,\n                        _ => background.channels[i],\n                    };"
+ },
+ {
+  "label": "the noise is not rectified",
+  "old": "                    *v = (*v + amplitude * (2.0 * rng.next_f64() - 1.0)).max(0.0);",
+  "new": "                    *v = *v + amplitude * (2.0 * rng.next_f64() - 1.0);"
+ },
+ {
+  "label": "a zero-channel generator is accepted",
+  "old": "        if n == 0 {\n            return Err(OlfactionError::Parameter {\n                field: \"n\",",
+  "new": "        if false {\n            return Err(OlfactionError::Parameter {\n                field: \"n\","
+ },
+ {
+  "label": "a sparsity of zero is accepted",
+  "old": "        if !(sparsity > 0.0) || sparsity > 1.0 {",
+  "new": "        if sparsity < 0.0 || sparsity > 1.0 {"
+ },
+ {
+  "label": "the sparsity is the fraction of channels left silent",
+  "old": "                if self.rng.next_f64() < self.sparsity {",
+  "new": "                if self.rng.next_f64() < 1.0 - self.sparsity {"
+ },
+ {
+  "label": "an active channel loses its floor of 0.2",
+  "old": "                    *v = 0.2 + 0.8 * self.rng.next_f64();",
+  "new": "                    *v = self.rng.next_f64();"
+ },
+ {
+  "label": "the generator gives up after a single draw",
+  "old": "    pub const MAX_TRIES: usize = 4096;",
+  "new": "    pub const MAX_TRIES: usize = 1;"
+ },
+ {
+  "label": "an overlap target above one is accepted",
+  "old": "        if !(target >= 0.0) || target > 1.0 {",
+  "new": "        if !(target >= 0.0) || target > 2.0 {"
+ },
+ {
+  "label": "the pair search keeps the draws whose floor is above the target",
+  "old": "            if floor <= target {",
+  "new": "            if floor >= target {"
+ },
+ {
+  "label": "the mixture interpolates away from the pattern it is scored against",
+  "old": "                .map(|i| (1.0 - lam) * y.channels()[i] + lam * x.channels()[i])",
+  "new": "                .map(|i| (1.0 - lam) * x.channels()[i] + lam * y.channels()[i])"
+ },
+ {
+  "label": "the bisection keeps the half of the bracket without the answer",
+  "old": "            if c < target { lo = mid; } else { hi = mid; }",
+  "new": "            if c > target { lo = mid; } else { hi = mid; }"
+ },
+ {
+  "label": "the mixture is taken at the low end of the bracket rather than at its midpoint",
+  "old": "        let best = mix(0.5 * (lo + hi));",
+  "new": "        let best = mix(lo);"
+ },
+ {
+  "label": "the achieved overlap is the requested one rather than the measured one",
+  "old": "        Ok((x, Odour::new(best)?, got))",
+  "new": "        Ok((x, Odour::new(best)?, target))"
+ },
+ {
+  "label": "the achieved overlap is measured against the wrong member of the pair",
+  "old": "        let got = cosine_similarity(x.channels(), &best).ok_or(OlfactionError::ZeroOdour)?;",
+  "new": "        let got = cosine_similarity(y.channels(), &best).ok_or(OlfactionError::ZeroOdour)?;"
+ },
+ {
+  "label": "the one-cell case takes the top of the band rather than the bottom",
+  "old": "        1 => vec![lo],",
+  "new": "        1 => vec![hi],"
+ },
+ {
+  "label": "the threshold spread divides by the cell count rather than by the gaps between cells",
+  "old": "            .map(|j| lo + (hi - lo) * (j as f64) / ((n - 1) as f64))",
+  "new": "            .map(|j| lo + (hi - lo) * (j as f64) / (n as f64))"
+ },
+ {
+  "label": "the two cell models are swapped",
+  "old": "        let mitral_cell = Lif { tau_m: 4e-3, t_ref: 0.5e-3, ..Lif::default() };\n        let granule_cell = Lif { tau_m: 8e-3, t_ref: 1e-3, ..Lif::default() };",
+  "new": "        let mitral_cell = Lif { tau_m: 8e-3, t_ref: 1e-3, ..Lif::default() };\n        let granule_cell = Lif { tau_m: 4e-3, t_ref: 0.5e-3, ..Lif::default() };"
+ },
+ {
+  "label": "the mitral refractory period is transcribed as 0.25 ms",
+  "old": "        let mitral_cell = Lif { tau_m: 4e-3, t_ref: 0.5e-3, ..Lif::default() };",
+  "new": "        let mitral_cell = Lif { tau_m: 4e-3, t_ref: 0.25e-3, ..Lif::default() };"
+ },
+ {
+  "label": "the granule refractory period is transcribed as 2 ms",
+  "old": "        let granule_cell = Lif { tau_m: 8e-3, t_ref: 1e-3, ..Lif::default() };",
+  "new": "        let granule_cell = Lif { tau_m: 8e-3, t_ref: 2e-3, ..Lif::default() };"
+ },
+ {
+  "label": "the gamma band is transcribed as 400 Hz",
+  "old": "            gamma_hz: 40.0,\n            mitral_duty: 0.5,",
+  "new": "            gamma_hz: 400.0,\n            mitral_duty: 0.5,"
+ },
+ {
+  "label": "the ampere-per-activation gain is a factor of ten low",
+  "old": "            i_gain: 6.0e-9,",
+  "new": "            i_gain: 0.6e-9,"
+ },
+ {
+  "label": "the granule gain is a factor of ten low",
+  "old": "            granule_gain: 12.0e-9,",
+  "new": "            granule_gain: 1.2e-9,"
+ },
+ {
+  "label": "the broad thresholds are transcribed in the wrong order",
+  "old": "            broad_theta_lo: 0.02,\n            broad_theta_hi: 0.10,",
+  "new": "            broad_theta_lo: 0.10,\n            broad_theta_hi: 0.02,"
+ },
+ {
+  "label": "the ensemble threshold band is a factor of ten low",
+  "old": "            ensemble_theta_lo: 0.30,\n            ensemble_theta_hi: 0.75,",
+  "new": "            ensemble_theta_lo: 0.030,\n            ensemble_theta_hi: 0.075,"
+ },
+ {
+  "label": "the learning presentation is one gamma cycle long",
+  "old": "            learn_cycles: 4,",
+  "new": "            learn_cycles: 1,"
+ },
+ {
+  "label": "the recall threshold is dropped to 0.5",
+  "old": "            recall_threshold: 0.85,\n        }",
+  "new": "            recall_threshold: 0.5,\n        }"
+ },
+ {
+  "label": "a NaN time step passes the step check",
+  "old": "        if !(p.dt > 0.0) || !p.dt.is_finite() {",
+  "new": "        if p.dt <= 0.0 {"
+ },
+ {
+  "label": "the receptor gain is left out of the finiteness sweep",
+  "old": "            (\"i_bias\", p.i_bias),\n            (\"i_gain\", p.i_gain),\n",
+  "new": "            (\"i_bias\", p.i_bias),\n"
+ },
+ {
+  "label": "the broad threshold band may be crossed",
+  "old": "        if p.broad_theta_hi < p.broad_theta_lo {",
+  "new": "        if p.broad_theta_hi > p.broad_theta_lo {"
+ },
+ {
+  "label": "a mitral cell with no refractory period is accepted",
+  "old": "        if !(p.mitral_cell.t_ref > 0.0) {",
+  "new": "        if p.mitral_cell.t_ref < 0.0 {"
+ },
+ {
+  "label": "a mitral cell whose threshold is below rest is accepted",
+  "old": "            || !p.mitral_cell.r_m.is_finite()\n            || !(p.mitral_cell.v_th > p.mitral_cell.v_rest)\n        {",
+  "new": "            || !p.mitral_cell.r_m.is_finite()\n        {"
+ },
+ {
+  "label": "a granule cell with no rheobase is accepted",
+  "old": "        if !(p.granule_cell.r_m > 0.0) || !(p.granule_cell.v_th > p.granule_cell.v_rest) {",
+  "new": "        if !(p.granule_cell.r_m > 0.0) {"
+ },
+ {
+  "label": "a zero learning-cycle count is accepted",
+  "old": "        if p.learn_cycles == 0 || p.recall_cycles == 0 {",
+  "new": "        if p.recall_cycles == 0 {"
+ },
+ {
+  "label": "a zero recall-cycle count is accepted",
+  "old": "        if p.learn_cycles == 0 || p.recall_cycles == 0 {",
+  "new": "        if p.learn_cycles == 0 {"
+ },
+ {
+  "label": "the gamma period is one time step longer than the frequency asks for",
+  "old": "        let ticks = (1.0 / (p.gamma_hz * p.dt)).round();",
+  "new": "        let ticks = (1.0 / (p.gamma_hz * p.dt)).round() + 1.0;"
+ },
+ {
+  "label": "the cycle length is the frequency-time product rather than its reciprocal",
+  "old": "        let ticks = (1.0 / (p.gamma_hz * p.dt)).round();",
+  "new": "        let ticks = (p.gamma_hz * p.dt).round();"
+ },
+ {
+  "label": "a gamma period of fewer than four time steps is accepted",
+  "old": "        if !(ticks >= 4.0) || ticks > 1e7 {",
+  "new": "        if ticks > 1e7 {"
+ },
+ {
+  "label": "the duty-cycle range check is dropped",
+  "old": "        if !(p.mitral_duty > 0.0) || p.mitral_duty >= 1.0 {",
+  "new": "        if false {"
+ },
+ {
+  "label": "the mitral phase takes the granule fraction of the cycle",
+  "old": "        let mitral_ticks = (ticks * p.mitral_duty).round() as usize;",
+  "new": "        let mitral_ticks = (ticks * (1.0 - p.mitral_duty)).round() as usize;"
+ },
+ {
+  "label": "the broad pool is given the ensemble threshold band",
+  "old": "        let broad_thresholds = spread(p.broad_theta_lo, p.broad_theta_hi, p.broad_granule);",
+  "new": "        let broad_thresholds = spread(p.ensemble_theta_lo, p.ensemble_theta_hi, p.broad_granule);"
+ },
+ {
+  "label": "the mitral ceiling is taken over the whole cycle rather than over the mitral phase",
+  "old": "        let window = self.mitral_ticks as f64 * self.params.dt;",
+  "new": "        let window = self.ticks_per_cycle as f64 * self.params.dt;"
+ },
+ {
+  "label": "the mitral ceiling multiplies by the refractory period instead of dividing",
+  "old": "        (window / self.params.mitral_cell.t_ref).floor().max(1.0)",
+  "new": "        (window * self.params.mitral_cell.t_ref).floor().max(1.0)"
+ },
+ {
+  "label": "the granule ceiling is taken over the whole cycle rather than over the granule phase",
+  "old": "        let ticks = self.ticks_per_cycle - self.mitral_ticks;\n        let window = ticks as f64 * self.params.dt;",
+  "new": "        let ticks = self.ticks_per_cycle;\n        let window = ticks as f64 * self.params.dt;"
+ },
+ {
+  "label": "a granule cell with no refractory period divides by zero",
+  "old": "        if self.params.granule_cell.t_ref > 0.0 {",
+  "new": "        if self.params.granule_cell.t_ref >= 0.0 {"
+ },
+ {
+  "label": "inhibition adds to the mitral drive instead of subtracting from it",
+  "old": "        self.params.i_bias + self.params.i_gain * activation - inhibition",
+  "new": "        self.params.i_bias + self.params.i_gain * activation + inhibition"
+ },
+ {
+  "label": "the mitral drive ignores the inhibition entirely",
+  "old": "        self.params.i_bias + self.params.i_gain * activation - inhibition",
+  "new": "        self.params.i_bias + self.params.i_gain * activation"
+ },
+ {
+  "label": "the mitral drive has no bias current",
+  "old": "        self.params.i_bias + self.params.i_gain * activation - inhibition",
+  "new": "        self.params.i_gain * activation - inhibition"
+ },
+ {
+  "label": "the mitral cells are not reset at the start of each gamma cycle",
+  "old": "            for cell in &mut mitral {\n                cell.reset();\n            }\n            delivered.copy_from_slice(&inh);",
+  "new": "            delivered.copy_from_slice(&inh);"
+ },
+ {
+  "label": "the spike counts accumulate across gamma cycles",
+  "old": "            delivered.copy_from_slice(&inh);\n            counts.fill(0.0);",
+  "new": "            delivered.copy_from_slice(&inh);"
+ },
+ {
+  "label": "every mitral cell integrates the first glomerulus",
+  "old": "                    let i = self.mitral_current(odour.channels[m], inh[m]);",
+  "new": "                    let i = self.mitral_current(odour.channels[0], inh[m]);"
+ },
+ {
+  "label": "the inhibition computed by the loop never reaches a mitral cell",
+  "old": "                    let i = self.mitral_current(odour.channels[m], inh[m]);",
+  "new": "                    let i = self.mitral_current(odour.channels[m], 0.0);"
+ },
+ {
+  "label": "every mitral update is charged as idle",
+  "old": "                    if i != 0.0 {\n                        self.ledger.neuron_updates_driven += 1;\n                    } else {\n                        self.ledger.neuron_updates_idle += 1;\n                    }",
+  "new": "                    if false {\n                        self.ledger.neuron_updates_driven += 1;\n                    } else {\n                        self.ledger.neuron_updates_idle += 1;\n                    }"
+ },
+ {
+  "label": "a mitral spike count is set rather than accumulated",
+  "old": "                        counts[m] += 1.0;",
+  "new": "                        counts[m] = 1.0;"
+ },
+ {
+  "label": "the mitral spike addresses are shifted into the granule block",
+  "old": "                        train.push(Spike { t, source: m as u32 });",
+  "new": "                        train.push(Spike { t, source: m as u32 + 1 });"
+ },
+ {
+  "label": "the granule block starts one address inside the mitral block",
+  "old": "        let granule_base = n as u32;",
+  "new": "        let granule_base = n as u32 - 1;"
+ },
+ {
+  "label": "the open-loop pattern is recorded from the last cycle rather than the first",
+  "old": "            if cycle == 0 {\n                open_loop.copy_from_slice(&counts);",
+  "new": "            if cycle == cycles - 1 {\n                open_loop.copy_from_slice(&counts);"
+ },
+ {
+  "label": "the mitral pattern's norm is not square-rooted",
+  "old": "            let norm = counts.iter().map(|x| x * x).sum::<f64>().sqrt();",
+  "new": "            let norm = counts.iter().map(|x| x * x).sum::<f64>();"
+ },
+ {
+  "label": "the granule count forgets the cells per ensemble",
+  "old": "            let n_granule = (n_broad + n_ens * per) as u64;",
+  "new": "            let n_granule = (n_broad + n_ens) as u64;"
+ },
+ {
+  "label": "the mitral-to-granule synaptic operations are halved",
+  "old": "            self.ledger.syn_ops += (total as u64) * n_granule;",
+  "new": "            self.ledger.syn_ops += (total as u64) * n_granule / 2;"
+ },
+ {
+  "label": "the broad pool's drive is normalised by the mitral norm, so it measures shape",
+  "old": "            let broad_drive = total / (n as f64 * ceiling);",
+  "new": "            let broad_drive = total / (norm * ceiling);"
+ },
+ {
+  "label": "the ensemble drive is normalised by the total rate rather than by the norm",
+  "old": "                    (0..n).map(|m| e.template[m] * counts[m]).sum::<f64>() / norm",
+  "new": "                    (0..n).map(|m| e.template[m] * counts[m]).sum::<f64>() / total"
+ },
+ {
+  "label": "the ensemble's excitatory limb reads the inhibitory mask",
+  "old": "                    (0..n).map(|m| e.template[m] * counts[m]).sum::<f64>() / norm",
+  "new": "                    (0..n).map(|m| e.mask[m] * counts[m]).sum::<f64>() / norm"
+ },
+ {
+  "label": "the broad pool is not biased to its own rheobase",
+  "old": "                    let over = broad_drive - self.broad_thresholds[j];\n                    let i = rheobase + self.params.granule_gain * over;",
+  "new": "                    let over = broad_drive - self.broad_thresholds[j];\n                    let i = self.params.granule_gain * over;"
+ },
+ {
+  "label": "a broad spike count is set rather than accumulated",
+  "old": "                        broad_spikes[j] += 1.0;",
+  "new": "                        broad_spikes[j] = 1.0;"
+ },
+ {
+  "label": "the broad pool's spike addresses overlap the ensemble block",
+  "old": "                        train.push(Spike { t, source: granule_base + j as u32 });",
+  "new": "                        train.push(Spike { t, source: granule_base + j as u32 + 1 });"
+ },
+ {
+  "label": "the ensemble cell index transposes its two blocks",
+  "old": "                        let idx = k * per + j;",
+  "new": "                        let idx = k + j * per;"
+ },
+ {
+  "label": "every ensemble cell is given the lowest threshold in the band",
+  "old": "                        let over = drive[k] - self.ensembles[k].thresholds[j];",
+  "new": "                        let over = drive[k] - self.ensembles[k].thresholds[0];"
+ },
+ {
+  "label": "the ensemble cells have no threshold at all",
+  "old": "                        let over = drive[k] - self.ensembles[k].thresholds[j];",
+  "new": "                        let over = drive[k];"
+ },
+ {
+  "label": "the ensemble spike block overlaps the broad pool's addresses",
+  "old": "                                source: granule_base + (n_broad + idx) as u32,",
+  "new": "                                source: granule_base + idx as u32,"
+ },
+ {
+  "label": "the granule-to-mitral direction of the loop is not counted at all",
+  "old": "            self.ledger.syn_ops += (granule_total as u64) * n as u64;\n            self.ledger.syn_fetches += (granule_total as u64) * n as u64;",
+  "new": "            let _ = granule_total;"
+ },
+ {
+  "label": "a circuit with no broad pool delivers full broad inhibition",
+  "old": "            let a_broad = if n_broad == 0 {\n                0.0",
+  "new": "            let a_broad = if n_broad == 0 {\n                1.0"
+ },
+ {
+  "label": "the broad activity is not averaged over the pool",
+  "old": "                broad_spikes.iter().sum::<f64>() / (n_broad as f64 * granule_ceiling)",
+  "new": "                broad_spikes.iter().sum::<f64>() / granule_ceiling"
+ },
+ {
+  "label": "the broad activity's normaliser is one spike too generous",
+  "old": "                broad_spikes.iter().sum::<f64>() / (n_broad as f64 * granule_ceiling)",
+  "new": "                broad_spikes.iter().sum::<f64>() / (n_broad as f64 * (granule_ceiling + 1.0))"
+ },
+ {
+  "label": "every ensemble's activity is read off the first ensemble's cells",
+  "old": "                act[k] = (0..per).map(|j| ens_spikes[k * per + j]).sum::<f64>()",
+  "new": "                act[k] = (0..per).map(|j| ens_spikes[j]).sum::<f64>()"
+ },
+ {
+  "label": "the ensemble activity is normalised by twice the granule ceiling",
+  "old": "                    / (per as f64 * granule_ceiling);",
+  "new": "                    / (per as f64 * granule_ceiling * 2.0);",
+  "equivalent": "act[k] is used in exactly two places: the test `act_total > 0.0`, and the weighted average `sum_k act[k]*mask[k][m] / sum_k act[k]`. Halving every act[k] leaves the first unchanged (a positive sum stays positive) and leaves the second bit-for-bit identical, because scaling by a power of two is exact in binary floating point: each act[k]/2 is exact, each product (act[k]/2)*mask = (act[k]*mask)/2 is exact, and a sum of exactly-halved terms is exactly half the sum, so numerator and denominator are both halved by the same exact factor and the quotient is the same f64. Nothing else reads act, and no ledger count or spike depends on it."
+ },
+ {
+  "label": "a division by zero is allowed when no ensemble fires",
+  "old": "                let specific = if act_total > 0.0 {",
+  "new": "                let specific = if act_total >= 0.0 {"
+ },
+ {
+  "label": "the stored masks are averaged unweighted rather than by activity",
+  "old": "                    (0..n_ens).map(|k| act[k] * self.ensembles[k].mask[m]).sum::<f64>() / act_total",
+  "new": "                    (0..n_ens).map(|k| act[k] * self.ensembles[k].mask[m]).sum::<f64>() / n_ens as f64"
+ },
+ {
+  "label": "every probe delivers the first stored odour's mask",
+  "old": "                    (0..n_ens).map(|k| act[k] * self.ensembles[k].mask[m]).sum::<f64>() / act_total",
+  "new": "                    (0..n_ens).map(|k| act[k] * self.ensembles[0].mask[m]).sum::<f64>() / act_total"
+ },
+ {
+  "label": "the ensembles are paired with their masks in reverse order",
+  "old": "                    (0..n_ens).map(|k| act[k] * self.ensembles[k].mask[m]).sum::<f64>() / act_total",
+  "new": "                    (0..n_ens).map(|k| act[k] * self.ensembles[n_ens - 1 - k].mask[m]).sum::<f64>() / act_total"
+ },
+ {
+  "label": "the inhibition accumulates across cycles instead of being replaced",
+  "old": "                inh[m] = self.params.i_broad * a_broad + self.params.i_specific * specific;",
+  "new": "                inh[m] += self.params.i_broad * a_broad + self.params.i_specific * specific;"
+ },
+ {
+  "label": "the broad limb delivers nothing",
+  "old": "                inh[m] = self.params.i_broad * a_broad + self.params.i_specific * specific;",
+  "new": "                inh[m] = self.params.i_specific * specific;"
+ },
+ {
+  "label": "the odour-specific limb delivers nothing",
+  "old": "                inh[m] = self.params.i_broad * a_broad + self.params.i_specific * specific;",
+  "new": "                inh[m] = self.params.i_broad * a_broad;"
+ },
+ {
+  "label": "the reported inhibition is the one computed after the final cycle",
+  "old": "            inhibition: delivered,",
+  "new": "            inhibition: inh,"
+ },
+ {
+  "label": "the settled and open-loop patterns are reported the wrong way round",
+  "old": "            mitral: counts,\n            mitral_open_loop: open_loop,",
+  "new": "            mitral: open_loop,\n            mitral_open_loop: counts,"
+ },
+ {
+  "label": "the circuit takes one odour more than its limit",
+  "old": "        if self.ensembles.len() >= self.params.max_odours {",
+  "new": "        if self.ensembles.len() > self.params.max_odours {"
+ },
+ {
+  "label": "learning runs for the recall cycle count",
+  "old": "        let cycles = self.params.learn_cycles;\n        let shown = self.present(odour, cycles)?;",
+  "new": "        let cycles = self.params.recall_cycles;\n        let shown = self.present(odour, cycles)?;"
+ },
+ {
+  "label": "the template's norm is the sum of squares, not its square root",
+  "old": "        let norm = shown.mitral.iter().map(|x| x * x).sum::<f64>().sqrt();",
+  "new": "        let norm = shown.mitral.iter().map(|x| x * x).sum::<f64>();"
+ },
+ {
+  "label": "the template is the open-loop pattern rather than the settled one",
+  "old": "        let template: Vec<f64> = shown.mitral.iter().map(|x| x / norm).collect();",
+  "new": "        let template: Vec<f64> = shown.mitral_open_loop.iter().map(|x| x / norm).collect();"
+ },
+ {
+  "label": "the mask is normalised by the quietest mitral cell",
+  "old": "        let peak = shown.mitral.iter().copied().fold(0.0f64, f64::max);",
+  "new": "        let peak = shown.mitral.iter().copied().fold(0.0f64, f64::min);"
+ },
+ {
+  "label": "the inhibitory limb stores the template instead of its complement",
+  "old": "        let mask: Vec<f64> = shown.mitral.iter().map(|x| 1.0 - x / peak).collect();",
+  "new": "        let mask: Vec<f64> = shown.mitral.iter().map(|x| x / peak).collect();"
+ },
+ {
+  "label": "the ensemble is given the broad pool's threshold band",
+  "old": "        let thresholds = spread(\n            self.params.ensemble_theta_lo,\n            self.params.ensemble_theta_hi,",
+  "new": "        let thresholds = spread(\n            self.params.broad_theta_lo,\n            self.params.broad_theta_hi,"
+ },
+ {
+  "label": "learning returns the count of stored odours rather than the new index",
+  "old": "        Ok(self.ensembles.len() - 1)",
+  "new": "        Ok(self.ensembles.len())"
+ },
+ {
+  "label": "an untrained circuit scores against an empty template list",
+  "old": "        if self.ensembles.is_empty() {\n            return Err(OlfactionError::Untrained);",
+  "new": "        if false {\n            return Err(OlfactionError::Untrained);"
+ },
+ {
+  "label": "recall scores the settled pattern against the inhibitory mask",
+  "old": "            scores.push(cosine_similarity(&shown.mitral, &e.template).unwrap_or(0.0));",
+  "new": "            scores.push(cosine_similarity(&shown.mitral, &e.mask).unwrap_or(0.0));"
+ },
+ {
+  "label": "the best match is the worst-scoring template",
+  "old": "            if v > scores[best] {",
+  "new": "            if v < scores[best] {"
+ },
+ {
+  "label": "the runner-up includes the winner",
+  "old": "            .filter(|(k, _)| *k != best)",
+  "new": "            .filter(|(k, _)| *k != usize::MAX)"
+ },
+ {
+  "label": "the runner-up is the worst other template rather than the best",
+  "old": "            .filter(|(k, _)| *k != best)\n            .map(|(_, v)| *v)\n            .fold(0.0f64, f64::max);",
+  "new": "            .filter(|(k, _)| *k != best)\n            .map(|(_, v)| *v)\n            .fold(0.0f64, f64::min);"
+ },
+ {
+  "label": "the margin is measured from the runner-up down to the winner",
+  "old": "            margin: score - runner_up,",
+  "new": "            margin: runner_up - score,"
+ },
+ {
+  "label": "a score exactly at the recall threshold is rejected",
+  "old": "            identified: (score >= self.params.recall_threshold).then_some(best),",
+  "new": "            identified: (score > self.params.recall_threshold).then_some(best),"
+ },
+ {
+  "label": "the acceptance rate counts the refusals",
+  "old": "            if self.recall(o)?.identified.is_some() {",
+  "new": "            if self.recall(o)?.identified.is_none() {"
+ },
+ {
+  "label": "the acceptance rate divides by one more than the odours it saw",
+  "old": "        Ok(hits as f64 / odours.len() as f64)",
+  "new": "        Ok(hits as f64 / (odours.len() + 1) as f64)"
+ },
+ {
+  "label": "a probe point of zero is accepted",
+  "old": "    if probe_at.is_empty() || probe_at[0] == 0 {",
+  "new": "    if probe_at.is_empty() {"
+ },
+ {
+  "label": "the probe schedule must be strictly decreasing",
+  "old": "    if probe_at.windows(2).any(|w| w[1] <= w[0]) {",
+  "new": "    if probe_at.windows(2).any(|w| w[1] >= w[0]) {"
+ },
+ {
+  "label": "the capacity limit is checked against the first probe point",
+  "old": "    let top = probe_at[probe_at.len() - 1];",
+  "new": "    let top = probe_at[0];"
+ },
+ {
+  "label": "the first odour is never learned",
+  "old": "    for k in 1..=top {",
+  "new": "    for k in 0..top {"
+ },
+ {
+  "label": "the interfering backgrounds are drawn from the generator that supplies the odours to learn",
+  "old": "            let interferent = background.next_odour()?;",
+  "new": "            let interferent = source.next_odour()?;"
+ },
+ {
+  "label": "the capacity probe is the clean odour and not the occluded one",
+  "old": "            let r = epl.recall(&probe)?;",
+  "new": "            let r = epl.recall(s)?;"
+ },
+ {
+  "label": "capacity accuracy counts the misses",
+  "old": "            if mine >= other {\n                hits += 1;\n            }",
+  "new": "            if mine <= other {\n                hits += 1;\n            }"
+ },
+ {
+  "label": "the mean margin is the sum of the two means rather than their difference",
+  "old": "            mean_margin: (self_sum - other_sum) / n,",
+  "new": "            mean_margin: (self_sum + other_sum) / n,"
+ },
+ {
+  "label": "the analysis window is capped at 256 ticks",
+  "old": "pub const MAX_PERIOD_TICKS: u64 = 1 << 18;",
+  "new": "pub const MAX_PERIOD_TICKS: u64 = 1 << 8;"
+ },
+ {
+  "label": "the shortest analysable window is two ticks rather than four",
+  "old": "    if !(4..=MAX_PERIOD_TICKS).contains(&ticks) || !(dt > 0.0) || !dt.is_finite() {",
+  "new": "    if !(2..=MAX_PERIOD_TICKS).contains(&ticks) || !(dt > 0.0) || !dt.is_finite() {",
+  "equivalent": "the two ticks the mutation lets through are answered identically a few lines later. For ticks = 2 or 3, max_lag = n / 2 is 1, and the `if max_lag < 2 { return None; }` guard returns None before any lag is scored. So the function returns None for exactly the same inputs; only the line the None comes from moves. The guard earns its place as documentation of the bound, not as the thing that enforces it at 2 and 3."
+ },
+ {
+  "label": "a zero or negative time step is accepted",
+  "old": "    if !(4..=MAX_PERIOD_TICKS).contains(&ticks) || !(dt > 0.0) || !dt.is_finite() {",
+  "new": "    if !(4..=MAX_PERIOD_TICKS).contains(&ticks) || !dt.is_finite() {"
+ },
+ {
+  "label": "a spike past the end of the window is written outside the histogram",
+  "old": "        if s.source < source_max && s.t < ticks {",
+  "new": "        if s.source < source_max {"
+ },
+ {
+  "label": "the histogram is binary rather than a count",
+  "old": "            h[s.t as usize] += 1.0;",
+  "new": "            h[s.t as usize] = 1.0;"
+ },
+ {
+  "label": "the spike total is set rather than accumulated",
+  "old": "            total += 1.0;",
+  "new": "            total = 1.0;"
+ },
+ {
+  "label": "a train with no spikes in range is no longer refused early",
+  "old": "    if total <= 0.0 {\n        return None;\n    }\n    let mean = total / n as f64;",
+  "new": "    if total < 0.0 {\n        return None;\n    }\n    let mean = total / n as f64;",
+  "equivalent": "with no spikes in range total is exactly 0.0, so mean is 0.0 and every histogram bin stays exactly 0.0 after the mean subtraction. corr(1) is then a sum of products of zeros, exactly 0.0, which fails the `corr(lag) > 0.0` test, so lag stays 1; the scan that follows compares each c = 0.0 against best = 0.0 with a strict `>`, never assigns, and leaves best_lag at 0; the `if best_lag == 0 { return None; }` guard then returns None. The refusal arrives three guards later and unchanged."
+ },
+ {
+  "label": "the histogram's mean is added rather than removed",
+  "old": "        *v -= mean;",
+  "new": "        *v += mean;"
+ },
+ {
+  "label": "the period search starts at lag one instead of after the first zero crossing",
+  "old": "    while lag <= max_lag && corr(lag) > 0.0 {",
+  "new": "    while lag <= max_lag && corr(lag) < 0.0 {"
+ },
+ {
+  "label": "a window whose autocorrelation never goes non-positive is not refused",
+  "old": "    if lag > max_lag {\n        return None;\n    }",
+  "new": "    if false {\n        return None;\n    }",
+  "equivalent": "the guard is followed by `for l in lag..=max_lag`, and when lag > max_lag that range is empty, so the loop body never runs and best_lag keeps its initial 0. The `if best_lag == 0 { return None; }` guard three lines further down then returns the same None. The early return saves the empty loop and says what the case means; it does not change an answer."
+ },
+ {
+  "label": "the autocorrelation is normalised by the number of overlapping samples",
+  "old": "    let corr = |lag: usize| -> f64 { (0..n - lag).map(|t| h[t] * h[t + lag]).sum() };",
+  "new": "    let corr = |lag: usize| -> f64 {\n        (0..n - lag).map(|t| h[t] * h[t + lag]).sum::<f64>() / (n - lag) as f64\n    };"
+ },
+ {
+  "label": "the period is the weakest lag rather than the strongest",
+  "old": "        if c > best {",
+  "new": "        if c < best {"
+ },
+ {
+  "label": "a lag is converted to seconds by dividing by the time step",
+  "old": "    Some(best_lag as f64 * dt)",
+  "new": "    Some(best_lag as f64 / dt)"
+ }
+]

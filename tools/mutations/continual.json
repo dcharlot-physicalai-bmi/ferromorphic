@@ -1,0 +1,1138 @@
+[
+ {
+  "label": "the per-sample mean is the sum rather than the mean",
+  "old": "        let m = e.x.iter().sum::<f64>() / e.x.len() as f64;",
+  "new": "        let m = e.x.iter().sum::<f64>();"
+ },
+ {
+  "label": "the per-sample mean is added back rather than removed",
+  "old": "        for v in &mut e.x {\n            *v -= m;",
+  "new": "        for v in &mut e.x {\n            *v += m;"
+ },
+ {
+  "label": "an empty example's mean is computed rather than skipped",
+  "old": "        if e.x.is_empty() {\n            continue;\n        }\n        let m = e.x.iter().sum::<f64>()",
+  "new": "        let m = e.x.iter().sum::<f64>()",
+  "equivalent": "the guard exists to avoid 0/0, and 0/0 is the only thing it avoids. Without it `e.x.iter().sum::<f64>()` on an empty slice is exactly 0.0 and `e.x.len() as f64` is 0.0, so `m` is NaN — but the only use of `m` is inside `for v in &mut e.x`, which iterates zero times on the same empty slice. No number is written, no number is read, and `removing_the_sample_mean_leaves_a_mean_of_zero` asserts exactly what it asserted before: `e[2].x.is_empty()`. No test could tell, because there is nothing to observe."
+ },
+ {
+  "label": "the latency window spans every tick rather than the gaps between them",
+  "old": "    let span = (ticks - 1) as f64;",
+  "new": "    let span = ticks as f64;"
+ },
+ {
+  "label": "the latency feature is not centred on the window midpoint",
+  "old": "            out[i] = sp.t as f64 / span - 0.5;",
+  "new": "            out[i] = sp.t as f64 / span;"
+ },
+ {
+  "label": "the latency feature is a tick count rather than a fraction of the window",
+  "old": "            out[i] = sp.t as f64 / span - 0.5;",
+  "new": "            out[i] = sp.t as f64 - 0.5;"
+ },
+ {
+  "label": "the LAST spike on a channel becomes its latency rather than the first",
+  "old": "        if i < out.len() && out[i].is_nan() {",
+  "new": "        if i < out.len() {"
+ },
+ {
+  "label": "a spike from a channel past the declared width is written anyway",
+  "old": "        if i < out.len() && out[i].is_nan() {",
+  "new": "        if out[i].is_nan() {"
+ },
+ {
+  "label": "a silent channel is imputed as NaN rather than refused",
+  "old": "    for (i, v) in out.iter().enumerate() {\n        if v.is_nan() {\n            return Err(ContinualError::SilentChannel { channel: i as u32 });\n        }\n    }",
+  "new": "    for (i, v) in out.iter().enumerate() {\n        let _ = (i, v);\n    }"
+ },
+ {
+  "label": "a one-tick window is accepted and divides by a zero span",
+  "old": "    if ticks < 2 {",
+  "new": "    if ticks < 1 {"
+ },
+ {
+  "label": "a zero-width feature vector is accepted",
+  "old": "    if n_inputs == 0 {\n        return Err(ContinualError::Empty { what: \"n_inputs\" });\n    }",
+  "new": "    if false {\n        return Err(ContinualError::Empty { what: \"n_inputs\" });\n    }"
+ },
+ {
+  "label": "a curriculum of no tasks is accepted",
+  "old": "        if n_tasks == 0 {\n            return Err(ContinualError::Empty { what: \"n_tasks\" });\n        }",
+  "new": "        if false {\n            return Err(ContinualError::Empty { what: \"n_tasks\" });\n        }"
+ },
+ {
+  "label": "an empty train split is accepted",
+  "old": "        if train.is_empty() {",
+  "new": "        if false {"
+ },
+ {
+  "label": "an empty test split is accepted",
+  "old": "        if test.is_empty() {",
+  "new": "        if false {"
+ },
+ {
+  "label": "a zero-feature dataset is accepted",
+  "old": "        if f == 0 {\n            return Err(ContinualError::Empty { what: \"n_features\" });\n        }",
+  "new": "        if false {\n            return Err(ContinualError::Empty { what: \"n_features\" });\n        }"
+ },
+ {
+  "label": "a feature vector of the wrong length is accepted",
+  "old": "            if e.x.len() != f {",
+  "new": "            if false {"
+ },
+ {
+  "label": "the label bound is off by one, so a label naming no output unit passes",
+  "old": "            if e.label as usize >= n_classes {",
+  "new": "            if e.label as usize > n_classes {"
+ },
+ {
+  "label": "the label bound is not checked at all",
+  "old": "            if e.label as usize >= n_classes {\n                return Err(ContinualError::Label { label: e.label, n_classes });",
+  "new": "            if false {\n                return Err(ContinualError::Label { label: e.label, n_classes });"
+ },
+ {
+  "label": "chance is the class count rather than its reciprocal",
+  "old": "        let chance = 1.0 / n_classes as f64;",
+  "new": "        let chance = n_classes as f64;"
+ },
+ {
+  "label": "the test split is left unpermuted while the train split is permuted",
+  "old": "                test: apply_permutation(&test, &p),",
+  "new": "                test: test.clone(),"
+ },
+ {
+  "label": "a task's name does not carry its position in the sequence",
+  "old": "                name: format!(\"{name}/perm{k}\"),",
+  "new": "                name: format!(\"{name}/perm0\"),"
+ },
+ {
+  "label": "the permutation-invariant per-sample mean is left in the features",
+  "old": "            remove_sample_mean(&mut out);\n            Ok(out)",
+  "new": "            let _ = &mut out;\n            Ok(out)"
+ },
+ {
+  "label": "the test split is featureised from the train split",
+  "old": "            feat(Split::Train)?,\n            feat(Split::Test)?,",
+  "new": "            feat(Split::Train)?,\n            feat(Split::Train)?,"
+ },
+ {
+  "label": "the class count is read off the input channel count",
+  "old": "            base.n_classes as usize,",
+  "new": "            base.n_inputs as usize,"
+ },
+ {
+  "label": "task 0 is not the base task",
+  "old": "    let identity: Vec<usize> = (0..f).collect();\n    let mut out = vec![identity.clone()];",
+  "new": "    let identity: Vec<usize> = (0..f).collect();\n    let mut out = Vec::new();"
+ },
+ {
+  "label": "permutations are accepted without the derangement constraint",
+  "old": "        if out.iter().all(|q| cand.iter().zip(q).all(|(a, b)| a != b)) {",
+  "new": "        if out.iter().all(|q| cand.iter().zip(q).all(|(a, b)| a == b || a != b)) {"
+ },
+ {
+  "label": "derangement is checked only against the most recent permutation, not pairwise",
+  "old": "        if out.iter().all(|q| cand.iter().zip(q).all(|(a, b)| a != b)) {",
+  "new": "        if out.iter().rev().take(1).all(|q| cand.iter().zip(q).all(|(a, b)| a != b)) {"
+ },
+ {
+  "label": "the permutation stream is not decorrelated from the schedule seed",
+  "old": "    let mut rng = Rng::new(seed ^ 0xC047_1D0A_5EED_0001);",
+  "new": "    let mut rng = Rng::new(seed);"
+ },
+ {
+  "label": "the shuffle is Sattolo's rather than Fisher-Yates, so no element can stay put",
+  "old": "        let j = rng.below(i as u32 + 1) as usize;",
+  "new": "        let j = rng.below(i as u32) as usize;"
+ },
+ {
+  "label": "the shuffle never swaps anything",
+  "old": "        let j = rng.below(i as u32 + 1) as usize;\n        v.swap(i, j);",
+  "new": "        let j = rng.below(i as u32 + 1) as usize;\n        v.swap(i, i.max(j).min(i));"
+ },
+ {
+  "label": "a readout with no inputs is accepted",
+  "old": "        if n_features == 0 {\n            return Err(ContinualError::Empty { what: \"n_features\" });\n        }",
+  "new": "        if false {\n            return Err(ContinualError::Empty { what: \"n_features\" });\n        }"
+ },
+ {
+  "label": "a one-class classifier is accepted",
+  "old": "        if n_classes < 2 {",
+  "new": "        if n_classes < 1 {"
+ },
+ {
+  "label": "the weight matrix is allocated as a sum rather than a product of its dimensions",
+  "old": "            w: vec![0.0; n_features * n_classes],",
+  "new": "            w: vec![0.0; n_features + n_classes],"
+ },
+ {
+  "label": "the parameter count forgets the biases",
+  "old": "        self.w.len() + self.b.len()\n    }",
+  "new": "        self.w.len()\n    }"
+ },
+ {
+  "label": "a resized weight matrix passes the shape check",
+  "old": "        if self.w.len() != self.n_classes * self.n_features {",
+  "new": "        if false {"
+ },
+ {
+  "label": "a resized bias vector passes the shape check",
+  "old": "        if self.b.len() != self.n_classes {",
+  "new": "        if false {"
+ },
+ {
+  "label": "the softmax does not subtract the largest logit before exponentiating",
+  "old": "            *v = (*v - max).exp();",
+  "new": "            *v = (*v).exp();"
+ },
+ {
+  "label": "the softmax subtracts the smallest logit instead of the largest",
+  "old": "        let max = p.iter().copied().fold(f64::NEG_INFINITY, f64::max);",
+  "new": "        let max = p.iter().copied().fold(f64::INFINITY, f64::min);"
+ },
+ {
+  "label": "the posteriors are not normalised to sum to one",
+  "old": "        for v in &mut p {\n            *v /= sum;\n        }",
+  "new": "        for v in &mut p {\n            *v /= 1.0;\n        }"
+ },
+ {
+  "label": "the logits do not include the bias",
+  "old": "        let mut z = self.b.clone();",
+  "new": "        let mut z = vec![0.0; self.n_classes];"
+ },
+ {
+  "label": "consecutive class rows of the weight matrix overlap",
+  "old": "            let row = &self.w[c * self.n_features..(c + 1) * self.n_features];",
+  "new": "            let row = &self.w[c..c + self.n_features];"
+ },
+ {
+  "label": "the logit is a sum of weight and feature rather than their product",
+  "old": "                acc += row[k] * x[k];",
+  "new": "                acc += row[k] + x[k];"
+ },
+ {
+  "label": "a non-finite feature is accepted into the logits",
+  "old": "            if !v.is_finite() {\n                return Err(ContinualError::NotFinite { what: \"feature\", value: v });",
+  "new": "            if false {\n                return Err(ContinualError::NotFinite { what: \"feature\", value: v });"
+ },
+ {
+  "label": "a feature vector of the wrong width is indexed rather than refused",
+  "old": "        if x.len() != self.n_features {\n            return Err(ContinualError::Mismatch {\n                what: \"feature vector\",",
+  "new": "        if false {\n            return Err(ContinualError::Mismatch {\n                what: \"feature vector\","
+ },
+ {
+  "label": "ties in the argmax go to the highest class index rather than the lowest",
+  "old": "            if z[c] > z[best] {",
+  "new": "            if z[c] >= z[best] {"
+ },
+ {
+  "label": "the cross-entropy has the wrong sign",
+  "old": "            acc -= p[y].ln();",
+  "new": "            acc += p[y].ln();"
+ },
+ {
+  "label": "the cross-entropy is the sum over examples rather than their mean",
+  "old": "        Ok(acc / examples.len() as f64)\n    }\n}",
+  "new": "        Ok(acc)\n    }\n}"
+ },
+ {
+  "label": "a label past the class count indexes the posterior vector rather than being refused",
+  "old": "            if y >= self.n_classes {\n                return Err(ContinualError::Label {",
+  "new": "            if false {\n                return Err(ContinualError::Label {"
+ },
+ {
+  "label": "the loss of nothing is reported rather than refused",
+  "old": "        if examples.is_empty() {\n            return Err(ContinualError::Empty { what: \"examples\" });\n        }\n        let mut acc = 0.0;",
+  "new": "        if false {\n            return Err(ContinualError::Empty { what: \"examples\" });\n        }\n        let mut acc = 0.0;"
+ },
+ {
+  "label": "accuracy is computed against the predictions rather than against the truth",
+  "old": "        Ok(metrics::accuracy(&pred, &truth)?)",
+  "new": "        Ok(metrics::accuracy(&truth, &pred)?)",
+  "equivalent": "`metrics::accuracy` counts the positions at which its two slices are equal and divides by the length, and equality is symmetric, so accuracy(a, b) == accuracy(b, a) bit for bit: the same count over the same denominator. The two slices are also built to the same length here, one push per example, so neither argument can be the shorter one. No test could tell these apart, and no caller could either."
+ },
+ {
+  "label": "every example's truth label is read as class zero",
+  "old": "            truth.push(e.label as usize);",
+  "new": "            truth.push(0);"
+ },
+ {
+  "label": "the softmax residual adds the one-hot target instead of subtracting it",
+  "old": "        let p = model.probabilities(&e.x)?;\n        for c in 0..cn {\n            let d = p[c] - if c == y { 1.0 } else { 0.0 };",
+  "new": "        let p = model.probabilities(&e.x)?;\n        for c in 0..cn {\n            let d = p[c] + if c == y { 1.0 } else { 0.0 };"
+ },
+ {
+  "label": "the Fisher's per-weight gradient is a sum rather than a product",
+  "old": "                let gk = d * e.x[k];",
+  "new": "                let gk = d + e.x[k];"
+ },
+ {
+  "label": "the Fisher accumulates the gradient rather than its square",
+  "old": "                fisher[c * f + k] += gk * gk;",
+  "new": "                fisher[c * f + k] += gk;"
+ },
+ {
+  "label": "the Fisher overwrites rather than accumulating across examples",
+  "old": "                fisher[c * f + k] += gk * gk;",
+  "new": "                fisher[c * f + k] = gk * gk;"
+ },
+ {
+  "label": "the bias block of the Fisher overlaps the weight block",
+  "old": "            fisher[cn * f + c] += d * d;",
+  "new": "            fisher[c * f + c] += d * d;"
+ },
+ {
+  "label": "the Fisher is a sum over examples rather than a mean",
+  "old": "    let inv = 1.0 / examples.len() as f64;",
+  "new": "    let inv = 1.0;"
+ },
+ {
+  "label": "the Fisher of an empty example set is reported rather than refused",
+  "old": "    if examples.is_empty() {\n        return Err(ContinualError::Empty { what: \"examples\" });\n    }\n    model.check_shape()?;",
+  "new": "    if false {\n        return Err(ContinualError::Empty { what: \"examples\" });\n    }\n    model.check_shape()?;"
+ },
+ {
+  "label": "a label past the class count is silently treated as no class at all",
+  "old": "        if y >= cn {\n            return Err(ContinualError::Label { label: e.label, n_classes: cn });\n        }",
+  "new": "        if false {\n            return Err(ContinualError::Label { label: e.label, n_classes: cn });\n        }"
+ },
+ {
+  "label": "the synaptic-intelligence importance is not clamped at zero",
+  "old": "    Some((path / (displacement * displacement + xi)).max(0.0))",
+  "new": "    Some(path / (displacement * displacement + xi))"
+ },
+ {
+  "label": "the synaptic-intelligence denominator uses the displacement rather than its square",
+  "old": "    Some((path / (displacement * displacement + xi)).max(0.0))",
+  "new": "    Some((path / (displacement + xi)).max(0.0))"
+ },
+ {
+  "label": "the synaptic-intelligence denominator drops its damping term",
+  "old": "    Some((path / (displacement * displacement + xi)).max(0.0))",
+  "new": "    Some((path / (displacement * displacement)).max(0.0))"
+ },
+ {
+  "label": "the synaptic-intelligence importance is the reciprocal of its formula",
+  "old": "    Some((path / (displacement * displacement + xi)).max(0.0))",
+  "new": "    Some(((displacement * displacement + xi) / path).max(0.0))"
+ },
+ {
+  "label": "a zero damping term is accepted and divides by the squared displacement alone",
+  "old": "    if !path.is_finite() || !displacement.is_finite() || !xi.is_finite() || xi <= 0.0 {",
+  "new": "    if !path.is_finite() || !displacement.is_finite() || !xi.is_finite() || xi < 0.0 {"
+ },
+ {
+  "label": "a non-finite path integral produces an importance rather than nothing",
+  "old": "    if !path.is_finite() || !displacement.is_finite() || !xi.is_finite() || xi <= 0.0 {",
+  "new": "    if xi <= 0.0 {"
+ },
+ {
+  "label": "elastic weight consolidation is charged for the synaptic-intelligence vectors it does not hold",
+  "old": "            Consolidation::Ewc { .. } => (vec![0.0; n], Vec::new(), Vec::new()),",
+  "new": "            Consolidation::Ewc { .. } => (vec![0.0; n], vec![0.0; n], Vec::new()),"
+ },
+ {
+  "label": "synaptic intelligence keeps no task-start copy",
+  "old": "            Consolidation::Si { .. } => (vec![0.0; n], vec![0.0; n], vec![0.0; n]),",
+  "new": "            Consolidation::Si { .. } => (vec![0.0; n], vec![0.0; n], Vec::new()),"
+ },
+ {
+  "label": "the plain learner is charged for an anchor it never holds",
+  "old": "        let anchor = match method {\n            Consolidation::None => Vec::new(),",
+  "new": "        let anchor = match method {\n            Consolidation::None => vec![0.0; n],"
+ },
+ {
+  "label": "the consolidation bill counts only the anchor and the importance",
+  "old": "        self.anchor.len() + self.omega.len() + self.path.len() + self.start.len()",
+  "new": "        self.anchor.len() + self.omega.len()"
+ },
+ {
+  "label": "the path integral is not reset at a task boundary",
+  "old": "            self.start.copy_from_slice(flat);\n            self.path.fill(0.0);",
+  "new": "            self.start.copy_from_slice(flat);"
+ },
+ {
+  "label": "the elastic penalty ignores the importance it estimated",
+  "old": "                    g[k] += lambda * self.omega[k] * (flat[k] - self.anchor[k]);",
+  "new": "                    g[k] += lambda * (flat[k] - self.anchor[k]);"
+ },
+ {
+  "label": "the elastic penalty pushes the parameter away from its anchor",
+  "old": "                    g[k] += lambda * self.omega[k] * (flat[k] - self.anchor[k]);",
+  "new": "                    g[k] += lambda * self.omega[k] * (flat[k] + self.anchor[k]);"
+ },
+ {
+  "label": "the elastic penalty replaces the data gradient rather than adding to it",
+  "old": "                    g[k] += lambda * self.omega[k] * (flat[k] - self.anchor[k]);",
+  "new": "                    g[k] = lambda * self.omega[k] * (flat[k] - self.anchor[k]);"
+ },
+ {
+  "label": "the synaptic-intelligence penalty drops the factor of two its convention carries",
+  "old": "                    g[k] += 2.0 * c * self.omega[k] * (flat[k] - self.anchor[k]);",
+  "new": "                    g[k] += c * self.omega[k] * (flat[k] - self.anchor[k]);"
+ },
+ {
+  "label": "the path integral accumulates with the wrong sign",
+  "old": "                self.path[k] -= data_grad[k] * delta[k];",
+  "new": "                self.path[k] += data_grad[k] * delta[k];"
+ },
+ {
+  "label": "the path integral pairs the step with itself rather than with the gradient",
+  "old": "                self.path[k] -= data_grad[k] * delta[k];",
+  "new": "                self.path[k] -= delta[k] * delta[k];"
+ },
+ {
+  "label": "the Fisher of the newest task replaces the accumulated importance instead of adding to it",
+  "old": "                for k in 0..self.n {\n                    self.omega[k] += fisher[k];\n                }",
+  "new": "                for k in 0..self.n {\n                    self.omega[k] = fisher[k];\n                }"
+ },
+ {
+  "label": "an importance pass is billed as one pass rather than one per example",
+  "old": "                self.passes += train.len() as u64;",
+  "new": "                self.passes += 1;"
+ },
+ {
+  "label": "the synaptic-intelligence displacement is measured from the origin rather than from the task start",
+  "old": "                    let d = flat[k] - self.start[k];",
+  "new": "                    let d = flat[k];"
+ },
+ {
+  "label": "the synaptic-intelligence anchor is never moved off the origin",
+  "old": "                self.anchor.copy_from_slice(&flat);",
+  "new": "                let _ = &flat;"
+ },
+ {
+  "label": "the path integral and the displacement are handed to the importance in the wrong order",
+  "old": "                    if let Some(contrib) = path_importance(self.path[k], d, xi) {",
+  "new": "                    if let Some(contrib) = path_importance(d, self.path[k], xi) {"
+ },
+ {
+  "label": "the biases are not copied into the flat parameter vector",
+  "old": "    out[model.w.len()..].copy_from_slice(&model.b);",
+  "new": "    out[model.w.len()..].fill(0.0);"
+ },
+ {
+  "label": "the Box-Muller radius is drawn from a half-open interval that includes zero",
+  "old": "    let u1 = 1.0 - rng.next_f64();",
+  "new": "    let u1 = rng.next_f64();"
+ },
+ {
+  "label": "the Box-Muller radius drops its factor of two",
+  "old": "    (-2.0 * u1.ln()).sqrt() * (core::f64::consts::TAU * u2).cos()",
+  "new": "    (-1.0 * u1.ln()).sqrt() * (core::f64::consts::TAU * u2).cos()"
+ },
+ {
+  "label": "the Box-Muller radius is the log itself rather than its square root",
+  "old": "    (-2.0 * u1.ln()).sqrt() * (core::f64::consts::TAU * u2).cos()",
+  "new": "    (-2.0 * u1.ln()) * (core::f64::consts::TAU * u2).cos()"
+ },
+ {
+  "label": "the Box-Muller angle spans two radians rather than a full turn",
+  "old": "    (-2.0 * u1.ln()).sqrt() * (core::f64::consts::TAU * u2).cos()",
+  "new": "    (-2.0 * u1.ln()).sqrt() * (2.0 * u2).cos()"
+ },
+ {
+  "label": "the Box-Muller radius and angle are drawn from the same uniform",
+  "old": "    let u2 = rng.next_f64();",
+  "new": "    let u2 = u1;"
+ },
+ {
+  "label": "a retained example's label is not counted in the memory bill",
+  "old": "            Replay::Experience { .. } => self.buffer.len() * (self.n_features + 1),",
+  "new": "            Replay::Experience { .. } => self.buffer.len() * self.n_features,"
+ },
+ {
+  "label": "the replay buffer is billed for its reservation rather than for what it holds",
+  "old": "            Replay::Experience { .. } => self.buffer.len() * (self.n_features + 1),",
+  "new": "            Replay::Experience { budget } => budget * (self.n_features + 1),"
+ },
+ {
+  "label": "a class model is billed for its mean but not its standard deviation",
+  "old": "            Replay::Generative { .. } => self.models.len() * 2 * self.n_features,",
+  "new": "            Replay::Generative { .. } => self.models.len() * self.n_features,"
+ },
+ {
+  "label": "the reservoir holds one example more than its budget",
+  "old": "                    if self.buffer.len() < budget {",
+  "new": "                    if self.buffer.len() <= budget {"
+ },
+ {
+  "label": "the reservoir's stream counter does not accumulate",
+  "old": "                    self.seen += 1;",
+  "new": "                    self.seen = 1;"
+ },
+ {
+  "label": "the reservoir draws its slot from the budget rather than from the stream length",
+  "old": "                        let j = (rng.next_f64() * self.seen as f64) as u64;",
+  "new": "                        let j = (rng.next_f64() * budget as f64) as u64;"
+ },
+ {
+  "label": "the reservoir's acceptance test is off by one at the top of the buffer",
+  "old": "                        if j < budget as u64 {",
+  "new": "                        if j <= budget as u64 {"
+ },
+ {
+  "label": "the class mean keeps only the last example",
+  "old": "                            mean[k] += e.x[k];",
+  "new": "                            mean[k] = e.x[k];"
+ },
+ {
+  "label": "the class mean is a sum rather than a mean",
+  "old": "                        mean[k] *= inv;",
+  "new": "                        mean[k] *= 1.0;"
+ },
+ {
+  "label": "the class variance subtracts the mean rather than its square",
+  "old": "                        sd[k] = (sq[k] * inv - mean[k] * mean[k]).max(0.0).sqrt();",
+  "new": "                        sd[k] = (sq[k] * inv - mean[k]).max(0.0).sqrt();"
+ },
+ {
+  "label": "a negative variance from cancellation is passed to the square root",
+  "old": "                        sd[k] = (sq[k] * inv - mean[k] * mean[k]).max(0.0).sqrt();",
+  "new": "                        sd[k] = (sq[k] * inv - mean[k] * mean[k]).sqrt();"
+ },
+ {
+  "label": "the generator's spread is the variance rather than the standard deviation",
+  "old": "                        sd[k] = (sq[k] * inv - mean[k] * mean[k]).max(0.0).sqrt();",
+  "new": "                        sd[k] = (sq[k] * inv - mean[k] * mean[k]).max(0.0);"
+ },
+ {
+  "label": "only the first class of a task is modelled",
+  "old": "                for c in 0..n_classes {",
+  "new": "                for c in 0..1 {"
+ },
+ {
+  "label": "a generated sample scales the mean by the spread instead of adding noise to it",
+  "old": "                            .map(|k| m.mean[k] + m.sd[k] * standard_normal(rng))",
+  "new": "                            .map(|k| m.mean[k] * m.sd[k] * standard_normal(rng))"
+ },
+ {
+  "label": "every generated sample is labelled class zero",
+  "old": "                        out.push(Example { x, label: m.label });",
+  "new": "                        out.push(Example { x, label: 0 });"
+ },
+ {
+  "label": "the experience buffer is never rehearsed",
+  "old": "            Replay::Experience { .. } => self.buffer.clone(),",
+  "new": "            Replay::Experience { .. } => Vec::new(),"
+ },
+ {
+  "label": "the homeostat scales by the reciprocal of the factor it should apply",
+  "old": "            let g = (target / norm).powf(rate);",
+  "new": "            let g = (norm / target).powf(rate);"
+ },
+ {
+  "label": "the homeostat ignores its rate and always lands on the target",
+  "old": "            let g = (target / norm).powf(rate);",
+  "new": "            let g = target / norm;"
+ },
+ {
+  "label": "the row norm the homeostat measures leaves out the bias",
+  "old": "            let norm = (row.iter().map(|v| v * v).sum::<f64>() + model.b[c] * model.b[c]).sqrt();",
+  "new": "            let norm = row.iter().map(|v| v * v).sum::<f64>().sqrt();"
+ },
+ {
+  "label": "the bias is not scaled with the row it belongs to",
+  "old": "            model.b[c] *= g;",
+  "new": "            model.b[c] *= 1.0;"
+ },
+ {
+  "label": "a zero row is given an arbitrary direction rather than left alone",
+  "old": "            if norm == 0.0 {\n                factors.push(1.0);\n                continue;\n            }",
+  "new": "            if false {\n                factors.push(1.0);\n                continue;\n            }"
+ },
+ {
+  "label": "a target norm of zero is accepted",
+  "old": "        let target = in_range(\"target_norm\", self.target_norm, f64::MIN_POSITIVE, f64::MAX)?;",
+  "new": "        let target = in_range(\"target_norm\", self.target_norm, 0.0, f64::MAX)?;"
+ },
+ {
+  "label": "a rate past one is accepted",
+  "old": "        let rate = in_range(\"rate\", self.rate, 0.0, 1.0)?;",
+  "new": "        let rate = in_range(\"rate\", self.rate, 0.0, 2.0)?;"
+ },
+ {
+  "label": "the homeostat indexes a resized weight matrix rather than refusing it",
+  "old": "        let rate = in_range(\"rate\", self.rate, 0.0, 1.0)?;\n        model.check_shape()?;",
+  "new": "        let rate = in_range(\"rate\", self.rate, 0.0, 1.0)?;"
+ },
+ {
+  "label": "the default schedule runs twice the epochs",
+  "old": "        Self { epochs: 12, lr: 0.2, weight_decay: 1e-3, seed: 0xC047_0001 }",
+  "new": "        Self { epochs: 24, lr: 0.2, weight_decay: 1e-3, seed: 0xC047_0001 }"
+ },
+ {
+  "label": "the default learning rate is a tenth of what it is",
+  "old": "        Self { epochs: 12, lr: 0.2, weight_decay: 1e-3, seed: 0xC047_0001 }",
+  "new": "        Self { epochs: 12, lr: 0.02, weight_decay: 1e-3, seed: 0xC047_0001 }"
+ },
+ {
+  "label": "the default weight decay is zero, so the Fisher may collapse unnoticed",
+  "old": "        Self { epochs: 12, lr: 0.2, weight_decay: 1e-3, seed: 0xC047_0001 }",
+  "new": "        Self { epochs: 12, lr: 0.2, weight_decay: 0.0, seed: 0xC047_0001 }"
+ },
+ {
+  "label": "a schedule of zero epochs is accepted",
+  "old": "        if self.epochs == 0 {\n            return Err(ContinualError::Empty { what: \"epochs\" });\n        }",
+  "new": "        if false {\n            return Err(ContinualError::Empty { what: \"epochs\" });\n        }"
+ },
+ {
+  "label": "a negative learning rate is accepted",
+  "old": "        in_range(\"lr\", self.lr, f64::MIN_POSITIVE, f64::MAX)?;",
+  "new": "        in_range(\"lr\", self.lr, -f64::MAX, f64::MAX)?;"
+ },
+ {
+  "label": "a non-finite weight decay is accepted",
+  "old": "        in_range(\"weight_decay\", self.weight_decay, 0.0, f64::MAX)?;",
+  "new": "        let _ = self.weight_decay;"
+ },
+ {
+  "label": "the control protocol allocates consolidation state",
+  "old": "            consolidation: Consolidation::None,\n            replay: Replay::None,",
+  "new": "            consolidation: Consolidation::Ewc { lambda: 0.0 },\n            replay: Replay::None,"
+ },
+ {
+  "label": "extra state is billed at four bytes per f64",
+  "old": "        self.extra_floats * 8",
+  "new": "        self.extra_floats * 4"
+ },
+ {
+  "label": "the average accuracy is a sum rather than a mean",
+  "old": "        Some(last.iter().sum::<f64>() / last.len() as f64)",
+  "new": "        Some(last.iter().sum::<f64>())"
+ },
+ {
+  "label": "the average accuracy is read off the first row rather than the last",
+  "old": "        let last = self.r.last()?;\n        if last.is_empty() {",
+  "new": "        let last = self.r.first()?;\n        if last.is_empty() {"
+ },
+ {
+  "label": "backward transfer has the sign of forgetting reversed",
+  "old": "            acc += last.get(j)? - self.r[j].get(j)?;",
+  "new": "            acc += self.r[j].get(j)? - last.get(j)?;"
+ },
+ {
+  "label": "backward transfer averages over every task rather than over the earlier ones",
+  "old": "        for j in 0..t - 1 {\n            acc += last.get(j)? - self.r[j].get(j)?;\n        }\n        Some(acc / (t - 1) as f64)",
+  "new": "        for j in 0..t - 1 {\n            acc += last.get(j)? - self.r[j].get(j)?;\n        }\n        Some(acc / t as f64)"
+ },
+ {
+  "label": "backward transfer sums over the last task as well as the earlier ones",
+  "old": "        for j in 0..t - 1 {\n            acc += last.get(j)? - self.r[j].get(j)?;",
+  "new": "        for j in 0..t {\n            acc += last.get(j)? - self.r[j].get(j)?;",
+  "equivalent": "the extra term is j = t - 1, which contributes last.get(t-1)? - self.r[t-1].get(t-1)?. `last` IS `self.r[t-1]`, so that term is x - x = 0.0 exactly for any finite x, and the divisor (t - 1) is untouched. The sum and the mean are therefore bit-identical. The only thing that changes is the refusal behaviour on a ragged matrix — a last row shorter than t would now return None one index earlier — and `a_ragged_accuracy_matrix_refuses_rather_than_panicking` already gets None from both forms, because its short last row is empty and fails at j = 0. No test could tell."
+ },
+ {
+  "label": "backward transfer is reported for a single-task sequence",
+  "old": "        let t = self.r.len();\n        if t < 2 {\n            return None;\n        }\n        let last = self.r.last()?;",
+  "new": "        let t = self.r.len();\n        if t < 1 {\n            return None;\n        }\n        let last = self.r.last()?;"
+ },
+ {
+  "label": "forward transfer reads the diagonal rather than the row before it",
+  "old": "            acc += self.r[j - 1].get(j)? - self.baseline.get(j)?;",
+  "new": "            acc += self.r[j].get(j)? - self.baseline.get(j)?;"
+ },
+ {
+  "label": "forward transfer is an accuracy rather than a gain over the untrained baseline",
+  "old": "            acc += self.r[j - 1].get(j)? - self.baseline.get(j)?;",
+  "new": "            acc += self.r[j - 1].get(j)?;"
+ },
+ {
+  "label": "forward transfer starts at the first task, which has no row before it",
+  "old": "        for j in 1..t {\n            acc += self.r[j - 1].get(j)? - self.baseline.get(j)?;",
+  "new": "        for j in 0..t {\n            acc += self.r[j - 1].get(j)? - self.baseline.get(j)?;"
+ },
+ {
+  "label": "what a task was learned to is read off the first column",
+  "old": "        self.r.get(j)?.get(j).copied()",
+  "new": "        self.r.get(j)?.get(0).copied()"
+ },
+ {
+  "label": "what a task retained is read off the first row rather than the last",
+  "old": "        self.r.last()?.get(j).copied()",
+  "new": "        self.r.first()?.get(j).copied()"
+ },
+ {
+  "label": "forgetting is reported as a gain",
+  "old": "        Some(self.learned(j)? - self.retained(j)?)",
+  "new": "        Some(self.retained(j)? - self.learned(j)?)"
+ },
+ {
+  "label": "the accuracy matrix is scored on the training split",
+  "old": "    curriculum.tasks.iter().map(|t| model.accuracy(&t.test)).collect()",
+  "new": "    curriculum.tasks.iter().map(|t| model.accuracy(&t.train)).collect()"
+ },
+ {
+  "label": "the plain trainer runs one epoch whatever the schedule says",
+  "old": "    for _ in 0..schedule.epochs {\n        shuffle(&mut order, &mut rng);",
+  "new": "    for _ in 0..1 {\n        shuffle(&mut order, &mut rng);"
+ },
+ {
+  "label": "the plain trainer does not shuffle between epochs",
+  "old": "    for _ in 0..schedule.epochs {\n        shuffle(&mut order, &mut rng);",
+  "new": "    for _ in 0..schedule.epochs {\n        let _ = &mut rng;"
+ },
+ {
+  "label": "the plain trainer's step count does not accumulate",
+  "old": "            steps += 1;",
+  "new": "            steps = 1;"
+ },
+ {
+  "label": "the plain trainer accepts a task with no training examples",
+  "old": "    if task.train.is_empty() {\n        return Err(ContinualError::Empty { what: \"task train split\" });\n    }",
+  "new": "    if false {\n        return Err(ContinualError::Empty { what: \"task train split\" });\n    }"
+ },
+ {
+  "label": "an empty curriculum is indexed rather than refused",
+  "old": "    if tasks.is_empty() {\n        return Err(ContinualError::Empty { what: \"curriculum\" });\n    }",
+  "new": "    if false {\n        return Err(ContinualError::Empty { what: \"curriculum\" });\n    }"
+ },
+ {
+  "label": "two tasks may disagree about their feature width",
+  "old": "        if t.n_features() != nf {",
+  "new": "        if false {"
+ },
+ {
+  "label": "two tasks may disagree about their class count",
+  "old": "        if t.n_classes != nc {",
+  "new": "        if false {"
+ },
+ {
+  "label": "a task with no training examples is accepted by the runner",
+  "old": "        if t.train.is_empty() {\n            return Err(ContinualError::Empty { what: \"task train split\" });\n        }",
+  "new": "        if false {\n            return Err(ContinualError::Empty { what: \"task train split\" });\n        }"
+ },
+ {
+  "label": "a task with no test examples is accepted by the runner",
+  "old": "        if t.test.is_empty() {\n            return Err(ContinualError::Empty { what: \"task test split\" });\n        }",
+  "new": "        if false {\n            return Err(ContinualError::Empty { what: \"task test split\" });\n        }"
+ },
+ {
+  "label": "the readout is built with the class count as its input width",
+  "old": "    let mut model = Linear::new(nf, nc)?;",
+  "new": "    let mut model = Linear::new(nc, nf)?;"
+ },
+ {
+  "label": "the untrained baseline row is a declared constant rather than a measurement",
+  "old": "    let baseline: Vec<f64> = evaluate(&model, curriculum)?;",
+  "new": "    let baseline: Vec<f64> = tasks.iter().map(|t| t.chance).collect();",
+  "equivalent": "the model here is `Linear::new(nf, nc)`, which is all zeros, so every logit is exactly the same 0.0 for every class on every example. `predict` breaks that tie to the lowest index, so the untrained readout answers class 0 for every test example, and its accuracy on a task is exactly the fraction of that task's test split labelled 0. Every dataset this module's tests reach comes from `crate::tasks`, whose test splits are balanced (`per_class_test` examples of each of `n_classes` classes), so that fraction is exactly 1/n_classes, which is what `Task::chance` holds — the same f64, computed as 1.0 / n_classes in both places. `the_untrained_baseline_is_exactly_chance` asserts that equality with assert_eq!, so it is pinned rather than assumed. No test could tell the measurement from the constant; only an unbalanced test split could, and this module cannot construct one through `run`."
+ },
+ {
+  "label": "the rehearsal set is empty whatever the replay policy holds",
+  "old": "        let rehearsal = store.rehearsal(&mut rng);",
+  "new": "        let rehearsal = Vec::new();"
+ },
+ {
+  "label": "rehearsed examples are not marked as rehearsed in the ordering",
+  "old": "            .chain((0..rehearsal.len()).map(|i| (true, i)))",
+  "new": "            .chain((0..rehearsal.len()).map(|i| (false, i)))"
+ },
+ {
+  "label": "the rehearsal and current-task sets are read from each other's index space",
+  "old": "                let e = if replayed { &rehearsal[i] } else { &task.train[i] };",
+  "new": "                let e = if replayed { &task.train[i] } else { &rehearsal[i] };"
+ },
+ {
+  "label": "the gradient-step count does not accumulate",
+  "old": "                cost.gradient_steps += 1;",
+  "new": "                cost.gradient_steps = 1;"
+ },
+ {
+  "label": "every gradient step is billed as a rehearsal step",
+  "old": "                if replayed {\n                    cost.replayed_steps += 1;\n                }",
+  "new": "                if true {\n                    cost.replayed_steps += 1;\n                }"
+ },
+ {
+  "label": "the homeostat is never applied",
+  "old": "        if let Some(h) = protocol.homeostasis {\n            h.apply(&mut model)?;\n        }",
+  "new": "        if let Some(h) = protocol.homeostasis {\n            let _ = h;\n        }"
+ },
+ {
+  "label": "the consolidation anchor is taken before the homeostat rescales the model",
+  "old": "        if let Some(h) = protocol.homeostasis {\n            h.apply(&mut model)?;\n        }\n        consolidator.end_task(&model, &task.train)?;",
+  "new": "        consolidator.end_task(&model, &task.train)?;\n        if let Some(h) = protocol.homeostasis {\n            h.apply(&mut model)?;\n        }"
+ },
+ {
+  "label": "the replay store absorbs the task before the importance pass rather than after",
+  "old": "        consolidator.end_task(&model, &task.train)?;\n        store.absorb(&task.train, nc, &mut rng);",
+  "new": "        store.absorb(&task.train, nc, &mut rng);\n        consolidator.end_task(&model, &task.train)?;",
+  "equivalent": "these two statements touch disjoint state and therefore commute exactly. `end_task` reads `model` immutably and writes only the consolidator's own `omega`, `anchor` and `passes`; `absorb` reads `task.train` immutably and writes only the store's `buffer`, `seen` and `models`, drawing from `rng`. Neither reads anything the other writes: `absorb` never looks at the model or the consolidator, and `end_task` never draws from `rng` — `fisher_diagonal` is a deterministic pass over the examples. So the rng stream position, the buffer contents, the Fisher and the anchor are all bit-identical in either order. The one asymmetry is the `?` on `end_task`: if it returned Err, the swap would have absorbed the task first — but `run` then returns that Err and both the store and the consolidator are dropped unobserved. No test could tell, and neither could a caller."
+ },
+ {
+  "label": "the memory bill leaves out whatever the replay policy retains",
+  "old": "    cost.extra_floats = consolidator.extra_floats() + store.extra_floats();",
+  "new": "    cost.extra_floats = consolidator.extra_floats();"
+ },
+ {
+  "label": "the importance passes are never reported",
+  "old": "    cost.importance_passes = consolidator.passes;",
+  "new": "    cost.importance_passes = 0;"
+ },
+ {
+  "label": "the weight decay term is dropped from the gradient",
+  "old": "            data_grad[c * f + k] = d * e.x[k] + schedule.weight_decay * model.w[c * f + k];",
+  "new": "            data_grad[c * f + k] = d * e.x[k];"
+ },
+ {
+  "label": "the weight decay pushes the weights outward",
+  "old": "            data_grad[c * f + k] = d * e.x[k] + schedule.weight_decay * model.w[c * f + k];",
+  "new": "            data_grad[c * f + k] = d * e.x[k] - schedule.weight_decay * model.w[c * f + k];"
+ },
+ {
+  "label": "the data gradient is a sum of residual and feature rather than their product",
+  "old": "            data_grad[c * f + k] = d * e.x[k] + schedule.weight_decay * model.w[c * f + k];",
+  "new": "            data_grad[c * f + k] = d + e.x[k] + schedule.weight_decay * model.w[c * f + k];"
+ },
+ {
+  "label": "the bias gradient has the wrong sign",
+  "old": "        data_grad[cn * f + c] = d;",
+  "new": "        data_grad[cn * f + c] = -d;"
+ },
+ {
+  "label": "the biases are never trained",
+  "old": "        data_grad[cn * f + c] = d;",
+  "new": "        data_grad[cn * f + c] = 0.0;"
+ },
+ {
+  "label": "the consolidation penalty is folded into the gradient the path integral is taken along",
+  "old": "    grad.copy_from_slice(data_grad);\n    consolidator.add_penalty(flat, grad);",
+  "new": "    consolidator.add_penalty(flat, data_grad);\n    grad.copy_from_slice(data_grad);"
+ },
+ {
+  "label": "the step climbs the gradient instead of descending it",
+  "old": "        delta[k] = -schedule.lr * grad[k];",
+  "new": "        delta[k] = schedule.lr * grad[k];"
+ },
+ {
+  "label": "the parameter is replaced by its step rather than moved by it",
+  "old": "        flat[k] += delta[k];",
+  "new": "        flat[k] = delta[k];"
+ },
+ {
+  "label": "a parameter that leaves the finite numbers is reported as a result",
+  "old": "        if !flat[k].is_finite() {\n            return Err(ContinualError::Diverged { parameter: k, value: flat[k] });\n        }",
+  "new": "        if false {\n            return Err(ContinualError::Diverged { parameter: k, value: flat[k] });\n        }"
+ },
+ {
+  "label": "an infinite parameter slips through the divergence guard",
+  "old": "        if !flat[k].is_finite() {",
+  "new": "        if flat[k].is_nan() {"
+ },
+ {
+  "label": "the stepped parameters are never written back to the model",
+  "old": "    unflatten_from(flat, model);\n    Ok(())",
+  "new": "    Ok(())"
+ },
+ {
+  "label": "a label past the class count is stepped on rather than refused",
+  "old": "    if y >= cn {\n        return Err(ContinualError::Label { label: e.label, n_classes: cn });\n    }",
+  "new": "    if false {\n        return Err(ContinualError::Label { label: e.label, n_classes: cn });\n    }"
+ },
+ {
+  "label": "the fusi parameterisation's geometric ratio is a quarter rather than a half",
+  "old": "        Self { depth, q0: 1.0, p0: 1.0, x: 0.5 }",
+  "new": "        Self { depth, q0: 1.0, p0: 1.0, x: 0.25 }"
+ },
+ {
+  "label": "the fusi parameterisation's level-zero flip probability is a half",
+  "old": "        Self { depth, q0: 1.0, p0: 1.0, x: 0.5 }",
+  "new": "        Self { depth, q0: 0.5, p0: 1.0, x: 0.5 }"
+ },
+ {
+  "label": "a cascade of zero depth is accepted",
+  "old": "        if self.depth == 0 {\n            return Err(ContinualError::Empty { what: \"depth\" });\n        }",
+  "new": "        if false {\n            return Err(ContinualError::Empty { what: \"depth\" });\n        }"
+ },
+ {
+  "label": "a flip probability that is not a probability is accepted",
+  "old": "        in_range(\"q0\", self.q0, 0.0, 1.0)?;",
+  "new": "        let _ = self.q0;"
+ },
+ {
+  "label": "a geometric ratio above one is accepted",
+  "old": "        in_range(\"x\", self.x, 0.0, 1.0)?;",
+  "new": "        in_range(\"x\", self.x, 0.0, 2.0)?;"
+ },
+ {
+  "label": "a level at the depth is treated as a level",
+  "old": "        (level < self.depth).then(|| self.q0 * self.x.powi(level as i32))",
+  "new": "        (level <= self.depth).then(|| self.q0 * self.x.powi(level as i32))"
+ },
+ {
+  "label": "the flip probability is evaluated one level too deep",
+  "old": "        (level < self.depth).then(|| self.q0 * self.x.powi(level as i32))",
+  "new": "        (level < self.depth).then(|| self.q0 * self.x.powi(level as i32 + 1))"
+ },
+ {
+  "label": "the deepest level can still go deeper",
+  "old": "        if level + 1 == self.depth {\n            return Some(0.0);\n        }",
+  "new": "        if false {\n            return Some(0.0);\n        }"
+ },
+ {
+  "label": "a level one past the depth reports a deepening probability",
+  "old": "        if level >= self.depth {\n            return None;\n        }",
+  "new": "        if level > self.depth {\n            return None;\n        }"
+ },
+ {
+  "label": "the deepening probability is scaled by the flip rate",
+  "old": "        Some(self.p0 * self.x.powi(level as i32))\n    }",
+  "new": "        Some(self.q0 * self.x.powi(level as i32))\n    }"
+ },
+ {
+  "label": "a reinforced synapse's chance of staying put is computed from its flip rate",
+  "old": "            t[k * n + k] += 0.5 * (1.0 - deep);",
+  "new": "            t[k * n + k] += 0.5 * (1.0 - flip);"
+ },
+ {
+  "label": "deepening leaves the synapse where it was",
+  "old": "                t[k * n + k + 1] += 0.5 * deep;",
+  "new": "                t[k * n + k] += 0.5 * deep;"
+ },
+ {
+  "label": "a flip keeps the synapse's metaplastic level instead of resetting it",
+  "old": "            t[(d + k) * n] += 0.5 * flip;",
+  "new": "            t[(d + k) * n + k] += 0.5 * flip;"
+ },
+ {
+  "label": "the mirrored flip keeps the synapse's metaplastic level",
+  "old": "            t[k * n + d] += 0.5 * flip;",
+  "new": "            t[k * n + d + k] += 0.5 * flip;"
+ },
+ {
+  "label": "a depressing stimulus is as likely as certain rather than one half",
+  "old": "            t[(d + k) * n] += 0.5 * flip;",
+  "new": "            t[(d + k) * n] += flip;"
+ },
+ {
+  "label": "the deepest level deepens into nowhere and the row leaks probability",
+  "old": "            let deep = if k + 1 == d { 0.0 } else { self.p0 * self.x.powi(k as i32) };\n            for rate in [flip, deep] {",
+  "new": "            let deep = self.p0 * self.x.powi(k as i32);\n            for rate in [flip, deep] {"
+ },
+ {
+  "label": "a transition rate that has rounded away is kept rather than refused",
+  "old": "                if rate > 0.0 && 1.0 - rate == 1.0 {",
+  "new": "                if false {"
+ },
+ {
+  "label": "a legitimately zero rate is refused as if it had rounded away",
+  "old": "                if rate > 0.0 && 1.0 - rate == 1.0 {",
+  "new": "                if rate >= 0.0 && 1.0 - rate == 1.0 {"
+ },
+ {
+  "label": "the representability of a rate is tested at the wrong magnitude",
+  "old": "                if rate > 0.0 && 1.0 - rate == 1.0 {",
+  "new": "                if rate > 0.0 && 2.0 - rate == 2.0 {"
+ },
+ {
+  "label": "the generator's diagonal counts only the outgoing flips",
+  "old": "            g[k * n + k] = -0.5 * (deep + flip);",
+  "new": "            g[k * n + k] = -0.5 * flip;"
+ },
+ {
+  "label": "the generator's flip flux has the sign of an inflow",
+  "old": "            g[(d + k) * n] += 0.5 * flip;",
+  "new": "            g[(d + k) * n] -= 0.5 * flip;"
+ },
+ {
+  "label": "the flux-balance solution is discarded whenever it is stationary",
+  "old": "            if stationarity_residual(&m, n, &pi) <= 1e-9 {",
+  "new": "            if stationarity_residual(&m, n, &pi) >= 1e-9 {"
+ },
+ {
+  "label": "the deepest level's outflow is counted without its flip rate",
+  "old": "        let mut above = level[d - 1] * flip(d - 1);",
+  "new": "        let mut above = level[d - 1];"
+ },
+ {
+  "label": "the flux across a cut is multiplied by the deepening rate rather than divided by it",
+  "old": "            level[k] = above / deep(k);",
+  "new": "            level[k] = above * deep(k);"
+ },
+ {
+  "label": "the downward flux across a cut counts only the level just above it",
+  "old": "            above += level[k] * flip(k);",
+  "new": "            above = level[k] * flip(k);"
+ },
+ {
+  "label": "the stationary distribution is normalised over one polarity only",
+  "old": "        let total: f64 = 2.0 * level.iter().sum::<f64>();",
+  "new": "        let total: f64 = level.iter().sum::<f64>();"
+ },
+ {
+  "label": "the opposing polarity is given no stationary mass",
+  "old": "            pi[d + k] = level[k] / total;",
+  "new": "            pi[d + k] = 0.0;"
+ },
+ {
+  "label": "the reducible fallback starts from an unnormalised vector",
+  "old": "        let mut v = vec![1.0 / n as f64; n];",
+  "new": "        let mut v = vec![1.0; n];"
+ },
+ {
+  "label": "the stationarity residual multiplies the distribution by the wrong row",
+  "old": "            acc += pi[i] * m[i * n + j];\n        }\n        residual += (acc - pi[j]).abs();",
+  "new": "            acc += pi[j] * m[i * n + j];\n        }\n        residual += (acc - pi[j]).abs();"
+ },
+ {
+  "label": "the memory signal is the total mass rather than the mean polarity",
+  "old": "        Ok(v[..d].iter().sum::<f64>() - v[d..].iter().sum::<f64>())",
+  "new": "        Ok(v[..d].iter().sum::<f64>() + v[d..].iter().sum::<f64>())"
+ },
+ {
+  "label": "no memory is stored before the signal is watched decay",
+  "old": "        let mut v = self.stationary()?;\n        self.store_into(&mut v);\n        let mut next = vec![0.0; n];\n        for _ in 0..t {",
+  "new": "        let mut v = self.stationary()?;\n        let mut next = vec![0.0; n];\n        for _ in 0..t {"
+ },
+ {
+  "label": "the memory curve starts from a fresh population rather than from equilibrium",
+  "old": "        let mut v = self.stationary()?;\n        self.store_into(&mut v);\n        let mut next = vec![0.0; n];\n        for _ in 0..t {",
+  "new": "        let mut v = vec![0.0; n];\n        v[0] = 1.0;\n        self.store_into(&mut v);\n        let mut next = vec![0.0; n];\n        for _ in 0..t {"
+ },
+ {
+  "label": "the memory curve is advanced one stimulus short",
+  "old": "        let mut next = vec![0.0; n];\n        for _ in 0..t {",
+  "new": "        let mut next = vec![0.0; n];\n        for _ in 1..t {"
+ },
+ {
+  "label": "storing a memory reinforces a plus synapse with the flip rate",
+  "old": "            out[k] += v[k] * (1.0 - deep);",
+  "new": "            out[k] += v[k] * (1.0 - flip);"
+ },
+ {
+  "label": "a stored memory does not deepen the synapses that already agreed",
+  "old": "            if k + 1 < d {\n                out[k + 1] += v[k] * deep;\n            }",
+  "new": "            if k + 1 < d {\n                out[k] += v[k] * deep;\n            }"
+ },
+ {
+  "label": "a flipped synapse keeps its metaplastic level when the memory is stored",
+  "old": "            out[0] += v[d + k] * flip;",
+  "new": "            out[k] += v[d + k] * flip;"
+ },
+ {
+  "label": "the synapses that did not flip are counted by the rate that did",
+  "old": "            out[d + k] += v[d + k] * (1.0 - flip);",
+  "new": "            out[d + k] += v[d + k] * flip;"
+ },
+ {
+  "label": "the lifetime is the first stimulus at which the signal is still above the floor",
+  "old": "            if signal < floor {",
+  "new": "            if signal > floor {"
+ },
+ {
+  "label": "the lifetime is reported one stimulus late",
+  "old": "            if signal < floor {\n                return Ok(Some(t));\n            }",
+  "new": "            if signal < floor {\n                return Ok(Some(t + 1));\n            }"
+ },
+ {
+  "label": "a detection floor that is not a probability is accepted",
+  "old": "        let floor = in_range(\"floor\", floor, 0.0, 1.0)?;",
+  "new": "        let floor = in_range(\"floor\", floor, 0.0, 2.0)?;"
+ },
+ {
+  "label": "the learning probability is conditioned on the agreeing polarity",
+  "old": "        let mass: f64 = pi[d..].iter().sum();",
+  "new": "        let mass: f64 = pi[..d].iter().sum();",
+  "equivalent": "`transition_matrix` gives a potentiating and a depressing stimulus probability one half each and uses the SAME q0, p0 and x for both polarities, so the chain is invariant under the swap k <-> d + k and its stationary distribution satisfies pi[k] == pi[d + k] exactly. `stationary_by_flux_balance` builds it that way by construction — it solves the d-level quotient chain once and writes `pi[k] = level[k] / total` and `pi[d + k] = level[k] / total` from the same f64 — so the two halves are bit-identical, not merely equal to a tolerance, and the two sums are the same number. This is the mutation that survived a previous audit; `the_stationary_distribution_is_exactly_symmetric_under_polarity` is the test that records the symmetry so that anyone adding per-polarity rates finds out which half was meant."
+ },
+ {
+  "label": "the learning probability weights the stationary mass by the deepening rate",
+  "old": "            acc += pi[d + k] * self.q0 * self.x.powi(k as i32);",
+  "new": "            acc += pi[d + k] * self.p0 * self.x.powi(k as i32);"
+ },
+ {
+  "label": "the learning probability is not conditioned on the opposing mass",
+  "old": "        Ok(acc / mass)",
+  "new": "        Ok(acc)"
+ },
+ {
+  "label": "the learning probability sums over the shallowest level alone",
+  "old": "        for k in 0..d {\n            acc += pi[d + k] * self.q0 * self.x.powi(k as i32);\n        }",
+  "new": "        for k in 0..1 {\n            acc += pi[d + k] * self.q0 * self.x.powi(k as i32);\n        }"
+ },
+ {
+  "label": "the weight bit is not counted in the bits per synapse",
+  "old": "        1 + self.depth.next_power_of_two().trailing_zeros()",
+  "new": "        self.depth.next_power_of_two().trailing_zeros()"
+ },
+ {
+  "label": "the level needs log2 of the depth only when the depth is a power of two",
+  "old": "        1 + self.depth.next_power_of_two().trailing_zeros()",
+  "new": "        1 + self.depth.trailing_zeros()"
+ },
+ {
+  "label": "a fresh ensemble starts at the wrong polarity",
+  "old": "            polarity: vec![true; n],\n            level: vec![0; n],",
+  "new": "            polarity: vec![false; n],\n            level: vec![0; n],"
+ },
+ {
+  "label": "a fresh ensemble starts one level deep",
+  "old": "            polarity: vec![true; n],\n            level: vec![0; n],",
+  "new": "            polarity: vec![true; n],\n            level: vec![1; n],"
+ },
+ {
+  "label": "an ensemble of no synapses is accepted",
+  "old": "        cascade.validate()?;\n        if n == 0 {\n            return Err(ContinualError::Empty { what: \"n\" });\n        }",
+  "new": "        cascade.validate()?;\n        if false {\n            return Err(ContinualError::Empty { what: \"n\" });\n        }"
+ },
+ {
+  "label": "the polarity boundary of the sampled state is off by one",
+  "old": "            polarity.push(s < d);",
+  "new": "            polarity.push(s <= d);"
+ },
+ {
+  "label": "the sampled level is the polarity block rather than the level within it",
+  "old": "            level.push((s % d) as u32);",
+  "new": "            level.push((s / d) as u32);"
+ },
+ {
+  "label": "the ensemble signal is the plus fraction rather than the mean polarity",
+  "old": "        (2 * plus) as f64 / self.len() as f64 - 1.0",
+  "new": "        plus as f64 / self.len() as f64"
+ },
+ {
+  "label": "the background stimuli are not equiprobable in sign",
+  "old": "                let up = self.rng.next_f64() < 0.5;",
+  "new": "                let up = self.rng.next_f64() < 0.4;"
+ },
+ {
+  "label": "the background stimulus sign is drawn once per step rather than per synapse",
+  "old": "        for _ in 0..steps {\n            for i in 0..self.polarity.len() {\n                let up = self.rng.next_f64() < 0.5;\n                self.apply_one(i, up);",
+  "new": "        for _ in 0..steps {\n            let up = self.rng.next_f64() < 0.5;\n            for i in 0..self.polarity.len() {\n                self.apply_one(i, up);"
+ },
+ {
+  "label": "a stimulus reinforces a synapse exactly when it contradicts it",
+  "old": "        let reinforcing = self.polarity[i] == potentiating;",
+  "new": "        let reinforcing = self.polarity[i] != potentiating;"
+ },
+ {
+  "label": "a sampled synapse never goes deeper than level one",
+  "old": "            if self.rng.next_f64() < deep {\n                self.level[i] += 1;\n            }",
+  "new": "            if self.rng.next_f64() < deep {\n                self.level[i] = 1;\n            }"
+ },
+ {
+  "label": "a flipped synapse keeps the metaplastic depth it had",
+  "old": "                self.polarity[i] = potentiating;\n                self.level[i] = 0;",
+  "new": "                self.polarity[i] = potentiating;"
+ },
+ {
+  "label": "a sampled synapse at the deepest level can still go deeper",
+  "old": "            let deep = if k + 1 == self.cascade.depth {\n                0.0\n            } else {\n                self.cascade.p0 * self.cascade.x.powi(k as i32)\n            };",
+  "new": "            let deep = self.cascade.p0 * self.cascade.x.powi(k as i32);"
+ },
+ {
+  "label": "the elimination oracle does not project onto the polarity-symmetric subspace",
+  "old": "    let d = n / 2;\n    if n.is_multiple_of(2) {",
+  "new": "    let d = n / 2;\n    if false {"
+ },
+ {
+  "label": "the singular-pivot threshold is set where genuine entries live",
+  "old": "        if a[p * w + c].abs() < 1e-200 {",
+  "new": "        if a[p * w + c].abs() < 1e-3 {"
+ },
+ {
+  "label": "the oracle's normalisation row is all zeros",
+  "old": "    for j in 0..n {\n        a[(n - 1) * w + j] = 1.0;\n    }",
+  "new": "    for j in 0..n {\n        a[(n - 1) * w + j] = 0.0;\n    }"
+ }
+]

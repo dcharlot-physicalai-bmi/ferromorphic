@@ -2563,6 +2563,79 @@ mod tests {
         }
     }
 
+    /// ⭐ The residual is a **magnitude**: a target the fit over-predicts everywhere is exactly
+    /// as far from pairwise as one it under-predicts by the same amount.
+    ///
+    /// Why the suite could not see this. Both planted-interaction fixtures in this module plant a
+    /// **positive** third-order term — 0.8 nats above and 1.7 nats in
+    /// `the_fitted_coupling_is_symmetric_because_of_where_the_fit_reads_it` — so at every
+    /// configuration where the fit is wrong the target sits *above* the fitted value. The largest
+    /// signed difference and the largest absolute difference are then the same number, and the
+    /// `.abs()` in the residual sweep is doing nothing either fixture can observe. Here the term is
+    /// planted with the opposite sign: every nonzero disagreement is negative, the largest signed
+    /// difference over the whole sweep is exactly zero — the value at the empty configuration,
+    /// where the fit reads the target and is exact by construction — and a residual that reported
+    /// the signed maximum would call this target pairwise while it is 0.8 nats from being one.
+    ///
+    /// The fit itself is unmoved by the sign, and that is asserted too: the third-order term
+    /// vanishes at every background with fewer than two other units on, which is where the bias and
+    /// the couplings are read, so both targets get the identical pairwise part.
+    #[test]
+    fn a_target_the_fit_over_predicts_is_as_far_from_pairwise_as_one_it_under_predicts() {
+        let m = coupled();
+        let planted = 0.8;
+        let signed_target = |sign: f64| {
+            let log_w: Vec<f64> = (0..16u64)
+                .map(|z| {
+                    let e = m.energy(z).expect("in range");
+                    if z & 0b0111 == 0b0111 { e + sign * planted } else { e }
+                })
+                .collect();
+            Target::from_log_weights(4, &log_w).expect("valid")
+        };
+        let under = PairwiseFit::of(&signed_target(1.0)).expect("small");
+        let over_target = signed_target(-1.0);
+        let over = PairwiseFit::of(&over_target).expect("small");
+        let (ru, ro) = (under.residual, over.residual);
+        assert!((ru - planted).abs() < 1e-12, "a +{planted} nat term reads as a residual of {ru}");
+        assert!((ro - planted).abs() < 1e-12, "a -{planted} nat term reads as a residual of {ro}");
+        for k in 0..4 {
+            let (bu, bo) = (under.bias[k], over.bias[k]);
+            assert!((bu - bo).abs() < 1e-13, "bias {k}: {bu} under-predicting, {bo} over-predicting");
+            for j in 0..4 {
+                let (cu, co) = (under.coupling[k * 4 + j], over.coupling[k * 4 + j]);
+                assert!((cu - co).abs() < 1e-13, "coupling {k},{j}: {cu} against {co}");
+            }
+        }
+
+        // The quantity a sweep without the absolute value would report, spelled out over the same
+        // configurations the fit sweeps. Its maximum is 0 and its minimum is the planted term, so
+        // the two are not interchangeable on this target even though they are on the other one.
+        let mut largest_signed = f64::NEG_INFINITY;
+        let mut most_negative = f64::INFINITY;
+        for z in 0..16u64 {
+            for k in 0..4 {
+                let mut fitted = over.bias[k];
+                for j in 0..4 {
+                    if j != k && z >> j & 1 == 1 {
+                        fitted += over.coupling[k * 4 + j];
+                    }
+                }
+                let d = over_target.conditional_log_odds(z, k).expect("in range") - fitted;
+                largest_signed = largest_signed.max(d);
+                most_negative = most_negative.min(d);
+            }
+        }
+        assert!(
+            largest_signed.abs() < 1e-12,
+            "the signed sweep peaks at {largest_signed} nats, so it is not the zero the argument needs"
+        );
+        assert!(
+            (most_negative + planted).abs() < 1e-12,
+            "the planted term is not in the sweep: the worst signed disagreement is {most_negative}"
+        );
+    }
+
     /// The fitted coupling is symmetric, and it is symmetric for a reason that has nothing to do
     /// with the target being pairwise: `W_kj` and `W_jk` expand to the same four log-weights with
     /// the same signs, so their difference is identically zero for **any** target. A field
@@ -2965,6 +3038,119 @@ mod tests {
         assert!(s.record(&mut Rng::new(1), 0).is_err());
     }
 
+    /// ⭐ `NeuralSampler::run` keeps the ticks *after* the burn-in and no others — both how many
+    /// and which ones.
+    ///
+    /// Why the suite could not see this. Every other call to `run` in this module burns in about a
+    /// tenth of a one-to-two-million-tick run, and then reads the histogram only through
+    /// `Histogram::total_variation`, which divides by the sample count and so cannot see how many
+    /// samples there are. A transient a ten-thousandth of the run long moves that distance by far
+    /// less than its 0.02 threshold, so keeping the burn-in instead of discarding it passed every
+    /// one of those tests unchanged. Nothing in this module read `samples()` off a `run` at all.
+    ///
+    /// Both halves are pinned. The kept window has exactly `steps - burn_in` observations; and it
+    /// is the **tail**, reproduced here by stepping the burn-in by hand off the same seed and
+    /// running the remainder with no burn-in, which must give bin-for-bin identical counts. The
+    /// second half is what separates "discards the first `burn_in`" from "discards some `burn_in`
+    /// of them".
+    ///
+    /// The window that is dropped is a different chain by construction and not by luck: the sampler
+    /// starts from rest, a random scan can raise at most one unit per tick, so across the three
+    /// discarded ticks at most `1 + 2 + 3 = 6` of the nine unit-tick slots can be high. The
+    /// stationary occupancy of this model is `logistic(4) = 0.98201`, and the kept window measures
+    /// it.
+    #[test]
+    fn a_run_keeps_the_ticks_after_the_burn_in_and_no_others() {
+        let m = Boltzmann::independent(&[4.0, 4.0, 4.0]).expect("valid");
+        let (steps, burn_in) = (1_003u64, 3u64);
+        let occupied = |h: &Histogram| -> u64 {
+            h.counts().iter().enumerate().map(|(z, &n)| n * u64::from((z as u64).count_ones())).sum()
+        };
+
+        let mut a = NeuralSampler::new(m.clone(), 1, Scan::Random).expect("valid");
+        let mut ra = Rng::new(31);
+        let kept = a.run(&mut ra, steps, burn_in).expect("runs");
+        assert_eq!(
+            kept.samples(),
+            steps - burn_in,
+            "a run of {steps} ticks with a burn-in of {burn_in} kept the wrong number of them"
+        );
+        assert_eq!(kept.counts().iter().sum::<u64>(), steps - burn_in, "the bins and the count disagree");
+
+        let mut b = NeuralSampler::new(m.clone(), 1, Scan::Random).expect("valid");
+        let mut rb = Rng::new(31);
+        for _ in 0..burn_in {
+            b.step(&mut rb);
+        }
+        let tail = b.run(&mut rb, steps - burn_in, 0).expect("runs");
+        assert_eq!(kept.counts(), tail.counts(), "the window kept is not the tail of the run");
+
+        let mut c = NeuralSampler::new(m, 1, Scan::Random).expect("valid");
+        let mut rc = Rng::new(31);
+        let dropped = c.run(&mut rc, burn_in, 0).expect("runs");
+        let transient = occupied(&dropped);
+        assert!(
+            transient <= 6,
+            "the three discarded ticks hold {transient} high unit-ticks; from rest at most 6 are reachable"
+        );
+        let after = occupied(&kept) as f64 / (3 * (steps - burn_in)) as f64;
+        assert!(
+            after > 0.95,
+            "the kept window sits at an occupancy of {after}, nowhere near the stationary 0.98201"
+        );
+    }
+
+    /// ⭐ A random-scan spike is stamped with the unit that fired, not with a constant.
+    ///
+    /// Why the suite could not see this. Nothing downstream reads a random-scan spike's *identity*.
+    /// `Recording::reconstruct` refuses for `Scan::Random` by design, the histogram, every
+    /// marginal and the total-variation check are all built from the state trace rather than from
+    /// the train, and `the_chain_is_reproducible_from_its_seed` compares two trains that would
+    /// carry the same mistake in both. So the shift that turns "the selected unit fired" into a
+    /// bitmask was asserted nowhere, and reporting every random-scan spike as unit zero's changed
+    /// no test in this module.
+    ///
+    /// What is pinned is an exact invariant rather than a statistic. Under a random scan exactly
+    /// one unit updates per tick; a unit that spikes has its counter set to `tau >= 1`, so its
+    /// state bit is high immediately after the tick; and the set of bits that went from low to high
+    /// across the tick is therefore either empty — the unit was already high and re-fired — or
+    /// exactly the spiking unit's, never any other unit's. The second case is the discriminating
+    /// one, so the run is checked to contain enough of it to be a test at all.
+    #[test]
+    fn a_random_scan_spike_is_stamped_with_the_unit_that_fired_not_with_unit_zero() {
+        let mut s = NeuralSampler::new(coupled(), 3, Scan::Random).expect("valid");
+        let rec = s.record(&mut Rng::new(1_234), 20_000).expect("runs");
+        let states = rec.states();
+        let mut seen = [0u32; 4];
+        let mut raised_a_bit = 0u32;
+        for sp in rec.train().spikes() {
+            let (t, k) = (sp.t as usize, sp.source as usize);
+            assert!(k < 4, "the spike at tick {t} names unit {k} of a four-unit model");
+            seen[k] += 1;
+            assert!(
+                states[t] >> k & 1 == 1,
+                "unit {k} is recorded as spiking at tick {t} but is not high after it"
+            );
+            let previous = if t == 0 { 0 } else { states[t - 1] };
+            let newly = states[t] & !previous;
+            assert!(
+                newly == 0 || newly == 1u64 << k,
+                "tick {t} raised {newly:#06b} while the spike it recorded belongs to unit {k}"
+            );
+            if newly != 0 {
+                raised_a_bit += 1;
+            }
+        }
+        assert!(
+            raised_a_bit > 500,
+            "only {raised_a_bit} spikes took a unit from low to high; the invariant above is vacuous below that"
+        );
+        let total = rec.train().len();
+        for (k, &c) in seen.iter().enumerate() {
+            assert!(c > 0, "unit {k} is never named as a source across {total} spikes");
+        }
+    }
+
     /// Same seed, same spikes. The property the whole crate rests on, asserted for this module's
     /// chain because a sampler that drifted would make every measurement above unrepeatable.
     #[test]
@@ -3269,6 +3455,59 @@ mod tests {
             ((nhi - nlo) / (hi - lo) - 1.0 / e.iact.sqrt()).abs() < 1e-14,
             "the two intervals must differ only by sqrt(iact)"
         );
+    }
+
+    /// ⭐ `Estimate::understatement` refuses a zero naive bar instead of dividing by it, and the
+    /// guard is strict rather than merely non-negative.
+    ///
+    /// Why the suite could not see this. Every `Estimate` anywhere in this module arrives from
+    /// `estimate`, and `estimate` refuses a constant series with `BayesError::NoVariation` before
+    /// a zero `naive_sem` can reach the accessor — so the zero branch of the guard was never
+    /// taken by any test, and loosening it from `> 0.0` to `>= 0.0` changed nothing any of them
+    /// could observe. The struct's fields are public, which is the only route to the case, so the
+    /// case is built here by hand.
+    ///
+    /// The three values are chosen to separate the two comparisons: at `naive_sem == 0.0` with a
+    /// zero honest bar the loosened guard would return `Some(0.0 / 0.0)`, which is `Some(NaN)`; at
+    /// `naive_sem == 0.0` with a nonzero one it would return `Some(+inf)`; and at the smallest
+    /// positive `f64` the strict guard must still admit the ratio, which is `1.0` exactly because
+    /// both fields hold the same value. A `NaN` bar is refused by both forms and is asserted so
+    /// the refusal is not mistaken for a comparison this test moves.
+    #[test]
+    fn the_understatement_refuses_a_zero_naive_bar_rather_than_dividing_by_it() {
+        let degenerate = Estimate {
+            mean: 2.5,
+            sd: 0.0,
+            n: 64,
+            iact: 1.0,
+            ess: 64.0,
+            sem: 0.0,
+            naive_sem: 0.0,
+            lags: 1,
+            truncated_at_cap: false,
+            floored: true,
+        };
+        assert_eq!(
+            degenerate.understatement(),
+            None,
+            "a zero naive bar over a zero honest one is not a ratio, it is 0/0"
+        );
+        let infinite = Estimate { sem: 0.25, ..degenerate };
+        assert_eq!(
+            infinite.understatement(),
+            None,
+            "a zero naive bar under a 0.25 honest one would report an infinite understatement"
+        );
+        let smallest = Estimate { sem: f64::MIN_POSITIVE, naive_sem: f64::MIN_POSITIVE, ..degenerate };
+        assert_eq!(
+            smallest.understatement(),
+            Some(1.0),
+            "the guard is strict, so the smallest positive naive bar is still a bar"
+        );
+        assert_eq!(Estimate { naive_sem: f64::NAN, ..degenerate }.understatement(), None);
+        // And the reason no measured `Estimate` reaches the zero case: the series that would make
+        // one is refused a step earlier, with the count and the value that made it refuse.
+        assert!(matches!(estimate(&[2.5; 64]), Err(BayesError::NoVariation { n: 64, value: 2.5 })));
     }
 
     #[test]
@@ -3606,6 +3845,72 @@ mod tests {
         assert!(population_log_odds(&[], &[], &[], 0.1, 0.0).is_err());
         assert!(poisson_kl(&a, &[1.0], 0.1).is_err());
         assert!(sample_population(&mut Rng::new(1), &a, -1.0).is_err());
+    }
+
+    /// ⭐ A non-finite firing rate is refused as **non-finite**, which is what the `# Errors`
+    /// section of `population_log_odds` promises — and an infinite one is refused at all.
+    ///
+    /// Why the suite could not see this. The zero-rate refusal test above passes a zero rate and a
+    /// negative one, and both land in the neighbouring `OutOfRange` arm; no test in this module
+    /// passed a `NaN` or an infinity as a rate at all. Deleting the finiteness check is then
+    /// invisible for a `NaN`, because `!(NaN > 0.0)` is true and the positivity arm catches it
+    /// under a different name — the call still fails, so a test that only asked `is_err()` would
+    /// still pass either way. It is **not** invisible for `+inf`: `!(inf > 0.0)` is false, so an
+    /// infinite rate sails through both arms and the call returns `Ok` with a log-odds of `NaN`,
+    /// which is a confidence readout handing back a number that compares false against everything.
+    ///
+    /// So the variant and the index are asserted rather than merely the failure, over all three
+    /// non-finite values and over every slice that shares the gate: `rate_a` and `rate_b` of
+    /// `population_log_odds`, `rate_p` and `rate_q` of `poisson_kl`, and `rates` of
+    /// `sample_population`.
+    #[test]
+    fn a_non_finite_rate_is_refused_as_non_finite_rather_than_as_out_of_range() {
+        let ok = [10.0, 10.0];
+        let counts = [1u64, 0];
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let second = [10.0, bad];
+            let first = [bad, 10.0];
+            assert!(
+                matches!(
+                    population_log_odds(&counts, &second, &ok, 0.1, 0.0),
+                    Err(BayesError::NonFinite { what: "rate_a", index: 1 })
+                ),
+                "a rate of {bad} in rate_a[1] is not reported as non-finite"
+            );
+            assert!(
+                matches!(
+                    population_log_odds(&counts, &ok, &first, 0.1, 0.0),
+                    Err(BayesError::NonFinite { what: "rate_b", index: 0 })
+                ),
+                "a rate of {bad} in rate_b[0] is not reported as non-finite"
+            );
+            assert!(
+                matches!(
+                    poisson_kl(&second, &ok, 0.1),
+                    Err(BayesError::NonFinite { what: "rate_p", index: 1 })
+                ),
+                "a rate of {bad} in rate_p[1] is not reported as non-finite"
+            );
+            assert!(
+                matches!(
+                    poisson_kl(&ok, &first, 0.1),
+                    Err(BayesError::NonFinite { what: "rate_q", index: 0 })
+                ),
+                "a rate of {bad} in rate_q[0] is not reported as non-finite"
+            );
+            assert!(
+                matches!(
+                    sample_population(&mut Rng::new(1), &second, 0.1),
+                    Err(BayesError::NonFinite { what: "rates", index: 1 })
+                ),
+                "a rate of {bad} in rates[1] is not reported as non-finite"
+            );
+        }
+        // The message names the neuron, which is the whole reason the index is carried.
+        let text = population_log_odds(&counts, &[10.0, f64::INFINITY], &ok, 0.1, 0.0)
+            .expect_err("an infinite rate")
+            .to_string();
+        assert!(text.contains("rate_a[1]"), "{text}");
     }
 
     /// `logistic` must not return exactly zero for a large negative argument: the difference
@@ -4031,6 +4336,54 @@ mod tests {
         assert!(
             cb.cleanup(&v, s + 1e-12).expect("valid").is_none(),
             "a threshold above the best similarity must return None"
+        );
+    }
+
+    /// ⭐⭐ The tie-break coin is **fair**, so an even bundle is not pulled toward all-ones.
+    ///
+    /// Why the suite could not see this. Every measurement this module makes on a bundle is a
+    /// *similarity to a component*, and that quantity does not move with the coin's bias at all.
+    /// At a tied bit exactly half of the components carry a 1, so the chosen component's own bit is
+    /// a 1 at half the tied positions whatever the coin does; the bundle agrees with it at
+    /// probability one half either way, and `bundle_similarity`, the closed-form check and the
+    /// capacity sweep are all unmoved. `an_odd_bundle_consumes_no_randomness_and_an_even_one_does`
+    /// only asserts that the stream was touched and that two seeds give different answers, both of
+    /// which a nine-to-one coin still does. Nothing looked at the bundle's own **density**, which
+    /// is the one thing the bias moves.
+    ///
+    /// The fixture makes every bit a tie and nothing else: a vector and its exact complement
+    /// disagree at all `dim` positions, so the count at every bit is exactly one of two and the
+    /// bundle is `dim` coin flips with no majority anywhere. That the fixture really is degenerate
+    /// is asserted rather than assumed — the Hamming distance between the pair must be `dim`.
+    ///
+    /// The bound is arithmetic. Pooled over eight seeds the test watches 80 000 tied bits, and the
+    /// standard deviation of a fair proportion over that many is `sqrt(0.25 / 80_000) = 0.001768`,
+    /// so the asserted 0.01 is 5.7 of them. This implementation measures 0.50057, which is 0.32 of
+    /// one; a coin weighted nine to one would measure about 0.9, which is 226 of them.
+    #[test]
+    fn the_tie_break_coin_is_fair_so_an_even_bundle_is_not_pulled_toward_all_ones() {
+        let dim = 10_000;
+        let (mut ones, mut tied_bits) = (0usize, 0usize);
+        for seed in 1..=8u64 {
+            let mut rng = Rng::new(seed);
+            let v = Hypervector::random(&mut rng, dim).expect("valid");
+            let mut complement = Hypervector::zeros(dim).expect("valid");
+            for i in 0..dim {
+                complement.set(i, !v.get(i).expect("in range")).expect("in range");
+            }
+            assert_eq!(
+                v.hamming(&complement).expect("aligned"),
+                dim,
+                "seed {seed}: the pair is not a complement, so not every bit is a tie"
+            );
+            let bundled = Hypervector::bundle(&[v, complement], &mut rng).expect("valid");
+            ones += bundled.ones();
+            tied_bits += dim;
+        }
+        let p = ones as f64 / tied_bits as f64;
+        assert!(
+            (p - 0.5).abs() < 0.01,
+            "the tie-break coin set {p} of {tied_bits} tied bits; a fair coin sets about half"
         );
     }
 

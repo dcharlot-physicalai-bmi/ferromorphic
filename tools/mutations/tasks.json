@@ -1,0 +1,1022 @@
+[
+ {
+  "label": "an infinity is accepted as a finite parameter",
+  "old": "    if !value.is_finite() {\n        return Err(TaskError::NotFinite { what, value });",
+  "new": "    if value.is_nan() {\n        return Err(TaskError::NotFinite { what, value });"
+ },
+ {
+  "label": "a range check has no upper bound",
+  "old": "    if value < low || value > high {",
+  "new": "    if value < low {"
+ },
+ {
+  "label": "a range check is exclusive at both ends",
+  "old": "    if value < low || value > high {",
+  "new": "    if value <= low || value >= high {"
+ },
+ {
+  "label": "a range check never tests for a NaN first",
+  "old": "fn in_range(what: &'static str, value: f64, low: f64, high: f64) -> Result<(), TaskError> {\n    finite(what, value)?;",
+  "new": "fn in_range(what: &'static str, value: f64, low: f64, high: f64) -> Result<(), TaskError> {"
+ },
+ {
+  "label": "a zero count is accepted",
+  "old": "fn nonzero(what: &'static str, n: u64) -> Result<(), TaskError> {\n    if n == 0 {",
+  "new": "fn nonzero(what: &'static str, n: u64) -> Result<(), TaskError> {\n    if false {"
+ },
+ {
+  "label": "the draw ceiling is the whole u32 range rather than half of it",
+  "old": "pub const MAX_DRAW_SPAN: u64 = i32::MAX as u64;",
+  "new": "pub const MAX_DRAW_SPAN: u64 = u32::MAX as u64;"
+ },
+ {
+  "label": "the jitter ceiling rounds up and no longer fits its own span",
+  "old": "pub const MAX_JITTER_HALF: u64 = (MAX_DRAW_SPAN - 1) / 2;",
+  "new": "pub const MAX_JITTER_HALF: u64 = (MAX_DRAW_SPAN + 1) / 2;"
+ },
+ {
+  "label": "a span too wide for a uniform draw is narrowed rather than refused",
+  "old": "    if span > MAX_DRAW_SPAN {",
+  "new": "    if false {"
+ },
+ {
+  "label": "the draw span is checked against u32::MAX instead of the measured ceiling",
+  "old": "    if span > MAX_DRAW_SPAN {",
+  "new": "    if span > u64::from(u32::MAX) {"
+ },
+ {
+  "label": "a jitter half-width is never checked against its ceiling",
+  "old": "    if half > MAX_JITTER_HALF {",
+  "new": "    if false {"
+ },
+ {
+  "label": "a jitter half-width is checked against the full span rather than its half",
+  "old": "    if half > MAX_JITTER_HALF {",
+  "new": "    if half > MAX_DRAW_SPAN {"
+ },
+ {
+  "label": "the sample key drops the channel and keeps only the tick",
+  "old": "        for s in self.train.spikes() {\n            k.push(s.t);\n            k.push(u64::from(s.source));\n        }",
+  "new": "        for s in self.train.spikes() {\n            k.push(s.t);\n        }"
+ },
+ {
+  "label": "the sample key includes the label it is documented to exclude",
+  "old": "    fn key(&self) -> Vec<u64> {\n        let mut k = Vec::with_capacity(self.train.len() * 2);",
+  "new": "    fn key(&self) -> Vec<u64> {\n        let mut k = vec![u64::from(self.label)];"
+ },
+ {
+  "label": "the event key drops the polarity bit",
+  "old": "            k.push((u64::from(e.address) << 1) | u64::from(e.polarity == Polarity::On));",
+  "new": "            k.push(u64::from(e.address));"
+ },
+ {
+  "label": "the event key packs the polarity into the address's own low bit",
+  "old": "            k.push((u64::from(e.address) << 1) | u64::from(e.polarity == Polarity::On));",
+  "new": "            k.push(u64::from(e.address) | u64::from(e.polarity == Polarity::On));"
+ },
+ {
+  "label": "a split query returns the other half of the dataset",
+  "old": "        match split {\n            Split::Train => &self.train,\n            Split::Test => &self.test,\n        }",
+  "new": "        match split {\n            Split::Train => &self.test,\n            Split::Test => &self.train,\n        }"
+ },
+ {
+  "label": "the sample duration divides by the tick length instead of multiplying",
+  "old": "    pub fn duration_seconds(&self) -> f64 {\n        self.ticks as f64 * self.dt\n    }",
+  "new": "    pub fn duration_seconds(&self) -> f64 {\n        self.ticks as f64 / self.dt\n    }"
+ },
+ {
+  "label": "the class counts record presence rather than accumulating",
+  "old": "            if l < c.len() {\n                c[l] += 1;\n            }",
+  "new": "            if l < c.len() {\n                c[l] = 1;\n            }"
+ },
+ {
+  "label": "a label outside the class range is folded back into a class",
+  "old": "            let l = s.label() as usize;",
+  "new": "            let l = s.label() as usize % c.len();"
+ },
+ {
+  "label": "an empty split reports a vector of zeros rather than nothing",
+  "old": "        let n = self.split(split).len();\n        if n == 0 {\n            return Vec::new();\n        }",
+  "new": "        let n = self.split(split).len();"
+ },
+ {
+  "label": "the class shares are normalised by the counted total rather than by the split length",
+  "old": "        self.counts(split).into_iter().map(|c| c as f64 / n as f64).collect()",
+  "new": "        let total: usize = self.counts(split).iter().sum();\n        self.counts(split).into_iter().map(|c| c as f64 / total as f64).collect()"
+ },
+ {
+  "label": "the overlap counts the test samples that are NOT in the train split",
+  "old": "        self.test.iter().filter(|s| keys.binary_search(&s.key()).is_ok()).count()",
+  "new": "        self.test.iter().filter(|s| keys.binary_search(&s.key()).is_err()).count()"
+ },
+ {
+  "label": "the overlap binary-searches an unsorted key list",
+  "old": "        keys.sort_unstable();\n        self.test.iter()",
+  "new": "        self.test.iter()"
+ },
+ {
+  "label": "the overlap compares the test split against itself",
+  "old": "        let mut keys: Vec<Vec<u64>> = self.train.iter().map(Keyed::key).collect();",
+  "new": "        let mut keys: Vec<Vec<u64>> = self.test.iter().map(Keyed::key).collect();"
+ },
+ {
+  "label": "the channel-count vector has no bin per input channel",
+  "old": "        let mut c = vec![0u64; self.n_inputs as usize];",
+  "new": "        let mut c = vec![0u64; 0];"
+ },
+ {
+  "label": "the channel counts record presence rather than a total",
+  "old": "                if i < c.len() {\n                    c[i] += 1;\n                }",
+  "new": "                if i < c.len() {\n                    c[i] = 1;\n                }"
+ },
+ {
+  "label": "the first spike of a channel is reported as its last",
+  "old": "        sample.train.spikes().iter().find(|s| s.source == channel).map(|s| s.t)",
+  "new": "        sample.train.spikes().iter().rev().find(|s| s.source == channel).map(|s| s.t)"
+ },
+ {
+  "label": "the first-spike query answers with any channel at or above the one asked for",
+  "old": "        sample.train.spikes().iter().find(|s| s.source == channel).map(|s| s.t)",
+  "new": "        sample.train.spikes().iter().find(|s| s.source >= channel).map(|s| s.t)"
+ },
+ {
+  "label": "the off-count is the whole stream rather than the complement of the on-count",
+  "old": "    (on, sample.events.len() - on)",
+  "new": "    (on, sample.events.len())"
+ },
+ {
+  "label": "the polarity counts are returned in the order (off, on)",
+  "old": "    let on = sample.events.iter().filter(|e| e.polarity == Polarity::On).count();",
+  "new": "    let on = sample.events.iter().filter(|e| e.polarity == Polarity::Off).count();"
+ },
+ {
+  "label": "the shuffle never leaves an element where it found it",
+  "old": "        let j = rng.below((i + 1) as u32) as usize;",
+  "new": "        let j = rng.below(i as u32) as usize;"
+ },
+ {
+  "label": "the shuffle leaves a whole split alone as though it were too short",
+  "old": "    if v.len() < 2 {",
+  "new": "    if v.len() < 512 {"
+ },
+ {
+  "label": "the training split is handed back class-ordered",
+  "old": "    let mut rng = Rng::new(shuffle_seed);\n    shuffle(&mut train, &mut rng);",
+  "new": "    let mut rng = Rng::new(shuffle_seed);"
+ },
+ {
+  "label": "the test split is handed back class-ordered",
+  "old": "    shuffle(&mut train, &mut rng);\n    shuffle(&mut test, &mut rng);",
+  "new": "    shuffle(&mut train, &mut rng);"
+ },
+ {
+  "label": "a class is filled to the train count alone, leaving no test half",
+  "old": "    let per_class = per_class_train.saturating_add(per_class_test);",
+  "new": "    let per_class = per_class_train;"
+ },
+ {
+  "label": "the draw budget is one draw per accepted sample",
+  "old": "    let budget = per_class.saturating_mul(64).saturating_add(1024);",
+  "new": "    let budget = per_class;"
+ },
+ {
+  "label": "the condition cycles on the draw index rather than on the accepted count",
+  "old": "            let s = make(c, kept.len());",
+  "new": "            let s = make(c, draws);"
+ },
+ {
+  "label": "a duplicate input is kept rather than redrawn",
+  "old": "            if let Err(pos) = seen.binary_search(&k) {\n                seen.insert(pos, k);\n                kept.push(s);\n            }",
+  "new": "            {\n                let pos = seen.binary_search(&k).unwrap_or_else(|e| e);\n                seen.insert(pos, k);\n                kept.push(s);\n            }"
+ },
+ {
+  "label": "distinctness is enforced within a class rather than across the whole dataset",
+  "old": "    let mut seen: Vec<Vec<u64>> = Vec::new();\n    let mut train = Vec::with_capacity(per_class_train * n_classes as usize);\n    let mut test = Vec::with_capacity(per_class_test * n_classes as usize);\n\n    for c in 0..n_classes {\n        let mut kept: Vec<S> = Vec::with_capacity(per_class);",
+  "new": "    let mut train = Vec::with_capacity(per_class_train * n_classes as usize);\n    let mut test = Vec::with_capacity(per_class_test * n_classes as usize);\n\n    for c in 0..n_classes {\n        let mut seen: Vec<Vec<u64>> = Vec::new();\n        let mut kept: Vec<S> = Vec::with_capacity(per_class);"
+ },
+ {
+  "label": "the train/test boundary is drawn at the test count",
+  "old": "            if i < per_class_train {",
+  "new": "            if i < per_class_test {"
+ },
+ {
+  "label": "the first samples of a class go to the test split",
+  "old": "            if i < per_class_train {\n                train.push(s);\n            } else {\n                test.push(s);\n            }",
+  "new": "            if i < per_class_train {\n                test.push(s);\n            } else {\n                train.push(s);\n            }"
+ },
+ {
+  "label": "chance is the class count rather than its reciprocal",
+  "old": "        chance: 1.0 / f64::from(n_classes),",
+  "new": "        chance: f64::from(n_classes),"
+ },
+ {
+  "label": "chance counts one class too many",
+  "old": "        chance: 1.0 / f64::from(n_classes),",
+  "new": "        chance: 1.0 / f64::from(n_classes + 1),"
+ },
+ {
+  "label": "the majority baseline is measured off the train split",
+  "old": "    let bal = d.balance(Split::Test);",
+  "new": "    let bal = d.balance(Split::Train);"
+ },
+ {
+  "label": "an empty split reports a majority baseline of zero",
+  "old": "        if bal.is_empty() { None } else { Some(bal.into_iter().fold(0.0f64, f64::max)) };",
+  "new": "        Some(bal.into_iter().fold(0.0f64, f64::max));"
+ },
+ {
+  "label": "the majority baseline is the smallest class share",
+  "old": "        if bal.is_empty() { None } else { Some(bal.into_iter().fold(0.0f64, f64::max)) };",
+  "new": "        if bal.is_empty() { None } else { Some(bal.into_iter().fold(1.0f64, f64::min)) };"
+ },
+ {
+  "label": "the majority baseline sums the class shares",
+  "old": "        if bal.is_empty() { None } else { Some(bal.into_iter().fold(0.0f64, f64::max)) };",
+  "new": "        if bal.is_empty() { None } else { Some(bal.into_iter().sum::<f64>()) };"
+ },
+ {
+  "label": "the jitter spans a half-width rather than twice one",
+  "old": "    let span = 2 * half.0 + 1;",
+  "new": "    let span = half.0 + 1;"
+ },
+ {
+  "label": "the jitter is never negative",
+  "old": "    i64::from(rng.below(span)) - i64::from(half.0)",
+  "new": "    i64::from(rng.below(span))"
+ },
+ {
+  "label": "the jitter is centred on minus the whole span",
+  "old": "    i64::from(rng.below(span)) - i64::from(half.0)",
+  "new": "    i64::from(rng.below(span)) - i64::from(span)"
+ },
+ {
+  "label": "a zero jitter half-width shifts every sample anyway",
+  "old": "    if half.0 == 0 {\n        return 0;\n    }",
+  "new": "    if half.0 == 0 {\n        return 2;\n    }"
+ },
+ {
+  "label": "the log-factorial table is shifted by one",
+  "old": "        acc += (k as f64).ln();",
+  "new": "        acc += (k as f64 + 1.0).ln();"
+ },
+ {
+  "label": "ln(0!) is one rather than zero",
+  "old": "    let mut acc = 0.0f64;\n    v.push(0.0);",
+  "new": "    let mut acc = 0.0f64;\n    v.push(1.0);"
+ },
+ {
+  "label": "a silent binomial channel puts all its mass on the largest count",
+  "old": "    if p <= 0.0 {\n        v[0] = 1.0;\n        return v;\n    }",
+  "new": "    if p <= 0.0 {\n        v[n] = 1.0;\n        return v;\n    }"
+ },
+ {
+  "label": "the binomial coefficient drops its complementary factorial",
+  "old": "        let l = lnf[n] - lnf[k] - lnf[n - k] + k as f64 * lp + (n - k) as f64 * lq;",
+  "new": "        let l = lnf[n] - lnf[k] + k as f64 * lp + (n - k) as f64 * lq;"
+ },
+ {
+  "label": "the binomial's success and failure log-probabilities are swapped",
+  "old": "        let l = lnf[n] - lnf[k] - lnf[n - k] + k as f64 * lp + (n - k) as f64 * lq;",
+  "new": "        let l = lnf[n] - lnf[k] - lnf[n - k] + (n - k) as f64 * lp + k as f64 * lq;"
+ },
+ {
+  "label": "the Poisson mass grows with its mean instead of decaying",
+  "old": "        v[k] = (-mu + k as f64 * lmu - lnf[k]).exp();",
+  "new": "        v[k] = (mu + k as f64 * lmu - lnf[k]).exp();"
+ },
+ {
+  "label": "the Poisson mass multiplies by the factorial instead of dividing",
+  "old": "        v[k] = (-mu + k as f64 * lmu - lnf[k]).exp();",
+  "new": "        v[k] = (-mu + k as f64 * lmu + lnf[k]).exp();"
+ },
+ {
+  "label": "a Poisson mean of zero reaches the logarithm",
+  "old": "    if mu <= 0.0 {\n        v[0] = 1.0;\n        return v;\n    }",
+  "new": "    if mu < 0.0 {\n        v[0] = 1.0;\n        return v;\n    }"
+ },
+ {
+  "label": "a tie counts as a win rather than as half of one",
+  "old": "    win + 0.5 * tie",
+  "new": "    win + tie"
+ },
+ {
+  "label": "a tie is thrown away rather than split",
+  "old": "    win + 0.5 * tie",
+  "new": "    win"
+ },
+ {
+  "label": "the suffix sum accumulates the slow channel's distribution",
+  "old": "        suffix[k] = suffix[k + 1] + hi[k];",
+  "new": "        suffix[k] = suffix[k + 1] + lo[k];"
+ },
+ {
+  "label": "the suffix sum is accumulated forwards, so every entry is its own term",
+  "old": "    for k in (0..hi.len()).rev() {",
+  "new": "    for k in 0..hi.len() {"
+ },
+ {
+  "label": "the strict win already includes the tie",
+  "old": "        win += pj * suffix.get(j + 1).copied().unwrap_or(0.0);",
+  "new": "        win += pj * suffix.get(j).copied().unwrap_or(0.0);"
+ },
+ {
+  "label": "the tie term reads the slow channel twice",
+  "old": "        tie += pj * hi.get(j).copied().unwrap_or(0.0);",
+  "new": "        tie += pj * lo.get(j).copied().unwrap_or(0.0);"
+ },
+ {
+  "label": "the XOR truth table labels a matching pair as different",
+  "old": "        [(false, false, 0), (true, true, 0), (false, true, 1), (true, false, 1)]",
+  "new": "        [(false, false, 1), (true, true, 0), (false, true, 1), (true, false, 1)]"
+ },
+ {
+  "label": "two of the four conditions are the same row",
+  "old": "        [(false, false, 0), (true, true, 0), (false, true, 1), (true, false, 1)]",
+  "new": "        [(false, false, 0), (true, true, 0), (false, true, 1), (false, true, 1)]"
+ },
+ {
+  "label": "the separability condition asks for ten times the jitter it derives",
+  "old": "            && self.late_tick - self.early_tick > 4 * self.jitter_ticks",
+  "new": "            && self.late_tick - self.early_tick > 40 * self.jitter_ticks"
+ },
+ {
+  "label": "a condition sample puts both volleys on channel 0",
+  "old": "                sp.push(Spike { t: base + k * self.burst_gap, source: ch });",
+  "new": "                sp.push(Spike { t: base + k * self.burst_gap, source: 0 });"
+ },
+ {
+  "label": "a condition sample reads its logical bits the wrong way round",
+  "old": "            let base = if late { self.late_tick } else { self.early_tick };\n            for k in 0..u64::from(self.spikes_per_channel) {",
+  "new": "            let base = if late { self.early_tick } else { self.late_tick };\n            for k in 0..u64::from(self.spikes_per_channel) {"
+ },
+ {
+  "label": "a condition's label is the AND of its two bits",
+  "old": "        Sample { train: Train::from_spikes(sp), label: u32::from(a != b) }",
+  "new": "        Sample { train: Train::from_spikes(sp), label: u32::from(a == b) }"
+ },
+ {
+  "label": "the coincidence rule thresholds at a quarter of the volley gap",
+  "old": "        let half = (self.late_tick - self.early_tick) / 2;",
+  "new": "        let half = (self.late_tick - self.early_tick) / 4;"
+ },
+ {
+  "label": "the coincidence rule answers the two classes the wrong way round",
+  "old": "        Some(u32::from(gap > half))",
+  "new": "        Some(u32::from(gap < half))"
+ },
+ {
+  "label": "the coincidence rule reads channel 0 for both of its times",
+  "old": "        let t1 = Dataset::first_spike(s, 1)?;\n        let gap = t0.abs_diff(t1);",
+  "new": "        let t1 = Dataset::first_spike(s, 0)?;\n        let gap = t0.abs_diff(t1);"
+ },
+ {
+  "label": "the window that must hold a jittered volley is never checked",
+  "old": "        let last = self.late_tick.saturating_add(span).saturating_add(self.jitter_ticks);\n        if last >= self.ticks {",
+  "new": "        let last = self.late_tick.saturating_add(span).saturating_add(self.jitter_ticks);\n        if false {"
+ },
+ {
+  "label": "the two conditions of a class alternate every third accepted sample",
+  "old": "                let second = accepted % 2 == 1;",
+  "new": "                let second = accepted % 3 == 1;"
+ },
+ {
+  "label": "class 0 only ever draws its early-early condition",
+  "old": "                    (0, false) => (false, false),\n                    (0, true) => (true, true),",
+  "new": "                    (0, false) => (false, false),\n                    (0, true) => (false, false),"
+ },
+ {
+  "label": "one of class 1's rows carries no difference between the channels",
+  "old": "                    (_, false) => (false, true),\n                    (_, true) => (true, false),",
+  "new": "                    (_, false) => (true, true),\n                    (_, true) => (true, false),"
+ },
+ {
+  "label": "the two channels share one jitter draw",
+  "old": "                let ja = jitter(&mut rng, jit);\n                let jb = jitter(&mut rng, jit);",
+  "new": "                let ja = jitter(&mut rng, jit);\n                let jb = ja;"
+ },
+ {
+  "label": "a volley is a single spike rather than spikes_per_channel of them",
+  "old": "                    for k in 0..u64::from(cfg.spikes_per_channel) {\n                        sp.push(Spike { t: start + k * cfg.burst_gap, source: ch });",
+  "new": "                    for k in 0..1 {\n                        sp.push(Spike { t: start + k * cfg.burst_gap, source: ch });"
+ },
+ {
+  "label": "the within-volley spacing is one tick rather than burst_gap",
+  "old": "                        sp.push(Spike { t: start + k * cfg.burst_gap, source: ch });",
+  "new": "                        sp.push(Spike { t: start + k, source: ch });"
+ },
+ {
+  "label": "the temporal XOR dataset renames itself out from under the catalogue",
+  "old": "            \"temporal_xor\",\n            train,",
+  "new": "            \"temporal_xor_v2\",\n            train,"
+ },
+ {
+  "label": "temporal XOR reports four classes",
+  "old": "            \"temporal_xor\",\n            train,\n            test,\n            2,\n            2,",
+  "new": "            \"temporal_xor\",\n            train,\n            test,\n            4,\n            2,"
+ },
+ {
+  "label": "the suggested membrane constant is in ticks rather than seconds",
+  "old": "        self.threshold_ticks as f64 * self.dt",
+  "new": "        self.threshold_ticks as f64"
+ },
+ {
+  "label": "the suggested membrane constant divides by the tick length",
+  "old": "        self.threshold_ticks as f64 * self.dt",
+  "new": "        self.threshold_ticks as f64 / self.dt"
+ },
+ {
+  "label": "the interval rule excludes the threshold itself",
+  "old": "        Some(u32::from(t0.abs_diff(t1) <= self.threshold_ticks))",
+  "new": "        Some(u32::from(t0.abs_diff(t1) < self.threshold_ticks))"
+ },
+ {
+  "label": "the interval rule thresholds at the largest gap drawn",
+  "old": "        Some(u32::from(t0.abs_diff(t1) <= self.threshold_ticks))",
+  "new": "        Some(u32::from(t0.abs_diff(t1) <= self.max_gap_ticks))"
+ },
+ {
+  "label": "a task with no room for a non-match is accepted",
+  "old": "        if self.max_gap_ticks <= self.threshold_ticks {",
+  "new": "        if self.max_gap_ticks < self.threshold_ticks {"
+ },
+ {
+  "label": "the coincident class can never realise a gap of exactly the threshold",
+  "old": "        let coincident_span = draw_span(\"threshold_ticks\", self.threshold_ticks.saturating_add(1))?;",
+  "new": "        let coincident_span = draw_span(\"threshold_ticks\", self.threshold_ticks)?;"
+ },
+ {
+  "label": "the non-coincident gap range is the whole gap range",
+  "old": "        let distant_span = draw_span(\"max_gap_ticks\", self.max_gap_ticks - self.threshold_ticks)?;",
+  "new": "        let distant_span = draw_span(\"max_gap_ticks\", self.max_gap_ticks)?;"
+ },
+ {
+  "label": "the two classes' gap ranges are swapped",
+  "old": "                let gap = if class == 1 {",
+  "new": "                let gap = if class == 0 {"
+ },
+ {
+  "label": "the non-coincident class starts at the threshold rather than past it",
+  "old": "                    cfg.threshold_ticks + 1 + u64::from(rng.below(distant_span))",
+  "new": "                    cfg.threshold_ticks + u64::from(rng.below(distant_span))"
+ },
+ {
+  "label": "only the first spike carries the common-mode jitter, so the jitter changes the gap",
+  "old": "                    vec![Spike { t: t0, source: 0 }, Spike { t: t0 + gap, source: 1 }];",
+  "new": "                    vec![Spike { t: t0, source: 0 }, Spike { t: cfg.first_tick + gap, source: 1 }];"
+ },
+ {
+  "label": "both coincidence spikes land on channel 0",
+  "old": "                    vec![Spike { t: t0, source: 0 }, Spike { t: t0 + gap, source: 1 }];",
+  "new": "                    vec![Spike { t: t0, source: 0 }, Spike { t: t0 + gap, source: 0 }];"
+ },
+ {
+  "label": "a jitter that would push the reference spike below tick zero is accepted",
+  "old": "        if self.first_tick < self.jitter_ticks {",
+  "new": "        if false {"
+ },
+ {
+  "label": "the sample holds one cue window rather than two",
+  "old": "        self.cue_ticks.saturating_mul(2).saturating_add(self.delay_ticks)",
+  "new": "        self.cue_ticks.saturating_add(self.delay_ticks)"
+ },
+ {
+  "label": "the memory requirement is the cue length rather than the delay",
+  "old": "        self.delay_ticks as f64 * self.dt",
+  "new": "        self.cue_ticks as f64 * self.dt"
+ },
+ {
+  "label": "the delay window starts at tick zero",
+  "old": "    pub fn delay_start(&self) -> u64 {\n        self.cue_ticks\n    }",
+  "new": "    pub fn delay_start(&self) -> u64 {\n        0\n    }"
+ },
+ {
+  "label": "the end of the delay forgets the first cue window",
+  "old": "        self.cue_ticks.saturating_add(self.delay_ticks)",
+  "new": "        self.delay_ticks"
+ },
+ {
+  "label": "the count shortcut needs one spike more than a doubled cue",
+  "old": "        u32::from(counts.iter().copied().max().unwrap_or(0) >= 2 * self.cue_spikes)",
+  "new": "        u32::from(counts.iter().copied().max().unwrap_or(0) > 2 * self.cue_spikes)"
+ },
+ {
+  "label": "the count shortcut fires on a single cue",
+  "old": "        u32::from(counts.iter().copied().max().unwrap_or(0) >= 2 * self.cue_spikes)",
+  "new": "        u32::from(counts.iter().copied().max().unwrap_or(0) >= self.cue_spikes)"
+ },
+ {
+  "label": "the shortcut's per-channel tally records presence rather than a count",
+  "old": "            if i < counts.len() {\n                counts[i] += 1;\n            }",
+  "new": "            if i < counts.len() {\n                counts[i] = 1;\n            }"
+ },
+ {
+  "label": "the cue spacing is computed from one spike too many",
+  "old": "        (self.cue_ticks / u64::from(self.cue_spikes)).max(1)",
+  "new": "        (self.cue_ticks / u64::from(self.cue_spikes + 1)).max(1)"
+ },
+ {
+  "label": "a cue's span is charged one interval too many",
+  "old": "        let span = u64::from(self.cue_spikes - 1).saturating_mul(self.spacing());",
+  "new": "        let span = u64::from(self.cue_spikes).saturating_mul(self.spacing());"
+ },
+ {
+  "label": "the cue window is charged one jitter half-width rather than two",
+  "old": "        let need = span.saturating_add(2 * self.jitter_ticks);",
+  "new": "        let need = span.saturating_add(self.jitter_ticks);"
+ },
+ {
+  "label": "a distractor may be placed so late that its cue runs past the delay",
+  "old": "            draw_span(\"delay_ticks\", self.delay_ticks - span)?",
+  "new": "            draw_span(\"delay_ticks\", self.delay_ticks)?"
+ },
+ {
+  "label": "the matching trials are the ones labelled 0",
+  "old": "                let test_sym = if class == 1 {",
+  "new": "                let test_sym = if class == 0 {"
+ },
+ {
+  "label": "a non-matching trial may draw the sample symbol again",
+  "old": "                    if k >= sample_sym { k + 1 } else { k }",
+  "new": "                    if k > sample_sym { k + 1 } else { k }"
+ },
+ {
+  "label": "the sample cue has no room reserved for its own jitter",
+  "old": "                cue(&mut sp, sample_sym, cfg.jitter_ticks, j1);",
+  "new": "                cue(&mut sp, sample_sym, 0, j1);"
+ },
+ {
+  "label": "the test cue is placed at the start of the delay rather than after it",
+  "old": "                cue(&mut sp, test_sym, cfg.delay_end() + cfg.jitter_ticks, j2);",
+  "new": "                cue(&mut sp, test_sym, cfg.delay_start() + cfg.jitter_ticks, j2);"
+ },
+ {
+  "label": "every cue is written to channel 0 rather than to its symbol's channel",
+  "old": "                    for k in 0..u64::from(cfg.cue_spikes) {\n                        sp.push(Spike { t: start + k * spacing, source: sym });",
+  "new": "                    for k in 0..u64::from(cfg.cue_spikes) {\n                        sp.push(Spike { t: start + k * spacing, source: 0 });"
+ },
+ {
+  "label": "exactly one distractor is placed however many were asked for",
+  "old": "                for _ in 0..cfg.distractor_cues {",
+  "new": "                for _ in 0..1 {"
+ },
+ {
+  "label": "distractors are placed after the delay instead of inside it",
+  "old": "                    let at = cfg.delay_start() + u64::from(rng.below(room));",
+  "new": "                    let at = cfg.delay_end() + u64::from(rng.below(room));"
+ },
+ {
+  "label": "the per-tick probability is the linear approximation rate times dt",
+  "old": "        Some(1.0 - (-rate * self.dt).exp())",
+  "new": "        Some(rate * self.dt)"
+ },
+ {
+  "label": "the per-tick probability divides by the tick length",
+  "old": "        Some(1.0 - (-rate * self.dt).exp())",
+  "new": "        Some(1.0 - (-rate / self.dt).exp())"
+ },
+ {
+  "label": "the per-tick probability is the survival probability",
+  "old": "        Some(1.0 - (-rate * self.dt).exp())",
+  "new": "        Some((-rate * self.dt).exp())"
+ },
+ {
+  "label": "a NaN rate is turned into a NaN probability rather than refused",
+  "old": "        if !rate.is_finite() || rate < 0.0 || !self.dt.is_finite() || self.dt <= 0.0 {",
+  "new": "        if rate < 0.0 || !self.dt.is_finite() || self.dt <= 0.0 {"
+ },
+ {
+  "label": "a silent channel has no per-tick probability at all",
+  "old": "        if !rate.is_finite() || rate < 0.0 || !self.dt.is_finite() || self.dt <= 0.0 {",
+  "new": "        if !rate.is_finite() || rate <= 0.0 || !self.dt.is_finite() || self.dt <= 0.0 {"
+ },
+ {
+  "label": "the exact bound has no ceiling on the support it allocates",
+  "old": "        if self.ticks == 0 || self.ticks > MAX_COUNT_SUPPORT || self.rate_lo > self.rate_hi {",
+  "new": "        if self.ticks == 0 || self.rate_lo > self.rate_hi {"
+ },
+ {
+  "label": "equal rates are refused instead of scoring exactly one half",
+  "old": "        if self.ticks == 0 || self.ticks > MAX_COUNT_SUPPORT || self.rate_lo > self.rate_hi {",
+  "new": "        if self.ticks == 0 || self.ticks > MAX_COUNT_SUPPORT || self.rate_lo >= self.rate_hi {"
+ },
+ {
+  "label": "a window of no length is summed anyway",
+  "old": "        if self.ticks == 0 || self.ticks > MAX_COUNT_SUPPORT || self.rate_lo > self.rate_hi {",
+  "new": "        if self.ticks > MAX_COUNT_SUPPORT || self.rate_lo > self.rate_hi {"
+ },
+ {
+  "label": "the Poisson bound accepts an inverted rate pair",
+  "old": "        if self.ticks == 0 || self.rate_lo > self.rate_hi {\n            return None;\n        }\n        if !self.rate_hi.is_finite()",
+  "new": "        if self.ticks == 0 {\n            return None;\n        }\n        if !self.rate_hi.is_finite()"
+ },
+ {
+  "label": "the Poisson window is counted in ticks rather than seconds",
+  "old": "        let t = self.ticks as f64 * self.dt;",
+  "new": "        let t = self.ticks as f64;"
+ },
+ {
+  "label": "the Poisson truncation keeps no tail past the mean",
+  "old": "        let k_max = (mu_hi + 12.0 * mu_hi.sqrt() + 60.0).ceil();",
+  "new": "        let k_max = mu_hi.ceil();"
+ },
+ {
+  "label": "the two Poisson means are swapped",
+  "old": "        let mu_hi = self.rate_hi * t;\n        let mu_lo = self.rate_lo * t;",
+  "new": "        let mu_hi = self.rate_lo * t;\n        let mu_lo = self.rate_hi * t;"
+ },
+ {
+  "label": "the counting classifier answers with the channel that counted less",
+  "old": "        u32::from(n1 > n0)",
+  "new": "        u32::from(n0 > n1)"
+ },
+ {
+  "label": "the counting classifier reads channel 0 for both of its counts",
+  "old": "        let n1 = s.train.spikes().iter().filter(|x| x.source == 1).count();",
+  "new": "        let n1 = s.train.spikes().iter().filter(|x| x.source == 0).count();"
+ },
+ {
+  "label": "both channels are given the fast rate",
+  "old": "                let p = if class == 0 { [p_hi, p_lo] } else { [p_lo, p_hi] };",
+  "new": "                let p = if class == 0 { [p_hi, p_lo] } else { [p_hi, p_lo] };"
+ },
+ {
+  "label": "the fast channel is the one the label says is slow",
+  "old": "                let p = if class == 0 { [p_hi, p_lo] } else { [p_lo, p_hi] };",
+  "new": "                let p = if class == 1 { [p_hi, p_lo] } else { [p_lo, p_hi] };"
+ },
+ {
+  "label": "the counting window generated is half the one the bound is computed over",
+  "old": "                for t in 0..ticks {",
+  "new": "                for t in 0..ticks / 2 {"
+ },
+ {
+  "label": "the slow rate is allowed to exceed the fast one",
+  "old": "        in_range(\"rate_lo\", self.rate_lo, 0.0, self.rate_hi)?;",
+  "new": "        in_range(\"rate_lo\", self.rate_lo, 0.0, f64::MAX)?;"
+ },
+ {
+  "label": "the separability condition asks for ten times the jitter",
+  "old": "        self.min_separation_ticks > 2 * self.jitter_ticks",
+  "new": "        self.min_separation_ticks > 20 * self.jitter_ticks"
+ },
+ {
+  "label": "a template only has to clear the separation from one of its predecessors",
+  "old": "            let ok = out.iter().all(|t| linf(t, &cand) > self.min_separation_ticks);",
+  "new": "            let ok = out.iter().any(|t| linf(t, &cand) > self.min_separation_ticks);"
+ },
+ {
+  "label": "templates only have to be distinct, not separated",
+  "old": "            let ok = out.iter().all(|t| linf(t, &cand) > self.min_separation_ticks);",
+  "new": "            let ok = out.iter().all(|t| linf(t, &cand) > 0);"
+ },
+ {
+  "label": "template latencies leave no margin for the jitter below them",
+  "old": "        let lo = self.jitter_ticks;",
+  "new": "        let lo = 0;"
+ },
+ {
+  "label": "the template rejection sampler is given a single draw",
+  "old": "        let budget = 4096usize * self.n_classes as usize;",
+  "new": "        let budget = 1usize;"
+ },
+ {
+  "label": "the nearest template is always reported as class 0",
+  "old": "            if d < best.0 {\n                best = (d, c as u32);\n            }",
+  "new": "            if d < best.0 {\n                best = (d, 0);\n            }"
+ },
+ {
+  "label": "the L-infinity distance is the smallest per-channel difference",
+  "old": "    a.iter().zip(b).map(|(&x, &y)| x.abs_diff(y)).max().unwrap_or(0)",
+  "new": "    a.iter().zip(b).map(|(&x, &y)| x.abs_diff(y)).min().unwrap_or(0)"
+ },
+ {
+  "label": "the per-channel jitter becomes one common-mode draw per sample",
+  "old": "                for (ch, &base) in t.iter().enumerate() {\n                    let off = jitter(&mut rng, jit);",
+  "new": "                let off = jitter(&mut rng, jit);\n                for (ch, &base) in t.iter().enumerate() {"
+ },
+ {
+  "label": "every latency spike is written to channel 0",
+  "old": "                    sp.push(Spike { t: at, source: ch as u32 });",
+  "new": "                    sp.push(Spike { t: at, source: 0 });"
+ },
+ {
+  "label": "the latency dataset reports its channel count as its class count",
+  "old": "            \"latency_patterns\",\n            train,\n            test,\n            self.n_classes,\n            self.n_inputs,",
+  "new": "            \"latency_patterns\",\n            train,\n            test,\n            self.n_inputs,\n            self.n_classes,"
+ },
+ {
+  "label": "a traverse emits one event per pixel rather than two",
+  "old": "        2 * u64::from(self.width) * u64::from(self.height)",
+  "new": "        u64::from(self.width) * u64::from(self.height)"
+ },
+ {
+  "label": "the slowest speed adds the jitter fraction",
+  "old": "        self.speed_px_per_tick * (1.0 - self.speed_jitter_frac)",
+  "new": "        self.speed_px_per_tick * (1.0 + self.speed_jitter_frac)"
+ },
+ {
+  "label": "the fastest speed subtracts the jitter fraction",
+  "old": "        self.speed_px_per_tick * (1.0 + self.speed_jitter_frac)",
+  "new": "        self.speed_px_per_tick * (1.0 - self.speed_jitter_frac)"
+ },
+ {
+  "label": "the window floor rounds the traverse down",
+  "old": "        let t = (extent / v).ceil();",
+  "new": "        let t = (extent / v).floor();"
+ },
+ {
+  "label": "the window floor forgets the start delay",
+  "old": "        Some(self.max_start_delay.saturating_add(t as u64).saturating_add(2))",
+  "new": "        Some((t as u64).saturating_add(2))"
+ },
+ {
+  "label": "the window floor drops the two edge ticks",
+  "old": "        Some(self.max_start_delay.saturating_add(t as u64).saturating_add(2))",
+  "new": "        Some(self.max_start_delay.saturating_add(t as u64))"
+ },
+ {
+  "label": "the traverse extent ignores the bar's own thickness",
+  "old": "        let extent = f64::from(self.width.max(self.height)) + f64::from(self.bar_width);",
+  "new": "        let extent = f64::from(self.width.max(self.height));"
+ },
+ {
+  "label": "a bar that cannot move is given a window anyway",
+  "old": "        if !v.is_finite() || v <= 0.0 {\n            return None;\n        }",
+  "new": "        if !v.is_finite() || v < 0.0 {\n            return None;\n        }"
+ },
+ {
+  "label": "an advance exactly equal to the bar's thickness is refused",
+  "old": "        if speed.ceil() > f64::from(self.bar_width) {",
+  "new": "        if speed.ceil() >= f64::from(self.bar_width) {"
+ },
+ {
+  "label": "the bar starts with its leading edge already inside the frame",
+  "old": "            Direction::Right | Direction::Down => travelled - bw,",
+  "new": "            Direction::Right | Direction::Down => travelled,"
+ },
+ {
+  "label": "the reversed directions travel forwards",
+  "old": "            Direction::Left | Direction::Up => extent - travelled,",
+  "new": "            Direction::Left | Direction::Up => travelled - bw,"
+ },
+ {
+  "label": "the occupancy interval is not clipped to the far edge of the frame",
+  "old": "        let hi = (lead + bw).min(extent);",
+  "new": "        let hi = lead + bw;"
+ },
+ {
+  "label": "the occupancy interval may start before the frame",
+  "old": "        let lo = lead.max(0);",
+  "new": "        let lo = lead;"
+ },
+ {
+  "label": "an empty occupancy is not normalised to (0, 0)",
+  "old": "        if hi <= lo { (0, 0) } else { (lo, hi) }",
+  "new": "        (lo, hi)"
+ },
+ {
+  "label": "the bar is already moving before its start delay",
+  "old": "        let travelled = (speed * (t - delay) as f64).floor() as i64;",
+  "new": "        let travelled = (speed * t as f64).floor() as i64;"
+ },
+ {
+  "label": "the event walk starts one tick late",
+  "old": "        for t in 1..end {",
+  "new": "        for t in 2..end {"
+ },
+ {
+  "label": "the previous occupancy is taken from the second tick",
+  "old": "        let mut prev = self.occupancy(direction, delay, speed, 0);",
+  "new": "        let mut prev = self.occupancy(direction, delay, speed, 1);"
+ },
+ {
+  "label": "each polarity is emitted over the other one's interval",
+  "old": "                let (lo, hi) = if pol == Polarity::On { cur } else { prev };",
+  "new": "                let (lo, hi) = if pol == Polarity::On { prev } else { cur };"
+ },
+ {
+  "label": "freshness is tested against the wrong tick for each polarity",
+  "old": "                    let fresh = if pol == Polarity::On { !in_prev(c) } else { !in_cur(c) };",
+  "new": "                    let fresh = if pol == Polarity::On { !in_cur(c) } else { !in_prev(c) };"
+ },
+ {
+  "label": "an address is column-major rather than y times width plus x",
+  "old": "                        let address = (y * i64::from(self.width) + x) as u32;",
+  "new": "                        let address = (x * i64::from(self.width) + y) as u32;"
+ },
+ {
+  "label": "the travel axis and the cross axis are swapped when an address is formed",
+  "old": "                        let (x, y) = if direction.is_horizontal() { (c, k) } else { (k, c) };",
+  "new": "                        let (x, y) = if direction.is_horizontal() { (k, c) } else { (c, k) };"
+ },
+ {
+  "label": "the bar spans one row rather than the whole cross axis",
+  "old": "                    for k in 0..i64::from(cross) {",
+  "new": "                    for k in 0..1 {"
+ },
+ {
+  "label": "the cross-axis extent is the dimension the bar travels along",
+  "old": "        let cross = if direction.is_horizontal() { self.height } else { self.width };",
+  "new": "        let cross = if direction.is_horizontal() { self.width } else { self.height };"
+ },
+ {
+  "label": "the reach is multiplied by the speed rather than divided by it",
+  "old": "        let reach = (f64::from(extent) + f64::from(self.bar_width)) / speed;",
+  "new": "        let reach = (f64::from(extent) + f64::from(self.bar_width)) * speed;"
+ },
+ {
+  "label": "the walk stops two ticks before the bar is gone",
+  "old": "        self.ticks.min(delay.saturating_add(over as u64).saturating_add(2))",
+  "new": "        self.ticks.min(delay.saturating_add(over as u64))"
+ },
+ {
+  "label": "a saturated noise probability is accepted",
+  "old": "        if self.noise_prob_per_pixel_per_tick >= 1.0 {",
+  "new": "        if self.noise_prob_per_pixel_per_tick > 1.0 {"
+ },
+ {
+  "label": "a bar thinner than its fastest advance is accepted",
+  "old": "        if self.max_speed().ceil() > f64::from(self.bar_width) {",
+  "new": "        if false {"
+ },
+ {
+  "label": "a window exactly at its own floor is refused",
+  "old": "        if self.ticks < need {\n            return Err(TaskError::OutOfRange {\n                what: \"ticks\",\n                value: self.ticks as f64,\n                low: need as f64,\n                high: f64::MAX,\n            });\n        }\n\n        let mut rng = Rng::new(self.seed);",
+  "new": "        if self.ticks <= need {\n            return Err(TaskError::OutOfRange {\n                what: \"ticks\",\n                value: self.ticks as f64,\n                low: need as f64,\n                high: f64::MAX,\n            });\n        }\n\n        let mut rng = Rng::new(self.seed);"
+ },
+ {
+  "label": "every class of the moving bar travels the first direction",
+  "old": "                let dir = Direction::all()[class as usize];",
+  "new": "                let dir = Direction::all()[0];"
+ },
+ {
+  "label": "the speed jitter is a constant offset rather than a draw",
+  "old": "                let speed = cfg.speed_px_per_tick * (1.0 + cfg.speed_jitter_frac * u);",
+  "new": "                let speed = cfg.speed_px_per_tick * (1.0 + cfg.speed_jitter_frac);"
+ },
+ {
+  "label": "the speed jitter is one-sided",
+  "old": "                let u = rng.next_f64() * 2.0 - 1.0;",
+  "new": "                let u = rng.next_f64();"
+ },
+ {
+  "label": "the event stream is handed back unsorted",
+  "old": "                ev.sort_unstable();",
+  "new": "                let _ = ev.len();"
+ },
+ {
+  "label": "a background event fires when the draw is above its probability",
+  "old": "                            if rng.next_f64() < cfg.noise_prob_per_pixel_per_tick {",
+  "new": "                            if rng.next_f64() > cfg.noise_prob_per_pixel_per_tick {"
+ },
+ {
+  "label": "the noisy pixel count is the sum of the two grid dimensions",
+  "old": "                    let pixels = u64::from(cfg.width) * u64::from(cfg.height);",
+  "new": "                    let pixels = u64::from(cfg.width) + u64::from(cfg.height);"
+ },
+ {
+  "label": "background noise is added over half the window",
+  "old": "                    for t in 0..cfg.ticks {\n                        for a in 0..pixels {",
+  "new": "                    for t in 0..cfg.ticks / 2 {\n                        for a in 0..pixels {"
+ },
+ {
+  "label": "the class grid is centred one class off",
+  "old": "        let mid = i64::from(self.n_classes.saturating_sub(1)) / 2;",
+  "new": "        let mid = i64::from(self.n_classes.saturating_sub(2)) / 2;"
+ },
+ {
+  "label": "the sweep slope is measured from the wrong end of the class grid",
+  "old": "        self.slope_step_ticks.saturating_mul(i64::from(class) - mid)",
+  "new": "        self.slope_step_ticks.saturating_mul(i64::from(class) + mid)"
+ },
+ {
+  "label": "the channel grid is centred at a quarter of the channels",
+  "old": "        let mid = i64::from(self.n_channels) / 2;",
+  "new": "        let mid = i64::from(self.n_channels) / 4;"
+ },
+ {
+  "label": "the envelope is centred at a quarter of the window",
+  "old": "        let centre = (self.ticks / 2) as i64;",
+  "new": "        let centre = (self.ticks / 4) as i64;"
+ },
+ {
+  "label": "the sweep runs the other way across the channels",
+  "old": "        centre.saturating_add(self.slope(class).saturating_mul(i64::from(channel) - mid))",
+  "new": "        centre.saturating_add(self.slope(class).saturating_mul(mid - i64::from(channel)))"
+ },
+ {
+  "label": "the envelope is not scaled by its own width",
+  "old": "        let d = (t as i64 - peak) as f64 / self.sigma_ticks;",
+  "new": "        let d = (t as i64 - peak) as f64;"
+ },
+ {
+  "label": "the envelope's exponent is not squared",
+  "old": "        let rate = self.peak_hz * (-0.5 * d * d).exp();",
+  "new": "        let rate = self.peak_hz * (-0.5 * d).exp();"
+ },
+ {
+  "label": "the envelope grows away from its peak",
+  "old": "        let rate = self.peak_hz * (-0.5 * d * d).exp();",
+  "new": "        let rate = self.peak_hz * (0.5 * d * d).exp();"
+ },
+ {
+  "label": "the envelope's per-tick probability is the linear approximation",
+  "old": "        1.0 - (-rate * self.dt).exp()\n    }",
+  "new": "        rate * self.dt\n    }"
+ },
+ {
+  "label": "the sample's time jitter never reaches the envelope",
+  "old": "                        if rng.next_f64() < cfg.p_at(class, k, t, shift) {",
+  "new": "                        if rng.next_f64() < cfg.p_at(class, k, t, 0) {"
+ },
+ {
+  "label": "the analytic moments are reported for a jittered task too",
+  "old": "        if class >= self.n_classes || self.time_jitter_ticks != 0 {",
+  "new": "        if class >= self.n_classes {"
+ },
+ {
+  "label": "the spike-count variance is the mean",
+  "old": "            var += p * (1.0 - p);",
+  "new": "            var += p;"
+ },
+ {
+  "label": "the expected count is the last tick's probability",
+  "old": "                mean += p;",
+  "new": "                mean = p;"
+ },
+ {
+  "label": "the analytic moments sum over one channel",
+  "old": "        for k in 0..self.n_channels {\n            for t in 0..self.ticks {",
+  "new": "        for k in 0..1 {\n            for t in 0..self.ticks {"
+ },
+ {
+  "label": "the window margin is two sigma rather than four",
+  "old": "        let margin = (4.0 * self.sigma_ticks).ceil() as i64 + i64::from(jit.0);",
+  "new": "        let margin = (2.0 * self.sigma_ticks).ceil() as i64 + i64::from(jit.0);"
+ },
+ {
+  "label": "the window margin ignores the jitter half-width",
+  "old": "        let margin = (4.0 * self.sigma_ticks).ceil() as i64 + i64::from(jit.0);",
+  "new": "        let margin = (4.0 * self.sigma_ticks).ceil() as i64;"
+ },
+ {
+  "label": "an envelope may run off the top of the window",
+  "old": "                if p.saturating_sub(margin) < 0 || p.saturating_add(margin) >= self.ticks as i64 {",
+  "new": "                if p.saturating_sub(margin) < 0 {"
+ },
+ {
+  "label": "the top of the window is an inclusive bound",
+  "old": "                if p.saturating_sub(margin) < 0 || p.saturating_add(margin) >= self.ticks as i64 {",
+  "new": "                if p.saturating_sub(margin) < 0 || p.saturating_add(margin) > self.ticks as i64 {"
+ },
+ {
+  "label": "the bottom of the window is an exclusive bound",
+  "old": "                if p.saturating_sub(margin) < 0 || p.saturating_add(margin) >= self.ticks as i64 {",
+  "new": "                if p.saturating_sub(margin) <= 0 || p.saturating_add(margin) >= self.ticks as i64 {"
+ },
+ {
+  "label": "every spoken-digit spike lands on channel 0",
+  "old": "                            sp.push(Spike { t, source: k });",
+  "new": "                            sp.push(Spike { t, source: 0 });"
+ },
+ {
+  "label": "the spoken-digit caveat says nothing",
+  "old": "            \"a real cochleagram has formants, harmonics, speaker variability, variable duration \\\n             and a channel count of 700; this has one straight sweep per class and no speaker at \\\n             all\",",
+  "new": "            \"unstated\","
+ },
+ {
+  "label": "the coincidence task names no dataset it stands in for",
+  "old": "            \"the coincidence-detection unit test used throughout the spiking literature; no \\\n             recorded dataset\",",
+  "new": "            \"none\","
+ },
+ {
+  "label": "a catalogue row's class count drifts from its generator",
+  "old": "        name: \"latency_patterns\",\n        classes: 5,",
+  "new": "        name: \"latency_patterns\",\n        classes: 4,"
+ },
+ {
+  "label": "a catalogue row's chance level drifts from its generator",
+  "old": "        name: \"moving_bar\",\n        classes: 4,\n        chance: 0.25,",
+  "new": "        name: \"moving_bar\",\n        classes: 4,\n        chance: 0.2,"
+ },
+ {
+  "label": "a catalogue row names a task that does not exist",
+  "old": "        name: \"spoken_digits\",\n        classes: 5,\n        chance: 0.2,",
+  "new": "        name: \"spoken_digit\",\n        classes: 5,\n        chance: 0.2,"
+ },
+ {
+  "label": "two catalogue rows isolate the same mechanism",
+  "old": "        isolates: \"a spectro-temporal sweep across frequency channels\",",
+  "new": "        isolates: \"direction of motion in an address-event stream, with polarity\","
+ },
+ {
+  "label": "a catalogue row says nothing about what it isolates",
+  "old": "        isolates: \"holding a symbol across a silent delay\",",
+  "new": "        isolates: \"memory\","
+ },
+ {
+  "label": "a catalogue row names no dataset it stands in for",
+  "old": "        stands_in_for: \"Fuster and Alexander, Science 173:652-654, 1971\",",
+  "new": "        stands_in_for: \"none\","
+ }
+]

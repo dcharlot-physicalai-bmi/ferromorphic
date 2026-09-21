@@ -63,6 +63,16 @@ def main():
         + attributes
         + "\n"
         + "".join(f"pub mod {m};\n" for m in sorted(keep))
+        # The crate's own re-exports, for the modules this copy kept. Without them a doc example
+        # that writes `ferromorphic::Rng::new(1)` does not compile — which `cargo test --release
+        # --lib` never notices, because it does not build doc tests, so a copy could be red in a
+        # way the harness structurally could not see. Found by a `bayes` audit whose repair agent
+        # ran the full `cargo test` rather than the harness's `--lib` subset.
+        + "".join(
+            l + "\n"
+            for l in lib.splitlines()
+            if l.startswith("pub use ") and l[len("pub use ") :].split("::")[0] in keep
+        )
     )
     for m in keep:
         shutil.copy(os.path.join(repo, "src", m + ".rs"), os.path.join(dest, "src"))

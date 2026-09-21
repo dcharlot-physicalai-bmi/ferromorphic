@@ -1,0 +1,706 @@
+[
+ {
+  "label": "an empty array is no longer rejected at the boundary",
+  "old": "fn all_finite(v: &[f64], what: &'static str) -> Result<(), CompressError> {\n    if v.is_empty() {",
+  "new": "fn all_finite(v: &[f64], what: &'static str) -> Result<(), CompressError> {\n    if false {"
+ },
+ {
+  "label": "only NaN is rejected, so an infinite weight is accepted",
+  "old": "        if !x.is_finite() {\n            return Err(CompressError::NonFinite { what, index: i });",
+  "new": "        if x.is_nan() {\n            return Err(CompressError::NonFinite { what, index: i });"
+ },
+ {
+  "label": "a negative fraction is accepted",
+  "old": "fn unit_fraction(x: f64, what: &'static str) -> Result<(), CompressError> {\n    if !x.is_finite() || !(0.0..=1.0).contains(&x) {",
+  "new": "fn unit_fraction(x: f64, what: &'static str) -> Result<(), CompressError> {\n    if !x.is_finite() || !(-1.0..=1.0).contains(&x) {"
+ },
+ {
+  "label": "the fraction guard drops its finiteness test",
+  "old": "    if !x.is_finite() || !(0.0..=1.0).contains(&x) {",
+  "new": "    if !(0.0..=1.0).contains(&x) {",
+  "equivalent": "`RangeInclusive::contains` is `start <= x && x <= end`, and both comparisons are false for a NaN, so `(0.0..=1.0).contains(&NaN)` is false and the negation still refuses. For +inf, `inf <= 1.0` is false; for -inf, `0.0 <= -inf` is false; both still refuse. The removed disjunct therefore covers exactly the values the surviving one already rejects, and no input of any kind reaches a different branch."
+ },
+ {
+  "label": "the reported sparsity counts the non-zeros",
+  "old": "    pub fn sparsity(&self) -> f64 {\n        let zeros = self.w.iter().filter(|x| **x == 0.0).count();",
+  "new": "    pub fn sparsity(&self) -> f64 {\n        let zeros = self.w.iter().filter(|x| **x != 0.0).count();"
+ },
+ {
+  "label": "the removed fraction counts only the weights that actually lost information",
+  "old": "    pub fn removed_fraction(&self) -> f64 {\n        self.n_removed as f64 / self.w.len() as f64",
+  "new": "    pub fn removed_fraction(&self) -> f64 {\n        self.newly_zeroed as f64 / self.w.len() as f64"
+ },
+ {
+  "label": "a corrupted removal count underflows instead of saturating",
+  "old": "        self.w.len().saturating_sub(self.n_removed)",
+  "new": "        self.w.len() - self.n_removed"
+ },
+ {
+  "label": "the survivor count subtracts the newly-zeroed count instead of the removal count",
+  "old": "    pub fn n_kept(&self) -> usize {\n        self.w.len().saturating_sub(self.n_removed)",
+  "new": "    pub fn n_kept(&self) -> usize {\n        self.w.len().saturating_sub(self.newly_zeroed)"
+ },
+ {
+  "label": "a cut that ties the smallest kept weight is called clean",
+  "old": "            (Some(c), Some(s)) => c < s,\n            _ => true,",
+  "new": "            (Some(c), Some(s)) => c <= s,\n            _ => true,"
+ },
+ {
+  "label": "the removal count is floored rather than rounded",
+  "old": "    let requested = (sparsity * n as f64).round();",
+  "new": "    let requested = (sparsity * n as f64).floor();"
+ },
+ {
+  "label": "the saturating comparison on the removal count is loosened by one",
+  "old": "    let n_removed = if requested >= n as f64 { n } else { requested as usize };",
+  "new": "    let n_removed = if requested > n as f64 { n } else { requested as usize };",
+  "equivalent": "`unit_fraction` has already bounded `sparsity` to 0..=1, so `requested = round(sparsity * n)` lies in 0..=n and the only value the two comparisons disagree on is `requested == n`. There the `else` arm evaluates `requested as usize`, and an f64 holding exactly n for any n a Vec can hold (n < 2^53, far below the 2^64 saturation point of an `as` cast) converts to exactly n — the same value the `then` arm returns. The guard exists to stop a cast saturating, and no reachable input reaches the case where it would."
+ },
+ {
+  "label": "the sort orders by signed value rather than by magnitude",
+  "old": "    order.sort_unstable_by(|&a, &b| w[a].abs().total_cmp(&w[b].abs()).then(a.cmp(&b)));",
+  "new": "    order.sort_unstable_by(|&a, &b| w[a].total_cmp(&w[b]).then(a.cmp(&b)));"
+ },
+ {
+  "label": "the magnitude sort is descending, so the largest weights are removed",
+  "old": "    order.sort_unstable_by(|&a, &b| w[a].abs().total_cmp(&w[b].abs()).then(a.cmp(&b)));",
+  "new": "    order.sort_unstable_by(|&a, &b| w[b].abs().total_cmp(&w[a].abs()).then(a.cmp(&b)));"
+ },
+ {
+  "label": "the magnitude sort has no index tie-break",
+  "old": "    order.sort_unstable_by(|&a, &b| w[a].abs().total_cmp(&w[b].abs()).then(a.cmp(&b)));",
+  "new": "    order.sort_unstable_by(|&a, &b| w[a].abs().total_cmp(&w[b].abs()));"
+ },
+ {
+  "label": "the largest magnitudes are removed instead of the smallest",
+  "old": "    for &idx in &order[..n_removed] {",
+  "new": "    for &idx in &order[n - n_removed..] {"
+ },
+ {
+  "label": "a removed weight is written as negative zero",
+  "old": "        out[idx] = 0.0;\n        kept[idx] = false;",
+  "new": "        out[idx] = -0.0;\n        kept[idx] = false;"
+ },
+ {
+  "label": "the kept mask is not updated when a weight is removed",
+  "old": "        out[idx] = 0.0;\n        kept[idx] = false;",
+  "new": "        out[idx] = 0.0;"
+ },
+ {
+  "label": "the cut is the smallest magnitude removed rather than the largest",
+  "old": "    let cut = if n_removed == 0 { None } else { Some(w[order[n_removed - 1]].abs()) };",
+  "new": "    let cut = if n_removed == 0 { None } else { Some(w[order[0]].abs()) };"
+ },
+ {
+  "label": "the tie width counts every magnitude at or above the cut",
+  "old": "        (Some(c), Some(s)) if c == s => w.iter().filter(|x| x.abs() == c).count(),",
+  "new": "        (Some(c), Some(s)) if c == s => w.iter().filter(|x| x.abs() >= c).count(),"
+ },
+ {
+  "label": "a NaN threshold is accepted and keeps everything",
+  "old": "    if !threshold.is_finite() || threshold < 0.0 {",
+  "new": "    if threshold < 0.0 {"
+ },
+ {
+  "label": "the threshold cut is inclusive rather than strict",
+  "old": "        let m = w[i].abs();\n        if m < threshold {",
+  "new": "        let m = w[i].abs();\n        if m <= threshold {"
+ },
+ {
+  "label": "threshold pruning compares the signed weight rather than its magnitude",
+  "old": "        let m = w[i].abs();\n        if m < threshold {",
+  "new": "        let m = w[i];\n        if m < threshold {"
+ },
+ {
+  "label": "the threshold cut is the smallest magnitude removed rather than the largest",
+  "old": "            cut = Some(cut.map_or(m, |c: f64| c.max(m)));",
+  "new": "            cut = Some(cut.map_or(m, |c: f64| c.min(m)));"
+ },
+ {
+  "label": "threshold pruning's removal count is assigned rather than accumulated",
+  "old": "            n_removed += 1;",
+  "new": "            n_removed = 1;"
+ },
+ {
+  "label": "threshold pruning reports every removal as a tie at the cut",
+  "old": "    Ok(Pruned { w: out, kept, n_removed, newly_zeroed, cut, smallest_kept, tied_at_cut: 0 })",
+  "new": "    Ok(Pruned { w: out, kept, n_removed, newly_zeroed, cut, smallest_kept, tied_at_cut: n_removed })"
+ },
+ {
+  "label": "the L1 saliency sums signed weights rather than magnitudes",
+  "old": "            Self::L1 => v.iter().map(|x| x.abs()).sum(),",
+  "new": "            Self::L1 => v.iter().map(|x| *x).sum(),"
+ },
+ {
+  "label": "the L2 saliency is the sum of squares without its square root",
+  "old": "            Self::L2 => v.iter().map(|x| x * x).sum::<f64>().sqrt(),",
+  "new": "            Self::L2 => v.iter().map(|x| x * x).sum::<f64>(),"
+ },
+ {
+  "label": "the max saliency takes the largest signed value rather than the largest magnitude",
+  "old": "            Self::Max => v.iter().fold(0.0f64, |m, x| m.max(x.abs())),",
+  "new": "            Self::Max => v.iter().fold(0.0f64, |m, x| m.max(*x)),"
+ },
+ {
+  "label": "the unit count reads the wrong axis of the matrix",
+  "old": "        match self.unit {\n            Unit::OutputNeuron => self.n_out,\n            Unit::InputChannel => self.n_in,\n        }",
+  "new": "        match self.unit {\n            Unit::OutputNeuron => self.n_in,\n            Unit::InputChannel => self.n_out,\n        }"
+ },
+ {
+  "label": "unit sparsity is normalised by the weight count rather than by the unit count",
+  "old": "        self.removed.len() as f64 / self.units() as f64",
+  "new": "        self.removed.len() as f64 / self.w.len() as f64"
+ },
+ {
+  "label": "the removal test is inverted",
+  "old": "        self.removed.binary_search(&u).is_ok()",
+  "new": "        self.removed.binary_search(&u).is_err()"
+ },
+ {
+  "label": "a row index one past the end is served rather than refused",
+  "old": "        if o >= self.n_out {\n            return None;\n        }",
+  "new": "        if o > self.n_out {\n            return None;\n        }"
+ },
+ {
+  "label": "a row is cut with the output stride, so rows overlap",
+  "old": "        Some(&self.w[o * self.n_in..(o + 1) * self.n_in])",
+  "new": "        Some(&self.w[o * self.n_out..(o + 1) * self.n_out])"
+ },
+ {
+  "label": "a weight matrix longer than its declared shape is accepted",
+  "old": "    if w.len() != want {\n        return Err(CompressError::BadShape { got: w.len(), want });",
+  "new": "    if w.len() < want {\n        return Err(CompressError::BadShape { got: w.len(), want });"
+ },
+ {
+  "label": "the pruned axis is the opposite one to the unit asked for",
+  "old": "    let units = match unit {\n        Unit::OutputNeuron => n_out,\n        Unit::InputChannel => n_in,\n    };",
+  "new": "    let units = match unit {\n        Unit::OutputNeuron => n_in,\n        Unit::InputChannel => n_out,\n    };"
+ },
+ {
+  "label": "the scratch buffer is not cleared between units, so saliencies accumulate",
+  "old": "        buf.clear();\n        match unit {",
+  "new": "        buf.truncate(buf.len());\n        match unit {"
+ },
+ {
+  "label": "a column is gathered with the row-major index transposed",
+  "old": "            Unit::InputChannel => buf.extend((0..n_out).map(|o| w[o * n_in + u])),",
+  "new": "            Unit::InputChannel => buf.extend((0..n_out).map(|o| w[u * n_in + o])),"
+ },
+ {
+  "label": "the structured removal count is floored rather than rounded",
+  "old": "    let requested = (fraction * units as f64).round();",
+  "new": "    let requested = (fraction * units as f64).floor();"
+ },
+ {
+  "label": "the saliency sort has no index tie-break",
+  "old": "    order.sort_unstable_by(|&a, &b| saliencies[a].total_cmp(&saliencies[b]).then(a.cmp(&b)));",
+  "new": "    order.sort_unstable_by(|&a, &b| saliencies[a].total_cmp(&saliencies[b]));"
+ },
+ {
+  "label": "the highest-saliency units are removed instead of the lowest",
+  "old": "    order.sort_unstable_by(|&a, &b| saliencies[a].total_cmp(&saliencies[b]).then(a.cmp(&b)));",
+  "new": "    order.sort_unstable_by(|&a, &b| saliencies[b].total_cmp(&saliencies[a]).then(a.cmp(&b)));"
+ },
+ {
+  "label": "the removed list is sorted descending, so the binary search misses",
+  "old": "    removed.sort_unstable();",
+  "new": "    removed.sort_unstable_by(|a, b| b.cmp(a));"
+ },
+ {
+  "label": "the removal list is taken from the wrong end of the saliency order",
+  "old": "    let mut removed: Vec<usize> = order[..n_removed].to_vec();",
+  "new": "    let mut removed: Vec<usize> = order[units - n_removed..].to_vec();"
+ },
+ {
+  "label": "a removed row is zeroed at a one-element offset per unit, so rows overlap",
+  "old": "                for x in &mut out[u * n_in..(u + 1) * n_in] {",
+  "new": "                for x in &mut out[u..u + n_in] {"
+ },
+ {
+  "label": "pruning a net prunes the complementary fraction",
+  "old": "    let p = prune_magnitude(&net.w, sparsity)?;",
+  "new": "    let p = prune_magnitude(&net.w, 1.0 - sparsity)?;"
+ },
+ {
+  "label": "the pruned weights are never written back into the net",
+  "old": "    let mut out = net.clone();\n    out.w.clone_from(&p.w);",
+  "new": "    let out = net.clone();"
+ },
+ {
+  "label": "compaction keeps the zero-weight synapses",
+  "old": "            if w != 0.0 {",
+  "new": "            if true {"
+ },
+ {
+  "label": "compaction drops every synapse's delay",
+  "old": "                    post,\n                    w,\n                    d,\n                )?;",
+  "new": "                    post,\n                    w,\n                    0,\n                )?;"
+ },
+ {
+  "label": "compaction loses a neuron",
+  "old": "    let mut b = NetBuilder::new(net.n);",
+  "new": "    let mut b = NetBuilder::new(net.n - 1);"
+ },
+ {
+  "label": "the quantiser's scale is a fixed unit rather than the weights' own maximum",
+  "old": "    let q = Quantiser::from_weights(bits, w)?;",
+  "new": "    let q = Quantiser::symmetric(bits, 1.0)?;"
+ },
+ {
+  "label": "the quantiser is built one bit wider than the caller asked for",
+  "old": "    let q = Quantiser::from_weights(bits, w)?;",
+  "new": "    let q = Quantiser::from_weights(bits + 1, w)?;"
+ },
+ {
+  "label": "stochastic rounding silently rounds to nearest",
+  "old": "        (Rounding::Stochastic, Some(r)) => Ok(q.quantise_stochastic(w, r)?),",
+  "new": "        (Rounding::Stochastic, Some(_r)) => Ok(q.quantise_nearest(w)?),"
+ },
+ {
+  "label": "stochastic rounding without a generator falls back instead of refusing",
+  "old": "        (Rounding::Stochastic, None) => Err(CompressError::NeedsRng),",
+  "new": "        (Rounding::Stochastic, None) => Ok(q.quantise_nearest(w)?),"
+ },
+ {
+  "label": "a part's weight width is capped at eight bits",
+  "old": "    let bits = Quantiser::for_part(part, w)?.bits;",
+  "new": "    let bits = Quantiser::for_part(part, w)?.bits.min(8);"
+ },
+ {
+  "label": "a kept count larger than the total is no longer refused",
+  "old": "        if kept > total || bits == 0 || bits > 64 {",
+  "new": "        if bits == 0 || bits > 64 {"
+ },
+ {
+  "label": "a zero-bit weight width is accepted by the footprint arithmetic",
+  "old": "        if kept > total || bits == 0 || bits > 64 {",
+  "new": "        if kept > total || bits > 64 {"
+ },
+ {
+  "label": "the dense layout charges only for the survivors",
+  "old": "            Self::Dense => total.checked_mul(u64::from(bits)),",
+  "new": "            Self::Dense => kept.checked_mul(u64::from(bits)),"
+ },
+ {
+  "label": "the sparse layout charges for every position rather than for the survivors",
+  "old": "                kept.checked_mul(u64::from(bits) + u64::from(index_bits))",
+  "new": "                total.checked_mul(u64::from(bits) + u64::from(index_bits))"
+ },
+ {
+  "label": "the bitmask layout's mask is one bit per survivor rather than one per position",
+  "old": "            Self::Bitmask => total.checked_add(kept.checked_mul(u64::from(bits))?),",
+  "new": "            Self::Bitmask => kept.checked_add(kept.checked_mul(u64::from(bits))?),"
+ },
+ {
+  "label": "the sparse break-even inverts its ratio",
+  "old": "                Some(f64::from(index_bits) / f64::from(bits + index_bits))",
+  "new": "                Some(f64::from(bits) / f64::from(bits + index_bits))"
+ },
+ {
+  "label": "the bitmask break-even is the bit width rather than its reciprocal",
+  "old": "            Self::Bitmask => Some(1.0 / f64::from(bits)),",
+  "new": "            Self::Bitmask => Some(f64::from(bits)),"
+ },
+ {
+  "label": "the dense layout claims a break-even against itself",
+  "old": "            Self::Dense => None,\n            Self::Sparse { index_bits } => {",
+  "new": "            Self::Dense => Some(0.0),\n            Self::Sparse { index_bits } => {"
+ },
+ {
+  "label": "a model with no parameters is accepted",
+  "old": "        if self.parameters == 0 {\n            return Err(CompressError::Empty { what: \"parameters\" });",
+  "new": "        if false {\n            return Err(CompressError::Empty { what: \"parameters\" });"
+ },
+ {
+  "label": "a zero-bit state width is accepted",
+  "old": "        if self.state_bits == 0 || self.state_bits > 64 {",
+  "new": "        if self.state_bits > 64 {"
+ },
+ {
+  "label": "the weight width is allowed down to one bit",
+  "old": "        if !(2..=31).contains(&self.weight_bits) {",
+  "new": "        if !(1..=31).contains(&self.weight_bits) {"
+ },
+ {
+  "label": "the weight width is allowed up to 32 bits, past what the quantiser accepts",
+  "old": "        if !(2..=31).contains(&self.weight_bits) {",
+  "new": "        if !(2..=32).contains(&self.weight_bits) {"
+ },
+ {
+  "label": "a plan of zero ticks is accepted",
+  "old": "        if self.ticks == 0 {",
+  "new": "        if false {"
+ },
+ {
+  "label": "the plan's survivor count is floored rather than rounded",
+  "old": "        let removed = (self.sparsity * total as f64).round();",
+  "new": "        let removed = (self.sparsity * total as f64).floor();"
+ },
+ {
+  "label": "the plan reports the removed count as the kept count",
+  "old": "        let removed = if removed >= total as f64 { total } else { removed as u64 };\n        total - removed",
+  "new": "        let removed = if removed >= total as f64 { total } else { removed as u64 };\n        removed"
+ },
+ {
+  "label": "the footprint charges for every parameter rather than for the survivors",
+  "old": "        let kept = self.kept(shape.parameters);\n        let parameter_bits = self",
+  "new": "        let kept = shape.parameters;\n        let parameter_bits = self"
+ },
+ {
+  "label": "the parameter bits are computed at the state width",
+  "old": "            .parameter_bits(shape.parameters, kept, self.weight_bits)",
+  "new": "            .parameter_bits(shape.parameters, kept, shape.state_bits)"
+ },
+ {
+  "label": "the state bits are counted once per parameter rather than once per state value",
+  "old": "        let state_bits = shape\n            .state_values\n            .checked_mul(u64::from(shape.state_bits))",
+  "new": "        let state_bits = shape\n            .parameters\n            .checked_mul(u64::from(shape.state_bits))"
+ },
+ {
+  "label": "the footprint's two terms are swapped",
+  "old": "        Ok(Footprint { parameter_bits, state_bits })",
+  "new": "        Ok(Footprint { parameter_bits: state_bits, state_bits: parameter_bits })"
+ },
+ {
+  "label": "the work per inference ignores the pruning",
+  "old": "        self.kept(syn_ops_per_dense_tick).checked_mul(self.ticks)",
+  "new": "        syn_ops_per_dense_tick.checked_mul(self.ticks)"
+ },
+ {
+  "label": "the rate error is the variance rather than its square root",
+  "old": "    Some((p * (1.0 - p) / ticks as f64).sqrt())",
+  "new": "    Some(p * (1.0 - p) / ticks as f64)"
+ },
+ {
+  "label": "the rate error drops the (1 - p) factor of the Bernoulli variance",
+  "old": "    Some((p * (1.0 - p) / ticks as f64).sqrt())",
+  "new": "    Some((p / ticks as f64).sqrt())"
+ },
+ {
+  "label": "a zero tick budget is given an error rather than refused",
+  "old": "    if !p.is_finite() || !(0.0..=1.0).contains(&p) || ticks == 0 {",
+  "new": "    if !p.is_finite() || !(0.0..=1.0).contains(&p) {"
+ },
+ {
+  "label": "a certain outcome is said to need no ticks at all",
+  "old": "    if var == 0.0 {\n        return Some(1);\n    }",
+  "new": "    if var == 0.0 {\n        return Some(0);\n    }"
+ },
+ {
+  "label": "the tick budget's starting guess is floored rather than ceilinged",
+  "old": "    let guess = (var / (target * target)).ceil();",
+  "new": "    let guess = (var / (target * target)).floor();",
+  "equivalent": "The guess is only a starting point: the two reconciliation loops below make the answer the smallest T whose own `rate_rms` meets the target, and `rate_rms(p, ·)` is non-increasing in T, so the meeting budgets form an up-set. Flooring lands at most one below the ceiling, and `.max(1)` keeps it at least 1. From a start that meets the target the first loop walks down to the minimum; from a start that does not, the second walks up to the first that does, which for an up-set is that same minimum. Both starts therefore converge on the identical T, and the extra step costs one call to `rate_rms`, which no test observes."
+ },
+ {
+  "label": "the downward reconciliation loop is removed, so the naive ceiling ships",
+  "old": "    while t > 1 && meets(t - 1) {\n        t -= 1;\n    }",
+  "new": "    while false && meets(t - 1) {\n        t -= 1;\n    }"
+ },
+ {
+  "label": "the upward reconciliation loop is removed, so a budget that misses the target ships",
+  "old": "    while !meets(t) {\n        t = t.checked_add(1)?;\n    }",
+  "new": "    while false {\n        t = t.checked_add(1)?;\n    }"
+ },
+ {
+  "label": "a budget that exactly meets the target is treated as not meeting it",
+  "old": "    let meets = |k: u64| rate_rms(p, k).is_some_and(|e| e <= target);",
+  "new": "    let meets = |k: u64| rate_rms(p, k).is_some_and(|e| e < target);"
+ },
+ {
+  "label": "the error multiplier inverts its ratio",
+  "old": "    Some((from as f64 / to as f64).sqrt())",
+  "new": "    Some((to as f64 / from as f64).sqrt())"
+ },
+ {
+  "label": "a destination budget of zero is not refused by the error multiplier",
+  "old": "    if from == 0 || to == 0 {\n        return None;\n    }\n    Some((from as f64 / to as f64).sqrt())",
+  "new": "    if from == 0 {\n        return None;\n    }\n    Some((from as f64 / to as f64).sqrt())"
+ },
+ {
+  "label": "the work multiplier inverts its ratio",
+  "old": "    Some(to as f64 / from as f64)",
+  "new": "    Some(from as f64 / to as f64)"
+ },
+ {
+  "label": "the work multiplier divides by zero rather than refusing",
+  "old": "    if from == 0 {\n        return None;\n    }\n    Some(to as f64 / from as f64)",
+  "new": "    if false {\n        return None;\n    }\n    Some(to as f64 / from as f64)"
+ },
+ {
+  "label": "the ledger is rescaled by the reciprocal of the tick ratio",
+  "old": "    let scale = |x: u64| -> Option<u64> { Some(x.checked_mul(to)? / from) };",
+  "new": "    let scale = |x: u64| -> Option<u64> { Some(x.checked_mul(from)? / to) };"
+ },
+ {
+  "label": "the idle and driven neuron updates are swapped by the rescale",
+  "old": "        neuron_updates_idle: scale(base.neuron_updates_idle)?,\n        neuron_updates_driven: scale(base.neuron_updates_driven)?,",
+  "new": "        neuron_updates_idle: scale(base.neuron_updates_driven)?,\n        neuron_updates_driven: scale(base.neuron_updates_idle)?,"
+ },
+ {
+  "label": "the spike count is carried across unscaled",
+  "old": "        spikes_out: scale(base.spikes_out)?,",
+  "new": "        spikes_out: base.spikes_out,"
+ },
+ {
+  "label": "the readout count is scaled with the tick budget",
+  "old": "        reads: base.reads,",
+  "new": "        reads: scale(base.reads)?,"
+ },
+ {
+  "label": "the rescale guards the destination budget instead of the source",
+  "old": "    if from == 0 {\n        return None;\n    }\n    let scale = |x: u64| -> Option<u64> { Some(x.checked_mul(to)? / from) };",
+  "new": "    if to == 0 {\n        return None;\n    }\n    let scale = |x: u64| -> Option<u64> { Some(x.checked_mul(to)? / from) };"
+ },
+ {
+  "label": "the fitted exponent is fitted to the mean absolute error rather than to the RMS",
+  "old": "        fit_power_law(&self.ticks, &self.rms_error)",
+  "new": "        fit_power_law(&self.ticks, &self.mean_abs_error)"
+ },
+ {
+  "label": "the predicted curve is evaluated at the trial count rather than at each budget",
+  "old": "        self.ticks.iter().map(|&t| rate_rms(self.p, t)).collect()",
+  "new": "        self.ticks.iter().map(|&_t| rate_rms(self.p, self.trials as u64)).collect()"
+ },
+ {
+  "label": "a fit through mismatched arrays is attempted rather than refused",
+  "old": "    if ticks.len() != error.len() {\n        return None;\n    }",
+  "new": "    if false {\n        return None;\n    }"
+ },
+ {
+  "label": "the Bernoulli draw fires at half the requested probability",
+  "old": "                if rng.next_f64() < p {\n                    count += 1;\n                }",
+  "new": "                if rng.next_f64() < p * 0.5 {\n                    count += 1;\n                }"
+ },
+ {
+  "label": "the decoded rate is the raw count rather than the count divided by the budget",
+  "old": "            let e = count as f64 / t as f64 - p;",
+  "new": "            let e = count as f64 - p;"
+ },
+ {
+  "label": "the squared-error accumulator takes the absolute value instead of the square",
+  "old": "            sum_sq += e * e;",
+  "new": "            sum_sq += e.abs();"
+ },
+ {
+  "label": "the RMS error is the mean square, without its square root",
+  "old": "        rms_error.push((sum_sq / trials as f64).sqrt());",
+  "new": "        rms_error.push(sum_sq / trials as f64);"
+ },
+ {
+  "label": "the mean absolute error is the sum over trials rather than the mean",
+  "old": "        mean_abs_error.push(sum_abs / trials as f64);",
+  "new": "        mean_abs_error.push(sum_abs);"
+ },
+ {
+  "label": "a sweep of zero trials is accepted",
+  "old": "    if trials == 0 {\n        return Err(CompressError::BadValue { what: \"trials, which must be at least 1\", value: 0.0 });",
+  "new": "    if false {\n        return Err(CompressError::BadValue { what: \"trials, which must be at least 1\", value: 0.0 });"
+ },
+ {
+  "label": "the encoded probability is never checked",
+  "old": "    unit_fraction(p, \"p, which must be a probability in 0..=1\")?;",
+  "new": "    let _ = \"p, which must be a probability in 0..=1\";"
+ },
+ {
+  "label": "the logits are multiplied by the temperature rather than divided",
+  "old": "    let scaled: Vec<f64> = logits.iter().map(|z| z / temperature).collect();",
+  "new": "    let scaled: Vec<f64> = logits.iter().map(|z| z * temperature).collect();"
+ },
+ {
+  "label": "the softmax subtracts the smallest logit rather than the largest",
+  "old": "    let m = scaled.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));",
+  "new": "    let m = scaled.iter().fold(f64::INFINITY, |a, &b| a.min(b));"
+ },
+ {
+  "label": "the softmax's shift is clamped at zero rather than being the maximum",
+  "old": "    let m = scaled.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b));",
+  "new": "    let m = scaled.iter().fold(0.0f64, |a, &b| a.max(b));"
+ },
+ {
+  "label": "the softmax normalises by multiplying rather than dividing",
+  "old": "        *x /= sum;",
+  "new": "        *x *= sum;"
+ },
+ {
+  "label": "the softmax's sum guard cannot fire",
+  "old": "    if !(sum > 0.0) || !sum.is_finite() {",
+  "new": "    if false {"
+ },
+ {
+  "label": "a distribution with a non-finite entry is accepted",
+  "old": "fn check_distribution(p: &[f64], what: &'static str) -> Result<(), CompressError> {\n    all_finite(p, what)?;",
+  "new": "fn check_distribution(p: &[f64], what: &'static str) -> Result<(), CompressError> {"
+ },
+ {
+  "label": "a negative entry no longer disqualifies a distribution",
+  "old": "        if x < 0.0 {\n            return Err(CompressError::NotADistribution { what, sum: x });\n        }",
+  "new": "        if false {\n            return Err(CompressError::NotADistribution { what, sum: x });\n        }"
+ },
+ {
+  "label": "the tolerance on a distribution's sum is loosened to a tenth",
+  "old": "    if (sum - 1.0).abs() > 1e-9 {",
+  "new": "    if (sum - 1.0).abs() > 1e-1 {"
+ },
+ {
+  "label": "the divergence weights each term by q rather than by p",
+  "old": "        acc += p[i] * (p[i] / q[i]).ln();",
+  "new": "        acc += q[i] * (p[i] / q[i]).ln();"
+ },
+ {
+  "label": "the divergence's log ratio is inverted",
+  "old": "        acc += p[i] * (p[i] / q[i]).ln();",
+  "new": "        acc += p[i] * (q[i] / p[i]).ln();"
+ },
+ {
+  "label": "the zero-support skip tests the wrong distribution",
+  "old": "        if p[i] == 0.0 {\n            continue;\n        }",
+  "new": "        if q[i] == 0.0 {\n            continue;\n        }"
+ },
+ {
+  "label": "the zero-support refusal names the first distribution rather than the second",
+  "old": "            return Err(CompressError::ZeroSupport { what: \"q\", index: i });",
+  "new": "            return Err(CompressError::ZeroSupport { what: \"p\", index: i });"
+ },
+ {
+  "label": "a divergence between vectors of different lengths is attempted",
+  "old": "    if p.len() != q.len() {\n        return Err(CompressError::LengthMismatch { a: p.len(), b: q.len() });\n    }\n    check_distribution(p, \"p\")?;",
+  "new": "    if false {\n        return Err(CompressError::LengthMismatch { a: p.len(), b: q.len() });\n    }\n    check_distribution(p, \"p\")?;"
+ },
+ {
+  "label": "the cross-entropy is the log-probability rather than its negative",
+  "old": "    Ok(-q[label].ln())",
+  "new": "    Ok(q[label].ln())"
+ },
+ {
+  "label": "a zero probability on the true class returns an infinite loss",
+  "old": "    if q[label] == 0.0 {\n        return Err(CompressError::ZeroSupport { what: \"q\", index: label });\n    }",
+  "new": "    if false {\n        return Err(CompressError::ZeroSupport { what: \"q\", index: label });\n    }"
+ },
+ {
+  "label": "the soft term drops one factor of the temperature",
+  "old": "        let soft = self.temperature * self.temperature * kl_divergence(&p, &q)?;",
+  "new": "        let soft = self.temperature * kl_divergence(&p, &q)?;"
+ },
+ {
+  "label": "the soft term takes the divergence with teacher and student swapped",
+  "old": "        let soft = self.temperature * self.temperature * kl_divergence(&p, &q)?;",
+  "new": "        let soft = self.temperature * self.temperature * kl_divergence(&q, &p)?;"
+ },
+ {
+  "label": "the hard term is computed at the objective's temperature rather than at one",
+  "old": "        let hard = cross_entropy(&softmax_t(student_logits, 1.0)?, label)?;",
+  "new": "        let hard = cross_entropy(&softmax_t(student_logits, self.temperature)?, label)?;"
+ },
+ {
+  "label": "the hard term charges the teacher's cross-entropy rather than the student's",
+  "old": "        let hard = cross_entropy(&softmax_t(student_logits, 1.0)?, label)?;",
+  "new": "        let hard = cross_entropy(&softmax_t(teacher_logits, 1.0)?, label)?;"
+ },
+ {
+  "label": "the blend weights are swapped between the soft and hard terms",
+  "old": "        let total = self.alpha * soft + (1.0 - self.alpha) * hard;",
+  "new": "        let total = (1.0 - self.alpha) * soft + self.alpha * hard;"
+ },
+ {
+  "label": "the soft gradient drops its factor of T",
+  "old": "        Ok((0..p.len()).map(|i| self.temperature * (q[i] - p[i])).collect())",
+  "new": "        Ok((0..p.len()).map(|i| q[i] - p[i]).collect())"
+ },
+ {
+  "label": "the soft gradient's sign is flipped",
+  "old": "        Ok((0..p.len()).map(|i| self.temperature * (q[i] - p[i])).collect())",
+  "new": "        Ok((0..p.len()).map(|i| self.temperature * (p[i] - q[i])).collect())"
+ },
+ {
+  "label": "an alpha outside the unit interval is accepted",
+  "old": "        unit_fraction(alpha, \"alpha, which must be in 0..=1\")?;",
+  "new": "        let _ = \"alpha, which must be in 0..=1\";"
+ },
+ {
+  "label": "a NaN error is accepted into a point",
+  "old": "        if !error.is_finite() || error < 0.0 {",
+  "new": "        if error < 0.0 {"
+ },
+ {
+  "label": "a point's footprint is reported in bits rather than bytes",
+  "old": "        let bytes = plan\n            .footprint(shape)?\n            .bytes()\n            .ok_or(CompressError::Overflow { what: \"footprint bytes\" })?;",
+  "new": "        let bytes = plan.footprint(shape)?.parameter_bits;"
+ },
+ {
+  "label": "a point's work is costed against the parameter count rather than the dense tick cost",
+  "old": "            .work(syn_ops_per_dense_tick)",
+  "new": "            .work(shape.parameters)"
+ },
+ {
+  "label": "domination ignores the error when deciding it is no worse",
+  "old": "        let no_worse = self.bytes <= other.bytes\n            && self.syn_ops <= other.syn_ops\n            && self.error <= other.error;",
+  "new": "        let no_worse = self.bytes <= other.bytes\n            && self.syn_ops <= other.syn_ops;"
+ },
+ {
+  "label": "domination demands a strict win on every axis at once",
+  "old": "        let better = self.bytes < other.bytes\n            || self.syn_ops < other.syn_ops\n            || self.error < other.error;",
+  "new": "        let better = self.bytes < other.bytes\n            && self.syn_ops < other.syn_ops\n            && self.error < other.error;"
+ },
+ {
+  "label": "domination drops the strictness requirement, so equal points dominate each other",
+  "old": "        no_worse && better\n    }",
+  "new": "        no_worse\n    }"
+ },
+ {
+  "label": "the front is the dominated set rather than the undominated one",
+  "old": "        if !points.iter().enumerate().any(|(j, q)| j != i && q.dominates(&points[i])) {",
+  "new": "        if points.iter().enumerate().any(|(j, q)| j != i && q.dominates(&points[i])) {"
+ },
+ {
+  "label": "the front lets a point be compared against itself",
+  "old": "        if !points.iter().enumerate().any(|(j, q)| j != i && q.dominates(&points[i])) {",
+  "new": "        if !points.iter().enumerate().any(|(j, q)| j < points.len() && q.dominates(&points[i])) {",
+  "equivalent": "`dominates` is irreflexive: for a point compared with itself, `no_worse` holds (all three comparisons are `<=` on equal values) but `better` is the disjunction of three strict comparisons on equal values and is therefore false, so `no_worse && better` is false. The self-pair the mutant admits can never satisfy the predicate, and `j < points.len()` is true for every other j the enumeration produces, so the `any` returns the same answer for every i. `pareto_front` already refuses a NaN error at the boundary, so no point can have a comparison that is false in both directions."
+ },
+ {
+  "label": "the byte budget is not applied",
+  "old": "        if p.bytes > max_bytes || p.syn_ops > max_syn_ops {",
+  "new": "        if p.syn_ops > max_syn_ops {"
+ },
+ {
+  "label": "the budget tie-break goes to the highest index rather than the lowest",
+  "old": "                (p.error, p.bytes, p.syn_ops) < (c.error, c.bytes, c.syn_ops)",
+  "new": "                (p.error, p.bytes, p.syn_ops) <= (c.error, c.bytes, c.syn_ops)"
+ },
+ {
+  "label": "the budget rule picks the smallest model rather than the lowest error",
+  "old": "                (p.error, p.bytes, p.syn_ops) < (c.error, c.bytes, c.syn_ops)",
+  "new": "                (p.bytes, p.error, p.syn_ops) < (c.bytes, c.error, c.syn_ops)"
+ },
+ {
+  "label": "an infeasible set returns the first candidate rather than refusing",
+  "old": "    best.ok_or(CompressError::NoFeasiblePoint {\n        candidates: points.len(),",
+  "new": "    best.or(Some(0)).ok_or(CompressError::NoFeasiblePoint {\n        candidates: points.len(),"
+ },
+ {
+  "label": "the budget rule does not refuse a non-finite error",
+  "old": "        if !p.error.is_finite() {\n            return Err(CompressError::NonFinite { what: \"candidate errors\", index: i });\n        }\n    }\n    let mut best: Option<usize> = None;",
+  "new": "        if false {\n            return Err(CompressError::NonFinite { what: \"candidate errors\", index: i });\n        }\n    }\n    let mut best: Option<usize> = None;"
+ },
+ {
+  "label": "the front does not refuse a non-finite error",
+  "old": "        if !p.error.is_finite() {\n            return Err(CompressError::NonFinite { what: \"candidate errors\", index: i });\n        }\n    }\n    let mut front = Vec::new();",
+  "new": "        if false {\n            return Err(CompressError::NonFinite { what: \"candidate errors\", index: i });\n        }\n    }\n    let mut front = Vec::new();"
+ },
+ {
+  "label": "an empty-input refusal does not name what was empty",
+  "old": "            Self::Empty { what } => write!(f, \"no {what} to work with\"),",
+  "new": "            Self::Empty { what } => write!(f, \"no {} to work with\", what.len()),"
+ },
+ {
+  "label": "an out-of-range label is not printed",
+  "old": "                write!(f, \"label {label} names a class past the {classes} present\")",
+  "new": "                write!(f, \"a label names a class past the {classes} present\")"
+ },
+ {
+  "label": "a non-distribution refusal does not print the offending sum",
+  "old": "                write!(f, \"{what} is not a probability distribution (sum or entry {sum})\")",
+  "new": "                write!(f, \"{what} is not a probability distribution (sum or entry out of range)\")"
+ }
+]

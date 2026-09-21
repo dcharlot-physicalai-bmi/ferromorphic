@@ -1,0 +1,730 @@
+[
+ {
+  "label": "the impossible-shape message drops the dilation from the extent it reports",
+  "old": "                dilation * kernel.saturating_sub(1) + 1,",
+  "new": "                kernel.saturating_sub(1) + 1,"
+ },
+ {
+  "label": "the impossible-shape message pads one side of the input only",
+  "old": "                n + 2 * pad",
+  "new": "                n + pad"
+ },
+ {
+  "label": "a metrics overflow loses the name it came with",
+  "old": "            MetricError::Overflow { what } => Self::Overflow { what },",
+  "new": "            MetricError::Overflow { what } => Self::Overflow { what: \"synaptic operation accounting\" },"
+ },
+ {
+  "label": "a tensor is built without checking that its elements are finite",
+  "old": "        check_finite(&data, \"tensor element\")?;",
+  "new": "        if false { check_finite(&data, \"tensor element\")?; }"
+ },
+ {
+  "label": "a non-finite fill value is accepted",
+  "old": "        if !value.is_finite() {",
+  "new": "        if false {"
+ },
+ {
+  "label": "the row bound is off by one when reading an element",
+  "old": "        if c >= self.channels || y >= self.height || x >= self.width {",
+  "new": "        if c >= self.channels || y > self.height || x >= self.width {"
+ },
+ {
+  "label": "any activation at or above one counts as a spike",
+  "old": "        self.data.iter().all(|v| *v == 0.0 || *v == 1.0)",
+  "new": "        self.data.iter().all(|v| *v == 0.0 || *v >= 1.0)"
+ },
+ {
+  "label": "the spike count counts the silent units instead",
+  "old": "        self.data.iter().filter(|v| **v != 0.0).count()",
+  "new": "        self.data.iter().filter(|v| **v == 0.0).count()"
+ },
+ {
+  "label": "the binarity check passes everything",
+  "old": "            if *v != 0.0 && *v != 1.0 {",
+  "new": "            if false {"
+ },
+ {
+  "label": "a zero dimension is accepted",
+  "old": "        if n == 0 {\n            return Err(ConvError::Zero { what });\n        }\n    }\n    channels",
+  "new": "        if false {\n            return Err(ConvError::Zero { what });\n        }\n    }\n    channels"
+ },
+ {
+  "label": "a non-finite element passes the finiteness check",
+  "old": "        if !v.is_finite() {\n            return Err(ConvError::NonFinite { what, index: i, value: *v });",
+  "new": "        if false {\n            return Err(ConvError::NonFinite { what, index: i, value: *v });"
+ },
+ {
+  "label": "a zero dilation is accepted",
+  "old": "    if kernel == 0 || stride == 0 || dilation == 0 {",
+  "new": "    if kernel == 0 || stride == 0 {"
+ },
+ {
+  "label": "a zero stride is accepted",
+  "old": "    if kernel == 0 || stride == 0 || dilation == 0 {",
+  "new": "    if kernel == 0 || dilation == 0 {"
+ },
+ {
+  "label": "the dilated extent is the tap count times the spacing",
+  "old": "    let extent = dilation.checked_mul(kernel - 1)?.checked_add(1)?;",
+  "new": "    let extent = dilation.checked_mul(kernel)?;"
+ },
+ {
+  "label": "a kernel that exactly fills the padded input is refused",
+  "old": "    if extent > padded {",
+  "new": "    if extent >= padded {"
+ },
+ {
+  "label": "the output length drops the window at the origin",
+  "old": "    Some((padded - extent) / stride + 1)",
+  "new": "    Some((padded - extent) / stride)"
+ },
+ {
+  "label": "padding is added to one side of the input only",
+  "old": "    let padded = n.checked_add(pad.checked_mul(2)?)?;",
+  "new": "    let padded = n.checked_add(pad)?;"
+ },
+ {
+  "label": "the default spec pads by one on each side",
+  "old": "            stride_h: 1,\n            stride_w: 1,\n            pad_h: 0,\n            pad_w: 0,",
+  "new": "            stride_h: 1,\n            stride_w: 1,\n            pad_h: 1,\n            pad_w: 1,"
+ },
+ {
+  "label": "the default spec dilates its taps",
+  "old": "            pad_h: 0,\n            pad_w: 0,\n            dilation_h: 1,\n            dilation_w: 1,",
+  "new": "            pad_h: 0,\n            pad_w: 0,\n            dilation_h: 2,\n            dilation_w: 2,"
+ },
+ {
+  "label": "an even kernel is accepted by the same-padding constructor",
+  "old": "        if kernel_h == 0 || kernel_h.is_multiple_of(2) {",
+  "new": "        if kernel_h == 0 {"
+ },
+ {
+  "label": "same padding is computed from the row kernel on both axes",
+  "old": "        s.pad_w = (kernel_w - 1) / 2;",
+  "new": "        s.pad_w = (kernel_h - 1) / 2;"
+ },
+ {
+  "label": "same padding rounds the half-kernel up rather than down",
+  "old": "        s.pad_h = (kernel_h - 1) / 2;",
+  "new": "        s.pad_h = kernel_h / 2;",
+  "equivalent": "`same_padding` returns `ConvError::Zero { what: \"odd kernel_h\" }` for every even `kernel_h` before this line is reached, so the only values that reach it are odd. For an odd k = 2m + 1 the two expressions are the same integer: (k - 1) / 2 = 2m / 2 = m, and k / 2 = (2m + 1) / 2 = m because integer division truncates. The two forms differ only at even k, which the constructor refuses, so no admissible input can tell them apart."
+ },
+ {
+  "label": "the two axes are measured against each other's input extent",
+  "old": "        Some((\n            out_dim(in_h, self.kernel_h, self.pad_h, self.stride_h, self.dilation_h)?,\n            out_dim(in_w, self.kernel_w, self.pad_w, self.stride_w, self.dilation_w)?,\n        ))",
+  "new": "        Some((\n            out_dim(in_w, self.kernel_h, self.pad_h, self.stride_h, self.dilation_h)?,\n            out_dim(in_h, self.kernel_w, self.pad_w, self.stride_w, self.dilation_w)?,\n        ))"
+ },
+ {
+  "label": "a convolution's failing axis is named width when it is the rows",
+  "old": "                axis: \"height\",\n                n: in_h,\n                kernel: self.kernel_h,\n                pad: self.pad_h,\n                stride: self.stride_h,\n                dilation: self.dilation_h,",
+  "new": "                axis: \"width\",\n                n: in_h,\n                kernel: self.kernel_h,\n                pad: self.pad_h,\n                stride: self.stride_h,\n                dilation: self.dilation_h,"
+ },
+ {
+  "label": "the fan-in drops the kernel's column extent",
+  "old": "        self.in_channels.saturating_mul(self.kernel_h).saturating_mul(self.kernel_w)",
+  "new": "        self.in_channels.saturating_mul(self.kernel_h)"
+ },
+ {
+  "label": "the weight count scales the fan-in by the input channels again",
+  "old": "        self.out_channels.saturating_mul(self.fan_in())",
+  "new": "        self.in_channels.saturating_mul(self.fan_in())"
+ },
+ {
+  "label": "Kaiming scaling loses its factor of two",
+  "old": "            Self::KaimingUniform => Some((2.0 / n).sqrt()),",
+  "new": "            Self::KaimingUniform => Some((1.0 / n).sqrt()),"
+ },
+ {
+  "label": "LeCun scaling carries the rectifier's factor of two",
+  "old": "            Self::LecunUniform => Some((1.0 / n).sqrt()),",
+  "new": "            Self::LecunUniform => Some((2.0 / n).sqrt()),"
+ },
+ {
+  "label": "the threshold-scaled width divides by the input rate instead of multiplying",
+  "old": "                Some(v_th / (n * rate).sqrt())",
+  "new": "                Some(v_th / (n / rate).sqrt())"
+ },
+ {
+  "label": "the threshold-scaled width ignores the input rate",
+  "old": "                Some(v_th / (n * rate).sqrt())",
+  "new": "                Some(v_th / n.sqrt())"
+ },
+ {
+  "label": "a zero firing rate is accepted and gives an infinite width",
+  "old": "                if !v_th.is_finite() || v_th < 0.0 || !rate.is_finite() || rate <= 0.0 || rate > 1.0",
+  "new": "                if !v_th.is_finite() || v_th < 0.0 || !rate.is_finite() || rate < 0.0 || rate > 1.0"
+ },
+ {
+  "label": "a firing rate above one is accepted",
+  "old": "                if !v_th.is_finite() || v_th < 0.0 || !rate.is_finite() || rate <= 0.0 || rate > 1.0",
+  "new": "                if !v_th.is_finite() || v_th < 0.0 || !rate.is_finite() || rate <= 0.0"
+ },
+ {
+  "label": "a zero fan-in is scaled rather than refused",
+  "old": "        if fan_in == 0 {\n            return None;\n        }",
+  "new": "        if false {\n            return None;\n        }"
+ },
+ {
+  "label": "a negative explicit width is accepted",
+  "old": "                if !std_dev.is_finite() || std_dev < 0.0 {",
+  "new": "                if !std_dev.is_finite() {"
+ },
+ {
+  "label": "a non-finite kernel weight is accepted at construction",
+  "old": "        check_finite(&weights, \"conv weight\")?;",
+  "new": "        if false { check_finite(&weights, \"conv weight\")?; }"
+ },
+ {
+  "label": "the zero kernel is a kernel of ones",
+  "old": "        Ok(Self { spec, weights: vec![0.0; spec.n_weights()], bias: vec![0.0; spec.out_channels] })",
+  "new": "        Ok(Self { spec, weights: vec![1.0; spec.n_weights()], bias: vec![0.0; spec.out_channels] })"
+ },
+ {
+  "label": "the uniform half-width drops its factor of sqrt(3)",
+  "old": "        let half_width = sigma * 3.0_f64.sqrt();",
+  "new": "        let half_width = sigma;"
+ },
+ {
+  "label": "the weight draw is not centred on zero",
+  "old": "            (0..spec.n_weights()).map(|_| (2.0 * rng.next_f64() - 1.0) * half_width).collect();",
+  "new": "            (0..spec.n_weights()).map(|_| rng.next_f64() * half_width).collect();"
+ },
+ {
+  "label": "one kernel's worth of weights is drawn for every output channel",
+  "old": "        let weights =\n            (0..spec.n_weights())",
+  "new": "        let weights =\n            (0..spec.fan_in())"
+ },
+ {
+  "label": "a refused initialisation width falls back to one volt",
+  "old": "        let sigma = init.std_dev(spec.fan_in()).ok_or(ConvError::NonFinite {\n            what: \"init std_dev\",\n            index: 0,\n            value: f64::NAN,\n        })?;",
+  "new": "        let sigma = init.std_dev(spec.fan_in()).unwrap_or(1.0);"
+ },
+ {
+  "label": "the initialiser's stream does not depend on the seed it was given",
+  "old": "        let mut rng = Rng::new(seed);",
+  "new": "        let mut rng = Rng::new(seed ^ 0x5eed);"
+ },
+ {
+  "label": "the kernel is laid out as [ic][oc] rather than [oc][ic]",
+  "old": "        (((oc * self.spec.in_channels + ic) * self.spec.kernel_h) + ky) * self.spec.kernel_w + kx",
+  "new": "        (((ic * self.spec.out_channels + oc) * self.spec.kernel_h) + ky) * self.spec.kernel_w + kx"
+ },
+ {
+  "label": "the parameter count leaves out the biases",
+  "old": "        self.weights.len() + self.bias.len()",
+  "new": "        self.weights.len()"
+ },
+ {
+  "label": "the padded tap count leaves out the output channels",
+  "old": "        let per = (self.spec.fan_in() as u64).checked_mul(self.spec.out_channels as u64)?;",
+  "new": "        let per = self.spec.fan_in() as u64;"
+ },
+ {
+  "label": "the in-bounds tap count adds its two axes rather than multiplying them",
+  "old": "        rows.checked_mul(cols)?",
+  "new": "        rows.checked_add(cols)?"
+ },
+ {
+  "label": "the in-bounds tap count leaves out the input channels",
+  "old": "            .checked_mul(self.spec.in_channels as u64)?",
+  "new": "            .checked_mul(1)?"
+ },
+ {
+  "label": "the in-bounds row sweep is handed the column geometry",
+  "old": "        let rows = axis_in_bounds(oh, in_h, self.spec.kernel_h, self.spec.pad_h, self.spec.stride_h, self.spec.dilation_h)?;",
+  "new": "        let rows = axis_in_bounds(oh, in_h, self.spec.kernel_w, self.spec.pad_w, self.spec.stride_w, self.spec.dilation_w)?;"
+ },
+ {
+  "label": "the window start is spaced by the dilation and the tap by the stride",
+  "old": "    let p = o * stride + k * dilation;",
+  "new": "    let p = o * dilation + k * stride;"
+ },
+ {
+  "label": "the first real element of a padded row is treated as padding",
+  "old": "    if p < pad {",
+  "new": "    if p <= pad {"
+ },
+ {
+  "label": "the padding offset is not subtracted from the tap position",
+  "old": "    let i = p - pad;",
+  "new": "    let i = p;"
+ },
+ {
+  "label": "a tap one past the last element is read as in bounds",
+  "old": "    if i >= n { None } else { Some(i) }",
+  "new": "    if i > n { None } else { Some(i) }"
+ },
+ {
+  "label": "the tap sweep bound is transcribed as 2^4",
+  "old": "pub const MAX_TAP_SWEEP: u64 = 1 << 26;",
+  "new": "pub const MAX_TAP_SWEEP: u64 = 1 << 4;"
+ },
+ {
+  "label": "the tap sweep is unbounded",
+  "old": "    if (o_n as u64).checked_mul(kernel as u64)? > MAX_TAP_SWEEP {\n        return None;\n    }",
+  "new": "    if false {\n        return None;\n    }"
+ },
+ {
+  "label": "every in-bounds tap is counted twice",
+  "old": "                total = total.checked_add(1)?;",
+  "new": "                total = total.checked_add(2)?;"
+ },
+ {
+  "label": "a convolution accepts an input with the wrong channel count",
+  "old": "        if input.channels != self.spec.in_channels {",
+  "new": "        if false {"
+ },
+ {
+  "label": "a non-finite convolution input is not refused",
+  "old": "        check_finite(&input.data, \"conv input\")?;",
+  "new": "        if false { check_finite(&input.data, \"conv input\")?; }"
+ },
+ {
+  "label": "the bias is not the accumulator's starting value",
+  "old": "                    let mut acc = self.bias[oc];",
+  "new": "                    let mut acc = 0.0;"
+ },
+ {
+  "label": "a tap counts as effective when either of its factors is zero",
+  "old": "                                if a != 0.0 && w != 0.0 {",
+  "new": "                                if a != 0.0 || w != 0.0 {"
+ },
+ {
+  "label": "a tap that falls on padding reads the first column instead",
+  "old": "                                let ix = match src_coord(ox, self.spec.stride_w, kx, self.spec.dilation_w, self.spec.pad_w, input.width) {\n                                    Some(v) => v,\n                                    None => continue,\n                                };",
+  "new": "                                let ix = match src_coord(ox, self.spec.stride_w, kx, self.spec.dilation_w, self.spec.pad_w, input.width) {\n                                    Some(v) => v,\n                                    None => 0,\n                                };"
+ },
+ {
+  "label": "the channel accumulation runs in reverse",
+  "old": "                    for ic in 0..self.spec.in_channels {",
+  "new": "                    for ic in (0..self.spec.in_channels).rev() {"
+ },
+ {
+  "label": "the convolution reads its input transposed",
+  "old": "                                let a = input.data[input.index(ic, iy, ix)];",
+  "new": "                                let a = input.data[input.index(ic, ix, iy)];"
+ },
+ {
+  "label": "spiking activations are billed as multiply-accumulates",
+  "old": "                SynOps { dense, effective_macs: 0, effective_acs: effective }\n            }\n            ActivationKind::RealValued => {",
+  "new": "                SynOps { dense, effective_macs: effective, effective_acs: 0 }\n            }\n            ActivationKind::RealValued => {"
+ },
+ {
+  "label": "a non-overlapping pooling window overlaps",
+  "old": "        Ok(Self { kernel_h, kernel_w, stride_h: kernel_h, stride_w: kernel_w, pad_h: 0, pad_w: 0 })",
+  "new": "        Ok(Self { kernel_h, kernel_w, stride_h: 1, stride_w: 1, pad_h: 0, pad_w: 0 })"
+ },
+ {
+  "label": "the pooling shape formula dilates the window",
+  "old": "            out_dim(in_h, self.kernel_h, self.pad_h, self.stride_h, 1)?,\n            out_dim(in_w, self.kernel_w, self.pad_w, self.stride_w, 1)?,",
+  "new": "            out_dim(in_h, self.kernel_h, self.pad_h, self.stride_h, 2)?,\n            out_dim(in_w, self.kernel_w, self.pad_w, self.stride_w, 1)?,"
+ },
+ {
+  "label": "the checked pooled row count is measured against the column extent",
+  "old": "        let oh = out_dim(in_h, self.kernel_h, self.pad_h, self.stride_h, 1).ok_or(",
+  "new": "        let oh = out_dim(in_w, self.kernel_h, self.pad_h, self.stride_h, 1).ok_or("
+ },
+ {
+  "label": "the two padding-divisor conventions are swapped",
+  "old": "                let n = if count_include_pad { spec.kernel_h * spec.kernel_w } else { real };",
+  "new": "                let n = if count_include_pad { real } else { spec.kernel_h * spec.kernel_w };"
+ },
+ {
+  "label": "an empty window is averaged to a NaN rather than refused",
+  "old": "                if n == 0 {\n                    return Err(ConvError::EmptyWindow { y: oy, x: ox });\n                }\n                let idx = out.index(c, oy, ox);",
+  "new": "                let idx = out.index(c, oy, ox);"
+ },
+ {
+  "label": "the count of real elements in a window is set rather than accumulated",
+  "old": "                            real += 1;",
+  "new": "                            real = 1;"
+ },
+ {
+  "label": "average pooling reads its input transposed",
+  "old": "                            sum += input.data[input.index(c, iy, ix)];",
+  "new": "                            sum += input.data[input.index(c, ix, iy)];"
+ },
+ {
+  "label": "the maximum over a window is a minimum",
+  "old": "                                Some(b) if b >= v => b,",
+  "new": "                                Some(b) if b <= v => b,"
+ },
+ {
+  "label": "the maximum of an empty window is reported as silence",
+  "old": "                out.data[idx] = best.ok_or(ConvError::EmptyWindow { y: oy, x: ox })?;",
+  "new": "                out.data[idx] = best.unwrap_or(0.0);"
+ },
+ {
+  "label": "a pool is built for a window that cannot fit",
+  "old": "        spec.require_out_shape(height, width)?;",
+  "new": "        let _ = spec.require_out_shape(height, width);"
+ },
+ {
+  "label": "the pool reports its output shape transposed",
+  "old": "        Ok((self.channels, oh, ow))",
+  "new": "        Ok((self.channels, ow, oh))"
+ },
+ {
+  "label": "instant pooling takes the minimum over the window",
+  "old": "                                    value = Some(value.unwrap_or(0.0).max(s));",
+  "new": "                                    value = Some(value.unwrap_or(0.0).min(s));"
+ },
+ {
+  "label": "the rate gate hands a tie to the highest index in the window",
+  "old": "                                    if !seen || n > best_count {",
+  "new": "                                    if !seen || n >= best_count {"
+ },
+ {
+  "label": "the rate gate selects nothing while every count is level at zero",
+  "old": "                                    if !seen || n > best_count {",
+  "new": "                                    if n > best_count {"
+ },
+ {
+  "label": "the rate gate reads a count that includes the current timestep",
+  "old": "                                    let n = self.counts[idx];",
+  "new": "                                    let n = self.counts[idx] + u64::from(s != 0.0);"
+ },
+ {
+  "label": "the rate counters advance whether or not the unit fired",
+  "old": "                if *s != 0.0 {\n                    *n = n.saturating_add(1);\n                }",
+  "new": "                *n = n.saturating_add(1);"
+ },
+ {
+  "label": "a reset leaves every unit one spike ahead",
+  "old": "    pub fn reset(&mut self) {\n        self.counts.fill(0);",
+  "new": "    pub fn reset(&mut self) {\n        self.counts.fill(1);"
+ },
+ {
+  "label": "the residual alpha is the square root of two rather than its reciprocal",
+  "old": "        1.0 / 2.0_f64.sqrt()",
+  "new": "        2.0_f64.sqrt()"
+ },
+ {
+  "label": "the default momentum is 0.9 rather than PyTorch's 0.1",
+  "old": "            momentum: 0.1,",
+  "new": "            momentum: 0.9,"
+ },
+ {
+  "label": "the default alpha is one half",
+  "old": "            alpha: 1.0,\n            v_th,",
+  "new": "            alpha: 0.5,\n            v_th,"
+ },
+ {
+  "label": "the running variance starts at zero and divides by it",
+  "old": "            running_var: vec![1.0; channels],",
+  "new": "            running_var: vec![0.0; channels],"
+ },
+ {
+  "label": "the target standard deviation ignores alpha",
+  "old": "        self.alpha * self.v_th",
+  "new": "        self.v_th"
+ },
+ {
+  "label": "a batch is normalised without checking the layer's parameters",
+  "old": "        self.check_params()?;\n        let (mean, var, count) = channel_moments(batch, self.channels)?;",
+  "new": "        let (mean, var, count) = channel_moments(batch, self.channels)?;"
+ },
+ {
+  "label": "epsilon is subtracted from the variance rather than added",
+  "old": "                let denom = (var[c] + self.eps).sqrt();",
+  "new": "                let denom = (var[c] - self.eps).sqrt();"
+ },
+ {
+  "label": "the normalisation divides by the variance rather than by its square root",
+  "old": "                let denom = (var[c] + self.eps).sqrt();",
+  "new": "                let denom = var[c] + self.eps;"
+ },
+ {
+  "label": "the learnable gain is dropped from the training scale",
+  "old": "                let scale = self.gain[c] * sigma / denom;",
+  "new": "                let scale = sigma / denom;"
+ },
+ {
+  "label": "every channel is scaled by the first channel's gain",
+  "old": "                let scale = self.gain[c] * sigma / denom;",
+  "new": "                let scale = self.gain[0] * sigma / denom;"
+ },
+ {
+  "label": "the batch mean is not subtracted",
+  "old": "                        o.data[i] = (t.data[i] - mean[c]) * scale + self.shift[c];",
+  "new": "                        o.data[i] = t.data[i] * scale + self.shift[c];"
+ },
+ {
+  "label": "the learnable shift is dropped",
+  "old": "                        o.data[i] = (t.data[i] - mean[c]) * scale + self.shift[c];",
+  "new": "                        o.data[i] = (t.data[i] - mean[c]) * scale;"
+ },
+ {
+  "label": "every channel is centred on the first channel's mean",
+  "old": "                        o.data[i] = (t.data[i] - mean[c]) * scale + self.shift[c];",
+  "new": "                        o.data[i] = (t.data[i] - mean[0]) * scale + self.shift[c];"
+ },
+ {
+  "label": "Bessel's correction is inverted",
+  "old": "        let correction = if count > 1 { n / (n - 1.0) } else { 1.0 };",
+  "new": "        let correction = if count > 1 { (n - 1.0) / n } else { 1.0 };"
+ },
+ {
+  "label": "the running statistics weight the old and the new the wrong way round",
+  "old": "            self.running_mean[c] = (1.0 - self.momentum) * self.running_mean[c] + self.momentum * mean[c];\n            self.running_var[c] =\n                (1.0 - self.momentum) * self.running_var[c] + self.momentum * var[c] * correction;",
+  "new": "            self.running_mean[c] = self.momentum * self.running_mean[c] + (1.0 - self.momentum) * mean[c];\n            self.running_var[c] =\n                self.momentum * self.running_var[c] + (1.0 - self.momentum) * var[c] * correction;"
+ },
+ {
+  "label": "the running variance drops Bessel's correction where it is stored",
+  "old": "                (1.0 - self.momentum) * self.running_var[c] + self.momentum * var[c] * correction;",
+  "new": "                (1.0 - self.momentum) * self.running_var[c] + self.momentum * var[c];"
+ },
+ {
+  "label": "an input with the wrong channel count is normalised anyway",
+  "old": "        if x.channels != self.channels {\n            return Err(ConvError::ShapeMismatch {\n                what: \"tdBN input channels\",",
+  "new": "        if false {\n            return Err(ConvError::ShapeMismatch {\n                what: \"tdBN input channels\","
+ },
+ {
+  "label": "inference divides by the running mean",
+  "old": "            let denom = (self.running_var[c] + self.eps).sqrt();",
+  "new": "            let denom = (self.running_mean[c] + self.eps).sqrt();"
+ },
+ {
+  "label": "inference does not subtract the running mean",
+  "old": "                    o.data[i] = (x.data[i] - self.running_mean[c]) * scale + self.shift[c];",
+  "new": "                    o.data[i] = x.data[i] * scale + self.shift[c];"
+ },
+ {
+  "label": "a momentum outside the unit interval is accepted",
+  "old": "        if !(0.0..=1.0).contains(&self.momentum) {",
+  "new": "        if !(-1.0..=1.0).contains(&self.momentum) {"
+ },
+ {
+  "label": "a negative running variance is accepted",
+  "old": "        if let Some((i, &v)) = self.running_var.iter().enumerate().find(|(_, v)| **v < 0.0) {",
+  "new": "        if let Some((i, &v)) = self.running_var.iter().enumerate().find(|(_, v)| **v < -10.0) {"
+ },
+ {
+  "label": "the per-channel variance is the unbiased estimate",
+  "old": "        var[c] = ss / count as f64;",
+  "new": "        var[c] = ss / (count - 1) as f64;"
+ },
+ {
+  "label": "the variance is the one-pass difference of moments that cancels",
+  "old": "                    let d = t.data[t.index(c, y, x)] - m;\n                    ss += d * d;\n                }\n            }\n        }\n        mean[c] = m;\n        var[c] = ss / count as f64;",
+  "new": "                    let d = t.data[t.index(c, y, x)];\n                    ss += d * d;\n                }\n            }\n        }\n        mean[c] = m;\n        var[c] = ss / count as f64 - m * m;"
+ },
+ {
+  "label": "the layer is built for its input shape transposed",
+  "old": "        let (out_height, out_width) = conv.spec.require_out_shape(in_height, in_width)?;",
+  "new": "        let (out_height, out_width) = conv.spec.require_out_shape(in_width, in_height)?;"
+ },
+ {
+  "label": "an input of the wrong shape is stepped anyway",
+  "old": "        if (input.channels, input.height, input.width)\n            != (self.conv.spec.in_channels, self.in_height, self.in_width)\n        {",
+  "new": "        if false\n        {"
+ },
+ {
+  "label": "a graded input is stepped as if it were spikes",
+  "old": "        if kind == ActivationKind::Spiking {\n            input.require_binary()?;\n        }\n        // The fields are public.",
+  "new": "        // The fields are public."
+ },
+ {
+  "label": "a layer whose spec was changed after construction is stepped anyway",
+  "old": "        if now != self.out_shape() || self.units.len() != dims_len(now.0, now.1, now.2)? {",
+  "new": "        if false {"
+ },
+ {
+  "label": "a weight poisoned after construction is not re-checked",
+  "old": "        check_finite(&self.conv.weights, \"conv weights\")?;",
+  "new": "        if false { check_finite(&self.conv.weights, \"conv weights\")?; }"
+ },
+ {
+  "label": "a bias poisoned after construction is not re-checked",
+  "old": "        check_finite(&self.conv.bias, \"conv bias\")?;\n        let (drive, dense, effective) = self.conv.convolve(input)?;",
+  "new": "        let (drive, dense, effective) = self.conv.convolve(input)?;"
+ },
+ {
+  "label": "a multiply-accumulate is charged to the ledger as an accumulate",
+  "old": "        if kind == ActivationKind::Spiking {\n            self.ledger.syn_ops = self",
+  "new": "        if true {\n            self.ledger.syn_ops = self"
+ },
+ {
+  "label": "the ledger charges one accumulate per in-bounds tap rather than per effective one",
+  "old": "                .syn_ops\n                .checked_add(effective)",
+  "new": "                .syn_ops\n                .checked_add(dense)"
+ },
+ {
+  "label": "the weight fetch is charged per in-bounds tap rather than per delivery",
+  "old": "            .syn_fetches\n            .checked_add(effective)\n            .ok_or(ConvError::Overflow { what: \"syn_fetches\" })?;\n\n        let mut out = Tensor3::zeros",
+  "new": "            .syn_fetches\n            .checked_add(dense)\n            .ok_or(ConvError::Overflow { what: \"syn_fetches\" })?;\n\n        let mut out = Tensor3::zeros"
+ },
+ {
+  "label": "the layer's idle and driven updates are swapped",
+  "old": "            if dv == 0.0 {\n                self.ledger.neuron_updates_idle += 1;\n            } else {\n                self.ledger.neuron_updates_driven += 1;\n            }\n            unit.bump(dv);\n            if unit.step(self.dt, 0.0) {",
+  "new": "            if dv == 0.0 {\n                self.ledger.neuron_updates_driven += 1;\n            } else {\n                self.ledger.neuron_updates_idle += 1;\n            }\n            unit.bump(dv);\n            if unit.step(self.dt, 0.0) {"
+ },
+ {
+  "label": "a drive below a nanovolt counts as an idle update",
+  "old": "            if dv == 0.0 {\n                self.ledger.neuron_updates_idle += 1;\n            } else {\n                self.ledger.neuron_updates_driven += 1;\n            }\n            unit.bump(dv);\n            if unit.step(self.dt, 0.0) {",
+  "new": "            if dv.abs() < 1e-9 {\n                self.ledger.neuron_updates_idle += 1;\n            } else {\n                self.ledger.neuron_updates_driven += 1;\n            }\n            unit.bump(dv);\n            if unit.step(self.dt, 0.0) {"
+ },
+ {
+  "label": "the membrane is advanced before the drive is delivered",
+  "old": "            unit.bump(dv);\n            if unit.step(self.dt, 0.0) {\n                out.data[j] = 1.0;",
+  "new": "            let fired_now = unit.step(self.dt, 0.0);\n            unit.bump(dv);\n            if fired_now {\n                out.data[j] = 1.0;"
+ },
+ {
+  "label": "the drive is delivered as a current as well as a displacement",
+  "old": "            if unit.step(self.dt, 0.0) {\n                out.data[j] = 1.0;",
+  "new": "            if unit.step(self.dt, dv) {\n                out.data[j] = 1.0;"
+ },
+ {
+  "label": "the layer's spike count is overwritten rather than accumulated",
+  "old": "                out.data[j] = 1.0;\n                self.ledger.spikes_out += 1;",
+  "new": "                out.data[j] = 1.0;\n                self.ledger.spikes_out = 1;"
+ },
+ {
+  "label": "every unit is driven by the first unit's pre-activation",
+  "old": "            let dv = drive.data[j];",
+  "new": "            let dv = drive.data[0];"
+ },
+ {
+  "label": "a reset leaves the membranes where they are",
+  "old": "    pub fn reset(&mut self) {\n        for u in &mut self.units {\n            u.reset();\n        }\n    }\n\n    /// Zero the ledger",
+  "new": "    pub fn reset(&mut self) {\n        for u in &mut self.units {\n            let _ = u;\n        }\n    }\n\n    /// Zero the ledger"
+ },
+ {
+  "label": "clearing the counters leaves the ledger alone",
+  "old": "        self.ledger = Ledger::default();\n        self.ops = SynOps::default();\n    }\n\n    /// The surrogate derivative",
+  "new": "        self.ops = SynOps::default();\n    }\n\n    /// The surrogate derivative"
+ },
+ {
+  "label": "the surrogate offset is measured in volts rather than in surrogate widths",
+  "old": "            out.data[j] = s.backward((unit.potential() - v_th) / scale);",
+  "new": "            out.data[j] = s.backward(unit.potential() - v_th);"
+ },
+ {
+  "label": "the surrogate offset adds the threshold rather than subtracting it",
+  "old": "            out.data[j] = s.backward((unit.potential() - v_th) / scale);",
+  "new": "            out.data[j] = s.backward((unit.potential() + v_th) / scale);"
+ },
+ {
+  "label": "the surrogate offset is measured from the threshold to the membrane",
+  "old": "            out.data[j] = s.backward((unit.potential() - v_th) / scale);",
+  "new": "            out.data[j] = s.backward((v_th - unit.potential()) / scale);",
+  "equivalent": "Every surrogate family in this crate is an EVEN function of its argument, so negating the offset returns a bit-identical value. `FastSigmoid::backward` is `1/(1 + beta*|x|)^2`, `ArcTan::backward` is `alpha / (2*(1 + (pi*alpha*x/2)^2))`, `SuperSpike`'s is `beta*s*(1 - s)` with `s = logistic(beta*x)` which satisfies `s(-z) = 1 - s(z)` and therefore leaves the product unchanged, and the triangular and rectangular kernels are written on `x.abs()` directly. `the_surrogate_mask_is_exact_at_threshold_and_depends_on_the_scale` is the only test that calls `surrogate_mask` and it passes a `FastSigmoid`. No test could tell without an asymmetric surrogate, which this crate does not provide."
+ },
+ {
+  "label": "the footprint counts one state scalar per unit whatever the model carries",
+  "old": "        let states = (self.units.len() as u64)\n            .checked_mul(state_per_unit)",
+  "new": "        let states = (self.units.len() as u64)\n            .checked_mul(1)"
+ },
+ {
+  "label": "the parameter and state bit widths are swapped",
+  "old": "        Ok(Footprint::new(params, param_bits, states, state_bits)?)",
+  "new": "        Ok(Footprint::new(params, state_bits, states, param_bits)?)"
+ },
+ {
+  "label": "the SEW-ADD merge multiplies rather than adds",
+  "old": "            Self::SewAdd => Some(branch + identity),",
+  "new": "            Self::SewAdd => Some(branch * identity),"
+ },
+ {
+  "label": "the inverted merge inverts the shortcut instead of the branch",
+  "old": "            Self::SewIand => Some((1.0 - branch) * identity),",
+  "new": "            Self::SewIand => Some((1.0 - identity) * branch),"
+ },
+ {
+  "label": "SEW-AND is named as the style that leaves the binary regime",
+  "old": "        matches!(self, Self::SewAdd)",
+  "new": "        matches!(self, Self::SewAnd)"
+ },
+ {
+  "label": "the SEW shortcut attenuates like the naive one",
+  "old": "        ResidualStyle::SewAdd | ResidualStyle::SewIand => 1.0,",
+  "new": "        ResidualStyle::SewAdd | ResidualStyle::SewIand => 0.0,"
+ },
+ {
+  "label": "the naive shortcut's factor is not raised to the depth",
+  "old": "        ResidualStyle::Naive => (surrogate.backward(offset) * shortcut_gain).powi(d),",
+  "new": "        ResidualStyle::Naive => (surrogate.backward(offset) * shortcut_gain).powi(d.min(1)),"
+ },
+ {
+  "label": "a first convolution that changes shape is accepted",
+  "old": "        if (first.spec.out_channels, a.0, a.1) != (channels, height, width) {",
+  "new": "        if false {"
+ },
+ {
+  "label": "the second convolution's weights are not re-checked",
+  "old": "        check_finite(&self.second.weights, \"conv weights\")?;",
+  "new": "        if false { check_finite(&self.second.weights, \"conv weights\")?; }"
+ },
+ {
+  "label": "the second convolution is fed the block's input rather than the first stage's spikes",
+  "old": "        let (drive, dense, effective) = self.second.convolve(&s1)?;",
+  "new": "        let (drive, dense, effective) = self.second.convolve(x)?;"
+ },
+ {
+  "label": "the second stage's accumulates are billed as multiply-accumulates",
+  "old": "        self.ops.add(SynOps { dense, effective_macs: 0, effective_acs: effective })?;",
+  "new": "        self.ops.add(SynOps { dense, effective_macs: effective, effective_acs: 0 })?;"
+ },
+ {
+  "label": "the second stage charges one accumulate per in-bounds tap",
+  "old": "            self.ledger.syn_ops.checked_add(effective).ok_or(ConvError::Overflow { what: \"syn_ops\" })?;",
+  "new": "            self.ledger.syn_ops.checked_add(dense).ok_or(ConvError::Overflow { what: \"syn_ops\" })?;"
+ },
+ {
+  "label": "every unit reads the first element of the shortcut",
+  "old": "            let shortcut = x.data[j];",
+  "new": "            let shortcut = x.data[0];"
+ },
+ {
+  "label": "the naive block drops its shortcut",
+  "old": "                ResidualStyle::Naive => drive.data[j] + self.shortcut_gain * shortcut,",
+  "new": "                ResidualStyle::Naive => drive.data[j],"
+ },
+ {
+  "label": "the naive shortcut drives the neuron whether or not it spiked",
+  "old": "                ResidualStyle::Naive => drive.data[j] + self.shortcut_gain * shortcut,",
+  "new": "                ResidualStyle::Naive => drive.data[j] + self.shortcut_gain,"
+ },
+ {
+  "label": "the SEW styles add the shortcut in volts as well as merging it",
+  "old": "                ResidualStyle::SewAdd | ResidualStyle::SewAnd | ResidualStyle::SewIand => drive.data[j],",
+  "new": "                ResidualStyle::SewAdd | ResidualStyle::SewAnd | ResidualStyle::SewIand => drive.data[j] + shortcut,"
+ },
+ {
+  "label": "the block's second stage is advanced before it is driven",
+  "old": "            unit.bump(dv);\n            let fired = unit.step(self.dt, 0.0);",
+  "new": "            let fired = unit.step(self.dt, 0.0);\n            unit.bump(dv);"
+ },
+ {
+  "label": "the branch spike is inverted before the merge",
+  "old": "                    let branch = if fired { 1.0 } else { 0.0 };",
+  "new": "                    let branch = if fired { 0.0 } else { 1.0 };"
+ },
+ {
+  "label": "the merge is handed the shortcut and the branch the wrong way round",
+  "old": "                    out.data[j] = self.style.merge(branch, shortcut).unwrap_or(branch);",
+  "new": "                    out.data[j] = self.style.merge(shortcut, branch).unwrap_or(branch);"
+ },
+ {
+  "label": "the merge's fallback is the shortcut rather than the branch",
+  "old": "                    out.data[j] = self.style.merge(branch, shortcut).unwrap_or(branch);",
+  "new": "                    out.data[j] = self.style.merge(branch, shortcut).unwrap_or(shortcut);",
+  "equivalent": "`ResidualStyle::merge` returns `None` for exactly one style, `Naive`, and this line sits in the arm that matches only `SewAdd`, `SewAnd` and `SewIand`, each of which returns `Some`. The `unwrap_or` is therefore unreachable in every state the block can be in, and its argument cannot affect any output. The arms are listed rather than wildcarded — the comment above the arm says why — so a style added later would fail to compile here rather than silently fall through to this fallback."
+ },
+ {
+  "label": "clearing the block's counters leaves the first stage's alone",
+  "old": "        self.first.clear_counts();",
+  "new": "        let _ = &self.first;"
+ },
+ {
+  "label": "the block's own ledger is not cleared",
+  "old": "        self.ops = SynOps::default();\n        self.ledger = Ledger::default();\n    }",
+  "new": "        self.ops = SynOps::default();\n    }"
+ },
+ {
+  "label": "resetting the block leaves the first stage's membranes where they are",
+  "old": "        self.first.reset();\n        for u in &mut self.units {",
+  "new": "        for u in &mut self.units {"
+ }
+]

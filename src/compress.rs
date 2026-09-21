@@ -1242,6 +1242,16 @@ pub fn rate_error_vs_ticks(
 ///
 /// [`CompressError::Empty`] for no logits, [`CompressError::NonFinite`] naming the first bad one,
 /// [`CompressError::BadValue`] for a `temperature` that is not finite and strictly positive.
+///
+/// [`CompressError::NotADistribution`] naming `"softmax output"` when the exponentials do not sum
+/// to a positive finite number. ⛔ That is **not** dead code, though subtracting the maximum
+/// makes the largest term `exp(0) = 1` and so puts the sum in `1..=n` for every representable
+/// input. It is reached through the temperature: a logit divided by a small enough one overflows
+/// to an infinity, the shift is then `inf - inf`, which is `NaN`, and so is the sum. Refusing is
+/// the honest answer rather than a case to handle, because once two logits have both overflowed
+/// to `+inf` the ratio that decided the answer is gone — at a temperature of `1e-308`,
+/// `[1e10, 1e10]` and `[1e10, 1e10 - 1]` are a uniform distribution and a one-hot and are the same
+/// pair of infinities.
 pub fn softmax_t(logits: &[f64], temperature: f64) -> Result<Vec<f64>, CompressError> {
     all_finite(logits, "logits")?;
     if !temperature.is_finite() || temperature <= 0.0 {
@@ -2744,6 +2754,24 @@ mod tests {
         let mut record = prune_magnitude(&[1.0, 2.0], 0.5).expect("valid");
         record.n_removed = 9;
         assert_eq!(record.n_kept(), 0, "a corrupted public record saturates rather than underflows");
+        // ⛔ BOTH counts, not just the source. `error_multiplier`'s doc says `None` "if either
+        // count is zero"; only a source of zero was tested, and a DESTINATION of zero divides by
+        // zero and reports an infinite growth in error as an ordinary number.
+        assert!(error_multiplier(10, 0).is_none(), "a destination budget of zero");
+        assert!(error_multiplier(0, 0).is_none());
+        assert!(work_multiplier(10, 0).is_some(), "but no work at all is a legal workload");
+        // ⛔ `best_under_budget`'s `# Errors` names `NonFinite` "as `pareto_front`", and only
+        // `pareto_front` was ever handed one. A NaN error compares false against every incumbent,
+        // so the unguarded rule returns the NaN point whenever it is the first candidate that fits
+        // — the single worst answer available, chosen and reported as the best.
+        assert_eq!(
+            best_under_budget(&[point(1, 1, f64::NAN)], 10, 10).unwrap_err(),
+            CompressError::NonFinite { what: "candidate errors", index: 0 }
+        );
+        assert_eq!(
+            best_under_budget(&[point(1, 1, 0.5), point(1, 1, f64::INFINITY)], 10, 10).unwrap_err(),
+            CompressError::NonFinite { what: "candidate errors", index: 1 }
+        );
         // And the Display impl names the numbers, for every variant this module defines and for
         // the two wrapped errors it can build here. This comment used to say "for every variant"
         // above two of fourteen.
@@ -2840,5 +2868,466 @@ mod tests {
                 (0..w.len()).filter(|&i| !p.kept[i] && w[i] != 0.0).count();
             assert_eq!(p.newly_zeroed, newly, "threshold {threshold}");
         }
+    }
+
+    // ---- non-finite inputs, at every boundary that promises to reject them ----------------------
+
+    /// ⛔ NON-FINITE MEANS INFINITE TOO. [`CompressError::NonFinite`]'s doc says an element that is
+    /// "`NaN` or infinite" is rejected at the boundary, and `all_finite` is the single place that
+    /// promise is kept — but every fixture in this module reached it with `f64::NAN`, so narrowing
+    /// the test to `x.is_nan()` passed the whole suite. An infinite weight then reaches
+    /// [`Quantiser::from_weights`], whose scale is the largest magnitude present: the step becomes
+    /// infinite, every finite weight rounds to code 0, and the round trip reports a perfect one.
+    ///
+    /// Every caller of that helper is swept, because each one names its own array and an index,
+    /// and a guard that fires for the wrong array is not the guard the message claims.
+    #[test]
+    fn an_infinite_weight_is_refused_by_name_and_index_exactly_as_a_nan_is() {
+        for bad in [f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(
+                prune_magnitude(&[1.0, bad, 2.0], 0.5).unwrap_err(),
+                CompressError::NonFinite { what: "weights", index: 1 },
+                "magnitude pruning accepted {bad}"
+            );
+            assert_eq!(
+                prune_below(&[bad, 1.0], 0.5).unwrap_err(),
+                CompressError::NonFinite { what: "weights", index: 0 },
+                "threshold pruning accepted {bad}"
+            );
+            assert_eq!(
+                prune_structured(&[1.0, 2.0, bad, 4.0], 2, 2, Unit::OutputNeuron, Saliency::L2, 0.5)
+                    .unwrap_err(),
+                CompressError::NonFinite { what: "weights", index: 2 },
+                "structured pruning accepted {bad}"
+            );
+            assert_eq!(
+                softmax_t(&[0.0, 1.0, bad], 1.0).unwrap_err(),
+                CompressError::NonFinite { what: "logits", index: 2 },
+                "the softmax accepted {bad}"
+            );
+            // The distribution checks share the helper and each names its own argument.
+            assert_eq!(
+                kl_divergence(&[0.5, bad], &[0.5, 0.5]).unwrap_err(),
+                CompressError::NonFinite { what: "p", index: 1 }
+            );
+            assert_eq!(
+                kl_divergence(&[0.5, 0.5], &[bad, 0.5]).unwrap_err(),
+                CompressError::NonFinite { what: "q", index: 0 }
+            );
+            assert_eq!(
+                cross_entropy(&[bad, 1.0], 0).unwrap_err(),
+                CompressError::NonFinite { what: "q", index: 0 }
+            );
+        }
+        // And the place an infinite weight would have landed, which is why the guard is at the
+        // boundary rather than downstream: the quantiser's scale is taken from the largest
+        // magnitude in the vector it is handed.
+        assert!(matches!(
+            quantise(&[1.0, f64::INFINITY], 4, Rounding::Nearest, None).unwrap_err(),
+            CompressError::Hardware(HardwareError::NonFiniteWeight { index: 1, .. })
+        ));
+    }
+
+    /// ⛔ [`prune_below`]'s `# Errors` promises a refusal for a "negative or non-finite"
+    /// threshold, and the only one ever passed was `-1.0` — which `threshold < 0.0` catches by
+    /// itself. The two non-finite thresholds are the ones that do damage quietly: a `NaN` makes
+    /// every `m < threshold` false, so the call reports a record for a network it did not prune,
+    /// and an infinite one makes every comparison true, so it zeroes the whole vector and reports
+    /// that as an achieved sparsity of 1.
+    #[test]
+    fn a_non_finite_threshold_is_refused_rather_than_keeping_or_erasing_everything() {
+        let w = [0.1, 0.9, 0.2, 1.4, -0.05, -2.0];
+        assert_eq!(
+            prune_below(&w, f64::INFINITY).unwrap_err(),
+            CompressError::BadValue {
+                what: "threshold, which must be finite and non-negative",
+                value: f64::INFINITY,
+            }
+        );
+        // A `NaN` cannot be compared with `assert_eq!` — it is not equal to itself — so the
+        // variant and the name are matched and the value is tested for what it is.
+        match prune_below(&w, f64::NAN).unwrap_err() {
+            CompressError::BadValue { what, value } => {
+                assert_eq!(what, "threshold, which must be finite and non-negative");
+                assert!(value.is_nan(), "the refusal must report the value it was given");
+            }
+            other => panic!("a NaN threshold was accepted: {other:?}"),
+        }
+        // The guard is the non-finite test and not a widened sign test: `-0.0` is not negative and
+        // is still a legal threshold, and a finite one still prunes.
+        assert!(prune_below(&w, -0.0).is_ok(), "negative zero is not a negative threshold");
+        assert_eq!(prune_below(&w, 0.25).expect("finite and non-negative").n_removed, 3);
+    }
+
+    /// ⛔ [`Pruned::tied_at_cut`] is `0` by construction in [`prune_below`] — a strict `<` cut puts
+    /// every removed magnitude below `threshold` and every kept one at or above it, so the two
+    /// sets cannot share a magnitude. No test in this module read that field off a
+    /// threshold-pruned record, so writing `n_removed` into it was green; and the field is
+    /// precisely what tells a reader that the difference between two runs of the same network was
+    /// an arbitrary index tie-break rather than a decision. Reporting every removal as a tie says
+    /// the whole result was arbitrary.
+    ///
+    /// The fixture is deliberately full of duplicate magnitudes, so the same vector cut to a
+    /// count by [`prune_magnitude`] DOES report a tie. The contrast is the point.
+    #[test]
+    fn threshold_pruning_reports_no_tie_because_a_strict_cut_cannot_have_one() {
+        let w = [1.0, -1.0, 1.0, 2.0, 0.5, -0.5];
+        for threshold in [0.25f64, 0.75, 1.5, 2.0, 3.0] {
+            let p = prune_below(&w, threshold).expect("finite and non-negative");
+            assert_eq!(p.tied_at_cut, 0, "threshold {threshold} reported a tie at the cut");
+            assert!(p.separates_cleanly(), "threshold {threshold}");
+            if let (Some(c), Some(s)) = (p.cut, p.smallest_kept) {
+                assert!(c < threshold, "threshold {threshold}: the cut {c} is not below it");
+                assert!(s >= threshold, "threshold {threshold}: the kept {s} is below it");
+            }
+        }
+        // Those thresholds are not all vacuous: two of them remove a non-zero count, which is the
+        // only case in which `n_removed` and `0` are different numbers.
+        assert_eq!(prune_below(&w, 0.75).expect("valid").n_removed, 2);
+        assert_eq!(prune_below(&w, 1.5).expect("valid").n_removed, 5);
+        // The same vector cut by count instead: now the cut really does land inside a tie, three
+        // weights share magnitude 1.0, and the record says so.
+        let m = prune_magnitude(&w, 0.5).expect("valid");
+        assert_eq!(m.n_removed, 3);
+        assert_eq!(m.cut, Some(1.0));
+        assert_eq!(m.smallest_kept, Some(1.0));
+        assert_eq!(m.tied_at_cut, 3, "the magnitude cut lands inside a tie of three");
+        assert!(!m.separates_cleanly());
+    }
+
+    /// ⛔ [`CompressError::BadShape`]'s doc says the refusal is for a matrix whose "declared shape
+    /// is not its shape", and a matrix can miss in either direction — but only the short one was
+    /// tested, and `w.len() < want` still catches a short matrix. One element too many is then
+    /// accepted: every saliency is scored from the first `n_out * n_in` entries, the tail is
+    /// copied into [`Structured::w`] untouched, and [`Structured::weight_sparsity`] divides its
+    /// zero count by a length that is not the matrix.
+    #[test]
+    fn a_weight_matrix_longer_than_its_declared_shape_is_refused_like_a_short_one() {
+        let short = [1.0f64, 2.0, 3.0];
+        let exact = [1.0f64, 2.0, 3.0, 4.0];
+        let long = [1.0f64, 2.0, 3.0, 4.0, 5.0];
+        let prune = |m: &[f64]| prune_structured(m, 2, 2, Unit::OutputNeuron, Saliency::L2, 0.5);
+        assert_eq!(prune(&short).unwrap_err(), CompressError::BadShape { got: 3, want: 4 });
+        assert_eq!(prune(&long).unwrap_err(), CompressError::BadShape { got: 5, want: 4 });
+        let s = prune(&exact).expect("two by two is four entries");
+        assert_eq!(s.w.len(), 4, "the record's matrix is exactly the declared shape");
+        assert_eq!(s.removed, vec![0], "row [1, 2] carries the smaller L2 norm");
+        assert!((s.weight_sparsity() - 0.5).abs() < 1e-15, "two of four entries are zero");
+    }
+
+    /// ⭐⛔ THE SCALE IS THE WEIGHTS' OWN. [`quantise`]'s doc says the quantiser is "scaled to the
+    /// vector's own largest magnitude", and that claim is the entire argument for
+    /// prune-then-quantise being safe: pruning removes the smallest weights, so the maximum does
+    /// not move and neither does the step. Every weight fixture in this module has a largest
+    /// magnitude of exactly 1.0, so a fixed `Quantiser::symmetric(bits, 1.0)` produced a
+    /// bit-identical step and identical codes on all of them — a normaliser that is 1 in every
+    /// fixture makes the division by it invisible. These fixtures are scaled away from 1 in both
+    /// directions.
+    ///
+    /// The step is `max |w| / (2^(bits-1) - 1)`. It is recomputed here by the same two operations
+    /// in the same order, so the comparison is an equality rather than a tolerance.
+    #[test]
+    fn the_quantisers_scale_is_the_weights_own_largest_magnitude_and_not_a_fixed_unit() {
+        // The largest magnitude of `base` is exactly 1.0, so the largest magnitude of
+        // `base * scale` is exactly `scale` — one multiplication by one, which is exact.
+        let base = [0.5f64, -1.0, 0.25, 0.125, -0.75];
+        for scale in [0.25f64, 3.5, 1e-3, 64.0] {
+            let w: Vec<f64> = base.iter().map(|x| x * scale).collect();
+            for bits in [2u32, 4, 8, 16] {
+                let q = quantise(&w, bits, Rounding::Nearest, None).expect("finite, non-empty");
+                let max_code = (1i32 << (bits - 1)) - 1;
+                assert_eq!(
+                    q.step,
+                    scale / f64::from(max_code),
+                    "scale {scale} at {bits} bits: the step is not max |w| / (2^(bits-1) - 1)"
+                );
+                // Two consequences of a scale taken FROM the data, one on each side of it: the
+                // largest magnitude reaches full scale, and nothing clips. A fixed unit scale
+                // either leaves the top of the range unused or clamps weights into it.
+                assert_eq!(q.codes[1], -max_code, "the -1.0 * scale entry is not full scale");
+                assert_eq!(q.clipped, 0, "scale {scale} at {bits} bits clipped");
+                assert!(q.within_half_lsb(1e-12), "scale {scale} at {bits} bits");
+            }
+        }
+        // The order property, at a scale that is not 1: pruning takes the smallest weights, so it
+        // cannot move the largest magnitude and the step before and after is the same number.
+        let w: Vec<f64> = base.iter().map(|x| x * 3.5).collect();
+        let p = prune_magnitude(&w, 0.6).expect("valid");
+        assert_eq!(p.n_removed, 3);
+        let before = quantise(&w, 6, Rounding::Nearest, None).expect("valid");
+        let after = quantise(&p.w, 6, Rounding::Nearest, None).expect("valid");
+        assert_eq!(after.step, before.step, "pruning moved the quantiser's scale");
+        assert_eq!(after.step, 3.5 / 31.0, "max |w| = 3.5 over the 6-bit maximum code 31");
+    }
+
+    /// ⛔ THREE WIDTH RANGES, ALL TESTED AT THE TOP ONLY. [`Storage::parameter_bits`]'s doc says
+    /// `None` "when a width is zero or past 64", [`ModelShape::validate`]'s says `state_bits` runs
+    /// 1 to 64, and [`Plan::weight_bits`]'s says "2 to 31 — the range [`Quantiser`] accepts". The
+    /// suite tested 65, 65 and 1, so deleting the two `== 0` tests and widening `2..=31` to
+    /// `2..=32` were all green. A zero-bit weight charges nothing at all for every parameter in
+    /// the model, and a 32-bit plan validates although no quantiser in this crate will execute it.
+    ///
+    /// The last block is what makes the `weight_bits` range a fact rather than a number: the plan
+    /// and [`Quantiser::symmetric`] are asserted to accept and refuse the same widths, so the two
+    /// cannot drift apart without this failing.
+    #[test]
+    fn the_stored_widths_are_refused_at_the_bottom_of_their_ranges_as_well_as_the_top() {
+        for layout in [Storage::Dense, Storage::Sparse { index_bits: 16 }, Storage::Bitmask] {
+            assert!(layout.parameter_bits(10, 5, 0).is_none(), "{layout:?} at zero bits");
+            assert!(layout.parameter_bits(10, 5, 65).is_none(), "{layout:?} at 65 bits");
+            assert!(layout.parameter_bits(10, 5, 1).is_some(), "{layout:?} at one bit");
+            assert!(layout.parameter_bits(10, 5, 64).is_some(), "{layout:?} at 64 bits");
+            assert!(layout.break_even_sparsity(0).is_none(), "{layout:?} at zero bits");
+        }
+        assert!(Storage::Sparse { index_bits: 65 }.parameter_bits(10, 5, 8).is_none());
+        assert!(Storage::Sparse { index_bits: 65 }.break_even_sparsity(8).is_none());
+
+        let shape = |b: u32| ModelShape { parameters: 1, state_values: 1, state_bits: b };
+        assert!(matches!(
+            shape(0).validate().unwrap_err(),
+            CompressError::BadValue { what: "state_bits, which must be in 1..=64", .. }
+        ));
+        assert!(shape(1).validate().is_ok(), "one bit of state is a legal width");
+        assert!(shape(64).validate().is_ok());
+        assert!(shape(65).validate().is_err());
+
+        for bits in [2u32, 31] {
+            assert!(Plan::new(0.5, bits, 1, Storage::Dense).is_ok(), "the plan refused {bits}");
+            assert!(Quantiser::symmetric(bits, 1.0).is_ok(), "the quantiser refused {bits}");
+        }
+        for bits in [0u32, 1, 32, 33, 64] {
+            assert!(Plan::new(0.5, bits, 1, Storage::Dense).is_err(), "the plan accepted {bits}");
+            assert!(
+                Quantiser::symmetric(bits, 1.0).is_err(),
+                "the quantiser accepted {bits}"
+            );
+        }
+        // The consequence for the width the plan used to admit: it cannot be carried out.
+        assert!(matches!(
+            quantise(&[0.5, -1.0], 32, Rounding::Nearest, None).unwrap_err(),
+            CompressError::Hardware(HardwareError::BadBits { bits: 32 })
+        ));
+    }
+
+    /// ⭐⛔ A MEAN, NOT A SUM. [`RateSweep::mean_abs_error`]'s doc says "mean absolute decoding
+    /// error at each budget", and the only thing any test read off that array was the exponent of
+    /// a least-squares fit through its logarithm. A constant factor is an intercept in that
+    /// regression and not a slope, so multiplying every entry by `trials` — four thousand of them
+    /// — left the fitted exponent bit-identical and the suite green.
+    ///
+    /// The pin is a budget of one tick at `p = 0.5`, where the arithmetic is exact and does not
+    /// depend on the draws at all: one Bernoulli trial gives a count of 0 or 1, so the error
+    /// `count/1 - 0.5` is `+0.5` or `-0.5` on every trial whatever the seed. The mean absolute
+    /// error is therefore exactly 0.5 and so is the RMS, and with a power-of-two trial count both
+    /// accumulations are exact in binary — 64 halves sum to 32 and 64 quarters to 16. A sum over
+    /// those 64 trials would report 32 instead of 0.5.
+    #[test]
+    fn the_mean_absolute_error_is_a_mean_over_trials_and_not_a_sum() {
+        for seed in [1u64, 20260920, 7] {
+            let s = rate_error_vs_ticks(0.5, &[1], 64, &mut Rng::new(seed)).expect("valid");
+            assert_eq!(s.mean_abs_error, vec![0.5], "seed {seed}");
+            assert_eq!(s.rms_error, vec![0.5], "seed {seed}");
+            assert_eq!(s.trials, 64);
+        }
+        // Where the errors are not all equal, the mean absolute error is strictly below the RMS —
+        // Cauchy-Schwarz over the same `trials` numbers, with equality only when every `|e|` is
+        // identical. A sum over four thousand trials sits three orders of magnitude above it.
+        let ticks = [8u64, 64, 512];
+        let sweep = rate_error_vs_ticks(0.3, &ticks, 4_000, &mut Rng::new(31)).expect("valid");
+        assert_eq!(sweep.mean_abs_error.len(), ticks.len());
+        for k in 0..ticks.len() {
+            assert!(
+                sweep.mean_abs_error[k] > 0.0 && sweep.mean_abs_error[k] < sweep.rms_error[k],
+                "T = {}: mean |e| {} against RMS {}",
+                ticks[k],
+                sweep.mean_abs_error[k],
+                sweep.rms_error[k]
+            );
+        }
+    }
+
+    /// ⛔ THE SOFTMAX'S SUM GUARD IS NOT DEAD CODE. With the maximum subtracted first the largest
+    /// term is `exp(0) = 1`, so the sum is at least 1 and at most the number of classes — which
+    /// reads as though the `NotADistribution { what: "softmax output" }` branch can never be
+    /// taken, and deleting it was green against every fixture here. It is reached through the
+    /// temperature: a logit divided by a small enough temperature overflows to an infinity, the
+    /// shift is then `inf - inf`, which is `NaN`, and the sum is `NaN`.
+    ///
+    /// Refusing is the honest answer rather than a defect to repair. Once two logits have both
+    /// overflowed to `+inf` the ratio that decided the answer is gone: at this temperature
+    /// `[1e10, 1e10]` and `[1e10, 1e10 - 1]` — a uniform distribution and a one-hot — are the same
+    /// pair of infinities, so there is nothing left to return.
+    #[test]
+    fn a_temperature_small_enough_to_overflow_the_scaled_logits_is_refused() {
+        let tiny = 1e-308f64;
+        assert!(tiny.is_finite() && tiny > 0.0, "the temperature itself is a legal one");
+        for logits in [[1e10f64, 0.0], [1e10, -1e10], [-1e10, -2e10]] {
+            match softmax_t(&logits, tiny).unwrap_err() {
+                CompressError::NotADistribution { what, sum } => {
+                    assert_eq!(what, "softmax output");
+                    assert!(sum.is_nan(), "{logits:?} summed to {sum}");
+                }
+                other => panic!("{logits:?} at a temperature of {tiny} gave {other:?}"),
+            }
+        }
+        // The same logits at a temperature that does not overflow are an ordinary one-hot, so what
+        // is being refused is the overflow and not the size of the logits.
+        assert_eq!(
+            softmax_t(&[1e10, 0.0], 1.0).expect("nothing overflows at T = 1"),
+            vec![1.0, 0.0]
+        );
+    }
+
+    /// ⛔ A `NaN` PASSES BOTH OF `check_distribution`'s OWN TESTS. `x < 0.0` is false for a `NaN`,
+    /// and once the running sum has become a `NaN` so is `(sum - 1.0).abs() > 1e-9`, so the only
+    /// thing that stops a `NaN` entry reaching the divergence is the `all_finite` call at the top
+    /// — which no test exercised, because every non-distribution fixture in this module was a
+    /// vector that summed to the wrong number or held a negative entry. Without it
+    /// [`kl_divergence`] returns `Ok(NaN)`: a loss that is not a number, reported as a success,
+    /// with the cause several stages upstream.
+    #[test]
+    fn a_distribution_with_a_nan_entry_is_refused_rather_than_summing_to_nan() {
+        // The two tests a `NaN` walks past, computed off the fixture so the hole is named rather
+        // than implied: it is not negative, and the sum it poisons is not far from one either.
+        let poisoned = [0.5f64, f64::NAN];
+        assert!(!(poisoned[1] < 0.0), "a NaN entry is not a negative entry");
+        let sum: f64 = poisoned.iter().sum();
+        assert!(!((sum - 1.0).abs() > 1e-9), "and a NaN sum is not a sum far from one");
+
+        assert_eq!(
+            kl_divergence(&[0.5, f64::NAN], &[0.5, 0.5]).unwrap_err(),
+            CompressError::NonFinite { what: "p", index: 1 }
+        );
+        assert_eq!(
+            kl_divergence(&[0.5, 0.5], &[f64::NAN, 0.5]).unwrap_err(),
+            CompressError::NonFinite { what: "q", index: 0 }
+        );
+        assert_eq!(
+            cross_entropy(&[0.25, 0.25, f64::NAN, 0.5], 0).unwrap_err(),
+            CompressError::NonFinite { what: "q", index: 2 }
+        );
+        // The same call is what refuses an empty distribution, and it names the emptiness rather
+        // than reporting a sum of zero against a tolerance.
+        assert_eq!(kl_divergence(&[], &[]).unwrap_err(), CompressError::Empty { what: "p" });
+    }
+
+    /// ⛔ [`kl_divergence`]'s `# Errors` names [`CompressError::LengthMismatch`], but the only
+    /// length-mismatched call in this module went through [`Distillation::loss`], which has a
+    /// check of its own and never reaches this one. With the check gone the loop runs to
+    /// `p.len()`: a shorter `p` is silently scored against a prefix of `q` — `[1.0]` against the
+    /// first half of `[0.5, 0.5]` comes back as an entirely plausible 0.693 nats — and a longer
+    /// one indexes `q` past its end.
+    #[test]
+    fn a_divergence_between_different_lengths_is_refused_by_kl_divergence_itself() {
+        assert_eq!(
+            kl_divergence(&[1.0], &[0.5, 0.5]).unwrap_err(),
+            CompressError::LengthMismatch { a: 1, b: 2 }
+        );
+        assert_eq!(
+            kl_divergence(&[0.5, 0.5], &[1.0]).unwrap_err(),
+            CompressError::LengthMismatch { a: 2, b: 1 }
+        );
+        // Both arguments above are proper distributions on their own lengths, so nothing
+        // downstream would have complained; and equal lengths still go through.
+        assert_eq!(kl_divergence(&[0.5, 0.5], &[0.5, 0.5]).expect("same length"), 0.0);
+    }
+
+    /// ⭐⛔ THE HARD TERM IS THE STUDENT'S. [`DistillLoss::hard`]'s doc says
+    /// `-ln(student_1[label])` — the student's own cross-entropy at temperature 1, which is the
+    /// only term attaching the student to the true label at all. Every fixture in this module that
+    /// inspected `hard` either passed the same vector as teacher and student, or set `alpha` to 0
+    /// or 1 so that `total` was one term whatever the other held, so charging the TEACHER's
+    /// cross-entropy instead was green. A label term that does not depend on the student has no
+    /// gradient toward the label, and distillation would be soft targets and nothing else.
+    ///
+    /// Both terms are recomputed from the public functions, by the same operations in the same
+    /// order, so the comparisons are equalities and not tolerances.
+    #[test]
+    fn the_hard_term_charges_the_students_cross_entropy_and_not_the_teachers() {
+        let teacher = [4.0f64, 0.0, -1.0];
+        let student = [0.0f64, 0.0, 0.0];
+        let d = Distillation::new(3.0, 0.4).expect("valid");
+        let l = d.loss(&teacher, &student, 2).expect("same length");
+
+        let want_hard = cross_entropy(&softmax_t(&student, 1.0).expect("valid"), 2).expect("valid");
+        assert_eq!(l.hard, want_hard, "the hard term is the student's own cross-entropy");
+        assert!((want_hard - 3f64.ln()).abs() < 1e-15, "a flat student over three classes is ln 3");
+
+        // The teacher's cross-entropy, at the same label and the same temperature, is a visibly
+        // different number — which is what makes the assertion above able to fail.
+        let teachers = cross_entropy(&softmax_t(&teacher, 1.0).expect("valid"), 2).expect("valid");
+        assert!(teachers > want_hard + 3.0, "teacher {teachers} against student {want_hard}");
+
+        // `alpha` is strictly inside the unit interval, so `total` carries both terms and a wrong
+        // `hard` cannot hide behind a zero weight.
+        let want_soft = 3.0
+            * 3.0
+            * kl_divergence(
+                &softmax_t(&teacher, 3.0).expect("valid"),
+                &softmax_t(&student, 3.0).expect("valid"),
+            )
+            .expect("valid");
+        assert_eq!(l.soft, want_soft);
+        assert_eq!(l.total, 0.4 * want_soft + 0.6 * want_hard);
+        assert!(l.soft > 0.0 && l.hard > 0.0, "both terms are live in this fixture");
+    }
+
+    /// ⭐⛔ THE WORK IS THE DENSE TICK COST, NOT THE PARAMETER COUNT. [`Point::syn_ops`]'s doc says
+    /// it comes from [`Plan::work`] applied to `syn_ops_per_dense_tick`. The one sweep fixture in
+    /// this module set `shape.parameters` and `syn_ops_per_dense_tick` to the same 20,000, so the
+    /// two arguments were indistinguishable and costing the work against the parameter count was
+    /// green. They are different quantities — parameters are what a model STORES and the dense
+    /// tick cost is what it SPENDS — and a network with shared weights, a recurrent loop or an
+    /// input it only reads once has no reason to make them equal.
+    ///
+    /// The two are separated here and then asserted in opposite directions, so neither argument
+    /// can be substituted for the other.
+    #[test]
+    fn a_points_work_is_the_dense_tick_cost_and_not_the_parameter_count() {
+        let shape = ModelShape { parameters: 20_000, state_values: 256, state_bits: 16 };
+        let dense_tick = 7_000u64;
+        assert_ne!(dense_tick, shape.parameters, "the fixture has to separate the two");
+        let rows = [(0.0f64, 7_000u64, 20_000u64), (0.5, 3_500, 10_000), (0.9, 700, 2_000)];
+        for &(sparsity, survivors, kept_params) in &rows {
+            for &ticks in &[1u64, 16, 256] {
+                let plan = Plan::new(sparsity, 4, ticks, Storage::Bitmask).expect("valid plan");
+                let p = Point::new(plan, &shape, dense_tick, 0.01).expect("valid");
+                // Spelled out from the fixture rather than from `Plan::work`, so this is not a
+                // check that the point agrees with the method it is built from.
+                assert_eq!(p.syn_ops, survivors * ticks, "sparsity {sparsity}, {ticks} ticks");
+                // And the bytes go the other way: the footprint is charged against the parameter
+                // count, at one mask bit per position plus four bits per survivor.
+                let f = plan.footprint(&shape).expect("valid");
+                assert_eq!(f.parameter_bits, 20_000 + kept_params * 4, "sparsity {sparsity}");
+                assert_eq!(p.bytes, f.bytes().expect("fits"));
+            }
+        }
+    }
+
+    /// ⛔ [`fit_power_law`]'s doc says `None` "on mismatched lengths", and the only mismatch tested
+    /// was two budgets against one error — where [`crate::convert::ErrorCurve::fit_exponent`] zips
+    /// the two arrays, is left with a single point, and refuses for a reason of its own. The guard
+    /// was therefore deletable. The zip is exactly what makes a longer mismatch invisible: it
+    /// truncates silently to the shorter array, so a caller who hands in budgets from one sweep
+    /// and errors from another gets a confident exponent fitted through whatever prefix the two
+    /// happen to share, reported as a fit over the sweep.
+    #[test]
+    fn a_fit_through_mismatched_arrays_is_refused_even_when_the_zip_would_succeed() {
+        let ticks: Vec<u64> = (0..8).map(|k| 1u64 << k).collect();
+        let error: Vec<f64> = ticks.iter().map(|&t| 3.0 * (t as f64).powf(-0.5)).collect();
+        assert!(
+            (fit_power_law(&ticks, &error).expect("eight positive points") + 0.5).abs() < 1e-12,
+            "the matched fit is the control"
+        );
+        assert!(fit_power_law(&ticks, &error[..4]).is_none(), "eight budgets, four errors");
+        assert!(fit_power_law(&ticks[..4], &error).is_none(), "four budgets, eight errors");
+        // The regression underneath really would have answered, which is the whole hole: it sees
+        // four usable points and fits them.
+        let zipped = crate::convert::ErrorCurve {
+            ticks: ticks.clone(),
+            mean_abs_error: error[..4].to_vec(),
+        }
+        .fit_exponent();
+        assert!(zipped.is_some(), "the underlying regression does not refuse this on its own");
     }
 }

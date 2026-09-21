@@ -1,0 +1,824 @@
+[
+ {
+  "label": "a non-finite parameter is only rejected for not being positive",
+  "old": "fn positive(what: &'static str, value: f64) -> Result<f64, LearnError> {\n    if !value.is_finite() {",
+  "new": "fn positive(what: &'static str, value: f64) -> Result<f64, LearnError> {\n    if false {"
+ },
+ {
+  "label": "a zero parameter passes the strictly-positive check",
+  "old": "    if !(value > 0.0) {\n        return Err(LearnError::NotPositive { what, value });",
+  "new": "    if !(value >= 0.0) {\n        return Err(LearnError::NotPositive { what, value });"
+ },
+ {
+  "label": "the finiteness check on a signed parameter accepts anything",
+  "old": "    if value.is_finite() { Ok(value) } else { Err(LearnError::NonFiniteParam { what, value }) }",
+  "new": "    if true { Ok(value) } else { Err(LearnError::NonFiniteParam { what, value }) }"
+ },
+ {
+  "label": "an infinity in an input array is not a non-finite element",
+  "old": "        if !value.is_finite() {\n            return Err(LearnError::NonFiniteInput { index, value });",
+  "new": "        if value.is_nan() {\n            return Err(LearnError::NonFiniteInput { index, value });"
+ },
+ {
+  "label": "every non-finite input is reported at index zero",
+  "old": "            return Err(LearnError::NonFiniteInput { index, value });",
+  "new": "            return Err(LearnError::NonFiniteInput { index: 0, value });"
+ },
+ {
+  "label": "the singular-denominator message does not name the update",
+  "old": "                write!(f, \"the least-squares denominator was {value} at update {step}\")",
+  "new": "                write!(f, \"the least-squares denominator was {value} at that point\")"
+ },
+ {
+  "label": "the too-fine-grid message does not name the ceiling it exceeded",
+  "old": "                write!(f, \"t_end / dt asks for {steps} grid intervals, above the ceiling of {max}\")",
+  "new": "                write!(f, \"t_end / dt asks for {steps} grid intervals, above the ceiling\")"
+ },
+ {
+  "label": "a wrapped surrogate error is not reachable through the source chain",
+  "old": "    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {\n        match self {\n            Self::Surrogate(e) => Some(e),",
+  "new": "    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {\n        match self {\n            Self::Surrogate(_) => None,"
+ },
+ {
+  "label": "the grid ceiling is transcribed as 2^16",
+  "old": "pub const MAX_GRID_STEPS: usize = 1 << 26;",
+  "new": "pub const MAX_GRID_STEPS: usize = 1 << 16;"
+ },
+ {
+  "label": "the grid count inverts its ratio",
+  "old": "    let steps = t_end / dt;",
+  "new": "    let steps = dt / t_end;"
+ },
+ {
+  "label": "the grid ceiling is one interval too generous",
+  "old": "    if !(steps <= MAX_GRID_STEPS as f64) {",
+  "new": "    if !(steps <= MAX_GRID_STEPS as f64 + 1.0) {"
+ },
+ {
+  "label": "the grid refusal is written so a NaN ratio slips through",
+  "old": "    if !(steps <= MAX_GRID_STEPS as f64) {",
+  "new": "    if steps > MAX_GRID_STEPS as f64 {",
+  "equivalent": "both arguments reach `grid_steps` already checked finite and strictly positive, so `t_end / dt` is a quotient of two positive finite numbers: it is a positive real or, when `dt` is subnormal enough, `+inf`. Neither 0/0 nor inf/inf is reachable, so the quotient is never NaN and the only input that could distinguish `!(x <= c)` from `x > c` does not exist here."
+ },
+ {
+  "label": "the grid rounds up, so the scan runs one point past t_end",
+  "old": "    Ok(steps.floor() as usize)",
+  "new": "    Ok(steps.ceil() as usize)"
+ },
+ {
+  "label": "the trace's decay factor is the Euler form 1 - dt/tau",
+  "old": "        Ok(Self { tau, dt, value: 0.0, decay: (-dt / tau).exp() })",
+  "new": "        Ok(Self { tau, dt, value: 0.0, decay: 1.0 - dt / tau })"
+ },
+ {
+  "label": "the trace grows instead of decaying",
+  "old": "        Ok(Self { tau, dt, value: 0.0, decay: (-dt / tau).exp() })",
+  "new": "        Ok(Self { tau, dt, value: 0.0, decay: (dt / tau).exp() })"
+ },
+ {
+  "label": "the trace decays after the input rather than before it",
+  "old": "        self.value = self.decay * self.value + input;",
+  "new": "        self.value = self.decay * (self.value + input);"
+ },
+ {
+  "label": "the trace never decays on a step",
+  "old": "        self.value = self.decay * self.value + input;",
+  "new": "        self.value = self.value + input;"
+ },
+ {
+  "label": "a step replaces the trace instead of accumulating into it",
+  "old": "        self.value = self.decay * self.value + input;",
+  "new": "        self.value = input;"
+ },
+ {
+  "label": "the jump over a gap forgets the value it starts from",
+  "old": "        self.value * self.decay.powi(steps.min(i32::MAX as u32) as i32)",
+  "new": "        self.decay.powi(steps.min(i32::MAX as u32) as i32)"
+ },
+ {
+  "label": "the gap length saturates upward instead of being clamped",
+  "old": "        self.value * self.decay.powi(steps.min(i32::MAX as u32) as i32)",
+  "new": "        self.value * self.decay.powi(steps.max(i32::MAX as u32) as i32)"
+ },
+ {
+  "label": "the closed form decays over the time step rather than the time constant",
+  "old": "        self.value * (-seconds / self.tau).exp()",
+  "new": "        self.value * (-seconds / self.dt).exp()"
+ },
+ {
+  "label": "clearing a trace only halves it",
+  "old": "    pub fn clear(&mut self) {\n        self.value = 0.0;\n    }",
+  "new": "    pub fn clear(&mut self) {\n        self.value *= 0.5;\n    }"
+ },
+ {
+  "label": "the default e-prop config carries the full local Jacobian",
+  "old": "        Self { jacobian: Jacobian::Leak, spike_fn: SpikeFn::Heaviside }",
+  "new": "        Self { jacobian: Jacobian::Full, spike_fn: SpikeFn::Heaviside }"
+ },
+ {
+  "label": "the default e-prop config runs the smooth spike function",
+  "old": "        Self { jacobian: Jacobian::Leak, spike_fn: SpikeFn::Heaviside }",
+  "new": "        Self { jacobian: Jacobian::Leak, spike_fn: SpikeFn::Smooth }"
+ },
+ {
+  "label": "the readout filter's limit at kappa == 1 is zero rather than the number of terms",
+  "old": "    if denom == 0.0 {\n        return n as f64;\n    }",
+  "new": "    if denom == 0.0 {\n        return 0.0;\n    }"
+ },
+ {
+  "label": "the readout filter has no limit at kappa == 1",
+  "old": "    if denom == 0.0 {\n        return n as f64;\n    }",
+  "new": "    if false {\n        return n as f64;\n    }"
+ },
+ {
+  "label": "the readout filter's numerator is exp rather than exp_m1",
+  "old": "    (n as f64 * ln_kappa).exp_m1() / denom",
+  "new": "    (n as f64 * ln_kappa).exp() / denom"
+ },
+ {
+  "label": "the readout filter sums one term rather than n",
+  "old": "    (n as f64 * ln_kappa).exp_m1() / denom",
+  "new": "    ln_kappa.exp_m1() / denom"
+ },
+ {
+  "label": "the readout filter's denominator is the log decay rather than kappa - 1",
+  "old": "    let denom = ln_kappa.exp_m1();",
+  "new": "    let denom = ln_kappa;"
+ },
+ {
+  "label": "the readout filter takes kappa where it wants its logarithm",
+  "old": "    let ln_kappa = layer.kappa.ln();",
+  "new": "    let ln_kappa = layer.kappa;"
+ },
+ {
+  "label": "the forward sweep's own shape guard never fires",
+  "old": "    if x.is_empty() || ni == 0 || !x.len().is_multiple_of(ni) {\n        return Err(LearnError::ShapeMismatch { what: \"input\", got: x.len(), want: ni });\n    }\n    finite_slice(x)?;",
+  "new": "    if false {\n        return Err(LearnError::ShapeMismatch { what: \"input\", got: x.len(), want: ni });\n    }\n    finite_slice(x)?;"
+ },
+ {
+  "label": "the forward sweep does not check its input for finiteness",
+  "old": "    finite_slice(x)?;\n    let t_steps = x.len() / ni;",
+  "new": "    let _ = finite_slice(x);\n    let t_steps = x.len() / ni;"
+ },
+ {
+  "label": "the drive starts from zero rather than from the bias",
+  "old": "            let mut drive = layer.p[layer.idx_b(j)];",
+  "new": "            let mut drive = 0.0;"
+ },
+ {
+  "label": "an input weight drives the unit without its input",
+  "old": "                drive += layer.p[layer.idx_w(j, i)] * x[t * ni + i];",
+  "new": "                drive += layer.p[layer.idx_w(j, i)];"
+ },
+ {
+  "label": "the input index drops the channel stride",
+  "old": "                drive += layer.p[layer.idx_w(j, i)] * x[t * ni + i];",
+  "new": "                drive += layer.p[layer.idx_w(j, i)] * x[t + i];"
+ },
+ {
+  "label": "the recurrent drive reads the spikes of the step being computed",
+  "old": "                    drive += layer.p[layer.idx_v(j, k)] * s_prev[k];",
+  "new": "                    drive += layer.p[layer.idx_v(j, k)] * s_now[k];"
+ },
+ {
+  "label": "the first recurrent step is skipped",
+  "old": "            if layer.recurrent && t > 0 {",
+  "new": "            if layer.recurrent && t > 1 {"
+ },
+ {
+  "label": "the synaptic current does not leak",
+  "old": "            let i_now = layer.alpha * i_syn[j] + drive;",
+  "new": "            let i_now = i_syn[j] + drive;"
+ },
+ {
+  "label": "the reset adds to the membrane instead of subtracting from it",
+  "old": "            let u_now = layer.beta * u[j] + i_now - layer.theta * s_prev[j];",
+  "new": "            let u_now = layer.beta * u[j] + i_now + layer.theta * s_prev[j];"
+ },
+ {
+  "label": "the membrane integrates the previous step's synaptic current",
+  "old": "            let u_now = layer.beta * u[j] + i_now - layer.theta * s_prev[j];",
+  "new": "            let u_now = layer.beta * u[j] + i_syn[j] - layer.theta * s_prev[j];"
+ },
+ {
+  "label": "a forward state that leaves the finite numbers is not reported",
+  "old": "            if !i_now.is_finite() || !u_now.is_finite() {",
+  "new": "            if false {"
+ },
+ {
+  "label": "the two spike functions are swapped",
+  "old": "                SpikeFn::Heaviside => sur.forward(u_now - layer.theta),\n                SpikeFn::Smooth => sur.antiderivative(u_now - layer.theta),",
+  "new": "                SpikeFn::Heaviside => sur.antiderivative(u_now - layer.theta),\n                SpikeFn::Smooth => sur.forward(u_now - layer.theta),"
+ },
+ {
+  "label": "the spike is emitted on the raw membrane rather than on its offset from threshold",
+  "old": "                SpikeFn::Heaviside => sur.forward(u_now - layer.theta),",
+  "new": "                SpikeFn::Heaviside => sur.forward(u_now),"
+ },
+ {
+  "label": "the readout does not leak",
+  "old": "            let mut v = layer.kappa * y[c];",
+  "new": "            let mut v = y[c];"
+ },
+ {
+  "label": "the readout reads the previous step's spikes",
+  "old": "                v += layer.p[layer.idx_r(c, j)] * s_now[j];",
+  "new": "                v += layer.p[layer.idx_r(c, j)] * s_prev[j];"
+ },
+ {
+  "label": "the logit accumulator keeps only the last step",
+  "old": "            y[c] = v;\n            acc[c] += v;",
+  "new": "            y[c] = v;\n            acc[c] = v;"
+ },
+ {
+  "label": "the previous spikes are advanced before the callback reads them",
+  "old": "        on_step(t, &u, &s_now, &s_prev);\n        s_prev.copy_from_slice(&s_now);",
+  "new": "        s_prev.copy_from_slice(&s_now);\n        on_step(t, &u, &s_now, &s_prev);"
+ },
+ {
+  "label": "the time average is a multiplication by the reciprocal",
+  "old": "        *v /= t_steps as f64;",
+  "new": "        *v *= 1.0 / t_steps as f64;"
+ },
+ {
+  "label": "the readout is the sum over time rather than the mean",
+  "old": "        *v /= t_steps as f64;",
+  "new": "        *v /= 1.0;"
+ },
+ {
+  "label": "a short learning signal is accepted",
+  "old": "    if d_logits.len() != no {",
+  "new": "    if d_logits.len() > no {"
+ },
+ {
+  "label": "the learning signal is not checked for finiteness",
+  "old": "    finite_slice(d_logits)?;",
+  "new": "    let _ = finite_slice(d_logits);"
+ },
+ {
+  "label": "a feedforward layer carries eligibility for the frozen recurrent block",
+  "old": "    let v_slots = if layer.recurrent { nr } else { 0 };",
+  "new": "    let v_slots = nr;"
+ },
+ {
+  "label": "the bias has no eligibility slot",
+  "old": "    let slots = ni + v_slots + 1;",
+  "new": "    let slots = ni + v_slots;"
+ },
+ {
+  "label": "the learning signal is not divided by the episode length",
+  "old": "    let inv_t = 1.0 / t_steps as f64;",
+  "new": "    let inv_t = 1.0;"
+ },
+ {
+  "label": "the Leak Jacobian drops the membrane leak",
+  "old": "                Jacobian::Leak => (0.0, layer.beta),",
+  "new": "                Jacobian::Leak => (0.0, 1.0),"
+ },
+ {
+  "label": "the self-connection is read off the diagonal of V",
+  "old": "                        if layer.recurrent { layer.p[layer.idx_v(j, j)] } else { 0.0 };",
+  "new": "                        if layer.recurrent { layer.p[layer.idx_v(j, 0)] } else { 0.0 };"
+ },
+ {
+  "label": "the self-connection term drops the pseudo-derivative",
+  "old": "                    (self_w * psi_prev[j], layer.beta - layer.theta * psi_prev[j])",
+  "new": "                    (self_w, layer.beta - layer.theta * psi_prev[j])"
+ },
+ {
+  "label": "the soft reset is added to the membrane leak rather than subtracted",
+  "old": "                    (self_w * psi_prev[j], layer.beta - layer.theta * psi_prev[j])",
+  "new": "                    (self_w * psi_prev[j], layer.beta + layer.theta * psi_prev[j])"
+ },
+ {
+  "label": "the soft reset drops the threshold it is scaled by",
+  "old": "                    (self_w * psi_prev[j], layer.beta - layer.theta * psi_prev[j])",
+  "new": "                    (self_w * psi_prev[j], layer.beta - psi_prev[j])"
+ },
+ {
+  "label": "every unit's eligibility block starts at the same offset",
+  "old": "            let base = j * slots;\n            for m in 0..slots {\n                let xi = if m < ni {",
+  "new": "            let base = j;\n            for m in 0..slots {\n                let xi = if m < ni {"
+ },
+ {
+  "label": "the presynaptic factor of an input slot is frozen at the first step",
+  "old": "                    x[t * ni + m]",
+  "new": "                    x[m]"
+ },
+ {
+  "label": "the recurrent slot is driven by this step's spikes rather than the last step's",
+  "old": "                    s_prev[m - ni]\n                } else {\n                    1.0\n                };",
+  "new": "                    s_now[m - ni]\n                } else {\n                    1.0\n                };"
+ },
+ {
+  "label": "the bias slot has no drive",
+  "old": "                    s_prev[m - ni]\n                } else {\n                    1.0\n                };",
+  "new": "                    s_prev[m - ni]\n                } else {\n                    0.0\n                };"
+ },
+ {
+  "label": "the eligibility of the synaptic current does not leak",
+  "old": "                let ei = layer.alpha * eps_i[k] + c_iu * eps_u[k] + xi;",
+  "new": "                let ei = eps_i[k] + c_iu * eps_u[k] + xi;"
+ },
+ {
+  "label": "the membrane's eligibility does not feed back into the current's",
+  "old": "                let ei = layer.alpha * eps_i[k] + c_iu * eps_u[k] + xi;",
+  "new": "                let ei = layer.alpha * eps_i[k] + xi;"
+ },
+ {
+  "label": "the membrane eligibility does not integrate the current one",
+  "old": "                eps_u[k] = b_uu * eps_u[k] + ei;",
+  "new": "                eps_u[k] = b_uu * eps_u[k];"
+ },
+ {
+  "label": "the membrane eligibility integrates the previous step's current eligibility",
+  "old": "                eps_u[k] = b_uu * eps_u[k] + ei;",
+  "new": "                eps_u[k] = b_uu * eps_u[k] + eps_i[k];"
+ },
+ {
+  "label": "the two eligibility components are stored in the other order",
+  "old": "                eps_u[k] = b_uu * eps_u[k] + ei;\n                eps_i[k] = ei;",
+  "new": "                eps_i[k] = ei;\n                eps_u[k] = b_uu * eps_u[k] + ei;",
+  "equivalent": "the second statement writes `eps_i[k]` and reads nothing else; the first reads `eps_u[k]` and `ei`, neither of which the second touches. `ei` is a local already computed on the line above both. So the two statements commute exactly: every f64 written is the same bit pattern in either order, for every input. No test could tell, because there is nothing to tell."
+ },
+ {
+  "label": "the readout's backward filter is one term short",
+  "old": "        let g_t = geometric_sum(ln_kappa, denom, t_steps - t);",
+  "new": "        let g_t = geometric_sum(ln_kappa, denom, t_steps - t - 1);"
+ },
+ {
+  "label": "the readout gradient drops its backward filter",
+  "old": "            let gy = d_logits[c] * inv_t * g_t;",
+  "new": "            let gy = d_logits[c] * inv_t;"
+ },
+ {
+  "label": "the readout gradient keeps only the last step",
+  "old": "                g[layer.idx_r(c, j)] += gy * s_now[j];",
+  "new": "                g[layer.idx_r(c, j)] = gy * s_now[j];"
+ },
+ {
+  "label": "the learning signal is not projected through the readout weights",
+  "old": "                l += d_logits[c] * inv_t * g_t * layer.p[layer.idx_r(c, j)];",
+  "new": "                l += d_logits[c] * inv_t * g_t;"
+ },
+ {
+  "label": "every unit's learning signal is read off readout column zero",
+  "old": "                l += d_logits[c] * inv_t * g_t * layer.p[layer.idx_r(c, j)];",
+  "new": "                l += d_logits[c] * inv_t * g_t * layer.p[layer.idx_r(c, 0)];"
+ },
+ {
+  "label": "the pseudo-derivative is evaluated at the raw membrane",
+  "old": "            let psi = sur.backward(u[j] - layer.theta);",
+  "new": "            let psi = sur.backward(u[j]);"
+ },
+ {
+  "label": "the eligibility is accumulated without the learning signal",
+  "old": "            let lp = l * psi;",
+  "new": "            let lp = psi;"
+ },
+ {
+  "label": "the learning signal is not multiplied by the pseudo-derivative",
+  "old": "            let lp = l * psi;",
+  "new": "            let lp = l;"
+ },
+ {
+  "label": "the bias slot is mapped into the recurrent weight block",
+  "old": "                } else if m < ni + v_slots {\n                    layer.idx_v(j, m - ni)",
+  "new": "                } else if m <= ni + v_slots {\n                    layer.idx_v(j, m - ni)"
+ },
+ {
+  "label": "the gradient reads the current eligibility rather than the membrane one",
+  "old": "                g[idx] += lp * eps_u[base + m];",
+  "new": "                g[idx] += lp * eps_i[base + m];"
+ },
+ {
+  "label": "the gradient keeps only the last step's contribution",
+  "old": "                g[idx] += lp * eps_u[base + m];",
+  "new": "                g[idx] = lp * eps_u[base + m];"
+ },
+ {
+  "label": "the pseudo-derivative is not carried to the next step",
+  "old": "            psi_prev[j] = psi;",
+  "new": "            psi_prev[j] = 0.0;"
+ },
+ {
+  "label": "an empty batch reports a zero loss and a zero gradient",
+  "old": "    if batch.is_empty() {\n        return Err(LearnError::Empty { what: \"batch\" });\n    }",
+  "new": "    if false {\n        return Err(LearnError::Empty { what: \"batch\" });\n    }"
+ },
+ {
+  "label": "the batch gradient keeps only the last pattern",
+  "old": "        for (a, b) in g.iter_mut().zip(gi.iter()) {\n            *a += *b;",
+  "new": "        for (a, b) in g.iter_mut().zip(gi.iter()) {\n            *a = *b;"
+ },
+ {
+  "label": "the batch loss is the sum rather than the mean",
+  "old": "    loss *= inv;",
+  "new": "    loss *= 1.0;"
+ },
+ {
+  "label": "the batch gradient is the sum rather than the mean",
+  "old": "    for a in &mut g {\n        *a *= inv;\n    }",
+  "new": "    for a in &mut g {\n        *a *= 1.0;\n    }"
+ },
+ {
+  "label": "the eligibility state is one number per parameter slot rather than two",
+  "old": "    2 * layer.n_rec * slots + 5 * layer.n_rec + 2 * layer.n_out",
+  "new": "    layer.n_rec * slots + 5 * layer.n_rec + 2 * layer.n_out"
+ },
+ {
+  "label": "the eligibility slots leave out the bias",
+  "old": "    let slots = layer.n_in + if layer.recurrent { layer.n_rec } else { 0 } + 1;",
+  "new": "    let slots = layer.n_in + if layer.recurrent { layer.n_rec } else { 0 };"
+ },
+ {
+  "label": "BPTT is charged two numbers per unit per step rather than three",
+  "old": "    3usize\n        .checked_mul(layer.n_rec)",
+  "new": "    2usize\n        .checked_mul(layer.n_rec)"
+ },
+ {
+  "label": "BPTT's state does not scale with the episode length",
+  "old": "        .and_then(|v| v.checked_mul(t_steps))",
+  "new": "        .and_then(|v| v.checked_add(t_steps))"
+ },
+ {
+  "label": "the comparison runs its forward pass with a different spike function than the gradient",
+  "old": "    let tr = layer.forward(sur, x, cfg.spike_fn)?;",
+  "new": "    let tr = layer.forward(sur, x, SpikeFn::Heaviside)?;"
+ },
+ {
+  "label": "the cosine's inner product squares the reference gradient",
+  "old": "        dot += a * b;",
+  "new": "        dot += a * a;"
+ },
+ {
+  "label": "the reference norm is computed from the e-prop gradient",
+  "old": "        nb2 += a * a;",
+  "new": "        nb2 += b * b;"
+ },
+ {
+  "label": "a coordinate where e-prop is exactly zero counts as agreeing",
+  "old": "            compared += 1;\n            if a * b > 0.0 {",
+  "new": "            compared += 1;\n            if a * b >= 0.0 {"
+ },
+ {
+  "label": "the relative error is normalised by the e-prop gradient",
+  "old": "        relative: diff2.sqrt() / bptt_norm,",
+  "new": "        relative: diff2.sqrt() / eprop_norm,"
+ },
+ {
+  "label": "sign agreement is counted over every parameter rather than the compared ones",
+  "old": "        sign_agreement: agree as f64 / compared as f64,",
+  "new": "        sign_agreement: agree as f64 / gb.len() as f64,"
+ },
+ {
+  "label": "the zero-gradient refusal drops its count clause",
+  "old": "    if compared == 0 || !(bptt_norm > 0.0) || !(eprop_norm > 0.0) {",
+  "new": "    if !(bptt_norm > 0.0) || !(eprop_norm > 0.0) {"
+ },
+ {
+  "label": "the zero-gradient refusal is no longer symmetric",
+  "old": "    if compared == 0 || !(bptt_norm > 0.0) || !(eprop_norm > 0.0) {",
+  "new": "    if compared == 0 || !(bptt_norm > 0.0) {",
+  "equivalent": "the third clause is the one this function's own doc says is unreachable, and it gives the argument: the two gradients share their readout block exactly, so a zero e-prop gradient forces a zero BPTT gradient, and the first two clauses fire first on every such input. `compare_to_bptt` is only reachable from outside through a `LifLayer` plus an input, and no such pair is known that produces a zero e-prop gradient against a non-zero reference. The clause is written for symmetry of policy, not because an input reaches it, so no test can distinguish its presence."
+ },
+ {
+  "label": "a tempotron with no afferents is accepted",
+  "old": "        if n_in == 0 {\n            return Err(LearnError::Empty { what: \"afferents\" });\n        }",
+  "new": "        if false {\n            return Err(LearnError::Empty { what: \"afferents\" });\n        }"
+ },
+ {
+  "label": "two equal time constants are not refused",
+  "old": "        if tau == tau_s {\n            return Err(LearnError::TimeConstantsEqual { tau });\n        }",
+  "new": "        if false {\n            return Err(LearnError::TimeConstantsEqual { tau });\n        }"
+ },
+ {
+  "label": "the ordering of the two time constants is reversed",
+  "old": "        if tau < tau_s {\n            return Err(LearnError::NotPositive { what: \"tau - tau_s\", value: tau - tau_s });",
+  "new": "        if tau > tau_s {\n            return Err(LearnError::NotPositive { what: \"tau - tau_s\", value: tau - tau_s });"
+ },
+ {
+  "label": "the kernel's peak time inverts the logarithm's ratio",
+  "old": "        let peak = (tau * tau_s / (tau - tau_s)) * (tau / tau_s).ln();",
+  "new": "        let peak = (tau * tau_s / (tau - tau_s)) * (tau_s / tau).ln();"
+ },
+ {
+  "label": "the kernel's normalisation constant is not inverted",
+  "old": "        let v0 = 1.0 / ((-peak / tau).exp() - (-peak / tau_s).exp());",
+  "new": "        let v0 = (-peak / tau).exp() - (-peak / tau_s).exp();"
+ },
+ {
+  "label": "the Gutig & Sompolinsky synaptic constant is transcribed as tau / 2",
+  "old": "        Self::new(n_in, 15e-3, 15e-3 / 4.0, 1.0, lambda)",
+  "new": "        Self::new(n_in, 15e-3, 15e-3 / 2.0, 1.0, lambda)"
+ },
+ {
+  "label": "the tempotron's threshold is two rather than one",
+  "old": "        Self::new(n_in, 15e-3, 15e-3 / 4.0, 1.0, lambda)",
+  "new": "        Self::new(n_in, 15e-3, 15e-3 / 4.0, 2.0, lambda)"
+ },
+ {
+  "label": "the kernel responds to a spike that has not happened yet",
+  "old": "        if lag > 0.0 { self.v0 * ((-lag / self.tau).exp() - (-lag / self.tau_s).exp()) } else { 0.0 }",
+  "new": "        if lag != 0.0 { self.v0 * ((-lag / self.tau).exp() - (-lag / self.tau_s).exp()) } else { 0.0 }"
+ },
+ {
+  "label": "the kernel's two exponentials are swapped, so the potential is negative",
+  "old": "        if lag > 0.0 { self.v0 * ((-lag / self.tau).exp() - (-lag / self.tau_s).exp()) } else { 0.0 }",
+  "new": "        if lag > 0.0 { self.v0 * ((-lag / self.tau_s).exp() - (-lag / self.tau).exp()) } else { 0.0 }"
+ },
+ {
+  "label": "the kernel is not normalised to a unit peak",
+  "old": "        if lag > 0.0 { self.v0 * ((-lag / self.tau).exp() - (-lag / self.tau_s).exp()) } else { 0.0 }",
+  "new": "        if lag > 0.0 { (-lag / self.tau).exp() - (-lag / self.tau_s).exp() } else { 0.0 }"
+ },
+ {
+  "label": "the kernel fires at the instant of the spike",
+  "old": "        if lag > 0.0 { self.v0 * ((-lag / self.tau).exp() - (-lag / self.tau_s).exp()) } else { 0.0 }",
+  "new": "        if lag >= 0.0 { self.v0 * ((-lag / self.tau).exp() - (-lag / self.tau_s).exp()) } else { 0.0 }",
+  "equivalent": "at `lag == 0.0` the two exponentials are `exp(-0.0)` and `exp(-0.0)`, both exactly `1.0`, and `1.0 - 1.0` is exactly `+0.0` in IEEE-754 round-to-nearest. `v0 * 0.0` is `+0.0` for the finite positive `v0` the constructor guarantees. The `>` branch would have returned the literal `0.0`, the same bit pattern, so the two forms agree at the only argument where they differ."
+ },
+ {
+  "label": "a pattern with the wrong number of afferents is accepted",
+  "old": "        if pattern.len() != self.w.len() {",
+  "new": "        if pattern.len() > self.w.len() {"
+ },
+ {
+  "label": "the membrane reads its kernel backwards in time",
+  "old": "                psp += self.kernel(t - ts);",
+  "new": "                psp += self.kernel(ts - t);"
+ },
+ {
+  "label": "the tempotron's membrane sums its postsynaptic potentials unweighted",
+  "old": "            v += self.w[i] * psp;",
+  "new": "            v += psp;"
+ },
+ {
+  "label": "the peak search starts from zero rather than from minus infinity",
+  "old": "        let mut best = (f64::NEG_INFINITY, 0.0);",
+  "new": "        let mut best = (0.0, 0.0);"
+ },
+ {
+  "label": "the peak search skips the first grid point",
+  "old": "        for k in 0..=steps {\n            let t = k as f64 * dt;\n            let v = self.voltage(pattern, t)?;",
+  "new": "        for k in 1..=steps {\n            let t = k as f64 * dt;\n            let v = self.voltage(pattern, t)?;"
+ },
+ {
+  "label": "a tie on the membrane's peak goes to the last grid point",
+  "old": "            if v > best.0 {\n                best = (v, t);",
+  "new": "            if v >= best.0 {\n                best = (v, t);"
+ },
+ {
+  "label": "the tempotron updates on the trials it already decides correctly",
+  "old": "        if (v_max >= self.theta) == desired {\n            return Ok(false);\n        }",
+  "new": "        if (v_max >= self.theta) != desired {\n            return Ok(false);\n        }"
+ },
+ {
+  "label": "the update's sign is inverted",
+  "old": "        let sign = if desired { 1.0 } else { -1.0 };",
+  "new": "        let sign = if desired { -1.0 } else { 1.0 };"
+ },
+ {
+  "label": "the update is evaluated at the start of the trial rather than at the peak",
+  "old": "                psp += self.kernel(t_max - ts);",
+  "new": "                psp += self.kernel(0.0 - ts);"
+ },
+ {
+  "label": "the update drops the learning rate",
+  "old": "            self.w[i] += sign * self.lambda * psp;",
+  "new": "            self.w[i] += sign * psp;"
+ },
+ {
+  "label": "the error rate's denominator is one larger than the training set",
+  "old": "            hist.push(wrong as f64 / set.len() as f64);",
+  "new": "            hist.push(wrong as f64 / (set.len() + 1) as f64);"
+ },
+ {
+  "label": "an empty training set is trained on",
+  "old": "        if set.is_empty() {\n            return Err(LearnError::Empty { what: \"training set\" });\n        }",
+  "new": "        if false {\n            return Err(LearnError::Empty { what: \"training set\" });\n        }"
+ },
+ {
+  "label": "accuracy counts the decisions it got wrong",
+  "old": "            if self.fires(pattern, dt, t_end)? == *desired {",
+  "new": "            if self.fires(pattern, dt, t_end)? != *desired {"
+ },
+ {
+  "label": "a negative window amplitude is accepted",
+  "old": "        if amp < 0.0 {\n            return Err(LearnError::NotPositive { what: \"amp\", value: amp });",
+  "new": "        if amp < -1.0 {\n            return Err(LearnError::NotPositive { what: \"amp\", value: amp });"
+ },
+ {
+  "label": "the window's time constant and the learning rate are swapped",
+  "old": "        Ok(Self { a, amp, tau: positive(\"tau\", tau)?, eta: positive(\"eta\", eta)? })",
+  "new": "        Ok(Self { a, amp, tau: positive(\"tau\", eta)?, eta: positive(\"eta\", tau)? })"
+ },
+ {
+  "label": "the learning window fires at zero lag",
+  "old": "        if s > 0.0 { self.amp * (-s / self.tau).exp() } else { 0.0 }",
+  "new": "        if s >= 0.0 { self.amp * (-s / self.tau).exp() } else { 0.0 }"
+ },
+ {
+  "label": "the learning window drops its amplitude",
+  "old": "        if s > 0.0 { self.amp * (-s / self.tau).exp() } else { 0.0 }",
+  "new": "        if s > 0.0 { (-s / self.tau).exp() } else { 0.0 }"
+ },
+ {
+  "label": "the correlation pairs a postsynaptic spike with presynaptic spikes that follow it",
+  "old": "                if t_pre < t_post {\n                    s += self.window(t_post - t_pre);",
+  "new": "                if true {\n                    s += self.window(t_post - t_pre);"
+ },
+ {
+  "label": "the correlation counts simultaneous pairs",
+  "old": "                if t_pre < t_post {\n                    s += self.window(t_post - t_pre);",
+  "new": "                if t_pre <= t_post {\n                    s += self.window(t_post - t_pre);",
+  "equivalent": "the only pairs the two forms disagree about are those with `t_pre == t_post`, and for those the term added is `window(t_post - t_pre) = window(0.0)`, which is exactly `0.0` because `ReSuMe::window` returns the literal `0.0` for every `s` that is not strictly positive. Adding `0.0` to the accumulator `s` leaves its bit pattern unchanged: `s` starts at `+0.0`, and `x + 0.0 == x` for every finite `x` and for `+0.0` itself, so no input can make the two versions return different numbers."
+ },
+ {
+  "label": "the correlation reads its lag backwards",
+  "old": "                    s += self.window(t_post - t_pre);",
+  "new": "                    s += self.window(t_pre - t_post);"
+ },
+ {
+  "label": "the spike-count term is the excess of produced spikes over desired ones",
+  "old": "        let count = desired.len() as f64 - actual.len() as f64;",
+  "new": "        let count = actual.len() as f64 - desired.len() as f64;"
+ },
+ {
+  "label": "the teacher and the output correlations are summed rather than differenced",
+  "old": "        let hebbian = self.correlation(pre, desired) - self.correlation(pre, actual);",
+  "new": "        let hebbian = self.correlation(pre, desired) + self.correlation(pre, actual);"
+ },
+ {
+  "label": "the weight change drops the learning rate",
+  "old": "        Ok(self.eta * (self.a * count + hebbian))",
+  "new": "        Ok(self.a * count + hebbian)"
+ },
+ {
+  "label": "the presynaptic train is not checked for finiteness",
+  "old": "        finite_slice(pre)?;\n        finite_slice(desired)?;",
+  "new": "        let _ = finite_slice(pre);\n        finite_slice(desired)?;"
+ },
+ {
+  "label": "the alpha potential's exponent has the wrong sign",
+  "old": "        if lag > 0.0 { (lag / self.tau) * (1.0 - lag / self.tau).exp() } else { 0.0 }",
+  "new": "        if lag > 0.0 { (lag / self.tau) * (1.0 + lag / self.tau).exp() } else { 0.0 }"
+ },
+ {
+  "label": "the alpha potential inverts its ratio",
+  "old": "        if lag > 0.0 { (lag / self.tau) * (1.0 - lag / self.tau).exp() } else { 0.0 }",
+  "new": "        if lag > 0.0 { (self.tau / lag) * (1.0 - lag / self.tau).exp() } else { 0.0 }"
+ },
+ {
+  "label": "the alpha potential's slope drops its linear factor",
+  "old": "            (1.0 - lag / self.tau).exp() * (1.0 - lag / self.tau) / self.tau",
+  "new": "            (1.0 - lag / self.tau).exp() / self.tau"
+ },
+ {
+  "label": "the alpha potential's slope is not per second",
+  "old": "            (1.0 - lag / self.tau).exp() * (1.0 - lag / self.tau) / self.tau",
+  "new": "            (1.0 - lag / self.tau).exp() * (1.0 - lag / self.tau)"
+ },
+ {
+  "label": "a neuron with no afferents is accepted",
+  "old": "        if w.is_empty() {\n            return Err(LearnError::Empty { what: \"weights\" });\n        }",
+  "new": "        if false {\n            return Err(LearnError::Empty { what: \"weights\" });\n        }"
+ },
+ {
+  "label": "too few presynaptic times are accepted by the membrane",
+  "old": "    pub fn potential(&self, pre: &[f64], t: f64) -> Result<f64, LearnError> {\n        if pre.len() != self.w.len() {",
+  "new": "    pub fn potential(&self, pre: &[f64], t: f64) -> Result<f64, LearnError> {\n        if pre.len() > self.w.len() {"
+ },
+ {
+  "label": "the spikeprop membrane sums its postsynaptic potentials unweighted",
+  "old": "            u += self.w[i] * self.psp.eval(t - pre[i]);",
+  "new": "            u += self.psp.eval(t - pre[i]);"
+ },
+ {
+  "label": "the bracket's lower end is advanced onto the crossing point itself",
+  "old": "            if self.potential(pre, t)? >= self.theta {\n                found = Some(t);\n                break;\n            }\n            lo = t;",
+  "new": "            lo = t;\n            if self.potential(pre, t)? >= self.theta {\n                found = Some(t);\n                break;\n            }"
+ },
+ {
+  "label": "a membrane already over threshold at t = 0 is bisected rather than answered directly",
+  "old": "        if hi0 == 0.0 {\n            return Ok(Some(0.0));\n        }",
+  "new": "        if false {\n            return Ok(Some(0.0));\n        }",
+  "equivalent": "the shortcut is taken only when the very first grid point, `t = 0`, is already at or above the threshold, and that is also the only way `lo` can still be its initial `0.0` when the scan breaks. The bisection then starts from `lo = 0.0` and `hi = 0.0`: every midpoint is `0.5 * (0.0 + 0.0) = 0.0`, the test `potential(0.0) >= theta` holds, so `hi` is assigned `0.0` eighty times over and the function returns `Ok(Some(0.0))` — the same value, bit for bit, that the shortcut returns. Only the eighty wasted membrane evaluations differ, and no assertion can see them."
+ },
+ {
+  "label": "the root is refined by two bisections rather than eighty",
+  "old": "        for _ in 0..80 {\n            let mid = 0.5 * (lo + hi);",
+  "new": "        for _ in 0..2 {\n            let mid = 0.5 * (lo + hi);"
+ },
+ {
+  "label": "the bisection keeps the half without the root",
+  "old": "            if self.potential(pre, mid)? >= self.theta {\n                hi = mid;\n            } else {\n                lo = mid;\n            }",
+  "new": "            if self.potential(pre, mid)? >= self.theta {\n                lo = mid;\n            } else {\n                hi = mid;\n            }"
+ },
+ {
+  "label": "the membrane's slope at the crossing is summed unweighted",
+  "old": "            slope += self.w[i] * self.psp.slope(t_out - pre[i]);",
+  "new": "            slope += self.psp.slope(t_out - pre[i]);"
+ },
+ {
+  "label": "an infinite slope is accepted as a transversal crossing",
+  "old": "        if !(slope > 0.0) || !slope.is_finite() {",
+  "new": "        if !(slope > 0.0) {"
+ },
+ {
+  "label": "raising a weight is reported as delaying the spike",
+  "old": "            g.push(-self.psp.eval(t_out - pre[i]) / slope);",
+  "new": "            g.push(self.psp.eval(t_out - pre[i]) / slope);"
+ },
+ {
+  "label": "the timing error is measured from the target to the spike",
+  "old": "        let err = t_out - target;",
+  "new": "        let err = target - t_out;"
+ },
+ {
+  "label": "the timing rule ascends its loss",
+  "old": "            self.w[i] -= self.eta * err * g[i];",
+  "new": "            self.w[i] += self.eta * err * g[i];"
+ },
+ {
+  "label": "the timing rule drops its learning rate",
+  "old": "            self.w[i] -= self.eta * err * g[i];",
+  "new": "            self.w[i] -= err * g[i];"
+ },
+ {
+  "label": "a readout of no basis signals is accepted",
+  "old": "        if n == 0 {\n            return Err(LearnError::Empty { what: \"basis\" });\n        }",
+  "new": "        if false {\n            return Err(LearnError::Empty { what: \"basis\" });\n        }"
+ },
+ {
+  "label": "a zero ridge parameter is accepted",
+  "old": "        let ridge = positive(\"ridge\", ridge)?;",
+  "new": "        let ridge = finite(\"ridge\", ridge)?;"
+ },
+ {
+  "label": "the inverse correlation matrix is seeded with the ridge rather than its reciprocal",
+  "old": "            p[i * n + i] = 1.0 / ridge;",
+  "new": "            p[i * n + i] = ridge;"
+ },
+ {
+  "label": "the readout weights do not start at zero",
+  "old": "        Ok(Self { w: vec![0.0; n], ridge, p, n, updates: 0 })",
+  "new": "        Ok(Self { w: vec![1.0; n], ridge, p, n, updates: 0 })"
+ },
+ {
+  "label": "the readout output ignores its weights",
+  "old": "            y += self.w[i] * r[i];",
+  "new": "            y += r[i];"
+ },
+ {
+  "label": "the matrix-vector product reads P transposed",
+  "old": "                s += self.p[i * n + j] * r[j];",
+  "new": "                s += self.p[j * n + i] * r[j];",
+  "equivalent": "`P` is exactly symmetric at every step and for every input — `self.p[i * n + j]` and `self.p[j * n + i]` hold the same bit pattern, not merely the same value, which is what `the_inverse_correlation_matrix_stays_exactly_symmetric` asserts as an equality and what `Force::update` guarantees by computing each off-diagonal subtrahend once and storing it into both entries. The loop order over `j` is unchanged, so every partial sum is formed from the same f64s in the same order and `pr` comes out bit-identical. No test could tell."
+ },
+ {
+  "label": "the least-squares denominator drops its one",
+  "old": "        let denom = 1.0 + q;",
+  "new": "        let denom = q;"
+ },
+ {
+  "label": "the singular guard no longer rejects an overflowed denominator",
+  "old": "        if !(denom > 0.0) || !denom.is_finite() {",
+  "new": "        if !(denom > 0.0) {"
+ },
+ {
+  "label": "the recursive-least-squares gain is not inverted",
+  "old": "        let c = 1.0 / denom;",
+  "new": "        let c = denom;"
+ },
+ {
+  "label": "the a-priori error has the wrong sign",
+  "old": "        let mut err = -target;",
+  "new": "        let mut err = target;"
+ },
+ {
+  "label": "the diagonal of P is updated upward",
+  "old": "            self.p[i * n + i] -= ci * pr[i];",
+  "new": "            self.p[i * n + i] += ci * pr[i];"
+ },
+ {
+  "label": "the off-diagonal subtrahend is formed separately for each of the two entries",
+  "old": "                let d = ci * pr[j];\n                self.p[i * n + j] -= d;\n                self.p[j * n + i] -= d;",
+  "new": "                let d = ci * pr[j];\n                self.p[i * n + j] -= d;\n                self.p[j * n + i] -= c * pr[j] * pr[i];"
+ },
+ {
+  "label": "the rank-one downdate subtracts from the diagonal twice",
+  "old": "            for j in (i + 1)..n {",
+  "new": "            for j in (i)..n {"
+ },
+ {
+  "label": "the weight update ascends",
+  "old": "            self.w[i] -= ci * err;",
+  "new": "            self.w[i] += ci * err;"
+ },
+ {
+  "label": "applied updates are not counted",
+  "old": "        self.updates += 1;",
+  "new": "        self.updates += 0;"
+ }
+]

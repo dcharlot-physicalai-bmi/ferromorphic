@@ -1,0 +1,737 @@
+[
+ {
+  "label": "the logistic's negative branch is the naive form that underflows to zero",
+  "old": "        let e = x.exp();\n        e / (1.0 + e)",
+  "new": "        let e = x.exp();\n        let _ = e;\n        1.0 / (1.0 + (-x).exp())"
+ },
+ {
+  "label": "the logistic is inverted on its positive branch",
+  "old": "        1.0 / (1.0 + (-x).exp())\n    } else {",
+  "new": "        1.0 / (1.0 + x.exp())\n    } else {"
+ },
+ {
+  "label": "the logistic's branch boundary excludes zero",
+  "old": "    if x >= 0.0 {\n        1.0 / (1.0 + (-x).exp())",
+  "new": "    if x > 0.0 {\n        1.0 / (1.0 + (-x).exp())",
+  "equivalent": "the two branches agree exactly at the boundary they are split on. At x = 0 the positive branch computes 1/(1 + exp(-0)) = 1/(1 + 1) = 0.5 and the negative branch computes e = exp(0) = 1 then 1/(1 + 1) = 0.5 — the same two f64 operations on the same two operands, so the results are bit-identical, not merely close. At -0.0 the mutant also takes the else branch (-0.0 > 0.0 is false) and exp(-0.0) is exactly 1.0 again. The branch exists for the TAILS, where exp overflows, and both tails are on the same side of the boundary after the change as before it."
+ },
+ {
+  "label": "the finiteness gate rejects an infinity but lets a NaN through",
+  "old": "        if !x.is_finite() {\n            return Err(BayesError::NonFinite { what, index: i });",
+  "new": "        if x.is_infinite() {\n            return Err(BayesError::NonFinite { what, index: i });"
+ },
+ {
+  "label": "the finiteness gate reports the offending entry as the first one",
+  "old": "            return Err(BayesError::NonFinite { what, index: i });\n        }\n    }\n    Ok(())\n}",
+  "new": "            return Err(BayesError::NonFinite { what, index: 0 });\n        }\n    }\n    Ok(())\n}"
+ },
+ {
+  "label": "a non-finite scalar is accepted",
+  "old": "    if x.is_finite() { Ok(()) } else { Err(BayesError::NonFinite { what, index: 0 }) }",
+  "new": "    let _ = (x, what);\n    Ok(())"
+ },
+ {
+  "label": "a model over no units at all is accepted",
+  "old": "        let units = bias.len();\n        if units == 0 {",
+  "new": "        let units = bias.len();\n        if false {"
+ },
+ {
+  "label": "a coupling matrix shorter than the model is accepted",
+  "old": "        if coupling.len() != units * units {",
+  "new": "        if coupling.len() > units * units {"
+ },
+ {
+  "label": "a nonzero self-coupling is accepted",
+  "old": "            if d != 0.0 {\n                return Err(BayesError::SelfCoupling { unit: k, value: d });",
+  "new": "            if false {\n                return Err(BayesError::SelfCoupling { unit: k, value: d });"
+ },
+ {
+  "label": "the symmetry check compares an entry with itself",
+  "old": "                let (a, b) = (coupling[k * units + j], coupling[j * units + k]);",
+  "new": "                let (a, b) = (coupling[k * units + j], coupling[k * units + j]);"
+ },
+ {
+  "label": "the representable width is transcribed as 32 units",
+  "old": "pub const MAX_UNITS: usize = 64;",
+  "new": "pub const MAX_UNITS: usize = 32;"
+ },
+ {
+  "label": "the enumerable width is transcribed as 10 units",
+  "old": "pub const MAX_ENUMERABLE_UNITS: usize = 20;",
+  "new": "pub const MAX_ENUMERABLE_UNITS: usize = 10;"
+ },
+ {
+  "label": "the coupling enters the energy twice per pair",
+  "old": "                        e += 0.5 * self.coupling[k * self.units + j];",
+  "new": "                        e += self.coupling[k * self.units + j];"
+ },
+ {
+  "label": "the energy reads the coupling transposed",
+  "old": "                        e += 0.5 * self.coupling[k * self.units + j];\n                    }",
+  "new": "                        e += 0.5 * self.coupling[j * self.units + k];\n                    }",
+  "equivalent": "`Boltzmann::new` refuses any matrix with `coupling[k*units+j] != coupling[j*units+k]`, and that comparison is exact f64 equality, not a tolerance — so for every model this type can hold the two reads return the identical bit pattern. Term by term the mutated sum is the same sequence of f64 additions on the same values in the same order, so the energy is bit-for-bit what it was. A test could only tell the two apart on a matrix the constructor does not allow to exist, and the only route into the struct is `new` (and `independent`, which goes through it)."
+ },
+ {
+  "label": "the bias is counted for every unit rather than only the ones that are on",
+  "old": "            if z >> k & 1 == 1 {\n                e += self.bias[k];",
+  "new": "            e += self.bias[k];\n            if z >> k & 1 == 1 {"
+ },
+ {
+  "label": "the energy is computed for the complement of the configuration",
+  "old": "        for k in 0..self.units {\n            if z >> k & 1 == 1 {\n                e += self.bias[k];",
+  "new": "        for k in 0..self.units {\n            if z >> k & 1 == 0 {\n                e += self.bias[k];"
+ },
+ {
+  "label": "a state wider than the model is silently masked rather than refused",
+  "old": "        (self.units == MAX_UNITS || z >> self.units == 0).then(|| self.energy_of(z))",
+  "new": "        (true).then(|| self.energy_of(z))"
+ },
+ {
+  "label": "a full-width model can no longer report an energy for a high state",
+  "old": "        (self.units == MAX_UNITS || z >> self.units == 0).then(|| self.energy_of(z))\n    }",
+  "new": "        (z >> self.units == 0).then(|| self.energy_of(z))\n    }"
+ },
+ {
+  "label": "the membrane potential drops the unit's own bias",
+  "old": "        let mut u = self.bias[k];",
+  "new": "        let mut u = 0.0;"
+ },
+ {
+  "label": "the membrane potential sums the coupling matrix's diagonal",
+  "old": "                u += self.coupling[k * self.units + j];",
+  "new": "                u += self.coupling[j * self.units + j];"
+ },
+ {
+  "label": "the membrane accepts a state wider than the model",
+  "old": "        if k >= self.units || (self.units != MAX_UNITS && z >> self.units != 0) {",
+  "new": "        if k >= self.units {"
+ },
+ {
+  "label": "an energy that overflowed to infinity is normalised rather than refused",
+  "old": "            if !v.is_finite() {\n                return Err(BayesError::NonFinite { what: \"energy\", index: z });",
+  "new": "            if false {\n                return Err(BayesError::NonFinite { what: \"energy\", index: z });"
+ },
+ {
+  "label": "the largest energy is not subtracted before exponentiating",
+  "old": "            *v = (*v - top).exp();",
+  "new": "            *v = (*v).exp();"
+ },
+ {
+  "label": "the normalising sum keeps only the last term",
+  "old": "            sum += *v;",
+  "new": "            sum = *v;"
+ },
+ {
+  "label": "the enumerated distribution is never normalised",
+  "old": "        for v in &mut e {\n            *v /= sum;\n        }",
+  "new": "        for v in &mut e {\n            *v /= 1.0;\n        }"
+ },
+ {
+  "label": "an exact marginal accumulates the states where the unit is off",
+  "old": "        let p = self.exact()?;\n        let mut m = vec![0.0; self.units];\n        for (z, &pz) in p.iter().enumerate() {\n            for (k, mk) in m.iter_mut().enumerate() {\n                if z >> k & 1 == 1 {",
+  "new": "        let p = self.exact()?;\n        let mut m = vec![0.0; self.units];\n        for (z, &pz) in p.iter().enumerate() {\n            for (k, mk) in m.iter_mut().enumerate() {\n                if z >> k & 1 == 0 {"
+ },
+ {
+  "label": "a target's enumeration ceiling is the representation ceiling",
+  "old": "        if units > MAX_ENUMERABLE_UNITS {\n            return Err(BayesError::TooLarge {\n                what: \"units\",\n                got: units,\n                limit: MAX_ENUMERABLE_UNITS,\n            });\n        }\n        let want = 1usize << units;",
+  "new": "        if units > MAX_UNITS {\n            return Err(BayesError::TooLarge {\n                what: \"units\",\n                got: units,\n                limit: MAX_ENUMERABLE_UNITS,\n            });\n        }\n        let want = 1usize << units;"
+ },
+ {
+  "label": "a target wants two weights per unit rather than one per configuration",
+  "old": "        let want = 1usize << units;",
+  "new": "        let want = 2 * units;"
+ },
+ {
+  "label": "the Boltzmann constructor skips the finiteness gate the other one runs",
+  "old": "        let log_w: Vec<f64> = (0..n).map(|z| b.energy_of(z as u64)).collect();\n        finite(&log_w, \"log_w\")?;",
+  "new": "        let log_w: Vec<f64> = (0..n).map(|z| b.energy_of(z as u64)).collect();"
+ },
+ {
+  "label": "the conditional log-odds is the odds of the unit being off",
+  "old": "        Ok(self.log_w[on as usize] - self.log_w[off as usize])",
+  "new": "        Ok(self.log_w[off as usize] - self.log_w[on as usize])"
+ },
+ {
+  "label": "the conditional's background keeps the unit's own bit as it was given",
+  "old": "        let off = z & !(1u64 << k);",
+  "new": "        let off = z;"
+ },
+ {
+  "label": "the fitted bias is read against an all-on background",
+  "old": "            bias[k] = t.conditional_log_odds(0, k)?;",
+  "new": "            bias[k] = t.conditional_log_odds((1u64 << n) - 1, k)?;"
+ },
+ {
+  "label": "a fitted coupling keeps the bias it should have had subtracted",
+  "old": "                    coupling[k * n + j] = t.conditional_log_odds(1u64 << j, k)? - bias[k];",
+  "new": "                    coupling[k * n + j] = t.conditional_log_odds(1u64 << j, k)?;"
+ },
+ {
+  "label": "the fit writes the coupling transposed",
+  "old": "                    coupling[k * n + j] = t.conditional_log_odds(1u64 << j, k)? - bias[k];\n                }\n            }",
+  "new": "                    coupling[j * n + k] = t.conditional_log_odds(1u64 << j, k)? - bias[k];\n                }\n            }",
+  "equivalent": "the fit's own doc derives why: W_kj = [w(e_k+e_j) − w(e_j)] − [w(e_k) − w(0)] and W_jk = [w(e_j+e_k) − w(e_k)] − [w(e_j) − w(0)] are the same four log-weights with the same signs, for ANY target, third-order terms included. The two differ only in the order the four are associated, so the transposed write stores a value that differs from the original by at most a couple of ulps of the largest log-weight — of order 1e-16 nats for the models in this file, where the smallest tolerance any assertion on `coupling` or `residual` uses is 1e-13 and the planted residuals the fit is measured against are 0.8 and 1.7 nats. No assertion in this module distinguishes two matrices that agree to 1e-16."
+ },
+ {
+  "label": "the diagonal of the fitted coupling is filled in rather than skipped",
+  "old": "                if j != k {\n                    coupling[k * n + j]",
+  "new": "                if true {\n                    coupling[k * n + j]",
+  "equivalent": "the entry the mutant adds is exactly 0.0, which is what the diagonal already held. At j == k the value written is `conditional_log_odds(1 << k, k) - bias[k]`, and `conditional_log_odds` forces bit k in BOTH of its reads: off = (1<<k) & !(1<<k) = 0 and on = 0 | (1<<k) = 1<<k. That is the identical pair of indices `bias[k] = conditional_log_odds(0, k)` used, so the subtraction is x − x = 0.0 exactly, not approximately. The residual loop skips j == k independently, so nothing downstream reads the entry either way."
+ },
+ {
+  "label": "the residual is the smallest disagreement rather than the largest",
+  "old": "                residual = residual.max((t.conditional_log_odds(z, k)? - fitted).abs());",
+  "new": "                residual = residual.min((t.conditional_log_odds(z, k)? - fitted).abs());"
+ },
+ {
+  "label": "the residual drops its absolute value, so a target the fit over-predicts reads as pairwise",
+  "old": "                residual = residual.max((t.conditional_log_odds(z, k)? - fitted).abs());\n            }",
+  "new": "                residual = residual.max(t.conditional_log_odds(z, k)? - fitted);\n            }"
+ },
+ {
+  "label": "the residual is measured at the empty configuration alone",
+  "old": "        for z in 0..(1u64 << n) {",
+  "new": "        for z in 0..1u64 {"
+ },
+ {
+  "label": "a refractory window of zero ticks is accepted",
+  "old": "        if tau == 0 || tau > Self::MAX_TAU {",
+  "new": "        if tau > Self::MAX_TAU {"
+ },
+ {
+  "label": "the log-tau correction is taken in base ten",
+  "old": "        Ok(Self { model, tau, scan, zeta: vec![0; units], log_tau: f64::from(tau).ln() })",
+  "new": "        Ok(Self { model, tau, scan, zeta: vec![0; units], log_tau: f64::from(tau).log10() })"
+ },
+ {
+  "label": "a unit is only high on the tick it spiked",
+  "old": "            if c >= 1 {\n                z |= 1u64 << k;",
+  "new": "            if c >= self.tau {\n                z |= 1u64 << k;"
+ },
+ {
+  "label": "reset leaves the refractory counters where they were",
+  "old": "        self.zeta.fill(0);",
+  "new": "        let _ = &self.zeta;"
+ },
+ {
+  "label": "the refractory countdown never runs, so a unit re-decides every tick",
+  "old": "        if self.zeta[k] >= 2 {\n            self.zeta[k] -= 1;",
+  "new": "        if false {\n            self.zeta[k] -= 1;"
+ },
+ {
+  "label": "the refractory period holds a unit one tick too long",
+  "old": "        if self.zeta[k] >= 2 {\n            self.zeta[k] -= 1;\n            return false;",
+  "new": "        if self.zeta[k] >= 1 {\n            self.zeta[k] -= 1;\n            return false;"
+ },
+ {
+  "label": "the minus-log-tau correction is dropped from the firing probability",
+  "old": "        let q = logistic(u - self.log_tau);",
+  "new": "        let q = logistic(u);"
+ },
+ {
+  "label": "a unit fires when its coin lands above the firing probability",
+  "old": "        if rng.next_f64() < q {\n            self.zeta[k] = self.tau;",
+  "new": "        if rng.next_f64() > q {\n            self.zeta[k] = self.tau;"
+ },
+ {
+  "label": "a spike sets the refractory counter to one rather than to the window",
+  "old": "            self.zeta[k] = self.tau;\n            true",
+  "new": "            self.zeta[k] = 1;\n            true"
+ },
+ {
+  "label": "a unit that decides not to fire keeps its counter",
+  "old": "            self.zeta[k] = 0;\n            false\n        }\n    }",
+  "new": "            false\n        }\n    }"
+ },
+ {
+  "label": "a unit reads its inputs from the state the earlier units in the sweep have already changed",
+  "old": "        let u = self.model.membrane_of(z_snapshot, k);",
+  "new": "        let u = self.model.membrane_of(self.state(), k);"
+ },
+ {
+  "label": "the random scan always updates unit zero",
+  "old": "                let k = rng.below(self.model.units() as u32) as usize;",
+  "new": "                let k = 0;"
+ },
+ {
+  "label": "a random-scan spike is reported as unit zero's",
+  "old": "                u64::from(self.update(k, z, rng)) << k",
+  "new": "                u64::from(self.update(k, z, rng))"
+ },
+ {
+  "label": "the parallel sweep snapshots the state inside the loop rather than at the start of the tick",
+  "old": "                let z = self.state();\n                let mut fired = 0u64;\n                for k in 0..self.model.units() {\n                    if self.update(k, z, rng) {",
+  "new": "                let mut fired = 0u64;\n                for k in 0..self.model.units() {\n                    let z = self.state();\n                    if self.update(k, z, rng) {"
+ },
+ {
+  "label": "every parallel spike is reported as unit zero's",
+  "old": "                        fired |= 1u64 << k;",
+  "new": "                        fired |= 1u64;"
+ },
+ {
+  "label": "a burn-in that eats the whole run is accepted",
+  "old": "        if burn_in >= steps {",
+  "new": "        if burn_in > steps {"
+ },
+ {
+  "label": "the burn-in is not discarded",
+  "old": "            if t >= burn_in {\n                h.observe(self.state());",
+  "new": "            if true {\n                h.observe(self.state());"
+ },
+ {
+  "label": "a zero-length recording is accepted",
+  "old": "        if steps == 0 {\n            return Err(BayesError::TooShort { got: 0, want: 1 });",
+  "new": "        if false {\n            return Err(BayesError::TooShort { got: 0, want: 1 });"
+ },
+ {
+  "label": "a recording always claims it began from rest",
+  "old": "        let from_reset = self.zeta.iter().all(|&c| c == 0);",
+  "new": "        let from_reset = true;"
+ },
+ {
+  "label": "a spike is stamped one tick after the tick it happened on",
+  "old": "                train.push(Spike { t, source: k });",
+  "new": "                train.push(Spike { t: t + 1, source: k });"
+ },
+ {
+  "label": "the spike loop shifts the mask instead of clearing the bit it just read",
+  "old": "                fired &= fired - 1;",
+  "new": "                fired >>= 1;"
+ },
+ {
+  "label": "the state trace records the state before the tick rather than after it",
+  "old": "            let mut fired = self.step(rng);\n            while fired != 0 {\n                let k = fired.trailing_zeros();\n                train.push(Spike { t, source: k });\n                fired &= fired - 1;\n            }\n            states.push(self.state());",
+  "new": "            states.push(self.state());\n            let mut fired = self.step(rng);\n            while fired != 0 {\n                let k = fired.trailing_zeros();\n                train.push(Spike { t, source: k });\n                fired &= fired - 1;\n            }"
+ },
+ {
+  "label": "a histogram is allocated one bin per unit rather than one per configuration",
+  "old": "        Ok(Self { units, counts: vec![0; 1usize << units], samples: 0 })",
+  "new": "        Ok(Self { units, counts: vec![0; units], samples: 0 })"
+ },
+ {
+  "label": "an out-of-range observation is aliased onto a real bin",
+  "old": "        if self.units < MAX_UNITS && z >> self.units != 0 {\n            return;\n        }\n        self.counts[z as usize] += 1;",
+  "new": "        let z = if self.units < MAX_UNITS { z & ((1u64 << self.units) - 1) } else { z };\n        self.counts[z as usize] += 1;"
+ },
+ {
+  "label": "a bin is set rather than incremented",
+  "old": "        self.counts[z as usize] += 1;\n        self.samples += 1;",
+  "new": "        self.counts[z as usize] = 1;\n        self.samples += 1;"
+ },
+ {
+  "label": "the sample count is not advanced when an observation is recorded",
+  "old": "        self.counts[z as usize] += 1;\n        self.samples += 1;\n    }",
+  "new": "        self.counts[z as usize] += 1;\n    }"
+ },
+ {
+  "label": "the empirical distribution divides by the number of bins rather than the number of samples",
+  "old": "            .then(|| self.counts.iter().map(|&c| c as f64 / self.samples as f64).collect())",
+  "new": "            .then(|| self.counts.iter().map(|&c| c as f64 / self.counts.len() as f64).collect())"
+ },
+ {
+  "label": "an unnormalised reference distribution is accepted",
+  "old": "        if (mass - 1.0).abs() > 1e-9 {",
+  "new": "        if false {"
+ },
+ {
+  "label": "the total-variation distance drops its factor of one half",
+  "old": "        Ok(0.5 * p.iter().zip(reference).map(|(a, b)| (a - b).abs()).sum::<f64>())",
+  "new": "        Ok(p.iter().zip(reference).map(|(a, b)| (a - b).abs()).sum::<f64>())"
+ },
+ {
+  "label": "a histogram with no samples reports a distance rather than refusing",
+  "old": "        let p = self.probabilities().ok_or(BayesError::Empty { what: \"histogram\" })?;",
+  "new": "        let p = self.probabilities().unwrap_or_else(|| vec![0.0; self.counts.len()]);"
+ },
+ {
+  "label": "the indicator series is the complement of the unit's state",
+  "old": "            .then(|| self.states.iter().map(|&z| f64::from(u8::from(z >> k & 1 == 1))).collect())",
+  "new": "            .then(|| self.states.iter().map(|&z| f64::from(u8::from(z >> k & 1 == 0))).collect())"
+ },
+ {
+  "label": "a random-scan recording is decoded with a fixed window anyway",
+  "old": "        if k >= self.units || self.scan != Scan::Parallel || !self.from_reset {",
+  "new": "        if k >= self.units || !self.from_reset {"
+ },
+ {
+  "label": "a recording that began mid-refractory is decoded anyway",
+  "old": "        if k >= self.units || self.scan != Scan::Parallel || !self.from_reset {\n            return None;",
+  "new": "        if k >= self.units || self.scan != Scan::Parallel {\n            return None;"
+ },
+ {
+  "label": "the decode window is one tick rather than the refractory window",
+  "old": "            let end = (start + self.tau as usize).min(n);",
+  "new": "            let end = (start + 1).min(n);"
+ },
+ {
+  "label": "the decode marks a unit high from every unit's spikes",
+  "old": "            if s.source as usize != k {\n                continue;\n            }",
+  "new": "            if false {\n                continue;\n            }"
+ },
+ {
+  "label": "the 95% half-width uses the 90% normal quantile",
+  "old": "    pub fn half_width95(&self) -> f64 {\n        1.96 * self.sem",
+  "new": "    pub fn half_width95(&self) -> f64 {\n        1.645 * self.sem"
+ },
+ {
+  "label": "the interval is one-sided about the mean",
+  "old": "        (self.mean - self.half_width95(), self.mean + self.half_width95())",
+  "new": "        (self.mean, self.mean + self.half_width95())"
+ },
+ {
+  "label": "the naive interval is built on the honest error bar",
+  "old": "        let h = 1.96 * self.naive_sem;",
+  "new": "        let h = 1.96 * self.sem;"
+ },
+ {
+  "label": "the understatement ratio is inverted",
+  "old": "        (self.naive_sem > 0.0).then(|| self.sem / self.naive_sem)",
+  "new": "        (self.naive_sem > 0.0).then(|| self.naive_sem / self.sem)"
+ },
+ {
+  "label": "the understatement's zero-bar guard is loosened to admit a zero naive bar",
+  "old": "        (self.naive_sem > 0.0).then(|| self.sem / self.naive_sem)\n    }",
+  "new": "        (self.naive_sem >= 0.0).then(|| self.sem / self.naive_sem)\n    }"
+ },
+ {
+  "label": "the estimator accepts a four-sample series",
+  "old": "    const MIN_SAMPLES: usize = 8;",
+  "new": "    const MIN_SAMPLES: usize = 4;"
+ },
+ {
+  "label": "a lag window of zero is accepted and makes every series look uncorrelated",
+  "old": "    if max_lag == 0 {\n        return Err(BayesError::OutOfRange {",
+  "new": "    if false {\n        return Err(BayesError::OutOfRange {"
+ },
+ {
+  "label": "the series is not mean-centred before its autocovariance is taken",
+  "old": "    let mean = x.iter().sum::<f64>() / n as f64;\n    let c0 = x.iter().map(|v| (v - mean) * (v - mean)).sum::<f64>() / n as f64;",
+  "new": "    let mean = 0.0;\n    let c0 = x.iter().map(|v| (v - mean) * (v - mean)).sum::<f64>() / n as f64;"
+ },
+ {
+  "label": "a constant series is not refused, so its autocorrelations are zero over zero",
+  "old": "    if c0 <= 0.0 {\n        return Err(BayesError::NoVariation { n, value: x[0] });",
+  "new": "    if c0 < 0.0 {\n        return Err(BayesError::NoVariation { n, value: x[0] });"
+ },
+ {
+  "label": "the autocorrelation at a lag is normalised by the number of products rather than by n",
+  "old": "        s / (n as f64) / c0\n    };",
+  "new": "        s / ((n - lag) as f64) / c0\n    };"
+ },
+ {
+  "label": "the statistical n-over-two ceiling on the lag window is dropped",
+  "old": "    let cap = max_lag.min(n / 2);",
+  "new": "    let cap = max_lag;"
+ },
+ {
+  "label": "Geyer's pairs are shifted to start at lag one",
+  "old": "        let hi = 2 * k + 1;\n        if hi > cap {\n            break;\n        }\n        let g = rho(2 * k) + rho(hi);",
+  "new": "        let hi = 2 * k + 2;\n        if hi > cap {\n            break;\n        }\n        let g = rho(2 * k + 1) + rho(hi);"
+ },
+ {
+  "label": "the sum never stops at the first non-positive pair",
+  "old": "        if g <= 0.0 {\n            truncated_at_cap = false;\n            break;\n        }",
+  "new": "        if false {\n            truncated_at_cap = false;\n            break;\n        }"
+ },
+ {
+  "label": "no estimate ever reports that its lag window ran out",
+  "old": "    let mut truncated_at_cap = true;",
+  "new": "    let mut truncated_at_cap = false;"
+ },
+ {
+  "label": "the pair sum keeps only its last term",
+  "old": "        sum += g;\n        lags = hi;",
+  "new": "        sum = g;\n        lags = hi;"
+ },
+ {
+  "label": "the reported lag window is the even member of the last pair",
+  "old": "        sum += g;\n        lags = hi;\n        k += 1;",
+  "new": "        sum += g;\n        lags = 2 * k;\n        k += 1;"
+ },
+ {
+  "label": "the integrated time is plus one rather than minus one plus twice the sum",
+  "old": "    let raw = -1.0 + 2.0 * sum;",
+  "new": "    let raw = 1.0 + 2.0 * sum;"
+ },
+ {
+  "label": "a non-positive raw sum is reported as a measurement",
+  "old": "    let floored = !(raw > 0.0);",
+  "new": "    let floored = false;"
+ },
+ {
+  "label": "the default lag ceiling is eight samples",
+  "old": "pub const DEFAULT_MAX_LAG: usize = 4096;",
+  "new": "pub const DEFAULT_MAX_LAG: usize = 8;"
+ },
+ {
+  "label": "the sample deviation uses the n denominator rather than the documented n-minus-one",
+  "old": "    let var = x.iter().map(|v| (v - mean) * (v - mean)).sum::<f64>() / (n as f64 - 1.0);",
+  "new": "    let var = x.iter().map(|v| (v - mean) * (v - mean)).sum::<f64>() / n as f64;"
+ },
+ {
+  "label": "the effective sample size multiplies by the autocorrelation time",
+  "old": "    let ess = n as f64 / iact.value;",
+  "new": "    let ess = n as f64 * iact.value;"
+ },
+ {
+  "label": "the standard error to report is built on the raw count",
+  "old": "        sem: sd / ess.sqrt(),",
+  "new": "        sem: sd / (n as f64).sqrt(),"
+ },
+ {
+  "label": "the estimate drops the truncation flag",
+  "old": "        truncated_at_cap: iact.truncated_at_cap,",
+  "new": "        truncated_at_cap: false,"
+ },
+ {
+  "label": "the estimate drops the floor flag",
+  "old": "        floored: iact.floored,",
+  "new": "        floored: false,"
+ },
+ {
+  "label": "the posterior probability is that of the other hypothesis",
+  "old": "            probability_a: logistic(log_odds),",
+  "new": "            probability_a: logistic(-log_odds),"
+ },
+ {
+  "label": "an exact tie favours B rather than the documented A",
+  "old": "            favours: if log_odds >= 0.0 { Hypothesis::A } else { Hypothesis::B },",
+  "new": "            favours: if log_odds > 0.0 { Hypothesis::A } else { Hypothesis::B },"
+ },
+ {
+  "label": "an empty population is accepted",
+  "old": "    if rates.is_empty() {\n        return Err(BayesError::Empty { what });",
+  "new": "    if false {\n        return Err(BayesError::Empty { what });"
+ },
+ {
+  "label": "a rate of zero is accepted, so one spike can be infinitely convincing",
+  "old": "        if !(r > 0.0) {",
+  "new": "        if r < 0.0 {"
+ },
+ {
+  "label": "a non-finite rate is reported as out of range rather than as non-finite",
+  "old": "        if !r.is_finite() {\n            return Err(BayesError::NonFinite { what, index: i });",
+  "new": "        if false {\n            return Err(BayesError::NonFinite { what, index: i });"
+ },
+ {
+  "label": "the count-independent offset is dropped from the log-likelihood ratio",
+  "old": "        llr += counts[i] as f64 * (rate_a[i] / rate_b[i]).ln()\n            - window_s * (rate_a[i] - rate_b[i]);",
+  "new": "        llr += counts[i] as f64 * (rate_a[i] / rate_b[i]).ln();"
+ },
+ {
+  "label": "the per-neuron weight is the log of the inverted rate ratio",
+  "old": "        llr += counts[i] as f64 * (rate_a[i] / rate_b[i]).ln()",
+  "new": "        llr += counts[i] as f64 * (rate_b[i] / rate_a[i]).ln()"
+ },
+ {
+  "label": "the spike counts do not weight the log-ratio",
+  "old": "        llr += counts[i] as f64 * (rate_a[i] / rate_b[i]).ln()\n            - window_s",
+  "new": "        llr += (rate_a[i] / rate_b[i]).ln()\n            - window_s"
+ },
+ {
+  "label": "the prior is not added to the likelihood ratio",
+  "old": "    let mut llr = prior_log_odds;",
+  "new": "    let mut llr = 0.0;"
+ },
+ {
+  "label": "a zero-length observation window is accepted by the readout",
+  "old": "    if !(window_s > 0.0) {\n        return Err(BayesError::OutOfRange {\n            what: \"window_s\",\n            value: window_s,\n            low: f64::MIN_POSITIVE,\n            high: f64::INFINITY,\n        });\n    }\n    let mut llr = prior_log_odds;",
+  "new": "    if window_s < 0.0 {\n        return Err(BayesError::OutOfRange {\n            what: \"window_s\",\n            value: window_s,\n            low: f64::MIN_POSITIVE,\n            high: f64::INFINITY,\n        });\n    }\n    let mut llr = prior_log_odds;"
+ },
+ {
+  "label": "a count vector of the wrong length is accepted",
+  "old": "    if counts.len() != rate_a.len() {",
+  "new": "    if false {"
+ },
+ {
+  "label": "the Poisson divergence drops its linear term",
+  "old": "        kl += a * (a / b).ln() + b - a;",
+  "new": "        kl += a * (a / b).ln();"
+ },
+ {
+  "label": "the Poisson divergence's log-ratio is inverted",
+  "old": "        kl += a * (a / b).ln()",
+  "new": "        kl += a * (b / a).ln()"
+ },
+ {
+  "label": "the divergence's rates are never multiplied by the window",
+  "old": "        let (a, b) = (rate_p[i] * window_s, rate_q[i] * window_s);",
+  "new": "        let (a, b) = (rate_p[i], rate_q[i]);"
+ },
+ {
+  "label": "the expected spike count divides by the window rather than multiplying",
+  "old": "        let lambda = r * window_s;",
+  "new": "        let lambda = r / window_s;"
+ },
+ {
+  "label": "a dimension of zero bits is accepted",
+  "old": "    if dim == 0 {\n        return Err(BayesError::Empty { what: \"dimension\" });",
+  "new": "    if false {\n        return Err(BayesError::Empty { what: \"dimension\" });"
+ },
+ {
+  "label": "the word count truncates rather than rounding up",
+  "old": "    Ok(dim.div_ceil(64))",
+  "new": "    Ok(dim / 64)"
+ },
+ {
+  "label": "Kanerva's dimension is transcribed as one thousand bits",
+  "old": "pub const KANERVA_DIM: usize = 10_000;",
+  "new": "pub const KANERVA_DIM: usize = 1_000;"
+ },
+ {
+  "label": "the tail bits past the dimension are left as drawn",
+  "old": "        let rem = dim % 64;\n        if rem != 0 {",
+  "new": "        let rem = dim % 64;\n        if false {"
+ },
+ {
+  "label": "a bit's word and offset are swapped on the read",
+  "old": "        (index < self.dim).then(|| self.words[index / 64] >> (index % 64) & 1 == 1)\n    }",
+  "new": "        (index < self.dim).then(|| self.words[index % 64] >> (index / 64) & 1 == 1)\n    }"
+ },
+ {
+  "label": "a write past the end of the vector is silently ignored",
+  "old": "        if index >= self.dim {\n            return Err(BayesError::OutOfRange {\n                what: \"bit index\",",
+  "new": "        if index > self.dim {\n            return Err(BayesError::OutOfRange {\n                what: \"bit index\","
+ },
+ {
+  "label": "setting a bit sets the word's index instead of the bit's",
+  "old": "            self.words[w] |= 1u64 << b;",
+  "new": "            self.words[w] |= 1u64 << w;"
+ },
+ {
+  "label": "the population count counts zeros",
+  "old": "        self.words.iter().map(|w| w.count_ones() as usize).sum()",
+  "new": "        self.words.iter().map(|w| w.count_zeros() as usize).sum()"
+ },
+ {
+  "label": "binding is a bitwise AND rather than an XOR",
+  "old": "        let words = self.words.iter().zip(&other.words).map(|(a, b)| a ^ b).collect();",
+  "new": "        let words = self.words.iter().zip(&other.words).map(|(a, b)| a & b).collect();"
+ },
+ {
+  "label": "unbinding binds the vector with itself rather than with the key",
+  "old": "    pub fn unbind(&self, other: &Self) -> Result<Self, BayesError> {\n        self.bind(other)",
+  "new": "    pub fn unbind(&self, other: &Self) -> Result<Self, BayesError> {\n        let _ = other;\n        self.bind(self)"
+ },
+ {
+  "label": "a negative permutation is not wrapped into range",
+  "old": "        let s = shift.rem_euclid(d);",
+  "new": "        let s = shift % d;"
+ },
+ {
+  "label": "the permutation shifts the other way",
+  "old": "                let j = ((i as i64 + s) % d) as usize;",
+  "new": "                let j = ((i as i64 - s).rem_euclid(d)) as usize;"
+ },
+ {
+  "label": "the Hamming distance counts the bits either vector has set",
+  "old": "            .map(|(a, b)| (a ^ b).count_ones() as usize)",
+  "new": "            .map(|(a, b)| (a | b).count_ones() as usize)"
+ },
+ {
+  "label": "the similarity scale drops its factor of two, so it never reaches minus one",
+  "old": "        Ok(1.0 - 2.0 * (h as f64) / (self.dim as f64))",
+  "new": "        Ok(1.0 - (h as f64) / (self.dim as f64))"
+ },
+ {
+  "label": "the per-bit vote is set rather than counted",
+  "old": "                        count[idx] += 1;",
+  "new": "                        count[idx] = 1;"
+ },
+ {
+  "label": "the vote tally admits bits past the dimension",
+  "old": "                    if idx < dim {\n                        count[idx] += 1;\n                    }",
+  "new": "                    {\n                        count[idx] += 1;\n                    }",
+  "equivalent": "no set bit can have an index at or past `dim`, so the guard never fires and removing it removes nothing. Every constructor maintains the tail-zero invariant that `Hypervector::random`'s doc states: `zeros` allocates zeros, `random` masks the last word with `(1 << rem) - 1`, `bind` XORs two masked vectors (0 ^ 0 = 0 in every padding position), `permute` only ever sets `j = (i + s) mod dim < dim`, `set` refuses `index >= dim`, and `bundle` itself writes only `i` in `0..dim`. The loop walks `w.trailing_zeros()` over set bits only, so `idx` is the index of a bit that is 1, and no such bit sits past `dim`. `count` has length `dim`, so the mutant indexes exactly the same entries and would panic rather than differ if the invariant were ever broken."
+ },
+ {
+  "label": "the bundle's majority threshold is not doubled",
+  "old": "            let twice = 2 * count[i];",
+  "new": "            let twice = count[i];"
+ },
+ {
+  "label": "a tied bit is always resolved to one instead of by a coin",
+  "old": "            let one = if twice > k {\n                true",
+  "new": "            let one = if twice >= k {\n                true"
+ },
+ {
+  "label": "the tie-break coin is weighted nine to one",
+  "old": "                rng.next_f64() < 0.5",
+  "new": "                rng.next_f64() < 0.9"
+ },
+ {
+  "label": "a bundle size past the ceiling is computed anyway",
+  "old": "    if k == 0 || k > MAX_K {\n        return None;",
+  "new": "    if k == 0 {\n        return None;"
+ },
+ {
+  "label": "the binomial is taken over all k components rather than the other k minus one",
+  "old": "    let n = k - 1;\n    let mut r = vec![0.0f64; n + 1];",
+  "new": "    let n = k;\n    let mut r = vec![0.0f64; n + 1];"
+ },
+ {
+  "label": "the binomial mass is anchored at zero rather than at its mode",
+  "old": "    let mode = n / 2;",
+  "new": "    let mode = 0;"
+ },
+ {
+  "label": "the upward recurrence drops its denominator",
+  "old": "        r[j + 1] = r[j] * ((n - j) as f64) / ((j + 1) as f64);",
+  "new": "        r[j + 1] = r[j] * ((n - j) as f64);"
+ },
+ {
+  "label": "the majority threshold in the closed form is half of k minus one",
+  "old": "    let half = k as f64 / 2.0;",
+  "new": "    let half = n as f64 / 2.0;"
+ },
+ {
+  "label": "a tie in the closed form counts as a full disagreement",
+  "old": "            d += 0.5 * rj;",
+  "new": "            d += rj;"
+ },
+ {
+  "label": "the closed form is not normalised by the total mass",
+  "old": "    Some(1.0 - 2.0 * (d / total))",
+  "new": "    Some(1.0 - 2.0 * d)"
+ },
+ {
+  "label": "the standard deviation of a random similarity is twice the closed form",
+  "old": "    (dim > 0).then(|| 1.0 / (dim as f64).sqrt())",
+  "new": "    (dim > 0).then(|| 2.0 / (dim as f64).sqrt())"
+ },
+ {
+  "label": "the capacity z-score divides by the noise floor's square root instead of multiplying",
+  "old": "    (dim > 0).then(|| s * (dim as f64).sqrt())",
+  "new": "    (dim > 0).then(|| s / (dim as f64).sqrt())"
+ },
+ {
+  "label": "a codebook of no entries is accepted",
+  "old": "        if count == 0 {\n            return Err(BayesError::Empty { what: \"codebook entries\" });",
+  "new": "        if false {\n            return Err(BayesError::Empty { what: \"codebook entries\" });"
+ },
+ {
+  "label": "an added entry's name is not stored",
+  "old": "        self.names.push(name.to_string());\n        self.vectors.push(v);",
+  "new": "        self.vectors.push(v);"
+ },
+ {
+  "label": "the ranking is sorted least similar first",
+  "old": "        out.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(core::cmp::Ordering::Equal).then(a.0.cmp(&b.0)));",
+  "new": "        out.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(core::cmp::Ordering::Equal).then(a.0.cmp(&b.0)));"
+ },
+ {
+  "label": "a tie in the ranking resolves to the higher index",
+  "old": "unwrap_or(core::cmp::Ordering::Equal).then(a.0.cmp(&b.0)));",
+  "new": "unwrap_or(core::cmp::Ordering::Equal).then(b.0.cmp(&a.0)));"
+ },
+ {
+  "label": "cleanup refuses a similarity exactly at its threshold",
+  "old": "        Ok((s >= threshold).then_some((i, s)))",
+  "new": "        Ok((s > threshold).then_some((i, s)))"
+ },
+ {
+  "label": "cleanup accepts a NaN threshold",
+  "old": "        finite_scalar(threshold, \"threshold\")?;\n        let (i, s) = self.nearest(probe)?;",
+  "new": "        let (i, s) = self.nearest(probe)?;"
+ }
+]

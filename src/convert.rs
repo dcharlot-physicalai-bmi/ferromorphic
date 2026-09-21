@@ -386,6 +386,12 @@ impl Reset {
     /// `floor(T / ceil(1/z))` for [`Reset::ToZero`], both clamped at one spike per tick.
     /// `spikes_in_matches_the_simulated_neuron_exactly` checks a simulated neuron against it.
     ///
+    /// The formula is taken literally at both ends of the range. A `z` at or below about
+    /// 5.56e-309 overflows `1/z`, so `ceil(1/z)` is infinite and the count is ZERO rather than a
+    /// saturated `T` — `a_subnormal_activation_emits_no_spikes_rather_than_saturating` pins it,
+    /// because an earlier version of this method read that overflow as saturation and disagreed
+    /// with [`Reset::rate_limit`] by the whole dynamic range on the same input.
+    ///
     /// `z <= 0` returns `Some(0)` rather than `None`, and the distinction from
     /// [`crate::neuron::Lif::rate`] is deliberate. A sub-threshold leaky neuron has no firing rate,
     /// so that method refuses. Here zero **is the answer**: `ReLU` is exactly flat below zero and
@@ -410,7 +416,16 @@ impl Reset {
             Self::ToZero => {
                 let k = (1.0 / z).ceil();
                 if !k.is_finite() || k < 1.0 {
-                    ticks
+                    // The interval's two degeneracies, and they have OPPOSITE answers. `k` below
+                    // one is a unit driven harder than one spike per tick, where the hardware's
+                    // cap makes the count `ticks`. `k` INFINITE is the other end: `1.0 / z`
+                    // overflows for every `z` at or below about 5.56e-309, so the interval is
+                    // longer than any run a `u64` can count and the count is zero. This branch
+                    // returned `ticks` for both, which read the quietest drive an `f64` can carry
+                    // as a saturated unit and contradicted [`Reset::rate_limit`], which returns
+                    // 0.0 for the same `z`. The closed form `floor(T / ceil(1/z))` said zero all
+                    // along; only the code did not.
+                    if k < 1.0 { ticks } else { 0 }
                 } else {
                     // `k` is the exact inter-spike interval in ticks, so the count is an integer
                     // division rather than a rounded product.
@@ -3187,4 +3202,730 @@ mod tests {
         assert_eq!(two.at(100), Some(0.01));
         assert_eq!(two.at(50), None);
     }
+
+    /// Both `Reset::spikes_in` and `SpikingRelu::rate` document "`None` only for a non-finite"
+    /// argument, and the suite never handed either of them one: every fixture in this module feeds
+    /// them an activation or a current computed from a finite weight, so both finiteness guards
+    /// could be deleted and nothing would move. Only `Reset::rate_limit`'s refusals were pinned.
+    /// The wrong answers the guards prevent are not small, and they are not even consistent with
+    /// each other: without the guard an activation of `NaN` counts ZERO spikes under either reset
+    /// rule — `NaN` floors to zero on the cast to an integer and loses every comparison in the
+    /// interval's guard — while an INFINITE one counts a FULL `ticks` under both. The same broken
+    /// caller reads as a dead unit or as a saturated one depending on which non-finite value its
+    /// arithmetic happened to produce, and neither reading says anything was wrong.
+    #[test]
+    fn a_non_finite_activation_or_current_is_refused_rather_than_answered() {
+        for reset in [Reset::BySubtraction, Reset::ToZero] {
+            for &z in &[f64::NAN, f64::INFINITY] {
+                assert_eq!(reset.spikes_in(z, 100), None, "{reset} counted spikes at z {z}");
+                assert_eq!(reset.rate_limit(z), None, "{reset} rate-limited a z of {z}");
+            }
+            // Minus infinity is the one non-finite argument for which zero would be a defensible
+            // answer — it is below the quiet region, not outside it — and it is still refused,
+            // because the finiteness guard runs before the sign test. A caller that produced it
+            // has a broken drive, not a silent neuron.
+            assert_eq!(reset.spikes_in(f64::NEG_INFINITY, 100), None);
+            assert_eq!(reset.rate_limit(f64::NEG_INFINITY), None);
+        }
+        let n = SpikingRelu::new(1e-9, 1.0, Reset::BySubtraction);
+        for &i in &[f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert_eq!(n.rate(i), None, "a current of {i} amperes was given a firing rate");
+        }
+        // The finite neighbours still answer, so the guards refuse a non-finite argument and not
+        // merely a large one: minus `1e300` amperes is absurd and is the quiet region's business,
+        // not the guard's.
+        assert_eq!(n.rate(0.0), Some(0.0));
+        assert_eq!(n.rate(-1e300), Some(0.0));
+        assert_eq!(Reset::BySubtraction.spikes_in(-1e300, 100), Some(0));
+        assert_eq!(Reset::ToZero.rate_limit(-1e300), Some(0.0));
+    }
+
+    /// The one-spike-per-tick cap inside `Reset::spikes_in`, which no fixture reached: the largest
+    /// activation any test in this module hands the closed form is 0.83, and the cap only binds at
+    /// `z >= 1`. Below that, `floor(T z)` and the capped form are the same number, so the entire
+    /// branch could be replaced by its else-arm and every existing assertion would still hold. A
+    /// saturating unit is not an edge case here — it is what every normalisation but the
+    /// model-based bound admits by construction — and an uncapped closed form would report more
+    /// spikes than there were ticks to emit them in.
+    #[test]
+    fn the_closed_form_is_capped_at_one_spike_per_tick_when_the_unit_saturates() {
+        let ticks = 64u64;
+        for &z in &[1.0f64, 1.5, 2.0, 7.0, 1e300] {
+            for reset in [Reset::BySubtraction, Reset::ToZero] {
+                assert_eq!(
+                    reset.spikes_in(z, ticks),
+                    Some(ticks),
+                    "{reset} at a saturating z {z} did not cap at one spike per tick"
+                );
+            }
+        }
+        // Against the neuron itself, not only against the other closed form. At `z = 2` the
+        // membrane gains two thresholds per tick and can still emit only one spike, so the
+        // residual grows without bound and the count is exactly the tick count. The parameters are
+        // powers of two, so this is an equality with no slack at all.
+        let dt = 2f64.powi(-10);
+        for &z in &[1.0f64, 2.0, 4.0] {
+            for reset in [Reset::BySubtraction, Reset::ToZero] {
+                let mut n = SpikingRelu::new(2f64.powi(-30), 1.0, reset);
+                let i = z * n.gain(dt);
+                let mut spikes = 0u64;
+                for _ in 0..ticks {
+                    if n.step(dt, i) {
+                        spikes += 1;
+                    }
+                }
+                assert_eq!(spikes, ticks, "{reset} at z {z}: the neuron itself is capped");
+                assert_eq!(spikes, reset.spikes_in(z, ticks).expect("finite activation"));
+            }
+        }
+        // Saturation is also where the two reset rules AGREE, and the reason is the same cap:
+        // there is no overshoot to keep or throw away when every tick crosses.
+        assert_eq!(
+            Reset::ToZero.spikes_in(2.0, ticks),
+            Reset::BySubtraction.spikes_in(2.0, ticks)
+        );
+        // And the cap is a cap, not a floor: one step below saturation the count is `floor(T z)`
+        // and is strictly below the tick count.
+        assert_eq!(Reset::BySubtraction.spikes_in(0.5, ticks), Some(32));
+        assert_eq!(Reset::BySubtraction.spikes_in(0.984_375, ticks), Some(63));
+    }
+
+    /// The quiet region of `Reset::rate_limit` starts at `z <= 0`, not at `z < 0`, and the
+    /// difference is invisible at `+0.0`: both forms return zero there, because `1/(+0.0)` is
+    /// `+inf`, its ceiling is `+inf`, and one over that is zero again. The guard is load-bearing
+    /// for NEGATIVE zero, which is what a normalised activation of `-0.0 / λ` is and what a
+    /// rectifier's own `max(0.0, -0.0)` can hand back, and no fixture ever passed one. At `-0.0`
+    /// the arithmetic underneath goes the other way: `1/(-0.0)` is `-inf`, `ceil(-inf)` is `-inf`,
+    /// the `max(1.0)` rescues it to 1, and reset-to-zero reports a SATURATED unit — one spike per
+    /// tick for a neuron that will never fire at all.
+    #[test]
+    fn a_negative_zero_activation_is_quiet_rather_than_saturated() {
+        for reset in [Reset::BySubtraction, Reset::ToZero] {
+            for &z in &[0.0f64, -0.0f64] {
+                let r = reset.rate_limit(z).expect("zero is finite");
+                assert_eq!(r, 0.0, "{reset} at z {z} reported a rate of {r} spikes per tick");
+                // `-0.0 == 0.0` compares true, so the equality above cannot see a signed zero
+                // coming back out of the arithmetic. The documented answer is the `+0.0` the quiet
+                // arm returns, and a rate carrying a sign bit is not it.
+                assert!(r.is_sign_positive(), "{reset} at z {z} returned a negative zero rate");
+                assert_eq!(reset.spikes_in(z, 1000), Some(0), "{reset} at z {z} emitted spikes");
+            }
+        }
+        // And the neuron agrees with the closed form at both zeros: a unit driven at exactly zero
+        // never reaches threshold, whichever sign the zero carries.
+        let dt = 2f64.powi(-10);
+        for &z in &[0.0f64, -0.0f64] {
+            for reset in [Reset::BySubtraction, Reset::ToZero] {
+                let mut n = SpikingRelu::new(2f64.powi(-30), 1.0, reset);
+                let i = z * n.gain(dt);
+                assert!((0..1000).all(|_| !n.step(dt, i)), "{reset} at z {z} fired");
+                assert_eq!(n.v, 0.0, "{reset} at z {z} moved the membrane");
+            }
+        }
+    }
+
+    /// `SpikingRelu::new` builds the LINEAR integrator — the one the module's derivation assumes —
+    /// and every existing test that cares about the zero floor assigns the field explicitly on the
+    /// line after constructing, both ways, so the constructor's own choice is never read. Switch
+    /// the default on and `the_zero_floor_removes_a_negative_well_and_here_is_the_closed_form`
+    /// still passes, because it overwrites the field before it steps the neuron.
+    #[test]
+    fn a_constructed_neuron_starts_at_rest_with_no_zero_floor() {
+        let n = SpikingRelu::new(2f64.powi(-30), 1.0, Reset::BySubtraction);
+        assert_eq!(n.v, 0.0, "a fresh neuron is not at rest");
+        assert!(!n.floor_at_zero, "the constructor switched the zero floor on");
+        // Behaviourally, with no field poked at all. Fifty ticks at `-0.25` dig a well 12.5
+        // thresholds deep and the linear unit has to climb out of it before it can fire, so the
+        // closed forms in `SpikingRelu::floor_at_zero` separate: `n + ceil((1 + n a)/z)` is
+        // `50 + 54 = 104` without the clamp against `n + ceil(1/z) = 54` with it. The constructor
+        // picks between those two numbers, not between two preferences.
+        let dt = 2f64.powi(-10);
+        let mut fresh = SpikingRelu::new(2f64.powi(-30), 1.0, Reset::BySubtraction);
+        let g = fresh.gain(dt);
+        let mut first = None;
+        for k in 0..200u64 {
+            let z = if k < 50 { -0.25 } else { 0.25 };
+            if fresh.step(dt, z * g) {
+                first = Some(k + 1);
+                break;
+            }
+        }
+        assert_eq!(first, Some(104), "the constructed neuron did not behave as the linear one");
+    }
+
+    /// `DenseRelu::new` refuses a weight vector whose length does not match the shape, and the
+    /// existing refusal test supplies five weights for a 2x3 layer — too FEW. Loosen the `!=` to a
+    /// `<` and nothing moves, because no fixture ever passes too many. Too many is the likelier of
+    /// the two mistakes: it is what a transposed export or a stale row looks like, and a
+    /// constructor that accepted it would silently use the first `n_in * n_out` entries and drop
+    /// the rest, which is a different network from the one the caller exported.
+    #[test]
+    fn a_layer_with_too_many_weights_is_refused_as_loudly_as_one_with_too_few() {
+        assert_eq!(
+            DenseRelu::new(2, 3, vec![0.1; 7], vec![0.0; 3]),
+            Err(ConvertError::WeightCount { expected: 6, got: 7 })
+        );
+        // A transposed 3x2 export has exactly the right COUNT and is not this check's business;
+        // a 2x6 one has twice too many and is.
+        assert_eq!(
+            DenseRelu::new(2, 3, vec![0.1; 12], vec![0.0; 3]),
+            Err(ConvertError::WeightCount { expected: 6, got: 12 })
+        );
+        // The same mistake on the bias, in the same direction.
+        assert_eq!(
+            DenseRelu::new(2, 3, vec![0.1; 6], vec![0.0; 4]),
+            Err(ConvertError::BiasCount { expected: 3, got: 4 })
+        );
+        // The exact shape is still accepted, so this is a check and not a refusal.
+        assert!(DenseRelu::new(2, 3, vec![0.1; 6], vec![0.0; 3]).is_ok());
+        // `SpikingMlp::check_structure` makes the same judgement on a converted layer whose public
+        // `w` has grown after conversion, which is the post-conversion twin of the same mistake.
+        let ann = Mlp::new(vec![DenseRelu::new(2, 3, vec![0.1; 6], vec![0.0; 3]).expect("valid")])
+            .expect("one layer");
+        let cfg = Config { norm: Norm::ModelBased { input_max: 1.0 }, ..Config::default() };
+        let mut snn = SpikingMlp::from_ann(&ann, &[], cfg).expect("convertible");
+        snn.layers[0].w.push(0.1);
+        assert_eq!(snn.run(&[0.5; 2], 4), Err(ConvertError::WeightCount { expected: 6, got: 7 }));
+    }
+
+    /// `DenseRelu::max_possible_activation` documents "Returns 0.0 for a layer whose every unit is
+    /// dead", and the only test that reaches a dead layer matches `DegenerateScale { layer: 1, .. }`
+    /// without reading the `lambda` it carries — so the accumulator's floor could start anywhere at
+    /// or below the least-negative dead unit and the refusal would still arrive with the same
+    /// variant and the same layer index. The floor is what makes the answer a bound on the
+    /// ACTIVATION rather than on the pre-activation: a layer whose every pre-activation is negative
+    /// outputs zero, and zero is the largest activation it can produce.
+    #[test]
+    fn the_model_based_bound_of_a_dead_layer_is_exactly_zero_and_the_scale_is_refused() {
+        let dead = DenseRelu::new(2, 2, vec![-1.0, -1.0, -0.5, -0.25], vec![-0.25, -2.0])
+            .expect("shapes match");
+        // Every unit's pre-activation is negative for every input in `0..input_max`, at any
+        // `input_max`, so the layer's largest activation is 0.0 — not the -0.25 its least-negative
+        // unit reaches.
+        assert_eq!(dead.max_possible_activation(1.0), 0.0);
+        assert_eq!(dead.max_possible_activation(1e6), 0.0);
+        assert_eq!(dead.forward(&[1.0, 1.0]).expect("finite input"), vec![0.0, 0.0]);
+
+        // A live layer is the positive-weight sum times `input_max` plus the bias, hand-computed:
+        // unit 0 is `0.25 + 1.0 * 2.0 = 2.25` and unit 1 is `-0.5 + 0.5 * 2.0 = 0.5`, so the
+        // bound is 2.25 and the negative weights are not in it.
+        let live = DenseRelu::new(2, 2, vec![1.0, -1.0, 0.5, -3.0], vec![0.25, -0.5])
+            .expect("shapes match");
+        assert_eq!(live.max_possible_activation(2.0), 2.25);
+
+        // And the scale that would divide by a dead layer is refused by name AND by value, which
+        // is the part no existing assertion read.
+        let ann = Mlp::new(vec![live, dead]).expect("layers chain");
+        assert_eq!(
+            ann.scales(Norm::ModelBased { input_max: 2.0 }, &[]),
+            Err(ConvertError::DegenerateScale { layer: 2, lambda: 0.0 })
+        );
+        let cfg = Config { norm: Norm::ModelBased { input_max: 2.0 }, ..Config::default() };
+        assert_eq!(
+            SpikingMlp::from_ann(&ann, &[], cfg).err(),
+            Some(ConvertError::DegenerateScale { layer: 2, lambda: 0.0 })
+        );
+    }
+
+    /// The model-based scale is PROPAGATED: layer `l + 1`'s bound is computed from layer `l`'s
+    /// bound, not from the input bound. Every model-based fixture in this module uses
+    /// `input_max = 1.0`, and the existing bound tests check that the bound HOLDS on a sample — a
+    /// bound that is too small only fails when a sample reaches it, and these are loose by a factor
+    /// of seven on this module's own network. So reading `lam[0]` in place of `lam[l]` moves every
+    /// scale past the first and nothing reads them. Here the arithmetic is dyadic and the whole
+    /// scale vector is hand-computed.
+    #[test]
+    fn the_model_based_scale_is_propagated_layer_by_layer_and_here_is_the_arithmetic() {
+        let l1 = DenseRelu::new(2, 2, vec![1.0, 1.0, 0.5, 0.5], vec![0.0, 0.0]).expect("shapes");
+        let l2 = DenseRelu::new(2, 1, vec![1.0, 1.0], vec![0.0]).expect("shapes");
+        let ann = Mlp::new(vec![l1, l2]).expect("layers chain");
+        // At `input_max = 1`, layer 1's largest unit is `1 + 1 = 2` and layer 2's is `2 + 2 = 4` —
+        // computed from the TWO, not from the one.
+        assert_eq!(
+            ann.scales(Norm::ModelBased { input_max: 1.0 }, &[]).expect("live layers"),
+            vec![1.0, 2.0, 4.0]
+        );
+        // Doubling the input bound doubles every scale downstream of it, which is the propagation
+        // read as a homogeneity: with no bias the bound is linear in `input_max`.
+        assert_eq!(
+            ann.scales(Norm::ModelBased { input_max: 2.0 }, &[]).expect("live layers"),
+            vec![2.0, 4.0, 8.0]
+        );
+        // The same statement through the public per-layer method, which is where the doc's
+        // `λ_{l+1} = max_possible_activation(λ_l)` has to meet the code.
+        let lam = ann.scales(Norm::ModelBased { input_max: 1.0 }, &[]).expect("live layers");
+        for (l, layer) in ann.layers.iter().enumerate() {
+            assert_eq!(lam[l + 1], layer.max_possible_activation(lam[l]), "layer {l}");
+        }
+        // And with biases, so that the propagation cannot be mistaken for a pure scaling: layer 1
+        // becomes `0.5 + 1 + 1 = 2.5` and layer 2 becomes `0.25 + 2.5 + 2.5 = 5.25`, where the
+        // input scale alone would give `0.25 + 1 + 1 = 2.25`.
+        let b1 = DenseRelu::new(2, 2, vec![1.0, 1.0, 0.5, 0.5], vec![0.5, 0.0]).expect("shapes");
+        let b2 = DenseRelu::new(2, 1, vec![1.0, 1.0], vec![0.25]).expect("shapes");
+        let biased = Mlp::new(vec![b1, b2]).expect("layers chain");
+        assert_eq!(
+            biased.scales(Norm::ModelBased { input_max: 1.0 }, &[]).expect("live layers"),
+            vec![1.0, 2.5, 5.25]
+        );
+        // The bound still bounds, which is the property the propagation exists to give: normalise
+        // by it and every activation lands in `0..1`.
+        let mut normed = biased.clone();
+        let applied = normed.normalise(Norm::ModelBased { input_max: 1.0 }, &[]).expect("live");
+        assert_eq!(applied, vec![1.0, 2.5, 5.25]);
+        for k in 0..=8u32 {
+            let x = vec![f64::from(k) / 8.0, 1.0 - f64::from(k) / 8.0];
+            for a in normed.activations(&x).expect("finite input") {
+                assert!(a.iter().all(|v| *v <= 1.0), "activation {a:?} escaped the bound at {x:?}");
+            }
+        }
+    }
+
+    /// `Mlp::n_out` and `Mlp::n_synapses` are never called anywhere in this module's tests — only
+    /// the CONVERTED network's synapse count is — so the source type's shape reporting is unpinned
+    /// in both directions: `last` could read `first`, and the biases could be counted as synapses.
+    /// The synapse count is not decorative. It is the denominator
+    /// `crate::ledger::Ledger::spikes_per_synapse` divides by, so counting the biases would deflate
+    /// every deliveries-per-synapse figure this module quotes, and those figures are the ones
+    /// `crate::crossover` returns a verdict on.
+    #[test]
+    fn the_source_network_reports_its_own_shape_and_counts_weights_but_not_biases() {
+        let ann = net(1001, 6, 12, 4);
+        assert_eq!(ann.n_in(), 6);
+        assert_eq!(ann.n_out(), 4, "the output count is the LAST layer's, not the first's");
+        assert_eq!(ann.forward(&[0.5; 6]).expect("finite input").len(), ann.n_out());
+        // 6 x 12 + 12 x 4 = 72 + 48 = 120 weights. The 12 + 4 = 16 biases are not synapses: a bias
+        // is a constant current, it comes from no presynaptic unit, and nothing is delivered
+        // across it.
+        assert_eq!(ann.n_synapses(), 120);
+        assert_eq!(
+            ann.n_synapses(),
+            ann.layers.iter().map(|l| (l.n_in * l.n_out) as u64).sum::<u64>()
+        );
+        // The converted network inherits both, so the two counts have to be the same number or a
+        // per-synapse energy figure is measured against a different network from the one that ran.
+        let data = samples(1002, 16, 6);
+        let cfg = Config { norm: Norm::DataBased { percentile: 100.0 }, ..Config::default() };
+        let snn = SpikingMlp::from_ann(&ann, &data, cfg).expect("convertible");
+        assert_eq!(snn.n_synapses(), ann.n_synapses());
+        assert_eq!(snn.layers.last().expect("two layers").n_out, ann.n_out());
+        // A three-layer stack, where the first, the middle and the last layer's widths all differ,
+        // so no two of the three readings coincide.
+        let deep = Mlp::new(vec![
+            DenseRelu::new(3, 5, vec![0.1; 15], vec![0.0; 5]).expect("shapes match"),
+            DenseRelu::new(5, 7, vec![0.1; 35], vec![0.0; 7]).expect("shapes match"),
+            DenseRelu::new(7, 2, vec![0.1; 14], vec![0.0; 2]).expect("shapes match"),
+        ])
+        .expect("layers chain");
+        assert_eq!(deep.n_in(), 3);
+        assert_eq!(deep.n_out(), 2);
+        assert_eq!(deep.n_synapses(), 15 + 35 + 14);
+        assert_eq!(deep.forward(&[1.0; 3]).expect("finite input").len(), 2);
+    }
+
+    /// Every field of `Config::default` against the value its own doc comment states. Two of them
+    /// cancel out of every spike train this module measures — `dt` and `c` enter the answer only
+    /// through `c * v_th / dt`, which `only_the_ratio_c_v_th_over_dt_changes_the_spike_train`
+    /// proves — and every test that reads `gain()` supplies all three fields itself, so the
+    /// documented 1 ms and 1 nF were transcribed nowhere a test could read them. The `v_th` default
+    /// is already pinned, by an absolute membrane figure elsewhere; its two neighbours were not.
+    #[test]
+    fn the_documented_defaults_are_the_defaults() {
+        let d = Config::default();
+        assert_eq!(d.dt, 1e-3, "the default tick is not the documented 1 ms");
+        assert_eq!(d.v_th, 1.0);
+        assert_eq!(d.c, 1e-9, "the default capacitance is not the documented 1 nF");
+        assert_eq!(d.reset, Reset::BySubtraction);
+        assert_eq!(d.input, InputCoding::Analog);
+        assert_eq!(d.readout, Readout::SpikeCount);
+        assert_eq!(d.norm, Norm::DataBased { percentile: 99.9 });
+        assert!(!d.floor_at_zero);
+        assert_eq!(d.validate(), Ok(()));
+        // The doc's own arithmetic on those three, and the one number that a wrong `dt` or a wrong
+        // `c` both move: 1 nF x 1 V / 1 ms is 1 µA per unit of activation. This implementation
+        // measures `1e-9 * 1.0 / 1e-3` as exactly `1e-6` — the rounding of the two decimal
+        // literals cancels in the quotient — so it is an equality and not a tolerance.
+        assert_eq!(d.gain(), 1e-6);
+        // The other thing `dt` alone decides, which the gain cannot see because `c` can absorb it:
+        // the tick length is the reciprocal of the fastest rate a unit can report, and 1 ms ticks
+        // cap it at 1000 spikes per second. Exact in binary too.
+        assert_eq!(1.0 / d.dt, 1000.0);
+    }
+
+    /// `Config::validate`'s percentile arm is never exercised: the `BadPercentile` the refusal test
+    /// asserts comes from `Mlp::scales`, which carries its own copy of the same guard, so the
+    /// config's copy could accept a percentile of zero and a conversion would still refuse it one
+    /// call later with an identical error. The two are not redundant — `validate` is public and
+    /// documented to check the percentile, and a caller that validates a config before building
+    /// anything is entitled to the answer rather than to a network that refuses later.
+    #[test]
+    fn the_config_validates_its_own_percentile_and_not_only_the_normaliser_does() {
+        let at = |p: f64| Config { norm: Norm::DataBased { percentile: p }, ..Config::default() };
+        // Zero is refused: the zeroth percentile of a rectified layer is its minimum, which is
+        // zero on any layer with a silent unit, and dividing by it is the degenerate scale the
+        // whole guard exists to prevent.
+        assert_eq!(at(0.0).validate(), Err(ConvertError::BadPercentile { p: 0.0 }));
+        assert_eq!(at(-0.0).validate(), Err(ConvertError::BadPercentile { p: -0.0 }));
+        assert_eq!(at(-1.0).validate(), Err(ConvertError::BadPercentile { p: -1.0 }));
+        assert_eq!(at(100.5).validate(), Err(ConvertError::BadPercentile { p: 100.5 }));
+        let inf = at(f64::INFINITY).validate().expect_err("an infinite percentile");
+        assert_eq!(inf, ConvertError::BadPercentile { p: f64::INFINITY });
+        let nan = at(f64::NAN).validate().expect_err("a NaN percentile");
+        assert!(matches!(nan, ConvertError::BadPercentile { p } if p.is_nan()));
+        // The open end is open and the closed end is closed: 100 is Diehl et al.'s maximum and is
+        // accepted, 99.9 is the default, and the smallest positive `f64` is still a percentile.
+        assert_eq!(at(100.0).validate(), Ok(()));
+        assert_eq!(at(99.9).validate(), Ok(()));
+        assert_eq!(at(f64::MIN_POSITIVE).validate(), Ok(()));
+        // A model-based config has no percentile, and validating one must not invent a refusal.
+        assert_eq!(
+            Config { norm: Norm::ModelBased { input_max: 1.0 }, ..Config::default() }.validate(),
+            Ok(())
+        );
+        // The normaliser's own guard agrees with the config's on the same number, which is the
+        // reason one of them could go missing without anything noticing.
+        let ann = Mlp::new(vec![DenseRelu::new(2, 2, vec![0.5; 4], vec![0.1; 2]).expect("valid")])
+            .expect("one layer");
+        assert_eq!(
+            ann.scales(Norm::DataBased { percentile: 0.0 }, &[vec![1.0, 1.0]]),
+            Err(ConvertError::BadPercentile { p: 0.0 })
+        );
+    }
+
+    /// `SpikingMlp::from_ann` documents "# Errors: As `Config::validate`", and the conversion
+    /// refuses a broken physical parameter BEFORE it normalises a copy of the network. Deleting
+    /// that call does not make a broken network runnable — `check_structure` re-checks `dt`, `v_th`
+    /// and `c` on the first tick — so every existing test still passes and the only thing that
+    /// moves is WHERE the refusal happens: at conversion, or after a caller has built the network,
+    /// handed it to a sweep and waited for the first tick of the first run. No test converted with
+    /// a bad parameter, because every fixture builds its config from `Config::default`.
+    #[test]
+    fn the_conversion_validates_its_parameters_before_it_normalises() {
+        let ann = net(1011, 4, 6, 3);
+        let base = Config { norm: Norm::ModelBased { input_max: 1.0 }, ..Config::default() };
+        for (name, value, cfg) in [
+            ("dt", 0.0, Config { dt: 0.0, ..base }),
+            ("v_th", -1.0, Config { v_th: -1.0, ..base }),
+            ("c", f64::INFINITY, Config { c: f64::INFINITY, ..base }),
+        ] {
+            let e = SpikingMlp::from_ann(&ann, &[], cfg)
+                .expect_err("a broken parameter must be refused at conversion");
+            assert_eq!(e, ConvertError::BadParameter { name, value });
+        }
+        // The percentile too. This one the normaliser would also have caught, with the same
+        // variant and the same value — which is exactly why the config's own call had to be read
+        // through a parameter the normaliser never looks at, as the three above are.
+        let e = SpikingMlp::from_ann(
+            &ann,
+            &samples(1012, 8, 4),
+            Config { norm: Norm::DataBased { percentile: 0.0 }, ..Config::default() },
+        )
+        .expect_err("a zero percentile must be refused");
+        assert_eq!(e, ConvertError::BadPercentile { p: 0.0 });
+        // The unbroken config converts and runs, so the refusals above are the parameter's doing
+        // and not the fixture's.
+        let mut ok = SpikingMlp::from_ann(&ann, &[], base).expect("convertible");
+        assert!(ok.run(&[0.5; 4], 16).expect("positive ticks").iter().all(|v| v.is_finite()));
+    }
+
+    /// `Config::floor_at_zero` says "Passed to every neuron's `SpikingRelu::floor_at_zero`", and no
+    /// test ever converted a network with it set: every fixture leaves it at the default, and the
+    /// closed-form test that does exercise the flag builds its neurons directly rather than
+    /// through a conversion. So the one line that carries the config into the network could be
+    /// replaced by a constant `false` and nothing would notice. For CONSTANT input the flag
+    /// genuinely changes nothing — which is why a `run`-based test could not have seen it either —
+    /// so this drives the converted network through a SIGN CHANGE, one tick at a time.
+    #[test]
+    fn the_conversion_carries_the_configs_zero_floor_into_every_neuron() {
+        let ann = net(1021, 4, 6, 3);
+        for floor in [false, true] {
+            let cfg = Config {
+                floor_at_zero: floor,
+                norm: Norm::ModelBased { input_max: 1.0 },
+                ..Config::default()
+            };
+            let snn = SpikingMlp::from_ann(&ann, &[], cfg).expect("convertible");
+            assert_eq!(snn.layers.len(), 2);
+            assert!(
+                snn.layers.iter().flat_map(|l| l.neurons.iter()).all(|n| n.floor_at_zero == floor),
+                "a converted neuron did not carry floor_at_zero = {floor}"
+            );
+        }
+        // And what the flag is worth, measured through the conversion rather than asserted on the
+        // field. One unit, unit weight, no bias, and a model-based scale of exactly 1, so the
+        // drive that reaches the membrane is the input itself: fifty ticks at `-0.25` dig a well
+        // 12.5 thresholds deep. The closed forms give the first spike at `50 + ceil(1/0.25) = 54`
+        // with the clamp and at `50 + ceil((1 + 12.5)/0.25) = 104` without it. Dyadic `c`, `v_th`
+        // and `dt`, so both are exact tick indices and not tolerances.
+        let one = Mlp::new(vec![DenseRelu::new(1, 1, vec![1.0], vec![0.0]).expect("shapes")])
+            .expect("one layer");
+        let first_spike = |floor: bool| -> Option<u64> {
+            let cfg = Config {
+                c: 2f64.powi(-30),
+                v_th: 1.0,
+                dt: 2f64.powi(-10),
+                floor_at_zero: floor,
+                norm: Norm::ModelBased { input_max: 1.0 },
+                ..Config::default()
+            };
+            let mut snn = SpikingMlp::from_ann(&one, &[], cfg).expect("convertible");
+            assert_eq!(snn.lambdas, vec![1.0, 1.0], "the fixture's scales are not both 1");
+            (0..200u64)
+                .find(|&k| {
+                    let x = if k < 50 { -0.25 } else { 0.25 };
+                    snn.tick(&[x]).expect("a runnable network")[0]
+                })
+                .map(|k| k + 1)
+        };
+        assert_eq!(first_spike(true), Some(54), "the clamped conversion did not climb out at once");
+        assert_eq!(first_spike(false), Some(104), "the linear conversion did not dig a well");
+    }
+
+    /// `SpikingMlp::from_ann` seeds the input encoder's stream from the config, and so does
+    /// `SpikingMlp::reset_state`. Every Poisson test in this module goes through `run`, which calls
+    /// `reset_state` first, so the constructor's seeding is overwritten before it is ever read:
+    /// move it by one and the reproducibility test still passes, because both networks it compares
+    /// are re-seeded identically. The only way to read it is a direct `tick` on a freshly converted
+    /// network, which this makes, against the crate's own stream computed outside the network.
+    #[test]
+    fn a_converted_network_draws_its_first_tick_from_the_configured_seed() {
+        // One unit, unit weight, no bias, and scales of exactly 1, so a delivered input spike
+        // carries exactly one threshold: the membrane crosses, subtracts back to zero, and a
+        // silent tick moves nothing. The unit's output train IS the sequence of Bernoulli draws.
+        let one = Mlp::new(vec![DenseRelu::new(1, 1, vec![1.0], vec![0.0]).expect("shapes")])
+            .expect("one layer");
+        let data = vec![vec![1.0]];
+        let seed = 9_001u64;
+        let cfg = Config {
+            c: 2f64.powi(-30),
+            v_th: 1.0,
+            dt: 2f64.powi(-10),
+            input: InputCoding::Poisson { seed },
+            norm: Norm::DataBased { percentile: 100.0 },
+            ..Config::default()
+        };
+        let mut snn = SpikingMlp::from_ann(&one, &data, cfg).expect("convertible");
+        assert_eq!(snn.lambdas, vec![1.0, 1.0], "the fixture's scales are not both 1");
+        let mut r = Rng::new(seed);
+        let want: Vec<bool> = (0..64).map(|_| r.next_f64() < 0.5).collect();
+        assert!(
+            want.iter().any(|b| *b) && want.iter().any(|b| !*b),
+            "the draws all went one way, so the comparison is vacuous"
+        );
+        let got: Vec<bool> =
+            (0..64).map(|_| snn.tick(&[0.5]).expect("a runnable network")[0]).collect();
+        assert_eq!(got, want, "the first tick after conversion is not on the configured stream");
+        // And the reset rewinds to the same place the constructor started from, which is the
+        // statement `run` relies on and the one that hid the constructor's seeding.
+        snn.reset_state();
+        let again: Vec<bool> =
+            (0..64).map(|_| snn.tick(&[0.5]).expect("a runnable network")[0]).collect();
+        assert_eq!(again, want, "a reset did not rewind to the conversion's own stream");
+    }
+
+    /// `SpikingMlp::total_spikes` is only ever compared against another `total_spikes` — two
+    /// networks from one seed, one network against itself — so any function of the per-layer counts
+    /// that is stable across those comparisons passes, the MAXIMUM over layers included. The sum
+    /// and the max coincide whenever every layer but one is silent, so the fixture below is checked
+    /// for both layers firing before the identity is asserted.
+    #[test]
+    fn the_spike_total_is_the_sum_over_every_layer_not_the_busiest_one() {
+        let ann = net(1031, 6, 12, 4);
+        let data = samples(1032, 32, 6);
+        let cfg = Config { norm: Norm::DataBased { percentile: 100.0 }, ..Config::default() };
+        let mut snn = SpikingMlp::from_ann(&ann, &data, cfg).expect("convertible");
+        snn.run(&data[0], 128).expect("positive ticks");
+        let per_layer: Vec<u64> = snn.layers.iter().map(|l| l.counts.iter().sum()).collect();
+        assert_eq!(per_layer.len(), 2);
+        assert!(per_layer.iter().all(|&c| c > 0), "a layer was silent: {per_layer:?}");
+        assert_eq!(snn.total_spikes(), per_layer[0] + per_layer[1]);
+        assert!(
+            snn.total_spikes() > *per_layer.iter().max().expect("two layers"),
+            "the sum and the busiest layer are the same number here: {per_layer:?}"
+        );
+        // The same events counted from the other end: under the spike-count readout every emitted
+        // spike is both tallied on its own unit and billed as routed, so these are one number.
+        assert_eq!(snn.total_spikes(), snn.ledger.spikes_out);
+    }
+
+    /// `reset_state` documents "Clear every membrane, every spike count, THE LEDGER and the tick
+    /// counter", and every ledger assertion in this module follows exactly one run — so the line
+    /// that clears the ledger could be deleted and each of those assertions would still see only
+    /// its own run's counts. A second run would then report the two runs added together, which is
+    /// how a per-inference energy figure quietly doubles. In the same place, `run` documents
+    /// "`reads` is incremented once, because the decode is one host readout", and no test in this
+    /// module read that counter at all.
+    #[test]
+    fn a_run_is_billed_from_zero_and_the_decode_is_one_host_read() {
+        let ann = net(1041, 6, 10, 4);
+        let data = samples(1042, 32, 6);
+        let cfg = Config { norm: Norm::DataBased { percentile: 100.0 }, ..Config::default() };
+        let mut snn = SpikingMlp::from_ann(&ann, &data, cfg).expect("convertible");
+        let x = data[0].clone();
+
+        let first = snn.run(&x, 64).expect("positive ticks");
+        let after_one = snn.ledger;
+        assert!(after_one.syn_ops > 0 && after_one.spikes_out > 0, "the fixture did nothing");
+        assert_eq!(after_one.reads, 1, "the decode was not billed as a host read");
+
+        let second = snn.run(&x, 64).expect("positive ticks");
+        assert_eq!(second, first, "one network on one input disagreed with itself");
+        assert_eq!(snn.ledger, after_one, "the second run carried the first run's ledger");
+        assert_eq!(snn.ledger.reads, 1, "two runs were billed as one read, or one run as two");
+
+        // Every counter, from the other direction: a reset leaves a ledger with nothing in it.
+        snn.reset_state();
+        assert_eq!(snn.ledger.syn_ops, 0);
+        assert_eq!(snn.ledger.syn_fetches, 0);
+        assert_eq!(snn.ledger.neuron_updates_idle, 0);
+        assert_eq!(snn.ledger.neuron_updates_driven, 0);
+        assert_eq!(snn.ledger.spikes_out, 0);
+        assert_eq!(snn.ledger.reads, 0, "a reset did not clear the read count");
+        assert_eq!(snn.ticks_elapsed(), 0);
+
+        // A tick is not a read. The counter is the DECODE's, so a caller stepping the network by
+        // hand has done synaptic work and has not read anything out.
+        snn.tick(&x).expect("a runnable network");
+        assert!(snn.ledger.syn_ops > 0, "a tick delivered nothing");
+        assert_eq!(snn.ledger.reads, 0, "a tick was billed as a host read");
+    }
+
+    /// `Readout::MembranePotential` silences THE LAST LAYER — not every layer. Both membrane
+    /// fixtures in this module are single-layer networks, where `last` is true on the only
+    /// iteration and the conjunction is the identity, so dropping the `last &&` changes nothing
+    /// either of them can see. On a two-layer network it changes everything: the hidden layer
+    /// stops spiking, the output layer is then driven by nothing but its own bias, and the readout
+    /// is still a vector of finite numbers that looks like an answer.
+    #[test]
+    fn only_the_last_layer_is_silenced_under_the_membrane_readout() {
+        let ann = net(1051, 5, 9, 3);
+        let data = samples(1052, 24, 5);
+        let cfg = Config {
+            readout: Readout::MembranePotential,
+            norm: Norm::DataBased { percentile: 100.0 },
+            ..Config::default()
+        };
+        let mut snn = SpikingMlp::from_ann(&ann, &data, cfg).expect("convertible");
+        let x = data[0].clone();
+        let got = snn.run(&x, 256).expect("positive ticks");
+
+        let hidden: u64 = snn.layers[0].counts.iter().sum();
+        let out: u64 = snn.layers[1].counts.iter().sum();
+        assert!(hidden > 0, "the hidden layer was silenced too, so the readout has no input");
+        assert_eq!(out, 0, "the output layer spiked under the membrane readout");
+        assert_eq!(snn.ledger.spikes_out, hidden, "a spike arrived from outside the hidden layer");
+        assert!(snn.layers[1].neurons.iter().any(|n| n.v != 0.0), "the output membrane is empty");
+
+        // And the quantity the readout is FOR: it estimates the last layer's pre-activation given
+        // the hidden layer's spike train, so it carries that train's one-part-in-`T` quantisation
+        // and nothing else of its own. Against the source network's own last-layer pre-activation
+        // this implementation measures a worst-unit deviation of 0.01265 at 256 ticks, 0.002762 at
+        // 1024 and 0.0006556 at 4096 — a factor of 4.58 and then 4.21 per quadrupling, which is
+        // the `1/T` of the layer upstream and not a constant offset. The bounds below are those
+        // three measurements rounded up in the fourth digit, and the ratio band is stated so that
+        // a deviation which stopped falling would fail even if it stayed small.
+        let h = ann.layers[0].forward(&x).expect("finite input");
+        let want = ann.layers[1].pre_activation(&h).expect("finite input");
+        let worst = |g: &[f64]| (0..want.len()).map(|k| (g[k] - want[k]).abs()).fold(0.0f64, f64::max);
+        let w256 = worst(&got);
+        assert!(w256 < 0.0127, "at 256 ticks {w256}: {got:?} against {want:?}");
+        let mut prev = w256;
+        for t in [1024u64, 4096] {
+            let g = snn.run(&x, t).expect("positive ticks");
+            let w = worst(&g);
+            let fell = prev / w;
+            assert!(
+                (3.0..6.0).contains(&fell),
+                "at {t} ticks the deviation {w} is {fell}x the previous one, not the ~4x of 1/T"
+            );
+            prev = w;
+        }
+        assert!(prev < 0.000_66, "at 4096 ticks the deviation is {prev}");
+        // The deviation is a real one and not a rounding artefact, which is what makes the bounds
+        // above measurements rather than slack: a readout that inherited nothing from the layer
+        // upstream would agree with the source network exactly.
+        assert!(w256 > 0.0, "the readout was exact, so the bounds above measure nothing");
+    }
+
+    /// `ErrorCurve::fit_exponent` refuses a curve with no spread in its tick counts, and no fixture
+    /// ever repeated one — every sweep in this module doubles. Without that refusal the slope is
+    /// `0.0 / 0.0`, and `Some(NaN)` is worse than a missing answer: a `NaN` exponent compares false
+    /// against every bound, so a caller asserting "the fit is near -1" and a caller asserting "the
+    /// fit is not near -1" would both be told they were wrong.
+    #[test]
+    fn a_curve_with_no_spread_in_its_tick_counts_has_no_exponent() {
+        let flat = ErrorCurve { ticks: vec![64, 64, 64], mean_abs_error: vec![0.3, 0.2, 0.1] };
+        assert!(flat.fit_exponent().is_none(), "a curve with one distinct tick count was fitted");
+        let pair = ErrorCurve { ticks: vec![128, 128], mean_abs_error: vec![0.5, 0.25] };
+        assert!(pair.fit_exponent().is_none(), "two points at one tick count were fitted");
+        // A dropped point does not create spread that is not there: the two USABLE points here are
+        // both at 64, and the point that would have given the spread is the one with no error.
+        let dropped = ErrorCurve { ticks: vec![64, 128, 64], mean_abs_error: vec![0.3, 0.0, 0.1] };
+        assert!(dropped.fit_exponent().is_none(), "a dropped point left a fittable curve");
+        // One distinct tick count of spread is enough, and the answer is the slope through the
+        // two distinct abscissae: a halving of the error over a doubling of the ticks is -1.
+        let two = ErrorCurve { ticks: vec![64, 128, 64], mean_abs_error: vec![0.4, 0.2, 0.4] };
+        let p = two.fit_exponent().expect("two distinct tick counts");
+        assert!((p + 1.0).abs() < 1e-12, "a halving over a doubling fitted to {p}");
+    }
+
+
+    /// The two closed forms of reset-to-zero have to agree about the same activation, and at a
+    /// SUBNORMAL one they did not. `Reset::spikes_in` builds the inter-spike interval as
+    /// `ceil(1/z)` and read a non-finite interval as saturation — one spike on every tick — but
+    /// `1/z` overflows for every `z` at or below about 5.56e-309, which is the QUIETEST drive an
+    /// `f64` can carry and not the loudest. `Reset::rate_limit` divides by the same interval and
+    /// returns 0.0 there, so the module's own asymptote and its own exact count disagreed by the
+    /// full dynamic range on one input, and the stated closed form `floor(T / ceil(1/z))` agreed
+    /// with neither the code nor itself. The hole that hid it: every fixture in this module hands
+    /// `spikes_in` a `z` between 0.125 and 0.83, where `1/z` is an ordinary small number, and the
+    /// only test that compares the two forms compares them over that same band.
+    #[test]
+    fn a_subnormal_activation_emits_no_spikes_rather_than_saturating() {
+        let ticks = 1_000u64;
+        for &z in &[5e-324f64, 1e-320, 1e-310, 5.5e-309] {
+            // The fixture's own precondition, so that it cannot quietly stop testing what it says
+            // it tests: these are exactly the activations whose interval is not representable.
+            assert!(
+                !(1.0f64 / z).is_finite(),
+                "z {z} has a representable interval, so it is the wrong fixture for this"
+            );
+            for reset in [Reset::ToZero, Reset::BySubtraction] {
+                assert_eq!(
+                    reset.spikes_in(z, ticks),
+                    Some(0),
+                    "{reset} reported spikes at a subnormal z {z}"
+                );
+                // And at the largest run a `u64` can count: over `u64::MAX` ticks the membrane
+                // gains at most `1.8e19 * 5.56e-309`, about `1e-289` thresholds, so zero is the
+                // exact answer for every tick count and not merely for a short one.
+                assert_eq!(reset.spikes_in(z, u64::MAX), Some(0), "{reset} at z {z} over u64::MAX");
+            }
+            // The asymptote agrees, and says which rule is which: reset-to-zero's rate is one over
+            // an interval that overflowed, so it underflows to zero, while reset by subtraction
+            // converges to `z` itself and `z` is what it returns.
+            assert_eq!(Reset::ToZero.rate_limit(z), Some(0.0));
+            assert_eq!(Reset::BySubtraction.rate_limit(z), Some(z));
+        }
+        // The neuron itself, which is what "exact" means here. In the dimensionless frame the two
+        // source papers are written in — `c`, `v_th` and `dt` all 1 — the drive IS the activation,
+        // so the membrane gains `1e-320` per tick and stays 320 orders of magnitude below
+        // threshold for the whole run.
+        for reset in [Reset::ToZero, Reset::BySubtraction] {
+            let mut n = SpikingRelu::new(1.0, 1.0, reset);
+            let i = 1e-320 * n.gain(1.0);
+            assert!(i > 0.0, "the drive underflowed, so the run says nothing");
+            assert!((0..10_000).all(|_| !n.step(1.0, i)), "{reset} fired on a subnormal drive");
+            assert!(n.v > 0.0 && n.v < 1.0, "{reset} left the membrane at {}", n.v);
+        }
+        // The neighbouring interval, the largest one that IS representable, is untouched: at
+        // `f64::MIN_POSITIVE` the interval is 4.49e307 ticks, and the count comes out zero by the
+        // saturating cast and the integer division the method already had, not by the guard above.
+        assert!((1.0f64 / f64::MIN_POSITIVE).is_finite());
+        assert_eq!(Reset::ToZero.spikes_in(f64::MIN_POSITIVE, ticks), Some(0));
+        assert_eq!(Reset::BySubtraction.spikes_in(f64::MIN_POSITIVE, ticks), Some(0));
+        // And the ordinary region is where it was: `ceil(1/0.37)` is 3, so 1000 ticks give 333.
+        assert_eq!(Reset::ToZero.spikes_in(0.37, 1000), Some(333));
+        assert_eq!(Reset::ToZero.spikes_in(0.5, 1000), Some(500));
+    }
+
 }
