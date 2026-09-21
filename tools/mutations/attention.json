@@ -389,7 +389,8 @@
  {
   "label": "the row accessor returns the row one past the end",
   "old": "        if t >= self.tokens {\n            return None;\n        }\n        self.values.get(t * self.channels..(t + 1) * self.channels)",
-  "new": "        if t > self.tokens {\n            return None;\n        }\n        self.values.get(t * self.channels..(t + 1) * self.channels)"
+  "new": "        if t > self.tokens {\n            return None;\n        }\n        self.values.get(t * self.channels..(t + 1) * self.channels)",
+  "equivalent": "The edit widens the guard from `t >= self.tokens` to `t > self.tokens`, so the only index whose answer can change is `t == self.tokens`: every larger `t` is still turned away by the guard and every smaller one never reached it. At `t == tokens` the expression below the guard is `self.values.get(tokens * channels .. (tokens + 1) * channels)`, and two invariants hold for every `Tensor` that can exist. (1) `values.len() == tokens * channels`: `Tensor::new` is the only place the struct is constructed -- `real`, `spikes`, `silent`, `sinusoidal_spikes` and `slice_channels` all delegate to it -- and it refuses any other length with `BadShape { what: \"tensor\" }`. (2) `channels >= 1`: the same constructor refuses `channels == 0` with `Empty { what: \"channels\" }`. So the range starts at exactly `values.len()` and ends at `values.len() + channels`, which is strictly past the end, and `<[f64]>::get` on a `Range` returns `None` whenever `end > len`. Guard and slice bound therefore answer `None` on the identical set of inputs. The two ways they could differ are both unreachable: `channels == 0` would make start == end == len, where `get` answers `Some(&[])`, and that tensor cannot be built; and a `(tokens + 1) * channels` that overflows a `usize` would need `values` to hold about 2^64 f64 elements, and even then the wrapped end falls below the start and `get` returns `None` again. No test on any constructible tensor could tell the two apart."
  },
  {
   "label": "the element accessor is transposed",
@@ -755,7 +756,8 @@
  {
   "label": "the second product's kind is decided by the scores rather than by V",
   "old": "            let kind2 = OpKind::product(Domain::Real, v.domain);",
-  "new": "            let kind2 = OpKind::product(v.domain, Domain::Real);"
+  "new": "            let kind2 = OpKind::product(v.domain, Domain::Real);",
+  "equivalent": "This edit swaps the two arguments of a function that is symmetric by construction. `OpKind::product`'s entire body is `if a.is_binary() || b.is_binary() { Self::Ac } else { Self::Mac }`; `Domain::is_binary` is a total, pure `matches!(self, Self::Binary)` that cannot panic and has no side effect; and `||` on two `bool`s is commutative. So `OpKind::product(Domain::Real, v.domain)` and `OpKind::product(v.domain, Domain::Real)` are the same `OpKind` for each of the three values `v.domain` can take: `Binary` gives `Ac` from either position, `Integer(_)` and `Real` give `Mac` from either. Both arguments are already-evaluated `Copy` values, so argument evaluation order is not observable either. The edit does not change which operand is DECLARED real -- the score matrix is still passed as `Domain::Real` and V's own domain is still the other operand -- so the site's kind, its `because` string, its dense count and its effective count are all bit-identical on every input. A mutation that REPLACED an operand rather than swapping the pair is a different edit and is caught by `each_attention_product_follows_the_operand_that_decides_it`."
  },
  {
   "label": "a zero score still walks the whole value row and is billed for it",

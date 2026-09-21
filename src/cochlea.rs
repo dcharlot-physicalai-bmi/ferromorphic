@@ -1805,7 +1805,12 @@ impl Filterbank {
         let mut train = Train::new();
         // Allocated once, not once per sample: the change signal computed in pass 2 and rectified
         // the other way in pass 3, so the two passes read ONE value rather than each deriving it.
-        let mut change = vec![0.0; n];
+        // The annotation is load-bearing for the mutation audit, not for the compiler's benefit
+        // here: with it removed, the element type of `change` is inferred from the one place a
+        // `f64` is written into it, so an edit that writes a literal instead makes `(-change[ch])`
+        // an ambiguous `{float}` and the mutant does not compile — a mutation that says nothing
+        // either way rather than one this suite is shown to catch.
+        let mut change: Vec<f64> = vec![0.0; n];
         for (i, &x) in signal.iter().enumerate() {
             let t = i as u64;
             // Pass 1: the sustained path. Each channel's filter is stepped exactly once per
@@ -1875,6 +1880,11 @@ impl Filterbank {
     ///
     /// `ticks` is the number of samples the train covers, which is `signal.len()`. Addresses
     /// outside this bank are ignored rather than counted into channel zero.
+    ///
+    /// A run of zero ticks reports every rate as `0.0` rather than dividing by its own zero
+    /// duration. A `NaN` rate is worse than a wrong one: it compares false against every bound a
+    /// caller might put it under, so a summary built out of one reads as "nothing exceeded the
+    /// threshold" rather than as a refusal.
     #[must_use]
     pub fn cochleagram(&self, train: &Train, ticks: u64) -> Cochleagram {
         let n = self.f_c.len();
@@ -2054,6 +2064,9 @@ pub fn two_tone(
 /// The instrument for testing tonotopy: a rising chirp should excite channels in order of centre
 /// frequency, and if it does not, the bank's frequency map is wrong in a way no single-tone test
 /// would show.
+///
+/// Starts at zero phase, for the reason [`tone`] does: a waveform that began mid-cycle would open
+/// with a step, and the click's onset response is exactly what a tonotopy measurement reads.
 ///
 /// # Errors
 ///
@@ -4242,5 +4255,901 @@ mod tests {
         let gained = sustained(&mut build(Some(Agc::new(20e-3, 20.0).expect("valid"))));
         assert!(plain > 0, "the hair cell was silent under a unit tone");
         assert!(gained < plain, "with the AGC the Meddis arm fired {gained} against {plain} without");
+    }
+
+    // -------------------------------------------------------------------------------------
+    // ⛔ The mutation backfill. Each test below closes a mutation that SURVIVED the recorded
+    // list: the claim was in a doc and in nothing that could fail.
+    // -------------------------------------------------------------------------------------
+
+    /// Each transduction's default drive must land its output cell where the cell can still move:
+    /// above [`Lif`]'s threshold in silence, and far enough below the refractory ceiling that the
+    /// hair cell's own sustained range still shows up in the firing rate.
+    ///
+    /// ⛔ Three constants had no test. `silence_with_meddis_gives_the_closed_form_spontaneous_rate`
+    /// builds its expectation out of `bank.drive()` itself, so both sides of that comparison move
+    /// together when [`DEFAULT_DRIVE_MEDDIS`] moves; which of the two scales the Meddis arm picks
+    /// is chosen inside `from_centre_frequencies` and was never read back; and
+    /// [`DEFAULT_DRIVE_ONSET`] was only ever compared against itself. Measured here with
+    /// [`DEFAULT_DRIVE_MEDDIS`]: the spontaneous rate of 64.77 spikes/s drives the cell at
+    /// 137.6 Hz and the ceiling plateau of 100.08 spikes/s drives it at 190.6 Hz — a 38 % rise,
+    /// against a refractory bound of 500 Hz. A drive a hundred times larger pins the cell against
+    /// that bound instead, 488.7 Hz against 492.6 Hz, and every *relative* measurement stays green.
+    #[test]
+    fn each_transduction_drives_its_cell_into_its_own_working_range() {
+        let m = Meddis::default();
+        let bank =
+            Filterbank::erb_bank(FS, 300.0, 3000.0, 6, Transduction::Meddis(m)).expect("valid");
+        assert_eq!(
+            bank.drive(),
+            DEFAULT_DRIVE_MEDDIS,
+            "the Meddis arm was built with the wrong drive scale"
+        );
+        let half = Filterbank::erb_bank(
+            FS,
+            300.0,
+            3000.0,
+            6,
+            Transduction::HalfWave(Compression::default()),
+        )
+        .expect("valid");
+        assert_eq!(half.drive(), DEFAULT_DRIVE_HALF_WAVE);
+
+        let cell = Lif::default();
+        let ceiling = 1.0 / cell.t_ref;
+        let quiet = cell
+            .rate(m.spontaneous_rate() * bank.drive())
+            .expect("a nerve fibre fires in a quiet room");
+        let loudest = cell
+            .rate(m.max_achievable_rate() * bank.drive())
+            .expect("the ceiling plateau is above threshold");
+        assert!(
+            loudest < 0.5 * ceiling,
+            "the loudest sustained sound drives the cell to {loudest} Hz, past half the \
+             refractory ceiling of {ceiling} Hz: the drive has saturated the cell"
+        );
+        // The hair cell's whole sustained range, 64.77 to 100.08 spikes/s, has to survive the
+        // conversion to a current: if it does not, the sustained channel reports the same rate
+        // whatever it hears.
+        assert!(
+            loudest / quiet > 1.2,
+            "silence drives the cell at {quiet} Hz and the loudest plateau at {loudest} Hz, a \
+             rise of {}x: the drive has left the cell no room to move",
+            loudest / quiet
+        );
+
+        // The onset path's drive is a different scale, and the doc says which way it differs.
+        // Read back off a built bank rather than off the two constants, so this is a measurement
+        // of what a default bank runs rather than an assertion the compiler can fold away.
+        let build = || {
+            Filterbank::erb_bank(
+                FS,
+                400.0,
+                3000.0,
+                6,
+                Transduction::HalfWave(Compression::default()),
+            )
+            .expect("a valid bank")
+        };
+        let defaults = build();
+        assert!(
+            defaults.onset_drive() > defaults.drive(),
+            "a default bank's onset drive is {} against a sustained drive of {}: a difference of \
+             two leaky integrators is smaller than the signal it is computed from, so the onset \
+             path needs the larger scale",
+            defaults.onset_drive(),
+            defaults.drive()
+        );
+        let x = tone_burst(FS, 1000.0, 1.0, 0.4, 0.1, 0.2, 2e-3).expect("a valid burst");
+        let onsets = |bank: &mut Filterbank| -> usize {
+            let train = bank.spike_train(&x).expect("finite");
+            train
+                .spikes()
+                .iter()
+                .filter(|s| matches!(bank.decode_source(s.source), Some((ChannelKind::Onset, _))))
+                .count()
+        };
+        let at_onset_scale = onsets(&mut build());
+        let at_sustained_scale = onsets(
+            &mut build()
+                .with_onset_drive(DEFAULT_DRIVE_HALF_WAVE)
+                .expect("valid"),
+        );
+        // Measured: 23 onset spikes at the onset drive, 7 at the sustained one.
+        assert!(
+            at_sustained_scale < at_onset_scale,
+            "the burst produced {at_sustained_scale} onset spikes at the SUSTAINED drive and \
+             {at_onset_scale} at the onset drive: the two scales are the same number"
+        );
+    }
+
+    /// The `ERB`-rate scale's logarithm needs `4.37·f/1000 + 1 > 0`, which is `f > −228.8` Hz.
+    ///
+    /// ⛔ The suite's only off-scale probe was −500 Hz, where the argument is −1.185. A guard
+    /// loosened to `arg < −1.0` still refuses that one and hands back `Some(NaN)` for every
+    /// frequency between the pole and −457.7 Hz — a position on the scale that compares false
+    /// against every bound and propagates straight into [`erb_space`].
+    #[test]
+    fn erb_rate_refuses_every_frequency_below_its_pole() {
+        // 4.37·f/1000 + 1 == 0 at f = −1000/4.37 = −228.83 Hz.
+        let pole = -1000.0 / 4.37;
+        assert!(
+            erb_rate(pole).is_none(),
+            "at the pole the logarithm's argument is zero, not positive"
+        );
+        for &f in &[-229.0, -250.0, -300.0, -400.0, -457.0, -500.0, -1e6] {
+            assert!(
+                erb_rate(f).is_none(),
+                "{f} Hz is off the bottom of the scale; got {:?}",
+                erb_rate(f)
+            );
+        }
+        // Just above the pole the scale IS defined, and large and negative — negative frequencies
+        // are kept so the inverse's round trip can be written at all.
+        let e = erb_rate(-228.0).expect("just above the pole");
+        assert!(e < -20.0, "E(-228 Hz) came out at {e}");
+        let back = erb_rate_to_hz(e).expect("invertible");
+        assert!((back + 228.0).abs() < 1e-6, "round trip gave {back}");
+    }
+
+    /// [`Gammatone::with_shape`]'s doc says the bandwidth factor is a parameter "rather than a
+    /// constant reached for silently".
+    ///
+    /// ⛔ Every construction in this suite passed [`PATTERSON_B`], so the argument and the constant
+    /// were the same number and the pole could be built from either. Here the factor is doubled
+    /// and the filter is DRIVEN: `β = 2π·b·ERB(f_c)` doubles, so the impulse-envelope peak must
+    /// land at half the latency and the −3 dB width must double. Measured at 1 kHz: the peak moves
+    /// from sample 168 (3.500 ms) to sample 83 (1.729 ms), against the continuum's 1.766 ms.
+    #[test]
+    fn a_channel_built_with_its_own_bandwidth_factor_is_really_that_wide() {
+        let f_c = 1000.0;
+        let wide_b = 2.0 * PATTERSON_B;
+        let narrow = Gammatone::with_shape(f_c, FS, 4, PATTERSON_B).expect("valid channel");
+        let mut wide = Gammatone::with_shape(f_c, FS, 4, wide_b).expect("valid channel");
+        assert_eq!(wide.b_factor(), wide_b);
+        // β is linear in b, and scaling by two is exact in binary floating point.
+        assert_eq!(wide.decay_rate(), 2.0 * narrow.decay_rate());
+
+        let n = (0.05 * FS) as usize;
+        let mut env = Vec::with_capacity(n);
+        for i in 0..n {
+            wide.step(if i == 0 { 1.0 } else { 0.0 });
+            env.push(wide.envelope());
+        }
+        let measured = argmax(&env) as f64 / FS;
+        assert_eq!(
+            measured,
+            wide.peak_latency(),
+            "the driven envelope peak is not where the discrete formula puts it"
+        );
+        // Against the continuum, which is computed from `b_factor` and not from the pole. The
+        // tolerance is the n−1 samples the discretisation costs, 2.1 % here, as in
+        // `a_click_produces_the_predicted_travelling_wave_delay`.
+        let continuous = wide.peak_latency_continuous();
+        assert!(
+            (measured - continuous).abs() / continuous < 0.06,
+            "the doubled-bandwidth channel rang for {measured} s, its own continuum says \
+             {continuous} s: the pole was built from PATTERSON_B, not from the factor supplied"
+        );
+        // Same statement in the frequency domain: the width read out of the pole against the width
+        // read out of `b_factor`.
+        let from_pole = wide.bandwidth_3db().expect("narrow enough to have a width");
+        let from_factor = wide.bandwidth_3db_continuous();
+        assert!(
+            (from_pole - from_factor).abs() / from_factor < 1e-3,
+            "the pole says {from_pole} Hz wide, the factor says {from_factor} Hz"
+        );
+        assert_eq!(from_factor, 2.0 * narrow.bandwidth_3db_continuous());
+    }
+
+    /// [`Gammatone::bandwidth_3db`] refuses rather than clamping, and the refusal is a statement
+    /// about the filter: it never falls 3 dB anywhere inside the sampled band.
+    ///
+    /// ⛔ No test here had ever built one that wide, so the domain check could be deleted and the
+    /// method would hand back `Some(NaN)` — a bandwidth that prints as a number and compares false
+    /// against every bound. Measured: at `b_factor` 200 the pole magnitude is 0.031 and the
+    /// response at Nyquist is 0.781 of the peak, above `1/√2`, so there is nothing to report.
+    #[test]
+    fn a_filter_with_no_half_power_point_refuses_to_report_one() {
+        let half_power = 1.0 / 2f64.sqrt();
+        let too_wide = Gammatone::with_shape(1000.0, FS, 4, 200.0).expect("valid channel");
+        let at_nyquist = too_wide.magnitude_response(FS / 2.0);
+        assert!(
+            at_nyquist > half_power,
+            "the response at Nyquist was {at_nyquist}, below the half-power line: this filter DOES \
+             have a width and the test is no longer probing the refusal"
+        );
+        assert!(
+            too_wide.bandwidth_3db().is_none(),
+            "reported a width of {:?} for a filter that never falls 3 dB",
+            too_wide.bandwidth_3db()
+        );
+        // Half as wide, and it crosses the half-power line before Nyquist, so it has a width.
+        let narrower = Gammatone::with_shape(1000.0, FS, 4, 100.0).expect("valid channel");
+        assert!(narrower.magnitude_response(FS / 2.0) < half_power);
+        let w = narrower
+            .bandwidth_3db()
+            .expect("a filter that crosses the half-power line has a width");
+        assert!(w.is_finite() && w > 0.0, "the width came out at {w}");
+    }
+
+    /// [`Compression::default`]'s doc states the exponent "so a figure made with the default is
+    /// reproducible from the documentation alone", and nothing read it back.
+    ///
+    /// ⛔ 0.4 is the number that turns the 100 dB of input range the whole stage exists for into
+    /// 40 dB of output. 0.5 — the other end of the measured basilar-membrane range — makes it 50,
+    /// and every test that used the default compared it only against itself.
+    #[test]
+    fn the_default_compression_is_the_exponent_the_documentation_prints() {
+        assert_eq!(Compression::default(), Compression::Power { exponent: 0.4 });
+        let c = Compression::default();
+        let (lo, hi) = (1e-5f64, 1.0f64);
+        let in_db = 20.0 * (hi / lo).log10();
+        assert!((in_db - 100.0).abs() < 1e-9, "the probe span was {in_db} dB");
+        let out_db = 20.0 * (c.apply(hi) / c.apply(lo)).log10();
+        assert!(
+            (out_db - 40.0).abs() < 1e-9,
+            "the default turned {in_db} dB of input into {out_db} dB of output, not 40"
+        );
+    }
+
+    /// [`Agc::reset`] must put the loop back where [`Agc::new`] starts it.
+    ///
+    /// ⛔ `Agc::new` sets the level directly, so the only caller of `reset` inside this module is
+    /// [`Filterbank::reset`], and every bank test measures a SETTLED loop whose starting level it
+    /// has already forgotten. A reset that left the level at 1.0 would open every run attenuating
+    /// by `1/(1 + target)` — a factor of 21 at the loop these tests use — and suppress exactly the
+    /// transient an `AGC` exists to pass.
+    #[test]
+    fn a_gain_loop_returns_to_rest_and_not_to_some_other_level() {
+        let dt = 1.0 / FS;
+        let mut a = Agc::new(10e-3, 2.0).expect("valid loop");
+        for _ in 0..(FS as usize / 10) {
+            a.step(dt, 5.0);
+        }
+        assert!(a.level() > 4.9, "the loop never settled: level {}", a.level());
+        a.reset();
+        assert_eq!(a.level(), 0.0, "a reset loop's level is {}", a.level());
+        assert_eq!(a.gain(), 1.0, "a reset loop attenuates by {}", a.gain());
+        // A reset loop is the loop the constructor makes, coefficients and state alike.
+        assert_eq!(a, Agc::new(10e-3, 2.0).expect("valid loop"));
+        // And the first sample after a reset passes ungained, as it does from the constructor.
+        assert_eq!(a.step(dt, 1.0), 1.0);
+    }
+
+    /// [`Filterbank::reset`] clears five kinds of state; two of them had no test.
+    ///
+    /// ⛔ `a_bank_resets_between_runs` runs the half-wave path with no gain loops, so the loops
+    /// that reset the hair cells and the `AGC`s could each be reduced to a no-op with every test
+    /// green: nothing ran a [`Transduction::Meddis`] bank or an [`Agc`] twice through one
+    /// [`Filterbank`]. Both stages carry state across a run — a drained transmitter pool and a
+    /// settled level — so an unreset bank's second run is a different recording.
+    #[test]
+    fn a_bank_resets_every_stage_it_owns_between_runs() {
+        let build = || {
+            Filterbank::erb_bank(
+                FS,
+                500.0,
+                2000.0,
+                5,
+                Transduction::Meddis(Meddis::default()),
+            )
+            .expect("a valid bank")
+            .with_agc(Some(Agc::new(20e-3, 20.0).expect("valid loop")))
+            .expect("a valid loop")
+        };
+        // Loud in the hair cell's own units — the permeability half-saturates at B = 300 — so both
+        // the transmitter pool and the gain loop really move.
+        let loud = tone(FS, 1000.0, 300.0, 0.15).expect("a valid tone");
+        let mut bank = build();
+        let first = bank.spike_train(&loud).expect("finite");
+        let second = bank.spike_train(&loud).expect("finite");
+        assert!(!first.is_empty(), "the loud tone produced no spikes at all");
+        assert_eq!(
+            first, second,
+            "the second run through one bank differed from the first"
+        );
+        let mut fresh = build();
+        assert_eq!(
+            first,
+            fresh.spike_train(&loud).expect("finite"),
+            "two runs through one bank differed from one run through two"
+        );
+        // And the run really does leave those two stages away from rest, so the equality above is
+        // a reset being performed rather than a state that never moved.
+        let rest = Meddis::default();
+        assert!(
+            bank.hair.iter().any(|h| (h.q - rest.q).abs() > 1e-6),
+            "no hair cell's pool moved during the run"
+        );
+        assert!(
+            bank.agc.iter().any(|a| a.level() > 1e-6),
+            "no gain loop's level moved during the run"
+        );
+    }
+
+    /// The displacement is half-wave rectified **before** it reaches the transduction stage.
+    ///
+    /// ⛔ That call is invisible on the [`Transduction::HalfWave`] arm, because
+    /// [`Compression::apply`] rectifies its own input; only a [`Transduction::Meddis`] bank can
+    /// tell, and the one test that drove the hair cell hard enough
+    /// (`the_agc_acts_on_the_meddis_arm_too`) compares two banks that move together. Handing the
+    /// raw displacement to [`Meddis`] does not merely pass the negative half through: the
+    /// permeability law shuts the channels wherever `s + A < 0`, so the fibre falls nearly silent
+    /// for half of every cycle. Measured under a 30-unit tone at the channel's own centre
+    /// frequency, over the settled last quarter: the rectified path's instantaneous rate never
+    /// falls below 31.4 spikes/s, the raw path's falls to 1.2.
+    #[test]
+    fn the_transduction_stage_sees_the_rectified_displacement_and_not_the_raw_one() {
+        let dt = 1.0 / FS;
+        let f_c = 1000.0;
+        let x = tone(FS, f_c, 30.0, 0.4).expect("a valid tone");
+        let mut bank =
+            Filterbank::from_centre_frequencies(FS, &[f_c], Transduction::Meddis(Meddis::default()))
+                .expect("a valid bank");
+        let out = bank.transduce(&x).expect("finite");
+
+        // The documented pipeline, rebuilt from this module's own public pieces in the same order
+        // and with the same operations, so this is an equality and not a tolerance.
+        let mut g = Gammatone::new(f_c, FS).expect("valid channel");
+        let mut cell = Meddis::default();
+        let want: Vec<f64> = x
+            .iter()
+            .map(|&s| cell.step(dt, half_wave(g.step(s))))
+            .collect();
+        assert_eq!(
+            out[0], want,
+            "the bank's Meddis arm is not gammatone, half_wave, hair cell"
+        );
+
+        // What the rectifier buys, computed here so this test's margin is measured rather than
+        // asserted: the same cell fed the raw displacement shuts during the negative half-cycle.
+        let mut g_raw = Gammatone::new(f_c, FS).expect("valid channel");
+        let mut cell_raw = Meddis::default();
+        let raw: Vec<f64> = x.iter().map(|&s| cell_raw.step(dt, g_raw.step(s))).collect();
+        let tail = x.len() * 3 / 4;
+        let floor_of = |v: &[f64]| v[tail..].iter().cloned().fold(f64::INFINITY, f64::min);
+        assert!(
+            floor_of(&out[0]) > 10.0 * floor_of(&raw),
+            "the rectified path's rate floor is {} spikes/s and the raw path's is {}: the two \
+             are not far enough apart for this test to be measuring the rectifier",
+            floor_of(&out[0]),
+            floor_of(&raw)
+        );
+    }
+
+    /// `k(s) = g·(s + A)/(s + A + B)` for `s + A > 0` and **zero** below it — the paper's own
+    /// clamp, which exists because a large enough inward displacement shuts the transduction
+    /// channels entirely.
+    ///
+    /// ⛔ Nothing in this suite evaluated the law there, because `transduce_one` only ever hands it
+    /// a rectified value. Without the clamp a displacement of −10 units returns a permeability of
+    /// −33.9 s⁻¹ and a steady rate of 220 spikes/s — past both documented ceilings, from a sound
+    /// pushing the stereocilia the wrong way.
+    #[test]
+    fn the_permeability_law_shuts_the_channels_at_large_inward_displacement() {
+        let m = Meddis::default();
+        for &s in &[-5.0, -5.5, -10.0, -300.0, -1e9] {
+            assert_eq!(m.permeability(s), 0.0, "k({s}) was {}", m.permeability(s));
+            assert_eq!(
+                m.steady_state_rate(s),
+                0.0,
+                "a shut channel has no steady rate, got {}",
+                m.steady_state_rate(s)
+            );
+        }
+        // The clamp sits exactly at `s + A == 0`, and just above it the law is small and positive.
+        let just_open = m.permeability(-4.9);
+        assert!(
+            just_open > 0.0 && just_open < 1.0,
+            "k(-4.9) was {just_open}, not the small positive value the law gives at s + A = 0.1"
+        );
+        // Non-negative and monotone across the clamp: the law has no inward-opening branch.
+        let mut previous = -1.0;
+        for i in 0..400 {
+            let s = -20.0 + i as f64 * 0.1;
+            let k = m.permeability(s);
+            assert!(k >= 0.0, "k({s}) = {k}: the channels opened inward");
+            assert!(k >= previous, "k is not monotone at s = {s}: {k} after {previous}");
+            previous = k;
+        }
+    }
+
+    /// `M` is the pool maximum, and it appears in the equilibrium cleft as a factor.
+    ///
+    /// ⛔ It is `1.0` in the published parameter set and in every fixture here, and a factor of one
+    /// is the identity — so `k·y·M / (y(l+r) + k·l)` could drop its `M` and the integrator would
+    /// still agree with the closed form. `M` is the only forcing term in the three equations, so
+    /// the whole system is linear in it: doubling the pool maximum must double the equilibrium
+    /// cleft, pool and reprocessing store.
+    #[test]
+    fn the_steady_state_closed_forms_carry_the_pool_maximum() {
+        let dt = 1.0 / FS;
+        let s = 50.0;
+        let one = Meddis::default();
+        let mut big = Meddis {
+            m: 2.0,
+            ..Meddis::default()
+        };
+        big.reset();
+        big.validate().expect("a doubled pool maximum is a valid cell");
+        // Six seconds, as `meddis_settles_on_its_closed_form_steady_state` uses: the slowest mode
+        // relaxes on the order of 1/y.
+        for _ in 0..(6 * FS as usize) {
+            big.step(dt, s);
+        }
+        let k = big.permeability(s);
+        let want_c = big.steady_state_cleft(k);
+        let want_q = big.steady_state_pool(k);
+        assert!(
+            (big.c - want_c).abs() / want_c < 1e-6,
+            "with M = 2 the integrated cleft was {} and the closed form says {want_c}",
+            big.c
+        );
+        assert!(
+            (big.q - want_q).abs() / want_q < 1e-6,
+            "with M = 2 the integrated pool was {} and the closed form says {want_q}",
+            big.q
+        );
+        // And the closed form is linear in M. Scaling by two is exact in binary floating point and
+        // the two denominators are the same expression, so these are equalities.
+        assert_eq!(big.steady_state_cleft(k), 2.0 * one.steady_state_cleft(k));
+        assert_eq!(big.max_steady_rate(), 2.0 * one.max_steady_rate());
+    }
+
+    /// Forward Euler evaluates all three derivatives at the state the step **starts** from.
+    ///
+    /// ⛔ Writing the pool back before the cleft's derivative reads it turns the method into a
+    /// Gauss-Seidel sweep, and that is invisible to everything here: all three derivatives are
+    /// zero at equilibrium, so `meddis_settles_on_its_closed_form_steady_state` cannot see it, and
+    /// the transient it does bend has no closed form that any test pins. Checked as the arithmetic
+    /// it is — one step, from a known state, against the three updates written out by hand in the
+    /// same order, so these are equalities.
+    #[test]
+    fn the_hair_cell_integrates_by_forward_euler_from_one_state() {
+        let dt = 1.0 / FS;
+        for &s in &[0.0, 200.0, 1e4] {
+            let mut m = Meddis::default();
+            let (q0, c0, w0) = (m.q, m.c, m.w);
+            let k = m.permeability(s);
+            let dq = m.y * (m.m - q0) + m.x * w0 - k * q0;
+            let dc = k * q0 - m.l * c0 - m.r * c0;
+            let dw = m.r * c0 - m.x * w0;
+            let rate = m.step(dt, s);
+            assert_eq!(m.q, q0 + dq * dt, "s = {s}: the pool");
+            assert_eq!(m.c, c0 + dc * dt, "s = {s}: the cleft");
+            assert_eq!(m.w, w0 + dw * dt, "s = {s}: the reprocessing store");
+            assert_eq!(rate, m.h * m.c, "s = {s}: the rate returned");
+        }
+        // And the step really moves, so an update applied twice is a different number: from the
+        // silent equilibrium under a 200-unit stimulus the pool's derivative measures
+        // −279.5 quanta per second.
+        let m = Meddis::default();
+        let k = m.permeability(200.0);
+        let dq = m.y * (m.m - m.q) + m.x * m.w - k * m.q;
+        assert!(
+            dq.abs() > 1.0,
+            "the probe state was already at equilibrium: dq = {dq}"
+        );
+    }
+
+    /// [`Meddis::validate`]'s doc says the state variables "may be zero but not negative".
+    ///
+    /// ⛔ Every fixture handed it a state built by [`Meddis::reset`], which is strictly positive,
+    /// so the state loop's comparison was never driven from either side. A guard loosened to
+    /// `v < -1.0` still refuses a pool of −2 and accepts one of −1e−6, and a negative cleft is a
+    /// negative firing rate that every rectifier downstream hides.
+    #[test]
+    fn a_hair_cell_with_a_negative_pool_is_refused() {
+        for m in [
+            Meddis {
+                q: -1e-6,
+                ..Meddis::default()
+            },
+            Meddis {
+                c: -1e-9,
+                ..Meddis::default()
+            },
+            Meddis {
+                w: -0.5,
+                ..Meddis::default()
+            },
+        ] {
+            assert!(
+                matches!(m.validate(), Err(CochleaError::NotPositive { .. })),
+                "a negative state variable was accepted: {m:?}"
+            );
+            assert!(
+                matches!(
+                    Filterbank::erb_bank(FS, 400.0, 3000.0, 4, Transduction::Meddis(m)),
+                    Err(CochleaError::NotPositive { .. })
+                ),
+                "a bank was built on a cell with a negative state variable"
+            );
+        }
+        // Zero is a state, not an error: an emptied cell is one the model can start from.
+        assert!(
+            Meddis {
+                q: 0.0,
+                c: 0.0,
+                w: 0.0,
+                ..Meddis::default()
+            }
+            .validate()
+            .is_ok()
+        );
+        // And a non-finite one is refused as non-finite rather than as non-positive.
+        assert!(matches!(
+            Meddis {
+                c: f64::NAN,
+                ..Meddis::default()
+            }
+            .validate(),
+            Err(CochleaError::NotFinite { .. })
+        ));
+    }
+
+    /// One `get_mut(ch)` in `transduce_one` is the whole of the per-channel gain wiring.
+    ///
+    /// ⛔ Every `AGC` test measured one channel, so `get_mut(0)` would have every channel gained by
+    /// whatever channel zero happens to hear and nothing would fail. Driven from both ends of a
+    /// three-channel bank: the tone's own channel must be compressed, and the channels that cannot
+    /// hear the tone must be left alone. Measured under a 2 kHz tone: the 2 kHz channel goes from
+    /// 1.000 to 0.137 and the 500 Hz channel from 9.17e−6 to 9.17e−6, its own loop never having
+    /// left rest.
+    #[test]
+    fn each_channel_runs_its_own_gain_loop() {
+        let build = |agc: Option<Agc>| {
+            Filterbank::from_centre_frequencies(
+                FS,
+                &[500.0, 1000.0, 2000.0],
+                Transduction::HalfWave(Compression::Linear),
+            )
+            .expect("a valid bank")
+            .with_agc(agc)
+            .expect("a valid loop")
+        };
+        let fresh_loop = || Some(Agc::new(20e-3, 20.0).expect("valid loop"));
+        let peak = |bank: &mut Filterbank, x: &[f64], ch: usize| -> f64 {
+            let out = bank.transduce(x).expect("finite");
+            let tail = out[ch].len() * 2 / 3;
+            out[ch][tail..].iter().cloned().fold(0.0f64, f64::max)
+        };
+        for &(driven, deaf) in &[(2usize, 0usize), (0, 2)] {
+            let f = [500.0, 1000.0, 2000.0][driven];
+            let x = tone(FS, f, 1.0, 0.3).expect("a valid tone");
+            let own_plain = peak(&mut build(None), &x, driven);
+            let own_gained = peak(&mut build(fresh_loop()), &x, driven);
+            let far_plain = peak(&mut build(None), &x, deaf);
+            let far_gained = peak(&mut build(fresh_loop()), &x, deaf);
+            assert!(
+                own_gained < 0.3 * own_plain,
+                "a {f} Hz tone left channel {driven} at {own_gained} against {own_plain} \
+                 ungained: its own loop is not acting on it"
+            );
+            assert!(
+                far_gained > 0.99 * far_plain,
+                "a {f} Hz tone left channel {deaf} at {far_gained} against {far_plain} ungained: \
+                 it is being gained by a loop that is not its own"
+            );
+        }
+    }
+
+    /// The three output populations are three independent sets of neurons.
+    ///
+    /// ⛔ The offset pass steps `offset_cells[ch]`; stepping `onset_cells[ch]` there instead still
+    /// puts an offset spike at the right instant, because the two currents are the two rectified
+    /// halves of one difference and are never both non-zero on the same sample — so every edge
+    /// test stayed green while one whole population was never stepped at all. There is no public
+    /// builder that changes one population only ([`Filterbank::with_cell`] sets all three), so the
+    /// cells are reached directly here. Measured on a 200 ms burst: 36 sustained, 23 onset,
+    /// 23 offset, and a 10 mV stiffer offset cell drops the offsets to 13 and moves nothing else.
+    #[test]
+    fn the_three_populations_are_three_independent_sets_of_neurons() {
+        let build = || {
+            Filterbank::erb_bank(
+                FS,
+                400.0,
+                3000.0,
+                6,
+                Transduction::HalfWave(Compression::default()),
+            )
+            .expect("a valid bank")
+        };
+        let x = tone_burst(FS, 1000.0, 1.0, 0.4, 0.1, 0.2, 2e-3).expect("a valid burst");
+        let count = |bank: &mut Filterbank| -> (usize, usize, usize) {
+            let train = bank.spike_train(&x).expect("finite");
+            let (mut s, mut on, mut off) = (0, 0, 0);
+            for sp in train.spikes() {
+                match bank.decode_source(sp.source) {
+                    Some((ChannelKind::Sustained, _)) => s += 1,
+                    Some((ChannelKind::Onset, _)) => on += 1,
+                    Some((ChannelKind::Offset, _)) => off += 1,
+                    None => panic!("a spike with no address"),
+                }
+            }
+            (s, on, off)
+        };
+        let (base_s, base_on, base_off) = count(&mut build());
+        assert!(
+            base_s > 0 && base_on > 0 && base_off > 0,
+            "{base_s} {base_on} {base_off}"
+        );
+
+        let mut stiff_offset = build();
+        for c in &mut stiff_offset.offset_cells {
+            c.v_th += 10e-3;
+        }
+        let (s, on, off) = count(&mut stiff_offset);
+        assert_eq!(
+            (s, on),
+            (base_s, base_on),
+            "raising the OFFSET threshold moved the other two populations"
+        );
+        assert!(
+            off < base_off,
+            "a 10 mV stiffer offset cell left the offsets at {off} against {base_off}: they are \
+             not being produced by the offset cells"
+        );
+
+        let mut stiff_onset = build();
+        for c in &mut stiff_onset.onset_cells {
+            c.v_th += 10e-3;
+        }
+        let (s, on, off) = count(&mut stiff_onset);
+        assert_eq!(
+            (s, off),
+            (base_s, base_off),
+            "raising the ONSET threshold moved the other two populations"
+        );
+        assert!(
+            on < base_on,
+            "a 10 mV stiffer onset cell left the onsets at {on} against {base_on}"
+        );
+    }
+
+    /// [`Filterbank::onset_signal`] must be the same front end [`Filterbank::spike_train`] runs.
+    ///
+    /// ⛔ That is what `step_change_detector`'s doc claims — "a test that measures the change
+    /// signal through one and a deployment that spikes through the other would otherwise be
+    /// checking something the deployment does not run" — and nothing checked it. Advancing the
+    /// detector before the filter that feeds it lags `onset_signal`'s trace by exactly one sample
+    /// and leaves `spike_train` alone, and the steady-tone test that reads the trace holds an
+    /// eightfold margin. Here the trace is replayed through a fresh [`Lif`] and must reproduce the
+    /// bank's own onset spikes, tick for tick.
+    #[test]
+    fn the_change_signal_a_bank_reports_is_the_one_its_onset_cells_are_driven_by() {
+        let mut bank = Filterbank::erb_bank(
+            FS,
+            400.0,
+            3000.0,
+            6,
+            Transduction::HalfWave(Compression::default()),
+        )
+        .expect("a valid bank");
+        let x = tone_burst(FS, 1000.0, 1.0, 0.4, 0.1, 0.2, 2e-3).expect("a valid burst");
+        let dt = bank.dt();
+        let drive = bank.onset_drive();
+        let trace = bank.onset_signal(&x).expect("finite");
+        let train = bank.spike_train(&x).expect("finite");
+
+        let mut replayed: Vec<(u64, usize)> = Vec::new();
+        for (ch, t) in trace.iter().enumerate() {
+            let mut cell = Lif::default();
+            cell.reset();
+            for (i, &d) in t.iter().enumerate() {
+                if cell.step(dt, d.max(0.0) * drive) {
+                    replayed.push((i as u64, ch));
+                }
+            }
+        }
+        replayed.sort_unstable();
+        let mut reported: Vec<(u64, usize)> = train
+            .spikes()
+            .iter()
+            .filter_map(|s| match bank.decode_source(s.source) {
+                Some((ChannelKind::Onset, ch)) => Some((s.t, ch)),
+                _ => None,
+            })
+            .collect();
+        reported.sort_unstable();
+        assert!(
+            !reported.is_empty(),
+            "the burst produced no onset spikes to compare against"
+        );
+        assert_eq!(
+            replayed, reported,
+            "the trace onset_signal reports does not drive the bank's own onset cells"
+        );
+    }
+
+    /// A [`Cochleagram`]'s three rows each hold their own population's spikes.
+    ///
+    /// ⛔ The rows are only ever read one at a time, and in silence all three are zero — so
+    /// counting the onset spikes into the offset row, or summing the wrong row in
+    /// [`Cochleagram::total_sustained_hz`], passed every test here. Checked against the train the
+    /// bank itself produced, spike by spike. Measured on a 200 ms burst in a 400 ms buffer: the
+    /// onset row's first channel holds 2.5 Hz where the offset row's holds 0.0, so the two rows
+    /// are distinguishable rather than accidentally equal.
+    #[test]
+    fn a_cochleagram_counts_each_population_into_its_own_row() {
+        let mut bank = Filterbank::erb_bank(
+            FS,
+            400.0,
+            3000.0,
+            6,
+            Transduction::HalfWave(Compression::default()),
+        )
+        .expect("a valid bank");
+        let x = tone_burst(FS, 1000.0, 1.0, 0.4, 0.1, 0.2, 2e-3).expect("a valid burst");
+        let train = bank.spike_train(&x).expect("finite");
+        let gram = bank.cochleagram(&train, x.len() as u64);
+        let n = bank.channels();
+        let (mut sus, mut on, mut off) = (vec![0u64; n], vec![0u64; n], vec![0u64; n]);
+        for s in train.spikes() {
+            match bank.decode_source(s.source) {
+                Some((ChannelKind::Sustained, ch)) => sus[ch] += 1,
+                Some((ChannelKind::Onset, ch)) => on[ch] += 1,
+                Some((ChannelKind::Offset, ch)) => off[ch] += 1,
+                None => panic!("a spike with no address"),
+            }
+        }
+        assert_eq!(gram.seconds, x.len() as f64 * bank.dt());
+        for ch in 0..n {
+            // `k as f64 / seconds` is the operation the cochleagram performs, and it is repeated
+            // here, so these are equalities.
+            assert_eq!(
+                gram.sustained_hz[ch],
+                sus[ch] as f64 / gram.seconds,
+                "channel {ch}: the sustained row"
+            );
+            assert_eq!(
+                gram.onset_hz[ch],
+                on[ch] as f64 / gram.seconds,
+                "channel {ch}: the onset row"
+            );
+            assert_eq!(
+                gram.offset_hz[ch],
+                off[ch] as f64 / gram.seconds,
+                "channel {ch}: the offset row"
+            );
+        }
+        // The rows really differ here, so a comparison that swapped two of them would fail rather
+        // than compare a row against itself.
+        assert_ne!(gram.onset_hz, gram.offset_hz);
+        assert_ne!(gram.sustained_hz, gram.onset_hz);
+        // The total is the sustained row's own sum, in the same order, so this is an equality.
+        let want: f64 = sus.iter().map(|&k| k as f64 / gram.seconds).sum();
+        assert_eq!(
+            gram.total_sustained_hz(),
+            want,
+            "the total came to {} against {want}",
+            gram.total_sustained_hz()
+        );
+        assert_ne!(
+            gram.total_sustained_hz(),
+            gram.onset_hz.iter().sum::<f64>(),
+            "the sustained total and the onset total are the same number here"
+        );
+    }
+
+    /// A run of zero ticks has no duration to divide by.
+    ///
+    /// ⛔ Every call in this suite passes `signal.len()`, so the guard was never driven. With the
+    /// comparison loosened to `>= 0.0` an empty train gives `0/0` and a non-empty one gives `k/0`,
+    /// so every rate comes back `NaN` or infinite — and a `NaN` rate compares false against every
+    /// bound a caller might put it under.
+    #[test]
+    fn a_run_of_no_length_reports_nothing_rather_than_dividing_by_zero() {
+        let bank = Filterbank::erb_bank(
+            FS,
+            400.0,
+            3000.0,
+            4,
+            Transduction::HalfWave(Compression::Linear),
+        )
+        .expect("a valid bank");
+        let populated = Train::from_spikes(vec![
+            Spike { t: 0, source: 0 },
+            Spike { t: 0, source: 5 },
+            Spike { t: 0, source: 9 },
+        ]);
+        for train in [Train::new(), populated] {
+            let gram = bank.cochleagram(&train, 0);
+            assert_eq!(gram.seconds, 0.0);
+            for ch in 0..bank.channels() {
+                assert_eq!(
+                    gram.sustained_hz[ch], 0.0,
+                    "channel {ch} sustained rate was {}",
+                    gram.sustained_hz[ch]
+                );
+                assert_eq!(
+                    gram.onset_hz[ch], 0.0,
+                    "channel {ch} onset rate was {}",
+                    gram.onset_hz[ch]
+                );
+                assert_eq!(
+                    gram.offset_hz[ch], 0.0,
+                    "channel {ch} offset rate was {}",
+                    gram.offset_hz[ch]
+                );
+            }
+            assert_eq!(gram.total_sustained_hz(), 0.0);
+            assert!(
+                gram.best_channel().is_none(),
+                "a run of no length has no best channel"
+            );
+        }
+    }
+
+    /// Both sweeps start at zero phase, as [`tone`] does and for the same reason: a waveform that
+    /// began mid-cycle opens with a step, and the click's onset response is exactly what a
+    /// tonotopy measurement reads.
+    ///
+    /// ⛔ Nothing here could see it. The zero-crossing count that checks a chirp's total phase is
+    /// a count of DIFFERENCES and is blind to a constant offset — and the exponential sweep's own
+    /// `− 1` is that offset. Dropping it puts 293.6 radians of phase on sample zero and moves the
+    /// crossing count by less than the test's own tolerance of two.
+    #[test]
+    fn both_chirps_start_at_zero_phase_and_rise() {
+        for sweep in [Sweep::Linear, Sweep::Exponential] {
+            let x = chirp(FS, 200.0, 4000.0, 1.0, 0.7, sweep).expect("a valid chirp");
+            assert_eq!(
+                x[0], 0.0,
+                "{sweep:?}: sample zero is {}, so the chirp begins with a step",
+                x[0]
+            );
+            // One sample in, the phase is the start frequency's: 2*pi*200/48000 = 0.02618 rad. The
+            // tolerance is the sweep's own frequency change across that one sample — 0.113 Hz for
+            // the linear sweep, which moves sample one by 7.4e-6.
+            let want = (2.0 * PI * 200.0 / FS).sin();
+            assert!(
+                (x[1] - want).abs() < 2e-5,
+                "{sweep:?}: sample one was {}, the 200 Hz start says {want}",
+                x[1]
+            );
+        }
+        // A degenerate exponential sweep really is the tone it says it degenerates to.
+        let flat = chirp(FS, 440.0, 440.0, 0.7, 0.05, Sweep::Exponential).expect("a valid chirp");
+        let plain = tone(FS, 440.0, 0.7, 0.05).expect("a valid tone");
+        assert_eq!(flat.len(), plain.len());
+        for (i, (&a, &b)) in flat.iter().zip(plain.iter()).enumerate() {
+            assert!(
+                (a - b).abs() < 1e-12,
+                "sample {i}: the flat sweep gave {a}, the tone {b}"
+            );
+        }
+    }
+
+    /// A noise burst carries the amplitude it was asked for.
+    ///
+    /// ⛔ The only burst this suite MEASURES has an amplitude of 1.0, and multiplying by one is
+    /// the identity; the determinism test compares two runs that would both be missing the factor.
+    /// Two bursts from the same seed at `a` and `2a`: scaling by two is exact in binary floating
+    /// point, so the second is the first doubled, sample for sample.
+    #[test]
+    fn a_noise_burst_carries_the_amplitude_it_was_asked_for() {
+        let mut r1 = Rng::new(31);
+        let quiet = noise_burst(&mut r1, FS, 1.0, 0.2, 0.05, 0.1, 0.0).expect("a valid burst");
+        let mut r2 = Rng::new(31);
+        let loud = noise_burst(&mut r2, FS, 2.0, 0.2, 0.05, 0.1, 0.0).expect("a valid burst");
+        assert_eq!(quiet.len(), loud.len());
+        for (i, (&q, &l)) in quiet.iter().zip(loud.iter()).enumerate() {
+            assert_eq!(l, 2.0 * q, "sample {i}: {l} is not twice {q}");
+        }
+        // And the level is the doc's own closed form at an amplitude that is not one: uniform on
+        // [-a, a] has an rms of a/sqrt(3), which is 1.1547 at a = 2.
+        let inside = &loud[(0.05 * FS) as usize..(0.15 * FS) as usize];
+        let r = rms(inside).expect("a non-empty window");
+        assert!(
+            (r - 2.0 / 3f64.sqrt()).abs() < 0.02,
+            "the burst's rms was {r}, uniform on [-2, 2] says {}",
+            2.0 / 3f64.sqrt()
+        );
+        let extreme = inside.iter().cloned().fold(0.0f64, |m, v| m.max(v.abs()));
+        assert!(
+            extreme > 1.9 && extreme <= 2.0,
+            "the burst's largest sample was {extreme}, not near the amplitude of 2 it was asked for"
+        );
     }
 }

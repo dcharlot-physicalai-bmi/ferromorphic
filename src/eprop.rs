@@ -258,6 +258,12 @@ pub const MAX_GRID_STEPS: usize = 1 << 26;
 ///
 /// Both arguments are already known finite and strictly positive; this is the third condition, the
 /// one that is a property of the pair rather than of either.
+///
+/// The count is the **floor** of the ratio, so the last grid point a caller scans, `steps * dt`, is
+/// at or before `t_end`. Rounding up instead puts one point past the interval that was asked for,
+/// and both callers then answer a question nobody posed:
+/// `the_grid_stops_at_the_end_it_was_given_rather_than_one_point_past_it` measures it as a tempotron
+/// peak reported at a time outside its own trial and a `SpikeProp` crossing reported after `t_end`.
 fn grid_steps(dt: f64, t_end: f64) -> Result<usize, LearnError> {
     let steps = t_end / dt;
     if !(steps <= MAX_GRID_STEPS as f64) {
@@ -442,6 +448,13 @@ pub enum Jacobian {
     /// 3.38 against BPTT on a feedforward layer where every other term is exact, with the gradient
     /// coming out 4.1 times too long. That figure is proportional to the surrogate's peak; see the
     /// module doc's second table before concluding anything from it.
+    ///
+    /// It is proportional to the **threshold** as well, and for the same reason: the term being
+    /// dropped is `theta * psi`. On that same layer this implementation measures relative L2 errors
+    /// of 2.1045, 3.3817, 4.5517 and 6.0094 at thresholds 0.5, 1, 2 and 4, so the 3.38 above is the
+    /// `theta = 1` entry of a family rather than a constant — while [`Jacobian::Full`] stays exact
+    /// at every one of them, between 2.8e-16 and 5.1e-16.
+    /// `the_feedforward_gradient_is_exact_at_thresholds_other_than_one` is that sweep.
     Leak,
     /// The leaks, plus the soft reset `-theta * psi` on the membrane and the self-connection
     /// `V[j][j] * psi` into the current.
@@ -452,6 +465,10 @@ pub enum Jacobian {
     /// gradient exactly; with recurrence it cuts the relative error from 1.97 to 0.23 on the
     /// module doc's reference layer. This implementation did not locate this variant offered as an
     /// option in any published e-prop implementation it read.
+    ///
+    /// The `theta` that scales the reset is load-bearing, and it was invisible to this module's own
+    /// tests until it was swept: every layer built from [`crate::surrogate::LifLayerSpec::default`]
+    /// has a threshold of exactly one, where multiplying by it is the identity.
     Full,
 }
 
@@ -501,6 +518,12 @@ fn geometric_sum(ln_kappa: f64, denom: f64, n: usize) -> f64 {
 ///
 /// `on_step` receives `(t, u, s_now, s_prev)`: the membrane potentials after the step, the spikes
 /// emitted at this step, and the spikes emitted at the previous one.
+///
+/// Input channel `i` at step `t` is `x[t * n_in + i]`, and
+/// `an_input_with_more_than_one_channel_is_read_with_its_channel_stride` is what holds that stride:
+/// at `n_in == 1` — which is what [`crate::surrogate::LifLayerSpec::default`] and
+/// [`crate::surrogate::DelayedXor`] both give — that index and `x[t + i]` are the same number, so
+/// nothing built from either of them can see the stride at all.
 fn sweep(
     layer: &LifLayer,
     sur: &dyn Surrogate,
@@ -1078,6 +1101,13 @@ impl Tempotron {
     /// that puts the peak on the first one, where every postsynaptic potential is zero and the
     /// update is therefore zero: the fixed point at the origin that this type's doc describes exists
     /// because of it. `the_tempotron_cannot_bootstrap_from_a_silent_membrane` pins it.
+    ///
+    /// The scan starts from minus infinity rather than from zero, which is what lets it answer for a
+    /// membrane that never rises above the resting potential. Give the afferents negative weights
+    /// and a spike that arrived before the trial opened and every value on the grid is negative;
+    /// this implementation measures a maximum of `-0.1025` at 30 ms for the pattern in
+    /// `a_membrane_that_stays_negative_still_reports_its_own_largest_value`, where a scan seeded at
+    /// zero would report `0.0` at `t = 0` — a value that membrane never takes.
     ///
     /// # Errors
     ///
@@ -2421,6 +2451,189 @@ mod tests {
         assert!(compare_to_bptt(&alive, &sur, &x, 0, EpropConfig::default()).is_ok());
     }
 
+
+    /// The documented default is [`Jacobian::Leak`] — the eligibility trace as the e-prop
+    /// literature writes it — and not the [`Jacobian::Full`] variant this module adds.
+    ///
+    /// Nothing in the suite could see which one it was. Every test that takes
+    /// `EpropConfig::default()` either hands the same config to *both* sides of
+    /// [`compare_to_bptt`], where the choice cancels out of the comparison, or reads only the
+    /// readout block, which is exact under either variant. So the field could have been switched to
+    /// `Full` with every assertion still passing, and the module doc's first table — whose second
+    /// row is the one the default selects — would have become a description of a configuration no
+    /// caller gets by default. The second half of this test is what makes the first half worth
+    /// asserting: the two variants are 15 orders of magnitude apart on the very layer that table
+    /// names, so the default is a choice and not a formality.
+    #[test]
+    fn the_default_eprop_config_carries_the_leak_only_trace_the_literature_writes() {
+        assert_eq!(
+            EpropConfig::default(),
+            EpropConfig { jacobian: Jacobian::Leak, spike_fn: SpikeFn::Heaviside }
+        );
+        let layer = spec(false, 12).build().expect("valid");
+        let sur = ArcTan::default();
+        let x = xor_pattern();
+        // The module doc's first table, feedforward row: `Leak` measures 3.382 and `Full` 3.5e-16.
+        // The bracket is the one `dropping_the_reset_term_changes_the_feedforward_gradient` uses,
+        // and a default of `Full` would land fifteen orders of magnitude below its floor.
+        let by_default = compare_to_bptt(&layer, &sur, &x, 1, EpropConfig::default())
+            .expect("non-zero gradient");
+        assert!(
+            by_default.relative > 3.0 && by_default.relative < 3.8,
+            "the default config's relative error against BPTT is {}",
+            by_default.relative
+        );
+        let full = EpropConfig { jacobian: Jacobian::Full, spike_fn: SpikeFn::Heaviside };
+        let exact = compare_to_bptt(&layer, &sur, &x, 1, full).expect("non-zero gradient");
+        assert!(exact.relative < 1e-9, "the Full variant is no longer exact: {}", exact.relative);
+    }
+
+    /// [`logits_streaming`] documents [`LearnError::ShapeMismatch`] for an `x` that is empty or
+    /// whose length is not a multiple of `n_in`, and it is `sweep`'s own guard that owes it.
+    ///
+    /// The hole is that the guard is written twice. [`eprop_grad_from_dlogits`] repeats the same
+    /// check before it calls `sweep`, and `eprop_refuses_a_malformed_call` goes through that
+    /// copy — so deleting the one inside `sweep` left every assertion in the module passing while
+    /// the only public function that depends on it, [`logits_streaming`], stopped refusing
+    /// anything. The second case below also needs a layer with more than one input channel, which
+    /// no other fixture here has: at `n_in == 1` every length is a multiple of one and the
+    /// "not a multiple" half of the guard cannot be reached at all.
+    #[test]
+    fn the_streaming_forward_pass_refuses_a_malformed_input_on_its_own() {
+        let sur = ArcTan::default();
+        let one_channel = spec(true, 4).build().expect("valid");
+        assert!(matches!(
+            logits_streaming(&one_channel, &sur, &[], SpikeFn::Heaviside),
+            Err(LearnError::ShapeMismatch { what: "input", got: 0, want: 1 })
+        ));
+        let three_channel = LifLayerSpec {
+            n_in: 3,
+            n_rec: 4,
+            n_out: 2,
+            recurrent: false,
+            seed: 3,
+            ..LifLayerSpec::default()
+        }
+        .build()
+        .expect("valid");
+        // Seven is two steps of three channels plus a stray number: there is no `t_steps` that
+        // reads it, and a silently truncated sweep would run two steps and return plausible logits.
+        assert!(matches!(
+            logits_streaming(&three_channel, &sur, &[0.0; 7], SpikeFn::Heaviside),
+            Err(LearnError::ShapeMismatch { what: "input", got: 7, want: 3 })
+        ));
+        // ... and a length that does fit is accepted, so the guard refuses a shape rather than
+        // refusing everything.
+        assert!(logits_streaming(&three_channel, &sur, &[0.0; 9], SpikeFn::Heaviside).is_ok());
+    }
+
+    /// Input channel `i` at step `t` is `x[t * n_in + i]`, and the stride is `n_in`.
+    ///
+    /// This module could not see the stride at all. `LifLayerSpec::default().n_in` is 1 and
+    /// [`crate::surrogate::DelayedXor::n_in`] returns 1, so every e-prop fixture here has exactly
+    /// one input channel — and at `n_in == 1` the index `t * n_in + i` and the index `t + i` are
+    /// the same number for every `t`. Dropping the stride is then invisible, which is the shape of
+    /// hole a parameter that is 1 in every fixture always makes. The input below is three channels
+    /// carrying three different things, so the aliased read at step 1 would pick up channel 0's cue
+    /// from step 0 instead of its own.
+    ///
+    /// Two assertions, because the stride appears twice in this module: once in `sweep`'s drive
+    /// and once in the `xi` selector of [`eprop_grad_from_dlogits`]'s eligibility recursion. The
+    /// first is an equality against [`crate::surrogate::LifLayer::forward`], which owns the other
+    /// copy of the recurrence; the second is the feedforward exactness, which only holds if the
+    /// eligibility saw the same input the forward pass did.
+    #[test]
+    fn an_input_with_more_than_one_channel_is_read_with_its_channel_stride() {
+        let (n_in, t_steps) = (3usize, 40usize);
+        let mut x = vec![0.0; t_steps * n_in];
+        for t in 0..t_steps {
+            x[t * n_in] = if t < 8 { 1.0 } else { 0.0 }; // an early cue
+            x[t * n_in + 1] = if (20..28).contains(&t) { 1.0 } else { 0.0 }; // a late one
+            x[t * n_in + 2] = 0.25; // and a constant drive
+        }
+        let sur = ArcTan::default();
+        let build = |recurrent: bool| {
+            LifLayerSpec { n_in, n_rec: 8, n_out: 2, recurrent, seed: 3, ..LifLayerSpec::default() }
+                .build()
+                .expect("valid")
+        };
+        for recurrent in [false, true] {
+            let layer = build(recurrent);
+            for spike_fn in [SpikeFn::Heaviside, SpikeFn::Smooth] {
+                let stored = layer.forward(&sur, &x, spike_fn).expect("valid");
+                assert!(stored.spike_count() > 0.0, "recurrent {recurrent}: nothing spiked");
+                let streamed = logits_streaming(&layer, &sur, &x, spike_fn).expect("valid");
+                assert_eq!(stored.logits, streamed, "recurrent {recurrent}, {spike_fn:?}");
+            }
+        }
+        // The eligibility's own copy of the index. With no recurrent connections and the full local
+        // Jacobian the e-prop gradient IS the BPTT gradient, and that identity is destroyed by a
+        // presynaptic factor read from the wrong step. Measured 1.97e-16 here, against a bound four
+        // orders of magnitude above it.
+        let layer = build(false);
+        let cfg = EpropConfig { jacobian: Jacobian::Full, spike_fn: SpikeFn::Heaviside };
+        let a = compare_to_bptt(&layer, &sur, &x, 1, cfg).expect("non-zero gradient");
+        assert!(a.relative < 1e-12, "three-channel feedforward relative error {}", a.relative);
+        assert_eq!(a.sign_agreement, 1.0, "a coordinate had the wrong sign");
+        assert_eq!(a.n_compared, 46, "coordinates compared");
+    }
+
+    /// The soft reset in [`Jacobian::Full`] is `-theta * psi`, and the threshold it is scaled by is
+    /// load-bearing.
+    ///
+    /// Every layer in this module is built from `LifLayerSpec::default()`, whose `theta` is exactly
+    /// `1.0` — and a factor of one is the identity, so `layer.theta * psi` and `psi` are the same
+    /// number in every existing fixture. That is the whole hole: the reset term could lose its
+    /// threshold and nothing here would move.
+    ///
+    /// Two claims are pinned at once. The exactness is a statement about the algebra and holds at
+    /// every threshold: with no recurrent connections and the full local Jacobian, e-prop is BPTT,
+    /// measured between 2.8e-16 and 5.1e-16 across the sweep — a few ulps of the gradient's own
+    /// norm — against a bound of 1e-12. And the size of what [`Jacobian::Leak`] drops grows with
+    /// the threshold, because the dropped term IS `theta * psi`: this implementation measures
+    /// relative errors of 2.1045, 3.3817, 4.5517 and 6.0094 at thresholds 0.5, 1, 2 and 4, so the
+    /// module doc's 3.382 is the `theta = 1` entry of a family and not a lone number.
+    #[test]
+    fn the_feedforward_gradient_is_exact_at_thresholds_other_than_one() {
+        let sur = ArcTan::default();
+        let x = xor_pattern();
+        let measured = [(0.5f64, 2.1045f64), (1.0, 3.3817), (2.0, 4.5517), (4.0, 6.0094)];
+        let mut previous = 0.0f64;
+        for (theta, leak_relative) in measured {
+            let layer = LifLayerSpec {
+                n_rec: 12,
+                n_out: 2,
+                recurrent: false,
+                seed: 3,
+                theta,
+                ..LifLayerSpec::default()
+            }
+            .build()
+            .expect("valid");
+            assert_eq!(layer.theta, theta);
+            let spikes = layer.forward(&sur, &x, SpikeFn::Heaviside).expect("valid").spike_count();
+            assert!(spikes > 0.0, "theta {theta}: the layer never fired, so no reset was applied");
+
+            let full = EpropConfig { jacobian: Jacobian::Full, spike_fn: SpikeFn::Heaviside };
+            let a = compare_to_bptt(&layer, &sur, &x, 1, full).expect("non-zero gradient");
+            assert!(a.relative < 1e-12, "theta {theta}: Full relative error {}", a.relative);
+            assert_eq!(a.sign_agreement, 1.0, "theta {theta}: a coordinate had the wrong sign");
+
+            // ... and the term being carried is worth a great deal, by an amount that rises with
+            // the threshold. Bracketed at 1% of each measured value, which is far tighter than the
+            // 0.6-wide gaps between consecutive rows.
+            let leak = EpropConfig { jacobian: Jacobian::Leak, spike_fn: SpikeFn::Heaviside };
+            let b = compare_to_bptt(&layer, &sur, &x, 1, leak).expect("non-zero gradient");
+            assert!(
+                (b.relative - leak_relative).abs() < 0.01 * leak_relative,
+                "theta {theta}: Leak relative error {} against the measured {leak_relative}",
+                b.relative
+            );
+            assert!(b.relative > previous, "theta {theta}: the dropped term did not grow with it");
+            previous = b.relative;
+        }
+    }
+
     // -----------------------------------------------------------------------------------------
     // Tempotron
     // -----------------------------------------------------------------------------------------
@@ -2673,6 +2886,122 @@ mod tests {
             t.peak(&vec![vec![0.0]; 3], 0.0, 0.1),
             Err(LearnError::NotPositive { what: "dt", .. })
         ));
+    }
+
+
+    /// The grid is `0, dt, 2 dt, ...` **up to** `t_end`, so the number of intervals is the floor of
+    /// `t_end / dt` and not its ceiling.
+    ///
+    /// The only direct assertion on `grid_steps` before this one used `dt = 1.0` against a `t_end`
+    /// of exactly `MAX_GRID_STEPS`, where the quotient is a whole number and floor and ceil are the
+    /// same integer; every other fixture in the module puts its answer far from the end of its
+    /// trial, where one extra grid point changes nothing. Rounding up makes both scanners overrun
+    /// the interval they were handed by one step, and both overruns are observable:
+    /// [`Tempotron::peak`] reports a maximum at a time outside the trial, and
+    /// [`SpikeProp::first_spike`] reports a crossing later than the `t_end` its doc promises to
+    /// stop at. Each half below is built so the point past the end would win if it were scanned.
+    #[test]
+    fn the_grid_stops_at_the_end_it_was_given_rather_than_one_point_past_it() {
+        // 1.0 / 0.3 is 3.33, and 5 ms at 2 ms is 2.5 intervals: two quotients that are not whole
+        // numbers, which is the case `dt = 1.0` cannot produce.
+        assert_eq!(grid_steps(0.3, 1.0), Ok(3));
+        assert_eq!(grid_steps(2e-3, 5e-3), Ok(2));
+
+        let mut t = Tempotron::gutig_sompolinsky_2006(1, 1e-3).expect("valid");
+        t.w[0] = 1.0;
+        let pattern = vec![vec![0.0]];
+        let (dt, t_end) = (2e-3, 5e-3);
+        let (v_max, t_max) = t.peak(&pattern, dt, t_end).expect("a valid grid");
+        // 2.0 * 2e-3 is exactly 4e-3: scaling a double by a power of two is exact, so this is an
+        // equality and not a tolerance.
+        assert_eq!(t_max, 4e-3, "the peak landed at {t_max}, and t_end is {t_end}");
+        assert!(t_max <= t_end, "the scan reported a maximum at {t_max}, past t_end {t_end}");
+        assert_eq!(v_max, t.voltage(&pattern, t_max).expect("valid"));
+        // The kernel is still climbing at t_end — it peaks at 6.93 ms — so the first point past the
+        // end is strictly the larger of the two, and a scan that took it would report that one.
+        let past_the_end = t.voltage(&pattern, 6e-3).expect("valid");
+        assert!(past_the_end > v_max, "the point past t_end was not the larger one");
+
+        // The same overrun in the other scanner, where it changes an answer from `None` to a spike
+        // time outside the trial. The membrane reaches 0.982 at 4 ms and 1.097 at 5 ms, so a grid
+        // of floor(4.5) = 4 intervals never sees the threshold and a grid of 5 does.
+        let net = SpikeProp::new(vec![0.6, 0.6], 7e-3, 1.0, 1e4).expect("valid");
+        let pre = [0.0, 1e-3];
+        assert_eq!(grid_steps(1e-3, 4.5e-3), Ok(4));
+        assert!(net.potential(&pre, 4e-3).expect("valid") < net.theta);
+        assert!(net.potential(&pre, 5e-3).expect("valid") > net.theta);
+        assert_eq!(net.first_spike(&pre, 1e-3, 4.5e-3), Ok(None));
+        // ... and given the room, it does fire, so the line above is not reporting a neuron that
+        // never crosses at all. The crossing is between the 4 ms and 5 ms grid points.
+        let fired = net.first_spike(&pre, 1e-3, 6e-3).expect("valid").expect("it crosses");
+        assert!(fired > 4e-3 && fired < 5e-3, "the crossing was refined to {fired}");
+    }
+
+    /// [`Tempotron::peak`] must report the largest value the membrane actually takes on the grid,
+    /// including when every one of those values is negative.
+    ///
+    /// Every tempotron fixture in this module gives its afferents non-negative weights and spike
+    /// times at or after zero, which means `V(0)` is exactly zero — no postsynaptic potential has
+    /// arrived yet — and the maximum is therefore never below zero. A scan seeded with `0.0`
+    /// instead of minus infinity returns `(0.0, 0.0)` for any membrane that stays negative, and in
+    /// every existing fixture that is also the right answer or is beaten by a positive value, so
+    /// the seed is invisible. The pattern here fires one afferent **before** the trial window opens
+    /// — the state [`SpikeProp::first_spike`] already documents for its own scan — and weights both
+    /// afferents negatively, so `V(0)` is already `-0.479` and this implementation measures the
+    /// true maximum as `-0.1025` at 30 ms, a value no seeded scan can return.
+    #[test]
+    fn a_membrane_that_stays_negative_still_reports_its_own_largest_value() {
+        let mut t = Tempotron::gutig_sompolinsky_2006(2, 1e-3).expect("valid");
+        t.w[0] = -0.5;
+        t.w[1] = -0.5;
+        let pattern = vec![vec![-5e-3], vec![30e-3]];
+        let (dt, t_end) = (1e-3, 50e-3);
+        let (v_max, t_max) = t.peak(&pattern, dt, t_end).expect("a valid grid");
+
+        // Every value on the grid is strictly negative, so "the largest" is a real choice among
+        // negatives rather than a fallback to zero.
+        let steps = grid_steps(dt, t_end).expect("a valid grid");
+        assert_eq!(steps, 50);
+        let mut best = (f64::NEG_INFINITY, f64::NAN);
+        for k in 0..=steps {
+            let t_k = k as f64 * dt;
+            let v = t.voltage(&pattern, t_k).expect("valid");
+            assert!(v < 0.0, "the membrane reached {v} at {t_k}, so it is not negative throughout");
+            if v > best.0 {
+                best = (v, t_k);
+            }
+        }
+        // The same numbers by the same calls in the same order, so this is an equality.
+        assert_eq!((v_max, t_max), best);
+        assert!(v_max < 0.0, "the reported maximum was {v_max}");
+        assert!(t_max > 0.0 && t_max < t_end, "the maximum sits at {t_max}, not at an endpoint");
+        assert!((v_max + 0.1025).abs() < 1e-4, "this implementation measured {v_max} at {t_max}");
+        // The decision such a membrane licenses is "silent", and it is the value and not the
+        // decision that this test is about: both the true maximum and a seeded 0.0 are below the
+        // threshold of one, which is why `fires` could never have caught the seed.
+        assert!(!t.fires(&pattern, dt, t_end).expect("valid"));
+    }
+
+    /// [`Tempotron::train`] documents [`LearnError::Empty`] for an empty training set, and nothing
+    /// called it with one — so the refusal had never been executed.
+    ///
+    /// Without it the epoch loop runs, finds no pattern to be wrong about, and pushes
+    /// `0 as f64 / 0 as f64` — a `NaN` error rate — once per epoch. That is a training history that
+    /// no comparison against zero rejects, because every comparison against a `NaN` is false: a run
+    /// over an empty set would report "no epoch had an error rate above zero" rather than refusing.
+    /// [`Tempotron::accuracy`]'s own refusal is asserted beside it because the two share a shape and
+    /// a single test that covered only one of them is how the other would be lost.
+    #[test]
+    fn an_empty_tempotron_set_is_refused_rather_than_averaged_over() {
+        let mut t = Tempotron::gutig_sompolinsky_2006(3, 1e-3).expect("valid");
+        t.w.fill(0.05);
+        let (dt, t_end) = (1e-3, 0.05);
+        assert_eq!(t.train(&[], 4, dt, t_end), Err(LearnError::Empty { what: "training set" }));
+        assert_eq!(t.accuracy(&[], dt, t_end), Err(LearnError::Empty { what: "evaluation set" }));
+        // ... and one pattern is enough for both to work, so the refusal is about emptiness.
+        let set: Vec<Example> = vec![(vec![vec![0.01], vec![0.02], vec![0.03]], false)];
+        assert_eq!(t.train(&set, 4, dt, t_end).expect("non-empty").len(), 4);
+        assert!(t.accuracy(&set, dt, t_end).expect("non-empty").is_finite());
     }
 
     // -----------------------------------------------------------------------------------------

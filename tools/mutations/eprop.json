@@ -474,7 +474,8 @@
  {
   "label": "the zero-gradient refusal drops its count clause",
   "old": "    if compared == 0 || !(bptt_norm > 0.0) || !(eprop_norm > 0.0) {",
-  "new": "    if !(bptt_norm > 0.0) || !(eprop_norm > 0.0) {"
+  "new": "    if !(bptt_norm > 0.0) || !(eprop_norm > 0.0) {",
+  "equivalent": "`compared` is incremented once for each coordinate `a` of the BPTT gradient with `a != 0.0`, and `nb2` accumulates `a * a` over the same coordinates of the same loop, so the two quantities are not independent. `compared == 0` says every `a` compared equal to `0.0` — which in IEEE-754 covers both `+0.0` and `-0.0` and EXCLUDES a NaN, since `NaN != 0.0` is true and one NaN coordinate already makes `compared >= 1`. For each such coordinate `a * a` is `+0.0`, `nb2` starts at `+0.0`, and `+0.0 + +0.0` is `+0.0` under every rounding mode, so `compared == 0` FORCES `nb2 == +0.0`, hence `bptt_norm == (+0.0).sqrt() == +0.0` and `!(bptt_norm > 0.0)` is true. The first clause therefore cannot be the only true one on any input, and the disjunction has the same value with it and without it: for the empty parameter vector (compared 0, norm 0, both clauses agree), for a gradient of subnormals whose squares underflow — the case this line's own comment is about, where `compared > 0` and `bptt_norm == 0.0`, and which BOTH versions refuse through the second clause — and for a gradient carrying a NaN, which both refuse because `!(NaN > 0.0)` is true. The clause is defence in depth against a later change to how the norm is formed, not a condition any input isolates, so no test could tell."
  },
  {
   "label": "the zero-gradient refusal is no longer symmetric",
@@ -626,7 +627,8 @@
  {
   "label": "the correlation pairs a postsynaptic spike with presynaptic spikes that follow it",
   "old": "                if t_pre < t_post {\n                    s += self.window(t_post - t_pre);",
-  "new": "                if true {\n                    s += self.window(t_post - t_pre);"
+  "new": "                if true {\n                    s += self.window(t_post - t_pre);",
+  "equivalent": "The pairs the two forms disagree about are exactly those with `t_pre >= t_post`, and for every one of them the extra term added is `window(t_post - t_pre)` at a NON-POSITIVE argument, which `ReSuMe::window` returns as the literal `0.0`: its body is `if s > 0.0 { amp * (-s / tau).exp() } else { 0.0 }`, and the `else` branch reads no field, so no choice of `a`, `amp`, `tau` or `eta` — including values a caller reaches by struct literal rather than through `ReSuMe::new` — can make it return anything else. The argument really is non-positive: `delta_w` runs `finite_slice` over `pre`, `desired` and `actual` before `correlation` is called, so both times are finite; every finite f64 is an integer multiple of 2^-1074, so for `t_pre > t_post` the exact difference is a negative integer multiple of 2^-1074, its magnitude is at least 2^-1074, and correctly-rounded subtraction can neither round it to zero nor change its sign (an overflow to -inf is still negative); for `t_pre == t_post`, including `-0.0` against `+0.0`, the difference is exactly `+0.0`. So each extra term is `+0.0`. The accumulator `s` starts at `+0.0` and `x + 0.0 == x` bit for bit for every `x` except `-0.0`, which `s` can never hold: in round-to-nearest `+0.0 + y` is `y` for every `y != -0.0` and `+0.0` for `y == -0.0`, and an exact cancellation yields `+0.0` rather than `-0.0`. Every f64 `correlation` returns therefore has the same bit pattern under both forms, for every input, so `delta_w` does too and no assertion can see the difference — only the number of `window` calls that return zero changes. The guard is kept because it states the rule's causal pairing independently of `window`'s boundary convention, not because an input distinguishes it."
  },
  {
   "label": "the correlation counts simultaneous pairs",

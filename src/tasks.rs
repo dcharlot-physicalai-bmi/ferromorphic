@@ -2392,24 +2392,41 @@ impl SpokenDigits {
         let jit = half_width("time_jitter_ticks", self.time_jitter_ticks)?;
 
         let margin = (4.0 * self.sigma_ticks).ceil() as i64 + i64::from(jit.0);
+        // The floor `ticks` has to reach is set by the peak that sits FURTHEST FROM THE WINDOW
+        // CENTRE, and that distance does not move with `ticks`: `peak_tick` is
+        // `ticks / 2 + slope * (channel - mid)`, so widening the window carries the centre and
+        // every peak along with it. A window of `2 * (furthest + margin) + 1` leaves the extreme
+        // peak exactly `margin` inside each edge, which is the arithmetic the `SpokenDigits`
+        // default doc works through to reach 145 — so that is the number the refusal reports.
+        //
+        // It used to report `2 * (|peak| + margin) + 1`, off the peak's ABSOLUTE tick rather than
+        // its distance from the centre, and that is a different quantity by the whole half-window.
+        // Measured: the default at `ticks = 144` asked for 289 when its own doc, and the test
+        // beside this one, put the floor at 145. Worse, a peak clipped at the BOTTOM has a small
+        // absolute tick, so a down-sweep of `slope_step_ticks = -7` at 200 ticks reported
+        // `low = 97` — a bound the refused value of 200 already satisfies, printed as the reason
+        // 200 was refused. Following it to 97 refused again and asked for 177, which refuses again
+        // and asks for 97. The true floor for that configuration is 273, and it is what the line
+        // below now reports.
+        let halfway = (self.ticks / 2) as i64;
+        let mut furthest = 0i64;
+        let mut clipped = false;
         for c in 0..self.n_classes {
             for k in 0..self.n_channels {
                 let p = self.peak_tick(c, k);
+                furthest = furthest.max(p.saturating_sub(halfway).saturating_abs());
                 if p.saturating_sub(margin) < 0 || p.saturating_add(margin) >= self.ticks as i64 {
-                    let low = p
-                        .saturating_abs()
-                        .max(margin)
-                        .saturating_add(margin)
-                        .saturating_mul(2)
-                        .saturating_add(1);
-                    return Err(TaskError::OutOfRange {
-                        what: "ticks",
-                        value: self.ticks as f64,
-                        low: low as f64,
-                        high: f64::MAX,
-                    });
+                    clipped = true;
                 }
             }
+        }
+        if clipped {
+            return Err(TaskError::OutOfRange {
+                what: "ticks",
+                value: self.ticks as f64,
+                low: furthest.saturating_add(margin).saturating_mul(2).saturating_add(1) as f64,
+                high: f64::MAX,
+            });
         }
 
         let mut rng = Rng::new(self.seed);
@@ -2542,7 +2559,7 @@ mod tests {
         RateDiscrimination, Split, SpokenDigits, TaskError, TemporalXor, polarity_counts,
     };
     use crate::rng::Rng;
-    use crate::spike::Polarity;
+    use crate::spike::{Polarity, Spike, Train};
 
     // -- (a) determinism -----------------------------------------------------------------------
 
@@ -4110,5 +4127,761 @@ mod tests {
         let big = RateDiscrimination { ticks: 1_000_000, ..RateDiscrimination::default() };
         let a = big.optimal_accuracy().expect("a million ticks is inside the ceiling");
         assert!((0.5..=1.0).contains(&a), "the bound at a million ticks was {a}");
+    }
+
+    // -- (m) the survivors of the mutation audit ------------------------------------------------
+
+    /// `nonzero` is the module's only guard against a count of zero, and it is called at
+    /// nineteen places. Nothing asserted the refusal at any of them: the suite only ever built
+    /// tasks with counts it had chosen to be sensible, so emptying `nonzero`'s body left every
+    /// test passing.
+    /// Zero is not a small task, it is a different one — a volley of no spikes, a grid of no
+    /// pixels, a split of no samples — and each of those reaches different arithmetic downstream
+    /// (a `spikes_per_channel` of 0 underflows `spikes_per_channel - 1`, a `per_class` of 0 skips
+    /// the collection loop entirely and hands back an empty dataset). So the refusal is pinned
+    /// here by the name it reports, at every call site, rather than by the fact that something
+    /// went wrong somewhere.
+    #[test]
+    fn a_zero_count_is_refused_by_name_at_every_place_the_module_counts_something() {
+        macro_rules! empty {
+            ($what:literal, $e:expr) => {{
+                let got = $e;
+                assert!(
+                    matches!(got, Err(TaskError::Empty { what: $what })),
+                    concat!("a zero ", $what, " was accepted: {:?}"),
+                    got
+                );
+            }};
+        }
+        let x = TemporalXor::default();
+        empty!("spikes_per_channel", TemporalXor { spikes_per_channel: 0, ..x }.generate());
+        empty!("burst_gap", TemporalXor { burst_gap: 0, ..x }.generate());
+        // `collect_split`'s own two, reached through the generator that calls it.
+        empty!("samples per class", TemporalXor { per_class_train: 0, per_class_test: 0, ..x }.generate());
+
+        let m = DelayedMatch::default();
+        empty!("cue_spikes", DelayedMatch { cue_spikes: 0, ..m }.generate());
+        empty!("cue_ticks", DelayedMatch { cue_ticks: 0, ..m }.generate());
+
+        let l = LatencyPatterns::default();
+        empty!("n_classes", LatencyPatterns { n_classes: 0, ..l }.templates());
+        empty!("n_inputs", LatencyPatterns { n_inputs: 0, ..l }.templates());
+
+        let b = MovingBar::default();
+        empty!("width", MovingBar { width: 0, ..b }.generate());
+        empty!("height", MovingBar { height: 0, ..b }.generate());
+        empty!("bar_width", MovingBar { bar_width: 0, ..b }.generate());
+        empty!("ticks", MovingBar { ticks: 0, ..b }.generate());
+        // `traverse` re-checks the grid itself, because it is public and takes no `Dataset`.
+        empty!("width", MovingBar { width: 0, ..b }.traverse(Direction::Right, 1.0));
+        empty!("height", MovingBar { height: 0, ..b }.traverse(Direction::Right, 1.0));
+        empty!("bar_width", MovingBar { bar_width: 0, ..b }.traverse(Direction::Right, 1.0));
+
+        empty!("ticks", RateDiscrimination { ticks: 0, ..RateDiscrimination::default() }.generate());
+
+        let s = SpokenDigits::default();
+        empty!("n_classes", SpokenDigits { n_classes: 0, ..s }.generate());
+        empty!("n_channels", SpokenDigits { n_channels: 0, ..s }.generate());
+        empty!("ticks", SpokenDigits { ticks: 0, ..s }.generate());
+
+        // And `collect_split`'s class guard directly, which no generator can reach: every one of
+        // them passes a class count that is a literal or already checked.
+        let none = super::collect_split(0, 1, 1, 7, |c, _| super::Sample {
+            train: Train::from_spikes(vec![Spike { t: 0, source: 0 }]),
+            label: c,
+        });
+        empty!("n_classes", none.map(|_| ()));
+    }
+
+    /// The two ceilings are different numbers — `MAX_JITTER_HALF` is `(MAX_DRAW_SPAN - 1) / 2`,
+    /// because a half-width of `h` spans `2h + 1` values — and every test that exercised them used
+    /// a jitter of three billion, which is over *both*. A half-width between the two ceilings is
+    /// therefore the only witness, and nothing generated one: `1_073_741_824` is refused by the
+    /// real check and accepted by a check written against `MAX_DRAW_SPAN`, whose `Half` would then
+    /// ask `Rng::below` for `2_147_483_649` values — past the point the `MAX_DRAW_SPAN` doc
+    /// measures at 14.1 seconds a draw.
+    #[test]
+    fn a_jitter_half_width_is_measured_against_its_own_ceiling_not_the_draw_span() {
+        // The arithmetic the ceiling is derived from, restated as the equality it is.
+        assert_eq!(2 * super::MAX_JITTER_HALF + 1, super::MAX_DRAW_SPAN);
+        assert_eq!(super::MAX_JITTER_HALF, 1_073_741_823);
+
+        // At the ceiling: accepted, and the `Half` carries the value unchanged.
+        assert_eq!(
+            super::half_width("jitter_ticks", super::MAX_JITTER_HALF),
+            Ok(super::Half(1_073_741_823))
+        );
+        // One past it: refused, and the refusal reports the JITTER ceiling as its upper bound
+        // rather than the draw span, so the number a user is told to come under is the right one.
+        assert!(
+            matches!(
+                super::half_width("jitter_ticks", super::MAX_JITTER_HALF + 1),
+                Err(TaskError::OutOfRange { what: "jitter_ticks", high, .. })
+                    if (high - super::MAX_JITTER_HALF as f64).abs() < f64::EPSILON
+            ),
+            "a half-width of {} was admitted; its draw spans {} values",
+            super::MAX_JITTER_HALF + 1,
+            2 * (super::MAX_JITTER_HALF + 1) + 1
+        );
+        // And a half-width equal to the DRAW span is a half-width of more than twice the ceiling.
+        assert!(matches!(
+            super::half_width("jitter_ticks", super::MAX_DRAW_SPAN),
+            Err(TaskError::OutOfRange { what: "jitter_ticks", .. })
+        ));
+    }
+
+    /// The `Keyed` doc says the label is excluded from a sample's key, and the module doc rests the
+    /// whole disjointness argument on it: "the same input appearing under two labels is a
+    /// contradiction in the task, not leakage". `EventSample` had that pinned; `Sample`, which is
+    /// six of the seven tasks, did not. Every existing assertion reads a `Sample` key through
+    /// `Keyed::key` on both sides of the comparison, so a key that smuggled the label in was being
+    /// compared against itself and agreed.
+    #[test]
+    fn a_sample_key_is_its_input_alone_so_one_input_under_two_labels_is_one_key() {
+        use super::Keyed;
+        let spikes = vec![Spike { t: 4, source: 1 }, Spike { t: 9, source: 0 }];
+        let a = super::Sample { train: Train::from_spikes(spikes.clone()), label: 0 };
+        let b = super::Sample { train: Train::from_spikes(spikes), label: 3 };
+        assert_eq!(
+            a.key(),
+            b.key(),
+            "the label reached the key; one input under two labels would sit on both sides of a \
+             split while `overlap` reported zero"
+        );
+        // The key is the `(t, source)` pairs in train order, and nothing else — stated as the
+        // exact vector so a future field cannot be added to it unnoticed.
+        assert_eq!(a.key(), vec![4, 1, 9, 0]);
+        // And it still separates two inputs that differ only in which channel fired.
+        let moved = super::Sample {
+            train: Train::from_spikes(vec![Spike { t: 4, source: 0 }, Spike { t: 9, source: 0 }]),
+            label: 0,
+        };
+        assert_ne!(a.key(), moved.key());
+    }
+
+    /// An event key packs `(address, polarity)` into one `u64` as `address << 1 | on`. The shift is
+    /// load-bearing and nothing tested it: `two_streams_that_differ_only_in_a_sign_have_different_keys`
+    /// flips a polarity while holding the address fixed, which an unshifted `address | on` also
+    /// separates — for an even address. The pair that collides without the shift is an *even*
+    /// address that is on against the *next odd* address that is off, and no fixture held one.
+    #[test]
+    fn an_event_key_keeps_the_address_and_the_polarity_in_separate_bits() {
+        use super::Keyed;
+        let even_on = super::EventSample {
+            events: vec![super::Event { t: 1, address: 2, polarity: Polarity::On }],
+            label: 0,
+        };
+        let odd_off = super::EventSample {
+            events: vec![super::Event { t: 1, address: 3, polarity: Polarity::Off }],
+            label: 0,
+        };
+        assert_ne!(
+            even_on.key(),
+            odd_off.key(),
+            "pixel 2 turning on and pixel 3 turning off have the same key; one of the two streams \
+             would be rejected as a duplicate of the other"
+        );
+        // The exact encoding, so the two fields cannot start overlapping again: `2 << 1 | 1` and
+        // `3 << 1 | 0`.
+        assert_eq!(even_on.key(), vec![1, 5]);
+        assert_eq!(odd_off.key(), vec![1, 6]);
+    }
+
+    /// `channel_counts` is the instrument [`TemporalXor`]'s central claim is read through, and
+    /// every assertion on it compares class 0 against class 1 — at a point where the two are
+    /// exactly equal, on purpose. A counter that recorded *presence* instead of accumulating a
+    /// total reports `[1, 1]` for both classes, and every one of those comparisons still holds.
+    /// So this one asserts the absolute totals, which come from the configuration by
+    /// multiplication: 64 test samples of a class, three spikes per channel, is 192 per channel.
+    #[test]
+    fn the_channel_counts_are_totals_over_the_split_not_a_record_of_which_channels_fired() {
+        let x = TemporalXor::default();
+        let d = x.generate().unwrap();
+        let per_sample = u64::from(x.spikes_per_channel);
+        let test_total = x.per_class_test as u64 * per_sample;
+        let train_total = x.per_class_train as u64 * per_sample;
+        assert_eq!(test_total, 192);
+        assert_eq!(train_total, 384);
+        for class in 0..2 {
+            assert_eq!(
+                d.channel_counts(Split::Test, class),
+                vec![test_total; 2],
+                "class {class} test totals are not {test_total} spikes per channel"
+            );
+            assert_eq!(d.channel_counts(Split::Train, class), vec![train_total; 2]);
+        }
+        // A class nobody generated totals zero on every channel rather than one, which is the
+        // same arithmetic read at its empty end: nothing summed is 0, nothing PRESENT is 1.
+        assert_eq!(d.channel_counts(Split::Test, 7), vec![0, 0]);
+    }
+
+    /// `polarity_counts` is documented to return `(on, off)` in that order, and the whole suite
+    /// read it from one line — `assert_eq!(polarity_counts(s), (pixels, pixels))` on a full bar
+    /// traverse, which emits exactly `width * height` of each. A pair whose two entries are equal
+    /// cannot say which is which: vacuous-test mechanism #156 in the register, a balanced fixture
+    /// cancelling the defect out. A stream with three on-events and one off-event is the smallest
+    /// thing that can tell them apart.
+    #[test]
+    fn the_polarity_counts_are_on_first_then_off_on_a_stream_that_is_not_balanced() {
+        let lopsided = super::EventSample {
+            events: vec![
+                super::Event { t: 1, address: 0, polarity: Polarity::On },
+                super::Event { t: 2, address: 0, polarity: Polarity::On },
+                super::Event { t: 3, address: 0, polarity: Polarity::On },
+                super::Event { t: 4, address: 0, polarity: Polarity::Off },
+            ],
+            label: 0,
+        };
+        assert_eq!(polarity_counts(&lopsided), (3, 1), "the pair is (on, off), not (off, on)");
+        // The two always sum to the stream length, whichever way round they are, which is why the
+        // sum could never have caught this.
+        let (on, off) = polarity_counts(&lopsided);
+        assert_eq!(on + off, lopsided.events.len());
+    }
+
+    /// `shuffle` is documented as Fisher-Yates, which draws `j` from `0..=i` and therefore leaves
+    /// an element where it found it about once per shuffle whatever the length. Drawing from
+    /// `0..i` instead is Sattolo's algorithm, which is still deterministic, still a permutation,
+    /// still not the identity and still the same one for the same seed — every property
+    /// `shuffle_is_a_deterministic_permutation_that_actually_moves_things` asserts. Its one
+    /// assertion about fixed points is `fixed < 8`, an **upper** bound, and a cycle satisfies an
+    /// upper bound by having none at all; nothing anywhere put a floor under the count. The
+    /// smallest case that does is two elements, where Fisher-Yates leaves the pair alone about half
+    /// the time and Sattolo reverses it every single time.
+    #[test]
+    fn the_shuffle_sometimes_leaves_an_element_where_it_found_it() {
+        let mut rng = Rng::new(0x1234);
+        let mut stayed = 0usize;
+        for _ in 0..64 {
+            let mut pair = [0u32, 1];
+            super::shuffle(&mut pair, &mut rng);
+            if pair == [0, 1] {
+                stayed += 1;
+            }
+        }
+        // This implementation measures 38 of 64 — a fair coin would give 32, and 38 is 1.5
+        // standard deviations off it. A cycle would give 0 and an identity would give 64.
+        assert_eq!(stayed, 38, "a two-element shuffle left the pair alone {stayed} times in 64");
+
+        // The same property on a longer array, where the expected number of fixed points in a
+        // uniform permutation is exactly 1 per shuffle whatever the length. This implementation
+        // measures 60 over 64 shuffles of ten elements; a cycle would measure 0.
+        let mut rng = Rng::new(0x99);
+        let mut fixed = 0usize;
+        for _ in 0..64 {
+            let mut v: Vec<usize> = (0..10).collect();
+            super::shuffle(&mut v, &mut rng);
+            fixed += v.iter().enumerate().filter(|(i, x)| i == *x).count();
+        }
+        assert_eq!(fixed, 60, "ten-element shuffles produced {fixed} fixed points in 64 tries");
+    }
+
+    /// `collect_split`'s doc says a key is rejected if it has been seen "in **any** class", and the
+    /// module doc turns that into the disjointness guarantee. No generator in this module can
+    /// produce a cross-class collision — each one puts the class into the spike times — so moving
+    /// the `seen` list inside the per-class loop changes nothing any fixture can reach. Calling
+    /// `collect_split` directly with a generator that offers *the same inputs to both classes* is
+    /// the only way to ask the question.
+    #[test]
+    fn an_input_already_used_by_one_class_cannot_be_reused_by_another() {
+        // Class 0 and class 1 are handed the identical pair of inputs. Globally-distinct keys mean
+        // class 1 can never fill, and the budget runs out with nothing accepted.
+        let shared = super::collect_split(2, 1, 1, 7, |class, accepted| super::Sample {
+            train: Train::from_spikes(vec![Spike { t: accepted as u64, source: 0 }]),
+            label: class,
+        });
+        assert!(
+            matches!(shared, Err(TaskError::Exhausted { wanted: 2, distinct: 0, .. })),
+            "class 1 re-used class 0's inputs: {shared:?}"
+        );
+
+        // The positive control, without which the above is a test that `collect_split` refuses
+        // everything: the same generator with the classes offset by ten ticks fills both.
+        let (train, test) = super::collect_split(2, 1, 1, 7, |class, accepted| super::Sample {
+            train: Train::from_spikes(vec![Spike {
+                t: accepted as u64 + 10 * u64::from(class),
+                source: 0,
+            }]),
+            label: class,
+        })
+        .expect("distinct inputs per class must fill");
+        assert_eq!((train.len(), test.len()), (2, 2));
+    }
+
+    /// `condition_sample`'s doc says `false` is early and `true` is late, per channel. Its only
+    /// test checks the label — which is the exclusive-or of the two bits and is unchanged by
+    /// exchanging early for late — and the per-channel spike multisets, which over the four
+    /// conditions are also unchanged by it. The asymmetric condition is the witness: with bits
+    /// `(false, true)` channel 0 must fire at `early_tick` and channel 1 at `late_tick`, and a
+    /// reading that swapped them would put an identical label on the mirror-image stimulus.
+    #[test]
+    fn a_condition_sample_puts_the_early_volley_on_the_channel_whose_bit_is_false() {
+        let x = TemporalXor::default();
+        let s = x.condition_sample(false, true);
+        assert_eq!(Dataset::first_spike(&s, 0), Some(x.early_tick), "bit false is not early");
+        assert_eq!(Dataset::first_spike(&s, 1), Some(x.late_tick), "bit true is not late");
+        assert_eq!(s.label, 1);
+
+        let mirror = x.condition_sample(true, false);
+        assert_eq!(Dataset::first_spike(&mirror, 0), Some(x.late_tick));
+        assert_eq!(Dataset::first_spike(&mirror, 1), Some(x.early_tick));
+        assert_eq!(mirror.label, 1);
+        // The two class-1 rows carry the SAME label and OPPOSITE channel orders, which is what
+        // makes the label alone unable to see this.
+        assert_ne!(s.train, mirror.train);
+
+        // The symmetric rows, for completeness: both channels on the same side.
+        for (bit, tick) in [(false, x.early_tick), (true, x.late_tick)] {
+            let flat = x.condition_sample(bit, bit);
+            assert_eq!(Dataset::first_spike(&flat, 0), Some(tick));
+            assert_eq!(Dataset::first_spike(&flat, 1), Some(tick));
+            assert_eq!(flat.label, 0);
+        }
+    }
+
+    /// `TemporalXor::generate`'s `# Errors` section promises a refusal "when the jitter could push
+    /// a volley outside `0..ticks`", and no fixture ever sat near that edge — every configuration
+    /// in the suite has a window far longer than it needs, so the check could be deleted outright
+    /// and nothing would notice. The floor is arithmetic: the last spike of a late volley lands at
+    /// `late_tick + (spikes_per_channel - 1) * burst_gap + jitter_ticks`, which for the default is
+    /// `55 + 4 + 6 = 65`, so 66 ticks is the shortest window that holds it and 65 clips it.
+    #[test]
+    fn a_temporal_xor_window_too_short_for_a_jittered_volley_is_refused() {
+        let x = TemporalXor::default();
+        let span = u64::from(x.spikes_per_channel - 1) * x.burst_gap;
+        let last = x.late_tick + span + x.jitter_ticks;
+        assert_eq!(last, 65);
+
+        let clipped = TemporalXor { ticks: last, ..x };
+        assert!(
+            matches!(
+                clipped.generate(),
+                Err(TaskError::OutOfRange { what: "ticks", low, .. })
+                    if (low - (last + 1) as f64).abs() < f64::EPSILON
+            ),
+            "a window of {last} ticks cannot hold a volley whose last spike is at tick {last}"
+        );
+        // One tick more and it generates, so the check is a boundary rather than a ban — and the
+        // spikes really do reach the end of it.
+        let exact = TemporalXor { ticks: last + 1, per_class_train: 16, per_class_test: 8, ..x };
+        let d = exact.generate().unwrap();
+        let latest = d
+            .train
+            .iter()
+            .chain(d.test.iter())
+            .flat_map(|s| s.train.spikes().iter().map(|sp| sp.t))
+            .max()
+            .unwrap();
+        assert!(
+            latest < exact.ticks,
+            "a spike at {latest} is outside a {}-tick window",
+            exact.ticks
+        );
+        assert_eq!(latest, last, "no sample reached the tick the floor was derived from");
+    }
+
+    /// `Coincidence`'s doc says the coincident class draws its gap from `0 ..= threshold_ticks`,
+    /// inclusive, and its `classify_by_interval` puts the boundary at `gap <= threshold_ticks` —
+    /// so a gap of exactly the threshold is the one input that distinguishes an inclusive rule from
+    /// an exclusive one. A span of `threshold_ticks` rather than `threshold_ticks + 1` still leaves
+    /// 8 reachable gaps times 31 jitters, which is 248 distinct inputs against the 192 a class
+    /// needs — so generation still succeeds, the classifier is still perfect, and the class is
+    /// still balanced. The only visible trace is the missing value.
+    #[test]
+    fn the_coincident_class_realises_every_gap_from_zero_to_the_threshold_inclusive() {
+        let c = Coincidence::default();
+        let d = c.generate().unwrap();
+        let realised = |label: u32| {
+            let mut g: Vec<u64> = d
+                .train
+                .iter()
+                .chain(d.test.iter())
+                .filter(|s| s.label == label)
+                .map(|s| s.train.spikes()[0].t.abs_diff(s.train.spikes()[1].t))
+                .collect();
+            g.sort_unstable();
+            g.dedup();
+            g
+        };
+        let coincident: Vec<u64> = (0..=c.threshold_ticks).collect();
+        assert_eq!(
+            realised(1),
+            coincident,
+            "the coincident class did not realise every gap in 0..={}",
+            c.threshold_ticks
+        );
+        // The other class starts one past the threshold and stops at the largest gap asked for.
+        let distant = realised(0);
+        assert_eq!(distant.first(), Some(&(c.threshold_ticks + 1)));
+        assert_eq!(distant.last(), Some(&c.max_gap_ticks));
+        // The two ranges tile the whole gap space with no value in both and none missing.
+        assert_eq!(realised(1).len() + distant.len(), (c.max_gap_ticks + 1) as usize);
+    }
+
+    /// `Coincidence::generate`'s `# Errors` section promises a refusal when the jitter does not fit
+    /// inside `0..ticks`, and only the top end of that had a fixture. The bottom end is
+    /// `first_tick < jitter_ticks`: the jitter is drawn on `[-jitter_ticks, jitter_ticks]` and the
+    /// reference spike is placed with `.max(0)`, so without the check a negative shift is silently
+    /// clamped to tick 0 — which is not a refusal but a pile-up, and it makes the common-mode
+    /// jitter the task is built on stop being uniform exactly where a model would look for it.
+    #[test]
+    fn a_coincidence_jitter_that_would_push_the_reference_spike_below_tick_zero_is_refused() {
+        let c = Coincidence::default();
+        assert!(c.first_tick > c.jitter_ticks, "the default must not sit on the boundary");
+        let too_low = Coincidence { first_tick: c.jitter_ticks - 1, ..c };
+        assert!(
+            matches!(
+                too_low.generate(),
+                Err(TaskError::OutOfRange { what: "first_tick", low, .. })
+                    if (low - c.jitter_ticks as f64).abs() < f64::EPSILON
+            ),
+            "a reference spike {} ticks above zero was accepted with a jitter of {}",
+            c.jitter_ticks - 1,
+            c.jitter_ticks
+        );
+        // Exactly at the boundary is legal, and the earliest reference spike it produces is tick 0
+        // reached by the draw rather than by the clamp.
+        let edge = Coincidence {
+            first_tick: c.jitter_ticks,
+            per_class_train: 64,
+            per_class_test: 32,
+            ..c
+        };
+        let d = edge.generate().unwrap();
+        let earliest = d
+            .train
+            .iter()
+            .chain(d.test.iter())
+            .map(|s| s.train.spikes()[0].t)
+            .min()
+            .unwrap();
+        assert_eq!(earliest, 0);
+    }
+
+    /// `LatencyPatterns`'s field doc says template latencies live in
+    /// `jitter_ticks ..= ticks - 1 - jitter_ticks`, and the lower margin is what stops a per-channel
+    /// jitter from being clamped at tick 0 — a clamp that would compress the class prototypes
+    /// together at exactly the point the `L-infinity` separability guarantee is stated about. At
+    /// the defaults the margin is 2 ticks out of a 46-tick band, so random templates clear it
+    /// anyway about five times in six and the clamp hides the rest. A window of exactly
+    /// `2 * jitter_ticks + 1` collapses the band to a single value and makes the margin the only
+    /// thing left to measure.
+    #[test]
+    fn every_template_latency_leaves_a_jitter_half_width_of_room_below_it() {
+        // One value in the band, so every latency is the bottom of it and nothing is random.
+        let pinned = LatencyPatterns {
+            n_classes: 1,
+            n_inputs: 4,
+            ticks: 21,
+            jitter_ticks: 10,
+            min_separation_ticks: 0,
+            ..LatencyPatterns::default()
+        };
+        assert_eq!(pinned.ticks - 2 * pinned.jitter_ticks, 1, "the band must hold one value");
+        assert_eq!(pinned.templates().unwrap(), vec![vec![10, 10, 10, 10]]);
+
+        // And the band at the defaults, stated as the closed interval the field doc names.
+        let l = LatencyPatterns::default();
+        let t = l.templates().unwrap();
+        let lo = l.jitter_ticks;
+        let hi = l.ticks - 1 - l.jitter_ticks;
+        assert_eq!((lo, hi), (2, 47));
+        for (c, row) in t.iter().enumerate() {
+            for (k, &at) in row.iter().enumerate() {
+                assert!(
+                    (lo..=hi).contains(&at),
+                    "class {c} channel {k} peaks at {at}, outside {lo}..={hi}"
+                );
+            }
+        }
+        // The margin is what keeps the clamp in `generate` from ever firing: the earliest spike a
+        // jittered sample can carry is `lo - jitter_ticks`, which is 0 and not below it.
+        let d = l.generate().unwrap();
+        let earliest =
+            d.train.iter().flat_map(|s| s.train.spikes().iter().map(|sp| sp.t)).min().unwrap();
+        assert!(earliest >= lo - l.jitter_ticks);
+    }
+
+    /// `bar_events` spreads each leading-edge column across the axis the bar does **not** travel
+    /// along: a bar moving right is vertical and spans every row, so the cross extent is `height`.
+    /// Every `MovingBar` fixture in the suite is a 16x16 square, where `width` and `height` are the
+    /// same number — vacuous-test mechanism #160 in the register, a parameter that is identical in
+    /// every fixture makes the choice between it and its twin invisible. On an 8x4 grid the two
+    /// readings differ by a factor of four in the event count, in opposite directions for the two
+    /// orientations.
+    #[test]
+    fn a_bar_spans_the_axis_it_does_not_travel_along_on_a_grid_that_is_not_square() {
+        let b = MovingBar { width: 8, height: 4, ticks: 60, ..MovingBar::default() };
+        assert_ne!(b.width, b.height, "the point of this fixture is a grid that is not square");
+        let want = b.events_per_traverse();
+        assert_eq!(want, 64);
+        for dir in Direction::all() {
+            let ev = b.traverse(dir, 1.0).unwrap();
+            assert_eq!(
+                ev.len() as u64,
+                want,
+                "{dir:?} emitted {} events over an 8x4 grid, not {want}",
+                ev.len()
+            );
+            // Every pixel of the grid, exactly once on and once off — which is the claim the count
+            // is shorthand for, and which an out-of-range cross extent breaks by addressing rows
+            // that do not exist.
+            let pixels = b.width * b.height;
+            for pol in [Polarity::On, Polarity::Off] {
+                let mut seen: Vec<u32> =
+                    ev.iter().filter(|e| e.polarity == pol).map(|e| e.address).collect();
+                seen.sort_unstable();
+                assert_eq!(seen, (0..pixels).collect::<Vec<u32>>(), "{dir:?} {pol:?}");
+            }
+        }
+    }
+
+    /// The speed jitter is documented as a fractional half-width and `min_speed` is derived from
+    /// it, so a sample must be able to come out *slower* than the nominal speed as well as faster.
+    /// Drawing `u` from `[0, 1)` instead of `[-1, 1)` makes `min_speed` decorative — and nothing
+    /// noticed, because the traverse event count is invariant to speed on purpose, the polarity
+    /// split is invariant too, and the window floor derived from `min_speed` is only ever asserted
+    /// against configurations with room to spare. What moves with the speed is the *duration*: with
+    /// the start delay held at zero, the last event of a rightward traverse lands at tick 24 at
+    /// `min_speed` and tick 16 at `max_speed`, against 19 at the nominal speed.
+    #[test]
+    fn the_speed_jitter_reaches_below_the_nominal_speed_as_well_as_above_it() {
+        let b = MovingBar {
+            max_start_delay: 0,
+            per_class_train: 24,
+            per_class_test: 12,
+            ..MovingBar::default()
+        };
+        let end_at =
+            |v: f64| b.bar_events(Direction::Right, 0, v).iter().map(|e| e.t).max().unwrap();
+        let (slowest, nominal, fastest) =
+            (end_at(b.min_speed()), end_at(b.speed_px_per_tick), end_at(b.max_speed()));
+        assert_eq!((slowest, nominal, fastest), (24, 19, 16));
+
+        let d = b.generate().unwrap();
+        let ends: Vec<u64> = d
+            .train
+            .iter()
+            .chain(d.test.iter())
+            .filter(|s| s.label == 0)
+            .map(|s| s.events.iter().map(|e| e.t).max().unwrap())
+            .collect();
+        let (lo, hi) = (*ends.iter().min().unwrap(), *ends.iter().max().unwrap());
+        assert!(
+            hi > nominal,
+            "no rightward sample was slower than the nominal speed: the slowest ended at {hi}, \
+             the nominal traverse ends at {nominal}"
+        );
+        assert!(lo < nominal, "no rightward sample was faster than the nominal speed");
+        // The realised extremes are the ones the speed bounds imply, which is the other half of
+        // the claim: the jitter reaches both ends of its own interval.
+        assert_eq!((lo, hi), (fastest, slowest));
+    }
+
+    /// `SpokenDigits`'s doc says spikes are drawn with `p = 1 - exp(-rate * dt)`, "the same exact
+    /// form as `RateEncoder`". `RateDiscrimination::p_tick` has a test for exactly that; `p_at` had
+    /// none, and could not get one from the tests it already had, because `p_at` feeds **both** the
+    /// generator and `moments` — so `the_spoken_digit_spike_count_matches_its_analytic_mean`
+    /// compares the formula against itself and agrees whichever formula it is. The reference here
+    /// is recomputed in the test instead. At the 200 Hz peak with 1 ms ticks the two forms are
+    /// `1 - exp(-0.2) = 0.18127` and `0.2`, a 10.3% error, and it compounds to 44.90 expected
+    /// spikes against 48.13 over a whole sample.
+    #[test]
+    fn the_envelope_per_tick_probability_is_the_exact_poisson_form_not_its_linear_approximation() {
+        let s = SpokenDigits::default();
+        // At the peak of the flat class the rate is `peak_hz` exactly, so the arithmetic is closed.
+        let at_peak = s.p_at(2, s.n_channels / 2, s.ticks / 2, 0);
+        let exact = 1.0 - (-s.peak_hz * s.dt).exp();
+        assert!((at_peak - exact).abs() < 1e-15, "{at_peak} is not 1 - exp(-0.2)");
+        assert!(
+            (at_peak - 0.18126924692201818).abs() < 1e-15,
+            "the peak probability moved from the transcribed 1 - exp(-0.2)"
+        );
+        // The linear approximation differs in the third decimal place — far outside any tolerance
+        // a probability is compared at here.
+        assert!((at_peak - s.peak_hz * s.dt).abs() > 0.018);
+
+        // Recomputed independently of `p_at`, so the analytic mean is compared against arithmetic
+        // and not against the function that produced it.
+        let mut reference = 0.0f64;
+        for k in 0..s.n_channels {
+            for t in 0..s.ticks {
+                let d = (t as i64 - s.peak_tick(2, k)) as f64 / s.sigma_ticks;
+                let rate = s.peak_hz * (-0.5 * d * d).exp();
+                reference += 1.0 - (-rate * s.dt).exp();
+            }
+        }
+        let reported = s.expected_spikes_per_sample(2).unwrap();
+        // Same operations in the same order, so equality rather than a tolerance.
+        assert_eq!(reported, reference);
+        assert!((reported - 44.901_650_658_725_39).abs() < 1e-9, "{reported}");
+        // The linear sum this implementation measures for the same class is 48.127, which the
+        // existing mean-against-analytic test would have accepted because both sides would move.
+        assert!(reference < 45.0);
+    }
+
+    /// The per-sample time jitter is drawn and then handed to `p_at` as the envelope's shift. At
+    /// the default `time_jitter_ticks == 0` dropping it is literally the identity, and the one
+    /// jittered fixture in the suite asserts only that `generate` returns `Ok` — so nothing in the
+    /// module could see a jitter that was drawn, charged against the window margin, and then
+    /// thrown away. What it moves is the sample's spike centroid, one for one: at a half-width of
+    /// 20 ticks this implementation measures a centroid range of 38.2 ticks across the flat class,
+    /// against 2.7 ticks for the same configuration with no jitter at all.
+    #[test]
+    fn the_sample_time_jitter_moves_the_whole_envelope_it_is_drawn_for() {
+        let centroid_range = |cfg: &SpokenDigits| {
+            let d = cfg.generate().unwrap();
+            let c: Vec<f64> = d
+                .train
+                .iter()
+                .chain(d.test.iter())
+                .filter(|s| s.label == 2)
+                .map(|s| {
+                    let sp = s.train.spikes();
+                    sp.iter().map(|x| x.t as f64).sum::<f64>() / sp.len() as f64
+                })
+                .collect();
+            c.iter().copied().fold(f64::NEG_INFINITY, f64::max)
+                - c.iter().copied().fold(f64::INFINITY, f64::min)
+        };
+        let base =
+            SpokenDigits { per_class_train: 8, per_class_test: 4, ..SpokenDigits::default() };
+        let half = 20u64;
+        let still = centroid_range(&base);
+        let shaken = centroid_range(&SpokenDigits { time_jitter_ticks: half, ..base });
+        // Both bounds come from the half-width rather than from the measurement. Class 2 is the
+        // flat sweep, so every channel peaks at `ticks / 2` and an unjittered sample's centroid is
+        // that tick plus counting noise: a 6-tick envelope over ~45 spikes is well under a tick of
+        // standard error, so a quarter of the half-width is an enormous allowance for it. This
+        // implementation measures 2.7.
+        assert!(
+            still < half as f64 / 4.0,
+            "the unjittered centroid range is {still} ticks, which is not counting noise"
+        );
+        // The shift is uniform on `[-half, half]`, so twelve draws of it span most of `2 * half`.
+        // Requiring half of that interval is the weakest statement that a shift happened at all;
+        // this implementation measures 38.2 of a possible 40.
+        assert!(
+            shaken > half as f64,
+            "a jitter half-width of {half} ticks moved the centroid by only {shaken} ticks — the \
+             envelope was built at the unshifted peak"
+        );
+    }
+
+    /// `SpokenDigits::generate`'s `# Errors` section says a class's "envelope peak **plus the
+    /// jitter**" must fit inside four sigma of the window edge, and the test named
+    /// `the_window_floor_is_the_one_the_doc_derives` pins that floor at 145/144 — with
+    /// `time_jitter_ticks` at its default of **zero**, where the jitter term of the margin is zero
+    /// and therefore invisible. The margin is
+    /// `ceil(4 * sigma) + time_jitter_ticks`, so raising the half-width to 20 ticks tightens the
+    /// window at both ends and moves the floor by exactly `2 * 20`: from 145 to 185.
+    #[test]
+    fn the_window_margin_grows_with_the_jitter_half_width() {
+        let shaken = SpokenDigits {
+            time_jitter_ticks: 20,
+            per_class_train: 4,
+            per_class_test: 2,
+            ..SpokenDigits::default()
+        };
+        // The steepest sweep puts a peak `6 * 8 = 48` ticks off centre, and the margin is
+        // `ceil(4 * 6) + 20 = 44`, so the window needs `2 * (48 + 44) + 1 = 185` ticks.
+        assert_eq!(shaken.peak_tick(4, 0).abs_diff((shaken.ticks / 2) as i64), 48);
+        let margin = (4.0 * shaken.sigma_ticks).ceil() as u64 + shaken.time_jitter_ticks;
+        let floor = 2 * (48 + margin) + 1;
+        assert_eq!(floor, 185);
+
+        assert!(
+            SpokenDigits { ticks: floor, ..shaken }.generate().is_ok(),
+            "a window at its own floor must generate"
+        );
+        assert!(
+            matches!(
+                SpokenDigits { ticks: floor - 1, ..shaken }.generate(),
+                Err(TaskError::OutOfRange { what: "ticks", .. })
+            ),
+            "a {}-tick window clips a 20-tick jitter off a four-sigma envelope",
+            floor - 1
+        );
+        // The zero-jitter floor is 40 ticks lower, which is the jitter half-width counted once at
+        // each end — the term the margin was missing.
+        let still = SpokenDigits { time_jitter_ticks: 0, ..shaken };
+        assert!(SpokenDigits { ticks: 145, ..still }.generate().is_ok());
+        assert!(matches!(
+            SpokenDigits { ticks: 144, ..still }.generate(),
+            Err(TaskError::OutOfRange { what: "ticks", .. })
+        ));
+        assert_eq!(floor - 145, 2 * shaken.time_jitter_ticks);
+    }
+
+    /// A refusal's `low` is the number a user changes the config to, and the test named
+    /// `a_cue_window_too_short_for_its_spikes_and_jitter_is_refused` already holds `DelayedMatch`
+    /// to reporting the real one. `SpokenDigits` was reporting a
+    /// different quantity: `2 * (|peak| + margin) + 1` off the peak's **absolute** tick, where the
+    /// floor is set by the peak's **distance from the window centre** — the two differ by the whole
+    /// half-window, because `peak_tick` is `ticks / 2 + slope * (channel - mid)` and widening the
+    /// window carries the centre and the peaks together. Nothing saw it because the only test that
+    /// generated a refusal here matched on `what: "ticks"` and read no further, and the module's
+    /// own derivation of the floor lives in a doc comment rather than in an assertion.
+    ///
+    /// Two separate failures, both measured on this implementation. At the default config and
+    /// `ticks = 144` it asked for **289** where the `SpokenDigits::default` doc, and the test
+    /// beside this one, put the floor at **145**. And a peak clipped at the *bottom* has a small
+    /// absolute tick, so a down-sweep of `slope_step_ticks = -7` at 200 ticks reported
+    /// `low = 97` — a bound the refused value of 200 already satisfies, printed as the reason it
+    /// was refused; following it to 97 refused again and asked for 177, which refuses again and
+    /// asks for 97. The true floor there is 273.
+    #[test]
+    fn the_window_refusal_names_the_floor_the_window_actually_has() {
+        let floor_of = |cfg: &SpokenDigits, at: u64| {
+            match (SpokenDigits { ticks: at, ..*cfg }).generate() {
+                Err(TaskError::OutOfRange { what: "ticks", value, low, .. }) => {
+                    assert!((value - at as f64).abs() < f64::EPSILON);
+                    assert!(
+                        low > value,
+                        "a window of {value} ticks was refused for being under a floor of {low}"
+                    );
+                    low as u64
+                }
+                other => panic!("{at} ticks produced {other:?}"),
+            }
+        };
+        // The bound is the smallest window that generates, found by search rather than asserted:
+        // a `low` that is merely sufficient is still the wrong number to print.
+        let smallest = |cfg: &SpokenDigits| {
+            (1u64..800)
+                .find(|&t| (SpokenDigits { ticks: t, ..*cfg }).generate().is_ok())
+                .expect("some window in 1..800 must work")
+        };
+
+        let one = SpokenDigits { per_class_train: 1, per_class_test: 1, ..SpokenDigits::default() };
+        for cfg in [
+            one,
+            SpokenDigits { time_jitter_ticks: 20, ..one },
+            SpokenDigits { slope_step_ticks: -7, ..one },
+            SpokenDigits { slope_step_ticks: 7, ..one },
+        ] {
+            let real = smallest(&cfg);
+            assert_eq!(
+                floor_of(&cfg, real - 1),
+                real,
+                "the refusal at {} names the wrong floor",
+                real - 1
+            );
+            // Same floor whatever window it is asked from, because the floor is a property of the
+            // sweep and the envelope and not of the window that failed to hold them.
+            assert_eq!(floor_of(&cfg, 1), real);
+        }
+
+        // The four floors, as numbers, so they cannot drift: `2 * (furthest + margin) + 1` with a
+        // margin of `ceil(4 * sigma) + time_jitter_ticks` and a furthest peak offset of
+        // `|slope_step| * (n_classes - 1) / 2 * n_channels / 2`.
+        assert_eq!(smallest(&one), 145);
+        assert_eq!(smallest(&SpokenDigits { time_jitter_ticks: 20, ..one }), 185);
+        assert_eq!(smallest(&SpokenDigits { slope_step_ticks: -7, ..one }), 273);
+        assert_eq!(smallest(&SpokenDigits { slope_step_ticks: 7, ..one }), 273);
+        // 2 * (48 + 24) + 1, 2 * (48 + 44) + 1, 2 * (112 + 24) + 1.
+        assert_eq!(2 * (48 + 24) + 1, 145);
+        assert_eq!(2 * (48 + 44) + 1, 185);
+        assert_eq!(2 * (112 + 24) + 1, 273);
     }
 }

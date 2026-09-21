@@ -2882,12 +2882,31 @@ mod tests {
 
     /// A model built for two tokens refuses three, naming both shapes, rather than resizing its
     /// membranes and carrying one sequence's state into the next.
+    /// A model built for two tokens refuses three at **its own** boundary, not several frames
+    /// deeper.
+    ///
+    /// The `what` field is the whole assertion. With [`Model::forward`]'s guard removed the input
+    /// reaches [`Ssa::forward`], whose own guard reports
+    /// `BadShape { what: "attention input", got: 6, want: 4 }` — the identical pair of numbers —
+    /// so a `matches!` that elided `what` passed either way. A caller told "attention input" goes
+    /// looking inside a block for a shape the model was never built to take.
     #[test]
     fn a_model_built_for_two_tokens_refuses_three() {
         let mut m = toy();
         let wide = Tensor::spikes(3, 2, &[true; 6]).unwrap();
         let err = m.forward(&wide, &mut Audit::new()).unwrap_err();
-        assert!(matches!(err, AttnError::BadShape { got: 6, want: 4, .. }), "{err}");
+        assert!(
+            matches!(err, AttnError::BadShape { what: "model input", got: 6, want: 4 }),
+            "{err}"
+        );
+        // And the channel count, which the token count alone would not have caught: the same six
+        // elements arranged the other way round are refused for the other reason.
+        let narrow = Tensor::spikes(2, 3, &[true; 6]).unwrap();
+        let err = m.forward(&narrow, &mut Audit::new()).unwrap_err();
+        assert!(
+            matches!(err, AttnError::BadShape { what: "model input", got: 6, want: 4 }),
+            "{err}"
+        );
     }
 
     // ---------------------------------------------------------------------------------------
@@ -4389,5 +4408,399 @@ mod tests {
         // And the non-finite case, which is the first of the three.
         assert_eq!(slow.first_spike_step(f64::NAN), None);
         assert_eq!(slow.first_spike_step(f64::INFINITY), None);
+    }
+
+    /// ⭐ [`Split::multiplies`] is the one row of the split no test ever read as non-zero.
+    ///
+    /// Every model in this module runs `tau = 2` and a scale that is either exactly 1 or a power of
+    /// two, so neither site that can emit an [`OpKind::Mul`] — a leak that is not a power of two,
+    /// an unfolded non-power-of-two attention scale — is ever live, and every assertion on
+    /// `multiplies` anywhere in the suite is `== 0`. A row of zeros agrees with a field wired to
+    /// zero, so the whole bare-multiply column could be dropped out of the split, and with it out
+    /// of [`Audit::effective_total`] and the honest fraction, without a test moving.
+    ///
+    /// `tau = 3` makes the leak `1/3`, which is not an exact power of two, so the leak site is
+    /// charged as a bare multiply: 2 tokens x 3 channels = 6 neurons, one each.
+    #[test]
+    fn a_bare_multiply_appears_in_the_split_and_in_the_grand_total() {
+        let mut n = LifLayer::new(2, 3, 3.0, 1.0, 0.0).unwrap();
+        let mut audit = Audit::new();
+        n.forward(&Tensor::silent(2, 3).unwrap(), "n", &mut audit).unwrap();
+
+        let s = audit.split();
+        assert_eq!(s.multiplies, 6, "the split's bare-multiply row is not the leak count");
+        assert_eq!(
+            s.multiplies,
+            audit.effective_of(OpKind::Mul),
+            "the split's multiply row disagrees with the aggregate it is built from"
+        );
+        assert_eq!(s.shifts, 0, "1/3 is not a shift, so nothing may land in that row");
+        // By hand: `v_reset` is zero, so the membrane update is two adds per neuron and not three,
+        // and every neuron pays one threshold comparison.
+        assert_eq!((s.adds, s.comparisons), (12, 6));
+        assert_eq!(s.total(), Some(24), "the grand total must carry the bare multiplies");
+        assert_eq!(audit.effective_total(), Some(24));
+
+        // And the honest fraction is taken against that total, so a dropped row moves it: 24
+        // accumulates against 24 + 24 is one half, while against 18 + 24 it is 0.5714...
+        audit.charge("syn", OpKind::Ac, "test reason, long enough", 24, 24).unwrap();
+        assert_eq!(audit.ac_fraction(), Some(0.5), "the fraction is taken against a short total");
+    }
+
+    /// ⭐ `None` from [`Audit::ac_fraction`] on a pass that performed nothing, which is a different
+    /// statement from a fraction of zero and from an unrepresentable total.
+    ///
+    /// Nothing in the suite called either fraction on an audit whose effective total is zero: the
+    /// silent-model test still pays 112 membrane operations, so its total is 112 and its fraction
+    /// is `Some(0.0)`. With the zero guard removed the division is `0.0 / 0.0`, and the only reason
+    /// that is not `Some(0.0)` is that it is `Some(NaN)` — a value that compares unequal to itself,
+    /// so an assertion written as a tolerance around zero would have passed either way.
+    #[test]
+    fn a_pass_that_performed_nothing_has_no_fraction_rather_than_a_nan() {
+        let empty = Audit::new();
+        assert_eq!(empty.effective_total(), Some(0), "an empty audit's total is zero, not `None`");
+        assert_eq!(empty.ac_fraction(), None, "zero over zero is not a fraction");
+        assert_eq!(empty.synaptic_ac_fraction(), None);
+
+        // And an audit that charged dense work and no effective work: the model is there, the data
+        // made none of it fire, and the total is still zero.
+        let mut a = Audit::new();
+        a.charge("dead", OpKind::Ac, "test reason, long enough", 64, 0).unwrap();
+        assert_eq!(a.effective_total(), Some(0));
+        assert_eq!(a.ac_fraction(), None, "a pass that did nothing is not 0% accumulates");
+        assert_eq!(a.dense_of(OpKind::Ac), 64, "the dense side is unchanged: the model is there");
+
+        // The report names which of the two `None`s it hit, and "nothing ran" is not "NaN".
+        let text = a.to_string();
+        assert!(text.contains("AC share of ALL operations: nothing ran"), "{text}");
+    }
+
+    /// ⭐ [`Audit::synaptic_ac_fraction`] refuses a synaptic total that does not fit in a `u64`.
+    ///
+    /// The existing overflow fixture could not see the difference between refusing and wrapping:
+    /// it charged `u64::MAX` accumulates and **one** multiply-accumulate, and
+    /// `u64::MAX.wrapping_add(1)` is exactly `0` — the single value the `syn == 0` guard on the
+    /// next line also turns into `None`. The wrap landed on the one result indistinguishable from
+    /// the refusal. Two multiply-accumulates wrap to `1` instead, and a wrapped total of one
+    /// reports 18446744073709551615 accumulates as a share of a single synaptic operation.
+    #[test]
+    fn a_synaptic_total_that_wraps_past_one_is_still_refused() {
+        let mut a = Audit::new();
+        a.charge("ac", OpKind::Ac, "test reason, long enough", u64::MAX, u64::MAX).unwrap();
+        a.charge("mac", OpKind::Mac, "test reason, long enough", 2, 2).unwrap();
+        assert_eq!(a.effective_of(OpKind::Ac), u64::MAX);
+        assert_eq!(a.effective_of(OpKind::Mac), 2, "the fixture must not wrap back to zero");
+        assert_eq!(
+            a.synaptic_ac_fraction(),
+            None,
+            "a wrapped synaptic total was reported as a fraction"
+        );
+        let text = a.to_string();
+        assert!(
+            text.contains("AC share of synaptic operations: the total does not fit in u64"),
+            "{text}"
+        );
+    }
+
+    /// The general constructor's own shape refusals. [`Tensor::silent`] and
+    /// [`Tensor::sinusoidal_spikes`] each carry their own zero-dimension checks and both are
+    /// tested; [`Tensor::new`]'s were reached only through `Tensor::real(0, 2, vec![])`, which is
+    /// the **token** clause. Nothing anywhere handed it a zero-channel shape or a values vector of
+    /// the wrong length, and either would have produced a tensor that reads as "nothing cost
+    /// anything" instead of an error.
+    #[test]
+    fn the_general_tensor_constructor_refuses_a_zero_channel_shape_and_a_short_values_vector() {
+        assert!(matches!(
+            Tensor::new(2, 0, vec![], Domain::Binary),
+            Err(AttnError::Empty { what: "channels" })
+        ));
+        assert!(matches!(
+            Tensor::new(0, 2, vec![], Domain::Binary),
+            Err(AttnError::Empty { what: "tokens" })
+        ));
+        assert!(matches!(
+            Tensor::new(2, 2, vec![1.0, 0.0, 1.0], Domain::Binary),
+            Err(AttnError::BadShape { what: "tensor", got: 3, want: 4 })
+        ));
+        assert!(matches!(
+            Tensor::new(2, 2, vec![0.0; 5], Domain::Real),
+            Err(AttnError::BadShape { what: "tensor", got: 5, want: 4 })
+        ));
+        // The exact length is accepted, so this is a length check and not a refusal of everything.
+        assert_eq!(Tensor::new(2, 2, vec![0.0; 4], Domain::Real).unwrap().values().len(), 4);
+    }
+
+    /// [`Tensor::at`] answers `None` when **either** index is past the end, and only the token
+    /// index was ever asked. A tensor is stored row-major, so dropping the channel clause does not
+    /// read past the allocation — it reads the **next token's** row and returns a perfectly
+    /// plausible spike. On the 2x2 tensor below `at(0, 2)` is the element `at(1, 0)` answers.
+    #[test]
+    fn a_channel_index_past_the_end_is_none_and_not_the_next_tokens_row() {
+        let t = Tensor::spikes(2, 2, &[false, false, true, true]).unwrap();
+        assert_eq!(t.at(1, 0), Some(1.0), "the value the missing clause would have leaked");
+        assert_eq!(t.at(0, 0), Some(0.0), "and the one token 0 really carries");
+        assert_eq!(t.at(0, 2), None, "a channel past the end read into the next token's row");
+        assert_eq!(t.at(0, 9), None);
+        assert_eq!(t.at(2, 0), None, "the token clause still holds");
+        assert_eq!(t.at(1, 2), None, "the last row's overrun falls off the end of the values");
+        // The row accessor's bound on the same tensor, which the element accessor shares.
+        assert_eq!(t.row(0), Some(&[0.0, 0.0][..]));
+        assert_eq!(t.row(1), Some(&[1.0, 1.0][..]));
+        assert_eq!(t.row(2), None);
+    }
+
+    /// [`Linear::new`] documents `BadShape` "if `w.len()` is not `n_in * n_out` **or the bias is
+    /// not `n_out` long**", and only the weight half and the non-finite bias could be made to fire.
+    /// A short bias is not caught downstream either: `forward` indexes `b[j]` for every `j` below
+    /// `n_out` and would panic several frames from the caller who supplied it.
+    #[test]
+    fn a_bias_of_the_wrong_length_is_refused_at_construction() {
+        assert!(matches!(
+            Linear::new(2, 2, eye(2), Some(vec![0.0])),
+            Err(AttnError::BadShape { what: "bias", got: 1, want: 2 })
+        ));
+        assert!(matches!(
+            Linear::new(2, 3, vec![0.0; 6], Some(vec![0.0; 4])),
+            Err(AttnError::BadShape { what: "bias", got: 4, want: 3 })
+        ));
+        // The length is `n_out` and not `n_in`: a 2 -> 3 projection takes a bias of three.
+        assert!(Linear::new(2, 3, vec![0.0; 6], Some(vec![0.0; 3])).is_ok());
+        assert!(matches!(
+            Linear::new(2, 3, vec![0.0; 6], Some(vec![0.0; 2])),
+            Err(AttnError::BadShape { what: "bias", got: 2, want: 3 })
+        ));
+    }
+
+    /// The first of the three meanings of `None` in [`LifLayer::first_spike_step`]: `x` is not
+    /// finite, so there is no trajectory to solve.
+    ///
+    /// Every existing non-finite assertion runs at `tau > 1`, where that guard decides nothing —
+    /// the ratio comes out `NaN`, `NaN.ln() / d.ln()` is `NaN`, and the `!t.is_finite()` test
+    /// further down answers `None` on its own. The one place the guard is the only cover is
+    /// `tau == 1`, where `decay()` is exactly zero and the branch above the sub-threshold test
+    /// answers `x + v_reset >= v_th` directly: for an infinite drive that comparison is **true**,
+    /// so without the guard an infinity is reported as a neuron that fires on timestep 1.
+    #[test]
+    fn a_non_finite_drive_has_no_first_spike_even_when_the_membrane_forgets_everything() {
+        let forgetful = LifLayer::new(1, 1, 1.0, 1.0, 0.0).unwrap();
+        assert_eq!(forgetful.decay(), 0.0, "`tau = 1` is the branch the guard is the only cover for");
+        // Not vacuous: at `tau = 1` a finite drive that lands exactly on the threshold does fire on
+        // the first timestep, which is the answer an infinite drive would otherwise get.
+        assert_eq!(forgetful.first_spike_step(1.0), Some(1));
+        assert_eq!(forgetful.first_spike_step(f64::INFINITY), None, "an infinite drive fired");
+        assert_eq!(forgetful.first_spike_step(f64::NEG_INFINITY), None);
+        assert_eq!(forgetful.first_spike_step(f64::NAN), None);
+        // And with a reset potential below zero, where the `tau = 1` branch is ordered ahead of
+        // the sub-threshold guard that would otherwise have swallowed the case.
+        let shifted = LifLayer::new(1, 1, 1.0, 0.5, -1.0).unwrap();
+        assert_eq!(shifted.first_spike_step(1.5), Some(1), "1.5 - 1.0 lands exactly on 0.5");
+        assert_eq!(shifted.first_spike_step(f64::INFINITY), None);
+    }
+
+    /// [`LifLayer::forward`] documents `NonFinite` "if a membrane left the finite range", and
+    /// nothing in the suite could reach it: every drive here is of order 1, and the update
+    /// `v + (1/tau)(x - (v - v_reset))` is a contraction toward `x + v_reset` for `tau >= 1`, so
+    /// from rest a single step cannot leave the range whatever finite `x` is.
+    ///
+    /// It takes two steps and both ends of the `f64` range. At `tau = 1` the membrane lands on its
+    /// drive exactly, so one timestep at `-f64::MAX` parks it there, and the next at `+f64::MAX`
+    /// forms `x - (v - v_reset)`, which is `f64::MAX + f64::MAX` and overflows to infinity. Carried
+    /// forward instead of refused, that membrane compares `>= v_th` and the layer reports a spike:
+    /// an infinity laundered into an ordinary bit.
+    #[test]
+    fn a_membrane_driven_out_of_the_finite_range_is_refused_rather_than_spiking() {
+        let mut n = LifLayer::new(1, 1, 1.0, 1.0, 0.0).unwrap();
+        let mut audit = Audit::new();
+        let down =
+            n.forward(&Tensor::real(1, 1, vec![-f64::MAX]).unwrap(), "n", &mut audit).unwrap();
+        assert_eq!(down.values(), &[0.0], "a membrane at -f64::MAX is far below the threshold");
+        assert_eq!(n.membranes(), &[-f64::MAX], "the membrane must really be parked there");
+
+        let e =
+            n.forward(&Tensor::real(1, 1, vec![f64::MAX]).unwrap(), "n", &mut audit).unwrap_err();
+        assert!(matches!(e, AttnError::NonFinite { what: "membrane", index: 0 }), "{e}");
+        // The arithmetic the refusal is about, stated without the layer.
+        assert!(!(f64::MAX + f64::MAX).is_finite(), "the intermediate really does overflow");
+    }
+
+    /// ⭐ The whole **effective** side of [`Order::ValuesFirst`] was unwatched. The order is
+    /// exercised for its output values and its dense counts only, and the one invariant that would
+    /// have caught a miscount — effective never above dense — runs on a `ScoresFirst` model.
+    /// Neither miscount can trip it in any case: counting every operand pair of a live row still
+    /// gives at most `nnz x d_v`, which is below `d x n_k x d_v`.
+    ///
+    /// Both of this order's products skip a pair when the **second** operand is zero, and both
+    /// counts below are computed from the fixture by hand rather than read back from the code.
+    #[test]
+    fn the_values_first_order_counts_only_the_pairs_where_both_operands_fired() {
+        let q = Tensor::spikes(2, 2, &[true, false, false, true]).unwrap();
+        let k = Tensor::spikes(2, 2, &[true, true, false, true]).unwrap();
+        let v = Tensor::spikes(2, 2, &[true, false, false, true]).unwrap();
+        let mut a = Audit::new();
+        let o = attend(&q, &k, &v, Order::ValuesFirst, "t", &mut a).unwrap();
+
+        // G = Kᵀ V by hand. Row 0 of K is (1,1) and row 0 of V is (1,0), giving two live pairs at
+        // (c, e) = (0,0) and (1,0); row 1 of K is (0,1) and row 1 of V is (0,1), giving one at
+        // (1,1). Three — not the six that charging every value channel against every live key
+        // entry would give.
+        let gram = a.site("t.gram", OpKind::Ac).expect("both operands are binary");
+        assert_eq!(gram.dense, 2 * 2 * 2, "d x n_k x d_v");
+        assert_eq!(gram.effective, 3, "the gram counted an operation against a silent value");
+        assert!(gram.effective < gram.dense, "a fixture with no zeros in V could not tell");
+
+        // G is then ((1,0),(1,1)). Q row 0 is (1,0), so only c = 0 contributes and only e = 0 of
+        // G's row 0 is live: one pair. Q row 1 is (0,1), so c = 1, and both entries of G's row 1
+        // are live: two pairs. Three — not the four that charging every e would give.
+        let att = a.site("t.attend", OpKind::Ac).expect("the query operand is binary");
+        assert_eq!(att.dense, 2 * 2 * 2, "n_q x d x d_v");
+        assert_eq!(att.effective, 3, "the attend counted a pair against a zero of G");
+        assert!(att.effective < att.dense, "a G with no zeros could not tell");
+
+        // The two orders are the same product, so the values agree and the counts above are counts
+        // of the same arithmetic rather than of a different one.
+        let mut b = Audit::new();
+        let o2 = attend(&q, &k, &v, Order::ScoresFirst, "t", &mut b).unwrap();
+        assert_eq!(o.values(), o2.values(), "the two association orders disagreed");
+        assert_eq!(o.values(), &[1.0, 0.0, 1.0, 1.0], "hand-computed Q Kᵀ V");
+        assert!(o.nonzero() > 0, "a silent product would make every count above vacuous");
+    }
+
+    /// `Ssa::new`'s `Empty { what: "heads" }` refusal. `heads_must_divide_the_channel_count` runs
+    /// 4-of-6 and 3-of-6 and never 0, and with that guard gone zero does not even panic in the
+    /// division below it: `usize::is_multiple_of(0)` is `self == 0`, so a six-channel model answers
+    /// `HeadsDoNotDivide { channels: 6, heads: 0 }` and the named refusal is simply never reached.
+    #[test]
+    fn a_head_count_of_zero_is_empty_rather_than_indivisible() {
+        let lin = || Linear::new(6, 6, eye(6), None).unwrap();
+        let e = Ssa::new(
+            2,
+            0,
+            lin(),
+            lin(),
+            lin(),
+            lin(),
+            2.0,
+            1.0,
+            0.0,
+            1.0,
+            false,
+            Order::ScoresFirst,
+        )
+        .unwrap_err();
+        assert!(matches!(e, AttnError::Empty { what: "heads" }), "{e}");
+    }
+
+    /// [`Position::reset_state`] on the one variant that has state to forget. The existing encoder
+    /// test ends with a bare `p.reset_state()` and asserts nothing after it — a call with no
+    /// observation, so the body could be emptied and the suite stayed green. The membranes are read
+    /// back here, and the reset potential is deliberately **not** zero so that "parked at rest" and
+    /// "zeroed" are two different tables.
+    #[test]
+    fn the_conditional_encoders_reset_returns_its_membranes_to_their_reset_potential() {
+        let conv = DepthwiseConv1d::centre_tap(2, 3).unwrap();
+        // A threshold of 5 is out of reach in one step, so the membranes hold their charge instead
+        // of being reset by a spike of their own.
+        let neuron = LifLayer::new(3, 2, 2.0, 5.0, -0.25).unwrap();
+        let mut p = Position::Conditional(conv, neuron);
+        let x = Tensor::spikes(3, 2, &[true, false, false, true, true, true]).unwrap();
+        let mut audit = Audit::new();
+        let y = p.apply(&x, "position", &mut audit).unwrap();
+        assert_eq!(y.values(), x.values(), "nothing fired, so the shortcut added zero");
+
+        // v = v_reset, so `v - v_reset` is exactly zero and h = -0.25 + 0.5 * pre, with pre the
+        // identity convolution of the input.
+        let charged = match &p {
+            Position::Conditional(_, n) => n.membranes().to_vec(),
+            _ => unreachable!("the variant under test"),
+        };
+        assert_eq!(charged, vec![0.25, -0.25, -0.25, 0.25, 0.25, 0.25], "hand-computed membranes");
+        assert!(
+            charged.iter().any(|v| *v != -0.25),
+            "a reset with nothing to forget would prove nothing"
+        );
+
+        p.reset_state();
+        let rested = match &p {
+            Position::Conditional(_, n) => n.membranes().to_vec(),
+            _ => unreachable!("the variant under test"),
+        };
+        assert_eq!(rested, vec![-0.25; 6], "the conditional encoder kept its membranes");
+    }
+
+    /// ⭐ [`Model::run`] does **not** reset first, which is the whole difference between a model
+    /// that can be driven one timestep at a time and one that cannot. Every existing test either
+    /// runs once or calls `reset_state` before running again, so a reset at the top of `run` was
+    /// invisible.
+    ///
+    /// The model below has a closed-form first-spike latency of 3, so the two drivers agree only if
+    /// the state carries across calls: three separate one-timestep runs must reproduce the three
+    /// outputs of one three-timestep run, spike for spike.
+    #[test]
+    fn a_run_continues_from_the_state_the_previous_one_left() {
+        let d = 2;
+        let build = || {
+            let scaled = |g: f64| {
+                let mut w = eye(d);
+                for v in &mut w {
+                    *v *= g;
+                }
+                Linear::new(d, d, w, None).unwrap()
+            };
+            let attn = Ssa::new(
+                2,
+                1,
+                scaled(0.6),
+                scaled(0.6),
+                scaled(0.6),
+                scaled(1.0),
+                2.0,
+                0.5,
+                0.0,
+                1.0,
+                false,
+                Order::ScoresFirst,
+            )
+            .unwrap();
+            let mlp = SpikingMlp::new(2, scaled(1.0), scaled(1.0), 2.0, 0.5, 0.0).unwrap();
+            let block = Block::new(attn, mlp, Residual::None).unwrap();
+            Model::new(2, Position::None, vec![block]).unwrap()
+        };
+        let x = Tensor::spikes(2, 2, &[true, false, false, true]).unwrap();
+
+        let mut batched = build();
+        let (all, batch_audit) = batched.run(&[x.clone(), x.clone(), x.clone()]).unwrap();
+        assert_eq!(batch_audit.timesteps(), 3);
+        assert_eq!(all[2].values(), &[1.0, 0.0, 0.0, 1.0], "the third timestep must fire");
+        assert_ne!(all[0].values(), all[2].values(), "without integration this proves nothing");
+
+        let mut stepped = build();
+        let mut seen: Vec<Tensor> = Vec::new();
+        for _ in 0..3 {
+            let (out, audit) = stepped.run(std::slice::from_ref(&x)).unwrap();
+            assert_eq!(audit.timesteps(), 1, "each call audits only the timesteps it ran");
+            seen.push(out.into_iter().next().expect("one input, one output"));
+        }
+        for t in 0..3 {
+            assert_eq!(
+                seen[t].values(),
+                all[t].values(),
+                "timestep {t} differs: run() reset the membranes it was handed"
+            );
+        }
+    }
+
+    /// [`Model::run`]'s `Empty { what: "inputs" }`. The only empty-sequence assertion in the module
+    /// is on [`rate_readout`], which carries a refusal of its own; an empty run would otherwise
+    /// come back `Ok` with no outputs and a fresh audit — a report of a pass that never happened,
+    /// reading as "nothing cost anything".
+    #[test]
+    fn an_empty_input_sequence_is_refused_rather_than_audited_as_a_free_pass() {
+        let mut m = toy();
+        let e = m.run(&[]).unwrap_err();
+        assert!(matches!(e, AttnError::Empty { what: "inputs" }), "{e}");
+        // One input is enough, so the refusal is about emptiness and not about the call.
+        let (outs, audit) = m.run(&[Tensor::silent(2, 2).unwrap()]).unwrap();
+        assert_eq!(outs.len(), 1);
+        assert_eq!(audit.timesteps(), 1);
     }
 }

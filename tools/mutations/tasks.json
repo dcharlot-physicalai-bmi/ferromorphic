@@ -742,7 +742,8 @@
  {
   "label": "a bar that cannot move is given a window anyway",
   "old": "        if !v.is_finite() || v <= 0.0 {\n            return None;\n        }",
-  "new": "        if !v.is_finite() || v < 0.0 {\n            return None;\n        }"
+  "new": "        if !v.is_finite() || v < 0.0 {\n            return None;\n        }",
+  "equivalent": "The two forms differ for exactly one input: v == 0.0 (and -0.0). Everywhere else they agree — a negative v satisfies both `v < 0.0` and `v <= 0.0`, a positive v satisfies neither. At v == +-0.0 the mutant falls through to `let t = (extent / v).ceil()`, and `extent` is `f64::from(width.max(height)) + f64::from(bar_width)`: a sum of two `u32`-derived f64, so it is finite and >= 0.0 for every reachable config, NaN being unrepresentable there. IEEE-754 division by zero then gives +inf or -inf for extent > 0 and NaN for extent == 0.0, `ceil` preserves all three, and the very next guard — `if !t.is_finite() || t > 1e12 { return None; }`, which is there for the separate case of a speed so small the window would be astronomical — returns None. So both forms return None for every input to `min_ticks`, and `min_ticks` is the only reader of the branch. There is no cost signal either: the fall-through is one division, one ceil and one comparison. Measured on this implementation: min_ticks() is None for speed_px_per_tick = 0.0, for -0.0, and for 1e-320 (whose min_speed underflows to the denormal 8e-321, which is > 0.0 and so takes the identical path under both forms and is refused by the 1e12 ceiling). The `v <= 0.0` form is kept because it says at the place the speed is read that a bar which cannot move has no window, rather than leaving that to an infinity three lines later — but no test can tell the two apart, because they compute the same function."
  },
  {
   "label": "an advance exactly equal to the bar's thickness is refused",
