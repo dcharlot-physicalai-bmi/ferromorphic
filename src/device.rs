@@ -270,7 +270,7 @@
 //!   return `false` either way and only the buffers say which.
 //!
 //! One correction to the record came out of it. This module's own argument for why
-//! [`Crossbar::residual`] needs a single finiteness check rather than one per node set was
+//! `Crossbar::residual` (private) needs a single finiteness check rather than one per node set was
 //! **wrong in the direction that matters**: the two residuals share `g * (a - b)`, but they do not
 //! share the wire term, so the bit-line half of that check is load-bearing after all. The argument
 //! is rewritten where it lives and the case is pinned by a test.
