@@ -3997,17 +3997,22 @@ mod tests {
         f.step(&[]);
         assert!((f.state()[0] - (-1e-4f64 / 5e-3).exp()).abs() < 1e-15, "trace {}", f.state()[0]);
 
-        // A refused retune leaves the filter exactly as it was, rather than half-applied.
+        // A refused retune leaves the filter exactly as it was, rather than half-applied — and
+        // that is checked after EACH refusal rather than only after both. The second call used to
+        // pass the very `tau` the first one was refused for, so a `retune` that wrote `tau` before
+        // validating it was REPAIRED by the next refusal and the single assertion at the end could
+        // not see either write. The second call now carries a `tau` of its own for the same reason.
         let before = f.clone();
         assert!(matches!(
             f.retune(0.0, 1e-4).unwrap_err(),
             ReservoirError::OutOfRange { what: "tau", .. }
         ));
+        assert_eq!(f, before, "a refused tau was written before it was checked");
         assert!(matches!(
-            f.retune(5e-3, f64::NAN).unwrap_err(),
+            f.retune(7e-3, f64::NAN).unwrap_err(),
             ReservoirError::OutOfRange { what: "dt", .. }
         ));
-        assert_eq!(f, before, "a refused retune changed the filter");
+        assert_eq!(f, before, "a refused dt left the filter half-applied");
     }
 
     /// The liquid, end to end: two different input streams must drive it to different states, the
@@ -4078,5 +4083,768 @@ mod tests {
         assert!(!train.is_empty(), "the liquid was silent under 6 nA");
         assert!(sim.ledger.syn_ops > 0, "no synaptic operation was charged");
         assert_eq!(sim.ledger.neuron_updates_idle, 0, "event-driven updated an idle neuron");
+    }
+
+    /// **The iteration multiplies by the matrix, not by its transpose**, checked on a matrix whose
+    /// finite-iteration answer is a closed form rather than a measurement.
+    ///
+    /// Nothing in the suite could see this, and the reason is worth stating because it is not an
+    /// oversight. The spectral radius is transpose-invariant — `det(A − λI) = det(Aᵀ − λI)` — so an
+    /// iteration run on `Aᵀ` converges to the same radius; and the Rayleigh quotient evaluated at
+    /// the **left** eigenvector `u`, which is where iterating on `Aᵀ` lands, is `uᵀAu = λ·uᵀu = λ`,
+    /// the same number a second time. Every existing fixture is either symmetric (the
+    /// Householder-conjugated ones) or converges far enough that the two readings agree to the last
+    /// few bits: on the triangular fixture the measured gap is 4.4e-16.
+    ///
+    /// So the difference is only visible while the iterate is still moving, and it is pinned here
+    /// on a matrix where "still moving" has an exact answer. `A` is a scaled 3-cycle,
+    /// `e₀ → a·e₁ → ab·e₂ → abc·e₀`, so `A³ = abc·I` **exactly** for `a = 64`, `b = 1`, `c = 1/64`
+    /// — all powers of two — every eigenvalue is a cube root of `abc = 1`, and the true spectral
+    /// radius is exactly 1. The iterate is therefore periodic with period three,
+    /// `‖A^{3m+j}x₀‖ = (abc)^m · N_j`, and the window mean telescopes to a closed form at **any**
+    /// iteration count, including counts that cut across the cycle — where `A` and `Aᵀ` walk it in
+    /// opposite directions and land on different faces of it.
+    #[test]
+    fn the_iteration_multiplies_by_the_matrix_rather_than_by_its_transpose() {
+        let (a, b, c) = (64.0f64, 1.0f64, 1.0f64 / 64.0);
+        // Row-major: (Ax)₀ = c·x₂, (Ax)₁ = a·x₀, (Ax)₂ = b·x₁.
+        let m = vec![0.0, 0.0, c, a, 0.0, 0.0, 0.0, b, 0.0];
+        let abc = a * b * c;
+        assert_eq!(abc, 1.0, "three powers of two whose product is exactly one");
+
+        // `A³ = abc·I` exactly, which is the premise every line below rests on, so it is computed
+        // rather than described.
+        let mul = |p: &[f64], q: &[f64]| -> Vec<f64> {
+            let mut o = vec![0.0f64; 9];
+            for i in 0..3 {
+                for j in 0..3 {
+                    o[i * 3 + j] = (0..3).map(|k| p[i * 3 + k] * q[k * 3 + j]).sum();
+                }
+            }
+            o
+        };
+        let cube = mul(&mul(&m, &m), &m);
+        for i in 0..3 {
+            for j in 0..3 {
+                let want = if i == j { abc } else { 0.0 };
+                assert_eq!(cube[i * 3 + j], want, "A^3 at ({i}, {j})");
+            }
+        }
+
+        // The seeded start, drawn the way the function's doc says it is: `n` draws of
+        // `2·next_f64() − 1`, renormalised.
+        let seed = 13u64;
+        let mut rng = Rng::new(seed);
+        let raw: Vec<f64> = (0..3).map(|_| 2.0 * rng.next_f64() - 1.0).collect();
+        let nrm = raw.iter().map(|v| v * v).sum::<f64>().sqrt();
+        let (p, q, r) = (raw[0] / nrm, raw[1] / nrm, raw[2] / nrm);
+
+        // 396 iterations is divisible by both 4 and 3, so every quarter-window is a whole number of
+        // cycles, the telescoping product is exactly `(abc)^k`, and the estimator returns the true
+        // radius with a residual of exactly zero. This half is transpose-symmetric and says so.
+        let long = power_iteration(&m, 3, 396, 1e-10, seed).unwrap();
+        assert!((long.radius - 1.0).abs() < 1e-14, "radius {}", long.radius);
+        assert_eq!(long.residual, 0.0, "a whole number of cycles still left a residual");
+        assert!(long.converged);
+
+        // 8 iterations is not. `q = 2`, so the late window is growth steps 7 and 8 and the early
+        // window steps 5 and 6. With `N_k = ‖A^k x₀‖` and `N_{3m+j} = (abc)^m N_j`, the late window
+        // telescopes to `sqrt(N₈/N₆) = sqrt(N₂)` and the early one to `sqrt(N₆/N₄) = sqrt(abc/N₁)`.
+        let n1 = ((c * r).powi(2) + (a * p).powi(2) + (b * q).powi(2)).sqrt();
+        let n2 = ((c * b * q).powi(2) + (a * c * r).powi(2) + (b * a * p).powi(2)).sqrt();
+        let want_radius = n2.sqrt();
+        let want_residual = (want_radius - (abc / n1).sqrt()).abs() / want_radius;
+        // The final iterate is `A²x₀ / N₂` and `A³x₀ = abc·x₀`, so `xᵀAx = abc·(A²x₀ · x₀) / N₂²`.
+        let want_rayleigh = abc * (c * b * q * p + a * c * r * q + b * a * p * r) / (n2 * n2);
+        let s = power_iteration(&m, 3, 8, 1e-10, seed).unwrap();
+        // Three products, a sum and a square root on each side, so the two differ by a few ulps at
+        // most; 1e-14 relative is that budget with room to spare, not a knob.
+        assert!(
+            (s.radius - want_radius).abs() / want_radius < 1e-14,
+            "radius {} against the closed form {want_radius}",
+            s.radius
+        );
+        assert!(
+            (s.rayleigh - want_rayleigh).abs() < 1e-14,
+            "rayleigh {} against the closed form {want_rayleigh}",
+            s.rayleigh
+        );
+        assert!(
+            (s.residual - want_residual).abs() < 1e-14,
+            "residual {} against the closed form {want_residual}",
+            s.residual
+        );
+
+        // And the transpose is a genuinely different reading rather than the same number reached
+        // twice: the cycle runs the other way, so the same eight steps end on a different face.
+        // This implementation measures 1.8037 for the matrix and 7.6687 for its transpose.
+        let mt = vec![0.0, a, 0.0, 0.0, 0.0, b, c, 0.0, 0.0];
+        let m2 = ((a * b * r).powi(2) + (b * c * p).powi(2) + (c * a * q).powi(2)).sqrt();
+        let st = power_iteration(&mt, 3, 8, 1e-10, seed).unwrap();
+        assert!(
+            (st.radius - m2.sqrt()).abs() / m2.sqrt() < 1e-14,
+            "transpose radius {} against {}",
+            st.radius,
+            m2.sqrt()
+        );
+        assert!(
+            st.radius > 4.0 * s.radius,
+            "the two readings differ by a factor of only {}",
+            st.radius / s.radius
+        );
+        // Both are estimates of the SAME true radius of 1, which is exactly why 396 well-spent
+        // iterations cannot tell them apart and eight can.
+        let long_t = power_iteration(&mt, 3, 396, 1e-10, seed).unwrap();
+        assert!((long_t.radius - 1.0).abs() < 1e-14, "transpose over whole cycles {}", long_t.radius);
+    }
+
+    /// [`Spectrum::iters`] is documented as "iterations actually run, which is `max_iters` unless
+    /// the iterate collapsed to zero", and no assertion anywhere in the crate read the field — so
+    /// reporting a flat zero for every matrix passed the whole suite. The full-run branch is the
+    /// one the doc pins exactly and it is asserted first.
+    ///
+    /// The collapse branch the doc leaves open, and this test says which reading it has rather
+    /// than implying the doc settles it: the count is the number of **growth factors recorded**,
+    /// which is one fewer than the number of products formed, because the product that lands in
+    /// the kernel contributes no factor. A matrix of all zeros therefore reports 0 and not 1.
+    #[test]
+    fn the_iteration_count_is_the_work_that_was_actually_done() {
+        let a = householder_conjugate(&[4.0, -2.0, 1.0], &[1.0, 2.0, -0.5]);
+        assert_eq!(power_iteration(&a, 3, 400, 1e-12, 5).unwrap().iters, 400);
+        assert_eq!(power_iteration(&a, 3, 64, 1e-12, 5).unwrap().iters, 64);
+        // `[[0, 1], [0, 0]]` sends any start to a multiple of `e₀` in one step and to exactly zero
+        // in two, so exactly one growth factor is recorded before the collapse.
+        let s = power_iteration(&[0.0, 1.0, 0.0, 0.0], 2, 64, 1e-12, 10).unwrap();
+        assert_eq!(s.radius, 0.0);
+        assert!(s.converged);
+        assert_eq!(s.iters, 1, "the collapse was reported as {} iterations", s.iters);
+        // The 3x3 shift takes one step longer, which is what makes the count a count rather than a
+        // constant that happens to read 1.
+        let shift = vec![0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0];
+        let s3 = power_iteration(&shift, 3, 64, 1e-12, 10).unwrap();
+        assert_eq!(s3.radius, 0.0);
+        assert_eq!(s3.iters, 2, "the 3x3 collapse was reported as {} iterations", s3.iters);
+        // An all-zero matrix collapses on the very first product, with nothing recorded at all.
+        assert_eq!(power_iteration(&[0.0; 4], 2, 64, 1e-12, 5).unwrap().iters, 0);
+        // The radius is still the right answer for every one of them, which is what makes `iters`
+        // a report on the path taken rather than a warning about the number returned.
+        assert_eq!(power_iteration(&[0.0; 4], 2, 64, 1e-12, 5).unwrap().radius, 0.0);
+    }
+
+    /// The conditioning guard is **relative** to the matrix's own diagonal scale. That is the whole
+    /// argument [`cholesky`]'s doc makes — "vacuous for ten thousand samples, paranoid for one" —
+    /// and no fixture could see it: the rank-deficient design in
+    /// `a_rank_deficient_design_is_refused_without_a_penalty_and_solved_with_one` has a third pivot
+    /// near 1e-15 against a diagonal scale near 10, so it trips a relative 1e-12 and an absolute
+    /// one alike. Telling the two apart needs two matrices whose scales differ, which is the case
+    /// the doc is actually about, and the suite had only ever supplied one.
+    #[test]
+    fn the_conditioning_guard_is_relative_to_the_matrixs_own_diagonal_scale() {
+        // A Gram matrix accumulated over many samples: scale 1e6 puts the guard at 1e-6, and a
+        // pivot of 1e-7 has lost more than twelve digits of that scale. An ABSOLUTE 1e-12 would
+        // accept it and hand back a readout whose coefficients are noise.
+        let many = vec![1e6, 0.0, 0.0, 1e-7];
+        assert_eq!(
+            cholesky(&many, 2, 1e-12).unwrap_err(),
+            ReservoirError::IllConditioned { index: 1, pivot: 1e-7, scale: 1e6 }
+        );
+        // With the guard turned off the same matrix factorises, so the refusal above is the guard
+        // firing and not the arithmetic failing.
+        assert_eq!(cholesky(&many, 2, 0.0).unwrap().pivot_ratio, 1e13);
+
+        // And the other direction, which is the half an absolute guard gets wrong. One sample's
+        // worth of scale, 1e-6, puts the guard at 1e-18, and a pivot of 1e-13 is five orders of
+        // magnitude clear of it — a perfectly good factorisation that an absolute 1e-12 refuses.
+        let few = vec![1e-6, 0.0, 0.0, 1e-13];
+        assert_eq!(cholesky(&few, 2, 1e-12).unwrap().pivot_ratio, 1e7);
+        // The same matrix scaled up by 1e12 is the same problem with the same answer, which is the
+        // property "relative" buys and "absolute" does not.
+        let scaled: Vec<f64> = few.iter().map(|v| v * 1e12).collect();
+        assert_eq!(cholesky(&scaled, 2, 1e-12).unwrap().pivot_ratio, 1e7);
+    }
+
+    /// [`Cholesky`]'s type doc says only the **lower triangle** of the input is read, and says in
+    /// so many words that this is documented rather than checked. It is checked now. Every matrix
+    /// this crate factorises is a Gram matrix, symmetric by construction, so no fixture in the
+    /// suite has two triangles that disagree and reading `a[j][i]` where the code reads `a[i][j]`
+    /// was invisible — it is the transpose of a symmetric matrix on every input the tests supply.
+    #[test]
+    fn the_factorisation_reads_only_the_lower_triangle_of_its_input() {
+        // Lower triangle of [[4, ·], [2, 5]]: `L = [[2, 0], [1, 2]]` exactly, since 4 and 5 − 1²
+        // are both squares of numbers a `f64` holds exactly.
+        let want = vec![2.0, 0.0, 1.0, 2.0];
+        let symmetric = cholesky(&[4.0, 2.0, 2.0, 5.0], 2, 1e-12).unwrap();
+        assert_eq!(symmetric.l, want);
+        // The same lower triangle under an upper triangle that has nothing to do with it.
+        let lopsided = cholesky(&[4.0, 999.0, 2.0, 5.0], 2, 1e-12).unwrap();
+        assert_eq!(lopsided.l, want, "the upper triangle reached the factor");
+        assert_eq!(lopsided, symmetric, "the two agree in the pivot ratio as well as the factor");
+        // And `L Lᵀ` reproduces the SYMMETRISED-FROM-BELOW matrix, not the one that was passed:
+        // the 999 is gone, which is the documented behaviour stated as an equation.
+        let l = &lopsided.l;
+        for i in 0..2 {
+            for j in 0..2 {
+                let llt: f64 = (0..2).map(|k| l[i * 2 + k] * l[j * 2 + k]).sum();
+                let want = [[4.0, 2.0], [2.0, 5.0]][i][j];
+                assert_eq!(llt, want, "L Lt at ({i}, {j})");
+            }
+        }
+    }
+
+    /// [`Ridge::fit`] documents a [`ReservoirError::ShapeMismatch`] for a target list of a
+    /// different length from the design, and no test ever sent it one. `zip` truncates to the
+    /// shorter of its two sides, so a caller who dropped a row silently trained on a prefix and got
+    /// back a readout fitted to the wrong rows with no error raised anywhere in the chain.
+    #[test]
+    fn a_target_list_of_a_different_length_from_the_design_is_refused() {
+        let x = vec![vec![1.0, 2.0], vec![0.5, -1.0], vec![-2.0, 0.25]];
+        let y = vec![vec![1.0], vec![0.0], vec![-1.0]];
+        assert!(Ridge::fit(&x, &y, 1e-6, true).is_ok(), "the matched case still fits");
+        assert_eq!(
+            Ridge::fit(&x, &y[..2], 1e-6, true).unwrap_err(),
+            ReservoirError::ShapeMismatch { what: "targets", got: 2, want: 3 }
+        );
+        let long = vec![vec![1.0], vec![0.0], vec![-1.0], vec![2.0]];
+        assert_eq!(
+            Ridge::fit(&x, &long, 1e-6, true).unwrap_err(),
+            ReservoirError::ShapeMismatch { what: "targets", got: 4, want: 3 }
+        );
+        // No targets at all against a non-empty design is the same mismatch, reported rather than
+        // indexed: reaching the accumulate loop would read `y[0]` on an empty slice.
+        let none: Vec<Vec<f64>> = Vec::new();
+        assert_eq!(
+            Ridge::fit(&x, &none, 1e-6, true).unwrap_err(),
+            ReservoirError::ShapeMismatch { what: "targets", got: 0, want: 3 }
+        );
+        // [`Readout::rmse`] carries the same guard over the same two slices, and had no test for it
+        // either.
+        let r = Ridge::fit(&x, &y, 1e-6, true).unwrap();
+        assert_eq!(
+            r.rmse(&x, &y[..2]).unwrap_err(),
+            ReservoirError::ShapeMismatch { what: "targets", got: 2, want: 3 }
+        );
+    }
+
+    /// [`Readout::rmse`] is a **root** mean square, and every assertion on it in this module is a
+    /// threshold — `< 1e-12`, `< 1e-4`, `< 0.4`, `> 0.9`, `> 5x`. Squaring preserves all five,
+    /// because `x < t` and `x² < t²` agree for non-negative numbers, so dropping the square root
+    /// passed the whole suite; the closest any of them came was the XOR baseline's `> 0.9` against
+    /// a measured 0.994, which squares to 0.989 and still clears it.
+    ///
+    /// The readout here is built by hand rather than fitted, so the number the root is taken of is
+    /// chosen instead of measured: the predictions are all zero, the squared errors are 9, 16, 0
+    /// and 0, the mean over **samples and targets** is 25/4, and its root is exactly 2.5 in binary.
+    #[test]
+    fn the_reported_error_is_the_root_of_the_mean_square_over_samples_and_targets() {
+        let r = Readout {
+            features: 1,
+            targets: 2,
+            bias: false,
+            w: vec![0.0, 0.0],
+            pivot_ratio: 1.0,
+            samples: 2,
+        };
+        let x = vec![vec![1.0], vec![1.0]];
+        let y = vec![vec![3.0, 4.0], vec![0.0, 0.0]];
+        assert_eq!(r.predict(&x[0]).unwrap(), vec![0.0, 0.0], "the fixture predicts zero");
+        assert_eq!(r.rmse(&x, &y).unwrap(), 2.5, "the mean square is 6.25 and its root is 2.5");
+        // The denominator counts targets as well as samples: dividing by the sample count alone
+        // would give sqrt(12.5) = 3.5355, which is neither 2.5 nor 6.25.
+        assert_ne!(r.rmse(&x, &y).unwrap(), 12.5f64.sqrt());
+        // A readout with no error at all still reports 0, so the root is not carrying the test.
+        assert_eq!(r.rmse(&x, &[vec![0.0, 0.0], vec![0.0, 0.0]]).unwrap(), 0.0);
+    }
+
+    /// The module doc claims a figure produced with [`EsnSpec::default`] "is reproducible from the
+    /// documentation alone". The only test that touched the defaults compared two builds of them to
+    /// each other, which is true of any defaults whatever they are. The seven documented numbers
+    /// are pinned here as literals, and the two that carry a claim about the reservoir are checked
+    /// on the reservoir.
+    #[test]
+    fn the_default_spec_is_the_one_the_documentation_states() {
+        let d = EsnSpec::default();
+        assert_eq!(d.units, 100);
+        assert_eq!(d.spectral_radius, 0.9, "below 1, which is the echo-state regime");
+        assert_eq!(d.density, 0.1, "10% dense, the conventional starting point");
+        assert_eq!(d.input_scaling, 1.0);
+        assert_eq!(d.bias_scaling, 0.0, "unbiased, so the zero state is a fixed point at zero input");
+        assert_eq!(d.leak, 1.0, "the classic non-leaky echo state network");
+        assert_eq!(d.seed, 0x05EE_D0E5);
+
+        let e = Esn::new(&d, 1).unwrap();
+        // 10 000 entries drawn at p = 0.1 has a standard deviation of 30 entries, or 0.003 in this
+        // fraction, so 0.01 is three of them and the band is arithmetic rather than a guess.
+        let frac = e.w.iter().filter(|v| **v != 0.0).count() as f64 / (d.units * d.units) as f64;
+        assert!((frac - 0.1).abs() < 0.01, "the default matrix came out {frac} dense");
+        assert!(e.radius < 1.0, "the default reservoir measured a radius of {}", e.radius);
+    }
+
+    /// [`Esn::new`] draws **two numbers per entry whether or not the sparsity mask keeps it**, and
+    /// the comment beside the loop says why: drawing only on a hit makes the random stream a
+    /// function of the density, so two reservoirs differing only in density would share no entry at
+    /// all and could not be compared. Nothing checked it. Every assertion in the module is a
+    /// threshold on one reservoir at a time, and a threshold does not care which draw landed where.
+    #[test]
+    fn two_reservoirs_that_differ_only_in_density_share_the_draws_they_keep() {
+        let base = EsnSpec {
+            units: 20,
+            spectral_radius: 0.9,
+            density: 0.2,
+            input_scaling: 1.0,
+            bias_scaling: 0.3,
+            leak: 1.0,
+            seed: 4242,
+        };
+        let sparse = Esn::new(&base, 1).unwrap();
+        let dense = Esn::new(&EsnSpec { density: 1.0, ..base }, 1).unwrap();
+        let kept: Vec<usize> = (0..sparse.w.len()).filter(|&i| sparse.w[i] != 0.0).collect();
+        assert!(kept.len() > 50, "only {} of 400 entries survived the mask", kept.len());
+        assert!(kept.len() < sparse.w.len(), "the sparse draw kept every entry");
+        assert_eq!(
+            dense.w.iter().filter(|v| **v != 0.0).count(),
+            dense.w.len(),
+            "the density-1 draw dropped an entry"
+        );
+
+        // The two matrices hold the same draws scaled to the same radius by two different factors,
+        // so on the sparse matrix's support they agree up to ONE constant. The signs are exact — a
+        // positive scale factor cannot move one — and the ratios are two roundings of the same
+        // quotient, so a few ulps is the entire budget and 1e-12 sits far inside it.
+        let first = sparse.w[kept[0]] / dense.w[kept[0]];
+        for &i in &kept {
+            assert_eq!(
+                sparse.w[i].signum(),
+                dense.w[i].signum(),
+                "entry {i} changed sign between the two densities"
+            );
+            let ratio = sparse.w[i] / dense.w[i];
+            assert!(
+                (ratio / first - 1.0).abs() < 1e-12,
+                "entry {i} scaled by {ratio} where the first kept entry scaled by {first}"
+            );
+        }
+        // The input weights and the biases come off the same stream after the matrix, so a
+        // conditional draw shifts them too — which is the part of the claim that says the two
+        // reservoirs differ in the density and in nothing else.
+        assert_eq!(sparse.w_in, dense.w_in, "the input weights moved with the density");
+        assert_eq!(sparse.bias, dense.bias, "the biases moved with the density");
+        assert!(sparse.bias.iter().any(|v| *v != 0.0), "a zero bias vector would assert nothing");
+    }
+
+    /// The input block for unit `i` starts at `i · n_in`, not at `i`. Every fixture in this module
+    /// that asserts a **value** runs with `n_in = 1`, where those two offsets are the same number,
+    /// and the two multi-channel fixtures assert only that the state stayed inside its box and that
+    /// two builds of one spec are equal — neither of which moves when the block slides by
+    /// `i·(n_in − 1)` and reads a window overlapping its neighbours.
+    ///
+    /// The first step from the zero state is `tanh(W_in u + b)` term by term, written out here from
+    /// the public fields in the order [`Esn::step`] accumulates them, so this is an equality and
+    /// not a tolerance.
+    #[test]
+    fn the_input_weight_block_is_the_units_own_row_of_channels() {
+        let spec = EsnSpec {
+            units: 4,
+            spectral_radius: 0.9,
+            density: 0.5,
+            input_scaling: 1.0,
+            bias_scaling: 0.5,
+            leak: 1.0,
+            seed: 909,
+        };
+        let mut e = Esn::new(&spec, 3).unwrap();
+        assert_eq!(e.w_in.len(), 4 * 3, "w_in is units x n_in, row-major");
+        // The premise, so the test cannot pass because the three channels happen to agree: the
+        // shifted window really does read different weights for every unit past the first.
+        for i in 1..4 {
+            assert_ne!(
+                e.w_in[i * 3..i * 3 + 3],
+                e.w_in[i..i + 3],
+                "unit {i}'s block and the shifted window coincide"
+            );
+        }
+        let u = [0.5, -0.25, 0.75];
+        let want: Vec<f64> = (0..4)
+            .map(|i| {
+                // The state is all zeros, so the recurrent term adds exactly zero to the sum.
+                let mut s = e.bias[i];
+                for j in 0..3 {
+                    s += e.w_in[i * 3 + j] * u[j];
+                }
+                s.tanh()
+            })
+            .collect();
+        assert_eq!(e.step(&u).unwrap(), want.as_slice());
+    }
+
+    /// [`EchoReport::peak`] and [`EchoReport::ratio`] both carry a documented definition — "the
+    /// largest distance seen at **any** step" and "`end / start`" — and no test read either field.
+    /// Only `start` and `forgets` were ever asserted, so a peak that is really just the last
+    /// distance, and a ratio computed the other way up, both passed the whole suite.
+    #[test]
+    fn the_echo_report_carries_the_largest_distance_and_the_end_to_start_ratio() {
+        let e = esn(40, 0.8, 1.0, 5, 1);
+        let mut rng = Rng::new(31);
+        let inputs: Vec<Vec<f64>> = (0..120).map(|_| vec![2.0 * rng.next_f64() - 1.0]).collect();
+        let x0: Vec<f64> = (0..40).map(|_| 2.0 * rng.next_f64() - 1.0).collect();
+        let y0: Vec<f64> = (0..40).map(|_| 2.0 * rng.next_f64() - 1.0).collect();
+        let rep = echo_state_check(&e, &inputs, &x0, &y0, 1e-9).unwrap();
+
+        // The same two copies stepped by hand, so the peak is compared against the maximum over the
+        // whole run computed by the same `dist` over the same states in the same order: an
+        // equality, not a tolerance.
+        let mut a = e.clone();
+        let mut b = e.clone();
+        a.set_state(&x0).unwrap();
+        b.set_state(&y0).unwrap();
+        let start = super::dist(a.state(), b.state());
+        let mut peak = start;
+        let mut end = start;
+        for u in &inputs {
+            a.step(u).unwrap();
+            b.step(u).unwrap();
+            end = super::dist(a.state(), b.state());
+            peak = peak.max(end);
+        }
+        assert_eq!(rep.start, start);
+        assert_eq!(rep.end, end);
+        assert_eq!(rep.peak, peak, "the peak is not the largest distance over the run");
+        assert_eq!(rep.steps, 120);
+
+        // A maximum over the run, on a reservoir that contracts, is at least where it started and
+        // strictly above where it ended — neither of which the last distance can be.
+        assert!(rep.peak >= rep.start, "peak {} fell below the start {}", rep.peak, rep.start);
+        assert!(rep.peak > rep.end, "peak {} did not exceed the end {}", rep.peak, rep.end);
+        // `end / start`, the way round the field's doc states it. This reservoir forgets, so the
+        // ratio is far below 1 and the inverted form would be far above it.
+        assert_eq!(rep.ratio, rep.end / rep.start);
+        assert!(rep.ratio < 1e-6, "ratio {}", rep.ratio);
+        assert!(rep.forgets, "end {} against a tolerance of 1e-9", rep.end);
+    }
+
+    /// [`MemoryCapacity::samples`] is the sample count the reconstruction was fitted on, and no
+    /// assertion read it — so reporting a flat zero passed, and so did running the reservoir for
+    /// `max_delay` ticks fewer than it needs, which quietly collects that many fewer samples than
+    /// were asked for. The delay budget is why the run is longer than the sample count: the first
+    /// state kept has to have `max_delay` inputs behind it for `u(t − max_delay)` to exist at all.
+    #[test]
+    fn the_memory_curve_is_fitted_on_the_sample_count_it_was_asked_for() {
+        let spec = EsnSpec {
+            units: 8,
+            spectral_radius: 0.9,
+            density: 1.0,
+            input_scaling: 0.5,
+            bias_scaling: 0.0,
+            leak: 1.0,
+            seed: 17,
+        };
+        let e = Esn::new(&spec, 1).unwrap();
+        for &(delays, samples, washout) in &[(5usize, 400usize, 50usize), (20, 300, 10)] {
+            let mc = memory_capacity(&e, delays, samples, washout, 1e-8, 5).unwrap();
+            assert_eq!(mc.samples, samples, "{delays} delays over {samples} samples");
+            assert_eq!(mc.per_delay.len(), delays);
+            assert_eq!(mc.units, 8);
+        }
+        // The refusals that guard the same arithmetic, which had no test either.
+        assert!(matches!(
+            memory_capacity(&e, 0, 100, 10, 1e-8, 5).unwrap_err(),
+            ReservoirError::Empty { what: "delays" }
+        ));
+        assert!(matches!(
+            memory_capacity(&e, 100, 100, 10, 1e-8, 5).unwrap_err(),
+            ReservoirError::OutOfRange { what: "samples", .. }
+        ));
+    }
+
+    /// `r2`'s constant-series branch returns **zero**, and its doc says why: a prediction that never
+    /// moves explains none of the target's variance. No fixture reaches that branch — a reservoir's
+    /// reconstruction of a long delay decays *towards* a constant without ever being one — so
+    /// returning the whole of the variance instead passed the suite, and a dead reservoir would
+    /// have reported 1.0 at every delay and summed straight past Jaeger's bound.
+    #[test]
+    fn a_series_that_never_moves_explains_none_of_the_others_variance() {
+        let moving = [1.0, 2.0, 3.0, 4.0];
+        let flat = [7.0, 7.0, 7.0, 7.0];
+        assert_eq!(super::r2(&flat, &moving), 0.0, "a prediction that never moves");
+        assert_eq!(super::r2(&moving, &flat), 0.0, "a target that never moves");
+        assert_eq!(super::r2(&flat, &flat), 0.0, "two constants");
+        // The branch is reached rather than assumed: the same series against itself is a perfect
+        // correlation and the statistic is exactly 1, so 0 above is a decision and not a default.
+        assert_eq!(super::r2(&moving, &moving), 1.0);
+        // A sign flip is still perfect, because the statistic is r SQUARED.
+        let flipped = [-1.0, -2.0, -3.0, -4.0];
+        assert_eq!(super::r2(&flipped, &moving), 1.0);
+        // And one value between the two ends, by hand: against b = [1, 2, 3, 8] the centred sums
+        // are Saa = 5, Sbb = 29 and Sab = 11, so r2 = 121/145.
+        let b = [1.0, 2.0, 3.0, 8.0];
+        let got = super::r2(&moving, &b);
+        assert!((got - 121.0 / 145.0).abs() < 1e-15, "r2 {got} against 121/145");
+    }
+
+    /// [`Liquid::MAX_DELAY_TICKS`] is a million, and the ceiling test that exercises it computes
+    /// its own bound as `MAX_DELAY_TICKS · dt` and then asserts `max_delay == MAX_DELAY_TICKS` —
+    /// both written in terms of the constant, so both move with it and neither can see it change.
+    /// The doc's justification is arithmetic on the number itself, and that is what is pinned here.
+    #[test]
+    fn the_delay_ceiling_is_the_documented_million_ticks() {
+        assert_eq!(Liquid::MAX_DELAY_TICKS, 1_000_000);
+        let dt = LiquidSpec::maass_column().dt;
+        assert_eq!(dt, 1e-4);
+        let seconds = f64::from(Liquid::MAX_DELAY_TICKS) * dt;
+        assert!((seconds - 100.0).abs() < 1e-9, "the ceiling is {seconds} s at the default tick");
+        // 24 bytes a bucket over `max_delay + 1` buckets, which is the 24 MB of ring the doc prices
+        // the policy at.
+        let ring = (f64::from(Liquid::MAX_DELAY_TICKS) + 1.0) * 24.0;
+        assert!((ring / 1e6 - 24.0).abs() < 1e-3, "{ring} bytes of delivery ring");
+    }
+
+    /// Three documented [`Liquid::build`] refusals that `a_malformed_liquid_spec_is_refused_naming
+    /// _the_field` never reaches: it sends a positive `w_ie`, a zero `lambda`, an out-of-range
+    /// `c_ee` and a zero `nx`, and stops. Each guard below can be deleted outright without moving a
+    /// single existing assertion, and each one fails **silently** rather than loudly — an
+    /// inhibitory fraction of 1.5 is clamped by the `min(n)` two lines later into a wholly
+    /// inhibitory column, a `NaN` weight rides into every synapse the column builds, and a negative
+    /// delay saturates the `as u32` cast to zero ticks and becomes an instantaneous synapse.
+    #[test]
+    fn the_liquid_refuses_a_fraction_a_weight_and_a_delay_outside_their_stated_ranges() {
+        let base = LiquidSpec::maass_column();
+        for bad in [1.5, -0.1, f64::NAN] {
+            assert!(
+                matches!(
+                    Liquid::build(&LiquidSpec { inhibitory_fraction: bad, ..base }).unwrap_err(),
+                    ReservoirError::OutOfRange { what: "inhibitory_fraction", .. }
+                ),
+                "an inhibitory fraction of {bad} was accepted"
+            );
+        }
+        // Both ends of the stated range are legal, so the guard is a range and not a refusal of
+        // everything that reaches it.
+        assert_eq!(
+            Liquid::build(&LiquidSpec { inhibitory_fraction: 0.0, ..base }).unwrap().n_inhibitory(),
+            0
+        );
+        assert_eq!(
+            Liquid::build(&LiquidSpec { inhibitory_fraction: 1.0, ..base }).unwrap().n_inhibitory(),
+            135
+        );
+
+        // An excitatory weight has to be positive AND finite. Zero is a synapse that does nothing,
+        // NaN poisons every membrane it lands on, and infinity is not a membrane displacement.
+        for bad in [0.0, f64::NAN, f64::INFINITY] {
+            assert!(
+                matches!(
+                    Liquid::build(&LiquidSpec { w_ee: bad, ..base }).unwrap_err(),
+                    ReservoirError::OutOfRange { what: "w_ee", .. }
+                ),
+                "a w_ee of {bad} was accepted"
+            );
+            assert!(
+                matches!(
+                    Liquid::build(&LiquidSpec { w_ei: bad, ..base }).unwrap_err(),
+                    ReservoirError::OutOfRange { what: "w_ei", .. }
+                ),
+                "a w_ei of {bad} was accepted"
+            );
+        }
+
+        // A negative delay is not a delay. `(−1.5e-3 / 1e-4).round() as u32` saturates to 0, so
+        // without this guard the synapse is built as an instantaneous one and nothing says so.
+        for bad in [-1.5e-3, -1e-12] {
+            assert!(
+                matches!(
+                    Liquid::build(&LiquidSpec { delay_ee: bad, ..base }).unwrap_err(),
+                    ReservoirError::OutOfRange { what: "delay_ee", .. }
+                ),
+                "a delay_ee of {bad} was accepted"
+            );
+            assert!(
+                matches!(
+                    Liquid::build(&LiquidSpec { delay_other: bad, ..base }).unwrap_err(),
+                    ReservoirError::OutOfRange { what: "delay_other", .. }
+                ),
+                "a delay_other of {bad} was accepted"
+            );
+        }
+    }
+
+    /// The inhibitory count is `round(frac · n)` — to **nearest**, and the test has to press it
+    /// from both sides. The default column cannot: `0.2 × 135` is exactly 27, where rounding up,
+    /// rounding down and rounding to nearest all agree, and 0.2 is the only fraction any fixture in
+    /// the module uses.
+    #[test]
+    fn the_inhibitory_count_rounds_the_fraction_to_the_nearest_whole_cell() {
+        let col = |n: usize, frac: f64| {
+            let spec = LiquidSpec {
+                nx: n,
+                ny: 1,
+                nz: 1,
+                inhibitory_fraction: frac,
+                ..LiquidSpec::maass_column()
+            };
+            Liquid::build(&spec).unwrap().n_inhibitory()
+        };
+        // 8 x 0.3 = 2.4, which rounds DOWN to 2; rounding up would give 3.
+        assert_eq!(col(8, 0.3), 2, "2.4 cells");
+        // 8 x 0.44 = 3.52, which rounds UP to 4; truncating would give 3.
+        assert_eq!(col(8, 0.44), 4, "3.52 cells");
+        // And the exact case the default column sits on, where all three agree.
+        assert_eq!(col(135, 0.2), 27, "27 cells exactly");
+    }
+
+    /// [`Liquid::synapse_sd`] is `sqrt(Σ p(1 − p))`, the standard deviation of a sum of independent
+    /// Bernoulli draws. It appears in the suite only as the width of a 4-sigma band, and a band is
+    /// **loosened** rather than broken by a standard deviation that comes out too large: dropping
+    /// the `(1 − p)` factor raises it by 6% on the default column and every existing assertion
+    /// still passes.
+    #[test]
+    fn the_synapse_counts_standard_deviation_is_the_bernoulli_closed_form() {
+        // Two excitatory neurons one site apart at lambda = 1: two ordered pairs, each drawn at
+        // p = 0.3·exp(−1), and nothing else in the column.
+        let spec = LiquidSpec {
+            nx: 2,
+            ny: 1,
+            nz: 1,
+            inhibitory_fraction: 0.0,
+            lambda: 1.0,
+            ..LiquidSpec::maass_column()
+        };
+        let l = Liquid::build(&spec).unwrap();
+        let p = 0.3 * (-1.0f64).exp();
+        assert!((l.expected_synapses() - 2.0 * p).abs() < 1e-15, "{}", l.expected_synapses());
+        let want = (2.0 * p * (1.0 - p)).sqrt();
+        assert!((l.synapse_sd() - want).abs() < 1e-15, "sd {} against {want}", l.synapse_sd());
+        // The two forms are far apart on this fixture rather than a rounding of each other: this
+        // implementation measures 0.44313 where sqrt(2p) would be 0.46982.
+        assert!(
+            (want - (2.0 * p).sqrt()).abs() > 0.02,
+            "the fixture cannot tell the two forms apart"
+        );
+        // And the property the `(1 − p)` carries and a bare `p` does not: a draw that is certain
+        // cannot fluctuate, so a column whose every pair connects has no spread at all.
+        let certain = LiquidSpec { c_ee: 1.0, lambda: 1e9, ..spec };
+        let c = Liquid::build(&certain).unwrap();
+        assert!((c.expected_synapses() - 2.0).abs() < 1e-9, "{}", c.expected_synapses());
+        assert_eq!(c.net.n_syn, 2, "both ordered pairs connected");
+        assert!(c.synapse_sd() < 1e-4, "a certain column reported a spread of {}", c.synapse_sd());
+    }
+
+    /// [`Liquid::to_sim`] gives excitatory and inhibitory cells **different** membranes, and the
+    /// only run in the suite with two different `Lif`s is the separation test, whose bars are
+    /// `sep > 0.5` and a monotone growth in column size — both of which survive handing each
+    /// population the other's membrane. The mapping is asserted cell by cell here rather than
+    /// through a spike count that averages the two populations together.
+    #[test]
+    fn each_population_gets_the_membrane_it_was_handed() {
+        let spec = LiquidSpec::maass_column();
+        let l = Liquid::build(&spec).unwrap();
+        // Two membranes that differ in three parameters at once, so no single field carries the
+        // comparison on its own.
+        let exc = Lif { tau_m: 20e-3, v_th: -50e-3, t_ref: 2e-3, ..Lif::default() };
+        let inh = Lif { tau_m: 11e-3, v_th: -45e-3, t_ref: 3.7e-3, ..Lif::default() };
+        assert_ne!(exc, inh);
+        let sim = l.to_sim(exc, inh, spec.dt, Mode::Clocked).unwrap();
+        assert_eq!(sim.neurons.len(), l.n());
+        let mut counts = [0usize; 2];
+        for i in 0..l.n() {
+            let want = if l.kinds[i] == Cell::Excitatory { exc } else { inh };
+            assert_eq!(sim.neurons[i], want, "neuron {i} got the other population's membrane");
+            counts[usize::from(l.kinds[i] == Cell::Inhibitory)] += 1;
+        }
+        // Both populations occur, or the loop above asserts nothing about one of them.
+        assert_eq!(counts, [108, 27], "108 excitatory and 27 inhibitory cells");
+    }
+
+    /// [`Liquid::respond`] folds a tick's spikes into the filter **before** it records the state,
+    /// so the state at tick `k` already holds the spikes of tick `k`. Recording first shifts the
+    /// whole trace one tick later, which no separation bar in the module can see — both runs being
+    /// compared are shifted the same way, so every distance between them is unchanged.
+    ///
+    /// The anchor is independent of the filter: the simulator is run on its own over the same input
+    /// to find the tick of the column's first spike, and the trace on that tick must already be
+    /// exactly 1, since decaying a zero trace gives zero and a spike adds exactly 1 to it.
+    #[test]
+    fn the_liquid_state_at_a_tick_already_holds_that_ticks_spikes() {
+        let spec = LiquidSpec::maass_column();
+        let l = Liquid::build(&spec).unwrap();
+        let cell = Lif::default();
+        let sites = l.input_sites(1, 13, 99).unwrap();
+        let mut ext = vec![0.0; l.n()];
+        for &s in &sites[0] {
+            ext[s as usize] = 4e-9;
+        }
+        let steps = 200usize;
+
+        // The simulator alone, with no filter anywhere in the path.
+        let mut sim = l.to_sim(cell, cell, spec.dt, Mode::Clocked).unwrap();
+        let mut first = None;
+        for t in 0..steps {
+            let fired = sim.step(&ext);
+            if !fired.is_empty() {
+                first = Some((t, fired));
+                break;
+            }
+        }
+        let (t0, fired) = first.expect("the column was silent under 4 nA");
+        assert_eq!(t0, 94, "this implementation measures the first spike on tick 94");
+        assert_eq!(fired.len(), 13, "the 13 driven cells reach threshold together");
+
+        let out = l.respond(cell, cell, spec.dt, 30e-3, &vec![ext.clone(); steps]).unwrap();
+        assert_eq!(out.len(), steps);
+        assert!(
+            out[t0 - 1].iter().all(|v| *v == 0.0),
+            "the tick before the first spike already carried a trace"
+        );
+        for &id in &fired {
+            assert_eq!(
+                out[t0][id as usize], 1.0,
+                "neuron {id} fired on tick {t0} and its trace there was not 1"
+            );
+        }
+        // On the next tick it is that 1 decayed by exactly one tick — which is what makes the
+        // assertion above a statement about ORDER rather than about magnitude.
+        let decay = (-spec.dt / 30e-3f64).exp();
+        for &id in &fired {
+            assert_eq!(out[t0 + 1][id as usize], decay, "neuron {id} one tick after its spike");
+        }
+    }
+
+    /// The trace **adds** on a spike; it does not reset to 1. The filter's closed-form test uses a
+    /// single spike, where adding and overwriting are the same operation, and the liquid's
+    /// separation bars are thresholds that a trace saturating at 1 still clears.
+    #[test]
+    fn a_second_spike_adds_to_the_trace_rather_than_replacing_it() {
+        let (tau, dt) = (30e-3f64, 1e-4f64);
+        let decay = (-dt / tau).exp();
+        let mut f = SpikeFilter::new(2, tau, dt).unwrap();
+        f.step(&[0]);
+        assert_eq!(f.state()[0], 1.0);
+        f.step(&[0]);
+        assert_eq!(
+            f.state()[0],
+            1.0 + decay,
+            "a second spike one tick later left the trace at {}",
+            f.state()[0]
+        );
+        f.step(&[0]);
+        assert_eq!(f.state()[0], 1.0 + decay * (1.0 + decay));
+        // The neuron that never fired stayed at zero throughout, so the additions above landed on
+        // the neuron that fired and not on the whole vector.
+        assert_eq!(f.state()[1], 0.0);
+
+        // Spiking every tick approaches the geometric series `1 / (1 − decay)`, which is the same
+        // closed form the single-spike test integrates over time, read the other way round. A trace
+        // that overwrites stops at 1 instead, three hundred times lower.
+        let mut g = SpikeFilter::new(1, tau, dt).unwrap();
+        for _ in 0..10_000 {
+            g.step(&[0]);
+        }
+        let series = 1.0 / (1.0 - decay);
+        assert!(series > 300.0, "the two behaviours are not far enough apart here: {series}");
+        // decay^10000 = exp(-33.3) = 3.3e-15, so the truncated series is within 1e-12 of the
+        // limit; 1e-9 is that with room for the accumulated rounding of 10 000 additions.
+        assert!(
+            (g.state()[0] - series).abs() < 1e-9,
+            "steady trace {} against the series {series}",
+            g.state()[0]
+        );
     }
 }

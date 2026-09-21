@@ -52,8 +52,7 @@
  {
   "label": "the Box-Muller transform takes the sine output instead of the cosine",
   "old": "(core::f64::consts::TAU * u2).cos()",
-  "new": "(core::f64::consts::TAU * u2).sin()",
-  "equivalent": "the Box-Muller pair is (R cos θ, R sin θ) with θ uniform on [0, 2π) and R = sqrt(-2 ln u1); both coordinates are standard normal and this function returns one of them, so the mutant's output has exactly the distribution the doc claims. Every test that reads this generator is either statistical — the quantile test, the spread and correlation closed forms — or compares the library's own stream against `normal()` called the same number of times, which moves with the mutation. The stream consumption is unchanged at two uniforms per draw, so no generator-state assertion can see it either. The defect this line COULD carry — a cached second sample, which would make the stream position depend on how many draws came before — is the one the doc argues against, and it is not this edit."
+  "new": "(core::f64::consts::TAU * u2).sin()"
  },
  {
   "label": "the programmable span is the negative of itself",

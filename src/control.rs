@@ -253,7 +253,9 @@ impl SigmaDeltaEncoder {
     ///
     /// # Errors
     ///
-    /// [`ControlError::NotPositive`] for a non-positive or non-finite `gain`.
+    /// [`ControlError::NotFinite`] for a `NaN` or infinite `gain`, [`ControlError::NotPositive`]
+    /// for a zero or negative one: the finiteness screen runs first, so an infinite gain is named
+    /// for what it is rather than slipping through a bare `> 0.0` test.
     pub fn new(gain: f64) -> Result<Self, ControlError> {
         need_positive("gain", gain)?;
         Ok(Self { gain, acc: 0.0, spikes: 0 })
@@ -365,7 +367,9 @@ impl SignedEncoder {
     ///
     /// # Errors
     ///
-    /// [`ControlError::NotPositive`] for a non-positive or non-finite `gain`.
+    /// [`ControlError::NotFinite`] for a `NaN` or infinite `gain`, [`ControlError::NotPositive`]
+    /// for a zero or negative one: the finiteness screen runs first, so an infinite gain is named
+    /// for what it is rather than slipping through a bare `> 0.0` test.
     pub fn new(gain: f64) -> Result<Self, ControlError> {
         Ok(Self { pos: SigmaDeltaEncoder::new(gain)?, neg: SigmaDeltaEncoder::new(gain)? })
     }
@@ -422,7 +426,8 @@ impl Trace {
     ///
     /// # Errors
     ///
-    /// [`ControlError::NotPositive`] for a non-positive or non-finite `tau`.
+    /// [`ControlError::NotFinite`] for a `NaN` or infinite `tau`, [`ControlError::NotPositive`] for
+    /// a zero or negative one.
     pub fn new(tau: f64) -> Result<Self, ControlError> {
         need_positive("tau", tau)?;
         Ok(Self { tau, x: 0.0 })
@@ -1909,14 +1914,14 @@ impl fmt::Display for ControlBudget {
 #[cfg(test)]
 mod tests {
     use super::{
-        ControlBudget, ControlError, FirstOrder, HalfCentre, Matsuoka, Pendulum,
+        ControlBudget, ControlError, FirstOrder, HalfCentre, HalfCentreRun, Matsuoka, Pendulum,
         PopulationEstimator, ScalarKalman, SigmaDeltaEncoder, SignedEncoder, SpikingPid,
         SpikingPidSpec, Trace, complete_elliptic_k, measure_period, phase_difference,
     };
     use crate::coding::GaussianPopulation;
     use crate::rng::Rng;
     use crate::sim::Mode;
-    use core::f64::consts::PI;
+    use core::f64::consts::{PI, TAU};
 
     // -----------------------------------------------------------------------------------------
     // THE ENCODER'S EXACT COUNT
@@ -3312,5 +3317,400 @@ mod tests {
             Pendulum::new(1.0, 1.0).unwrap().with_damping(-1.0),
             Err(ControlError::NotPositive { .. })
         ));
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // ⛔ THE TWELVE THAT SURVIVED: WHAT NO ASSERTION IN THIS MODULE COULD SEE
+    // -----------------------------------------------------------------------------------------
+
+    /// `need_positive` screens for FINITENESS first, so an infinite parameter is refused at all
+    /// and a `NaN` is named `NotFinite` rather than `NotPositive`.
+    ///
+    /// ⛔ THE HOLE: every value this module sends down a `need_positive` path in a test is
+    /// NEGATIVE or ZERO, and for those two the order of the finiteness and positivity checks does
+    /// not matter — both orderings refuse. `f64::INFINITY` is the value that separates them: it is not
+    /// positive-and-finite, but it does satisfy `value > 0.0`. A positivity check that stopped
+    /// screening for finiteness would therefore ACCEPT an infinite encoder gain — whose every
+    /// step then refuses with a count past `u64`, or with a `NaN` from `inf · 0` at zero input,
+    /// so the encoder can never count anything and the refusal blames the step rather than the
+    /// gain — and an infinite synaptic time constant, which is worse because it does NOT refuse:
+    /// the trace deposits `n/tau = 0` and decays by `exp(-dt/tau) = 1`, so it sits at zero
+    /// forever and a controller built on it reports a command of zero for every error.
+    #[test]
+    fn a_positivity_check_refuses_an_infinite_parameter_and_names_a_nan_not_finite() {
+        for &bad in &[f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
+            assert!(SigmaDeltaEncoder::new(bad).is_err(), "encoder gain {bad} was accepted");
+            assert!(SignedEncoder::new(bad).is_err(), "signed gain {bad} was accepted");
+            assert!(Trace::new(bad).is_err(), "trace tau {bad} was accepted");
+            assert!(Pendulum::new(bad, 1.0).is_err(), "pendulum length {bad} was accepted");
+            assert!(Pendulum::new(1.0, bad).is_err(), "pendulum mass {bad} was accepted");
+            assert!(FirstOrder::new(bad, 1.0).is_err(), "plant tau {bad} was accepted");
+            assert!(Matsuoka::new(40e-3, 160e-3, 2.5, 2.0, bad).is_err(), "drive {bad} accepted");
+            assert!(SpikingPid::new(SpikingPidSpec::proportional(bad, 1.0, 5e-3)).is_err());
+        }
+        // And the variant says WHICH kind of wrong it was, which is the whole point of having two.
+        assert!(matches!(
+            SigmaDeltaEncoder::new(f64::INFINITY),
+            Err(ControlError::NotFinite { what: "gain", .. })
+        ));
+        assert!(matches!(
+            SigmaDeltaEncoder::new(f64::NAN),
+            Err(ControlError::NotFinite { what: "gain", .. })
+        ));
+        // ANTI-VACUITY: the NotPositive arm is still reachable, so the assertions above are about
+        // the ORDER of the two checks rather than about one of them having swallowed the other.
+        assert!(matches!(
+            SigmaDeltaEncoder::new(0.0),
+            Err(ControlError::NotPositive { what: "gain", .. })
+        ));
+        assert!(matches!(
+            SigmaDeltaEncoder::new(-1.0),
+            Err(ControlError::NotPositive { what: "gain", .. })
+        ));
+    }
+
+    /// A refusal that comes from the RUNNING TOTAL empties the accumulator, like every other
+    /// refusal [`SigmaDeltaEncoder::step`] can make.
+    ///
+    /// ⛔ THE HOLE: the overflow test above asserts `acc` after the two refusals whose cause is a
+    /// non-finite product, and asserts only the spike COUNTER after the `checked_add` refusal.
+    /// Left un-emptied there, `acc` holds 3.0 — past the threshold its own field doc says it is
+    /// below (`[0, 1)` after every successful step), so the next step emits three spikes that no
+    /// input paid for, and the encoder's exact-count invariant is broken for the rest of the run.
+    #[test]
+    fn a_refused_running_total_empties_the_accumulator_like_every_other_refusal() {
+        let mut e = SigmaDeltaEncoder::new(1.0).unwrap();
+        e.spikes = u64::MAX - 1;
+        assert!(matches!(e.step(1.0, 3.0), Err(ControlError::NotFinite { .. })));
+        assert_eq!(e.spikes, u64::MAX - 1, "a refused step counted something");
+        assert_eq!(e.acc, 0.0, "the refused total left {} of charge behind", e.acc);
+        // Alive and honest: with the counter cleared, the next two seconds at unit input cost
+        // exactly the two spikes those two seconds paid for, not the three the refusal banked.
+        e.spikes = 0;
+        assert_eq!(e.step(2.0, 1.0).unwrap(), 2, "the refused charge was spent on a later step");
+        assert_eq!(e.spikes, 2);
+    }
+
+    /// `spikes_in` FLOORS: a partial spike is not yet a spike.
+    ///
+    /// ⛔ THE HOLE: the closed-form sweep allows one spike of slack, on purpose, so that a summed
+    /// `g·x·dt` and a single `g·x·t` may straddle an integer — which is exactly the slack `ceil`
+    /// needs to hide in. The one exact assertion on `spikes_in` is at `g·x·t = 1e12`, an integer,
+    /// where `floor` and `ceil` are the same number. Every fixture below is a dyadic rational, so
+    /// the product is exact in binary and there is no rounding left to argue about.
+    #[test]
+    fn the_closed_form_count_floors_a_partial_spike_rather_than_rounding_it_up() {
+        let e = SigmaDeltaEncoder::new(1024.0).unwrap();
+        // 1024 spikes/s for 1.5/1024 s: the product is exactly 1.5, so floor is 1 and ceil is 2.
+        assert_eq!(e.spikes_in(1.0, 1.5 / 1024.0).unwrap(), 1, "1.5 spikes' worth is one spike");
+        assert_eq!(e.spikes_in(1.0, 0.5 / 1024.0).unwrap(), 0, "half a spike is no spike");
+        assert_eq!(e.spikes_in(1.0, 7.5 / 1024.0).unwrap(), 7);
+        assert_eq!(e.spikes_in(1.0, 1.0 / 1024.0).unwrap(), 1, "a whole spike is a spike");
+        // The simulator agrees EXACTLY on the same fixtures, which is what the closed form is for:
+        // reset-by-subtraction keeps the remainder rather than rounding it in either direction.
+        for &(t, want) in &[(1.5 / 1024.0, 1u64), (0.5 / 1024.0, 0), (7.5 / 1024.0, 7)] {
+            let mut sim = SigmaDeltaEncoder::new(1024.0).unwrap();
+            assert_eq!(sim.step(t, 1.0).unwrap(), want, "simulator and closed form differ at {t}");
+            assert!(sim.acc < 1.0, "the simulator kept a whole spike back: {}", sim.acc);
+        }
+    }
+
+    /// The recorded-run bound is the constant its doc quotes, and the 537 MB is that constant's
+    /// own arithmetic rather than a remembered figure.
+    ///
+    /// ⛔ THE HOLE: both existing assertions on the bound are written as `MAX_RUN_STEPS + 1`, so
+    /// the refusal follows the constant wherever it moves. Doubling it to `2^26` — a gigabyte
+    /// across the two returned traces — leaves every test in this module green while the one
+    /// unguarded allocation here gets twice as large.
+    #[test]
+    fn the_recorded_run_bound_is_two_to_the_twenty_fifth_and_that_is_where_537_mb_comes_from() {
+        assert_eq!(super::MAX_RUN_STEPS, 1usize << 25, "the run bound moved");
+        assert_eq!(super::MAX_RUN_STEPS, 33_554_432);
+        // Both `Matsuoka::run` and `HalfCentre::run` return TWO `Vec<f64>` of `steps` samples, so
+        // the bound's cost is 2 · 8 · 2^25 bytes = 536,870,912 — the doc's 537 MB to three figures.
+        let bytes = 2 * core::mem::size_of::<f64>() * super::MAX_RUN_STEPS;
+        assert_eq!(bytes, 536_870_912, "the doc's 537 MB no longer follows from the constant");
+        assert!((bytes as f64 * 1e-6 - 537.0).abs() < 0.5, "{bytes} B is not 537 MB");
+    }
+
+    /// The order of [`SpikingPid::new`]'s checks, which its doc states: a `from_gains` spec with
+    /// `tau_fast == tau_slow` and a non-zero `kd` has an INFINITE `a_d`, and the `NotFinite`
+    /// refusal names the weight rather than the ordering that produced it.
+    ///
+    /// ⛔ THE HOLE: the one test that reaches `NotOrdered` builds a `proportional` spec and then
+    /// sets `tau_fast = tau_slow` by hand. That spec's `a_d` is the literal `0.0`, which is
+    /// finite, so the finiteness checks pass whatever order they run in. Nothing built the spec
+    /// the doc's own exception is about, so moving the ordering check to the front of the function
+    /// changed the error a user sees and no assertion moved.
+    #[test]
+    fn an_infinite_derivative_weight_is_named_before_the_ordering_that_produced_it() {
+        let spec = SpikingPidSpec::from_gains(2_000.0, 1.0, 0.0, 0.05, 5e-3, 8e-3, 8e-3);
+        assert!(spec.a_d.is_infinite(), "the fixture's a_d is {}, not infinite", spec.a_d);
+        assert!(
+            matches!(SpikingPid::new(spec), Err(ControlError::NotFinite { what: "a_d", .. })),
+            "got {:?}",
+            SpikingPid::new(spec)
+        );
+        // ANTI-VACUITY: with a FINITE weight the same crossed time constants give `NotOrdered`, so
+        // the assertion above is about which check runs first and not about one of them being the
+        // only one left.
+        let mut ordered = SpikingPidSpec::proportional(2_000.0, 1.0, 5e-3);
+        ordered.tau_fast = ordered.tau_slow;
+        assert!(ordered.a_d.is_finite());
+        assert!(matches!(SpikingPid::new(ordered), Err(ControlError::NotOrdered { .. })));
+    }
+
+    /// ⛔ Anti-windup RESTORES the integrator to the value it had before this tick's accumulation.
+    /// It does not empty it.
+    ///
+    /// THE HOLE: `saturation_does_not_wind_the_integrator_up` asserts an UPPER bound on how long
+    /// the command takes to reverse, and zeroing the integrator makes it reverse FASTER — a
+    /// sawtooth that still never exceeds the limit and still passes every bound that test carries.
+    /// The missing assertions are the two lower ones: that the held command does not collapse, and
+    /// that unwinding a legitimately full integrator TAKES the time its own contents say it should.
+    ///
+    /// An integral-only controller makes the integrator directly observable: with `a_p = a_d = 0`
+    /// the command IS the integrator, clamped. At `Ki = 30` and `g = 20,000` each spike is worth
+    /// `a_i = 1.5e-3`, so the largest multiple of `a_i` that fits under `u_limit = 0.5` is
+    /// `333 · a_i = 0.4995` — and that is exactly where a restoring anti-windup parks and stays.
+    #[test]
+    fn a_frozen_integrator_keeps_its_charge_instead_of_being_emptied() {
+        let mut spec = SpikingPidSpec::from_gains(20_000.0, 0.0, 30.0, 0.0, 50e-3, 1e-3, 10e-3);
+        spec.u_limit = 0.5;
+        assert!(spec.a_p == 0.0 && spec.a_d == 0.0, "the command is not the integrator alone");
+        assert!((spec.a_i - 1.5e-3).abs() < 1e-18, "a_i is {}", spec.a_i);
+        let mut pid = SpikingPid::new(spec).unwrap();
+        // 0.2 s at unit error: 4,000 spikes, far past the 333 the integrator has room for.
+        let mut lowest = f64::INFINITY;
+        let mut highest = f64::NEG_INFINITY;
+        for i in 0..20_000 {
+            let u = pid.step(1e-5, 1.0).unwrap();
+            assert!(u <= 0.5 + 1e-12, "the clamp leaked: {u}");
+            if i >= 5_000 {
+                lowest = lowest.min(u);
+                highest = highest.max(u);
+            }
+        }
+        // A restoring freeze holds 333·a_i = 0.4995 on EVERY tick; an emptying one sawtooths from
+        // zero back up to the limit and its floor is a spike's worth of charge, not the limit's.
+        assert!(
+            (lowest - 0.4995).abs() < 1e-12 && (highest - 0.4995).abs() < 1e-12,
+            "held command ranged over [{lowest}, {highest}], not the 0.4995 the integrator holds"
+        );
+        // And unwinding it costs the time its contents are worth: 333 spikes at 20,000 spikes/s is
+        // 16.65 ms, which at dt = 1e-5 is 1,665 ticks. The tolerance is one encoder inter-spike
+        // interval (5 ticks), for the floating-point end of the subtraction.
+        let mut ticks = 0u64;
+        loop {
+            let u = pid.step(1e-5, -1.0).unwrap();
+            ticks += 1;
+            if u <= 0.0 {
+                break;
+            }
+            assert!(ticks < 20_000, "still positive after 0.2 s; the integrator wound up");
+        }
+        assert!(
+            ticks.abs_diff(1_665) <= 5,
+            "took {ticks} ticks to unwind 0.4995 at 1.5e-3 a spike; 1,665 is what it is worth"
+        );
+    }
+
+    /// The one transcribed physical constant in this module, pinned to its DEFINED value.
+    ///
+    /// Standard gravity is `9.806 65 m/s²` exactly, by definition — fixed by the 3rd `CGPM` in
+    /// 1901 and carried into ISO 80000-3 — not a measurement with a tolerance, so the assertion is
+    /// equality and not a bound.
+    ///
+    /// ⛔ THE HOLE: every other pendulum test is self-consistent in `g`. The elliptic-period test
+    /// compares `measure_period` against `exact_period` and both read `self.gravity`; the
+    /// static-balance test deliberately recovers `g` from `small_angle_period()` rather than
+    /// typing a literal; the energy tests use `self.gravity` on both sides. The whole module would
+    /// have agreed with itself at the schoolbook 9.81, and the 1 m small-angle period would have
+    /// been 2.006 067 s instead of 2.006 409 s with nothing to say so.
+    #[test]
+    fn the_pendulum_is_built_at_standard_gravity_and_not_the_schoolbook_rounding() {
+        let p = Pendulum::new(1.0, 1.0).unwrap();
+        assert_eq!(p.gravity, 9.806_65, "gravity is {}", p.gravity);
+        // The constant reaches the derived quantities: 2π·sqrt(1/9.80665) = 2.006 409 292 589 s.
+        // At 9.81 the same formula gives 2.006 066 681 s, 3.43e-4 s lower — 340 times this bound.
+        let t = p.small_angle_period();
+        assert!((t - 2.006_409_292_589_04).abs() < 1e-6, "small-angle period {t} s");
+    }
+
+    /// The zero-amplitude limit of the exact period IS the small-angle period, and the branch that
+    /// returns it agrees with its own neighbourhood.
+    ///
+    /// ⛔ THE HOLE: nothing called `exact_period(0.0)`. The ratio test uses 30°, 90° and 120°; the
+    /// elliptic-period test sweeps 0.05 to 2.5 rad; the refusal test only asks for errors. The
+    /// early return at `theta0 == 0.0` was dead code to the suite, so replacing it with "a
+    /// pendulum released at rest from the bottom has no period" was green.
+    #[test]
+    fn the_exact_period_at_zero_amplitude_is_the_small_angle_period() {
+        let p = Pendulum::new(0.7, 2.0).unwrap();
+        let small = p.small_angle_period();
+        assert!(small > 1.6, "the fixture has no period to report: {small}");
+        assert_eq!(p.exact_period(0.0).unwrap(), small, "the limit at zero is not the limit");
+        assert_eq!(p.exact_period(-0.0).unwrap(), small, "negative zero took a different branch");
+        // Continuity, computed rather than assumed: `K(k)/(π/2) = 1 + k²/4 + O(k⁴)` with
+        // `k = sin(θ₀/2)`, so at θ₀ = 1e-6 rad the exact period must exceed the small-angle one by
+        // 6.25e-14 of itself. Measured here: 6.24e-14. A branch that agreed with the limit but not
+        // with the neighbourhood — or the other way round — fails one of these two.
+        let rel = p.exact_period(1e-6).unwrap() / small - 1.0;
+        assert!(
+            (5e-14..8e-14).contains(&rel),
+            "θ₀ = 1e-6 rad sits {rel} above the small-angle period, not the 6.25e-14 K(k) predicts"
+        );
+    }
+
+    /// [`Matsuoka::output`] is `[max(0, x1), max(0, x2)]` — the definition of `y` in the paper's
+    /// own equations — and the drive inherits the rectifier.
+    ///
+    /// ⛔ THE HOLE: `deriv` rectifies its own copy of the state, so the DYNAMICS are right whatever
+    /// `output` returns, and `drive` is built FROM `output`, so `the_drive_is_where_units_enter`
+    /// compares `drive(scale)` against `scale · (y[0] − y[1])` with `y` read from `output()`
+    /// itself — true for any pair of numbers. The constructor's deliberate symmetry break puts
+    /// `x2` at `−0.1·s`, so the rectifier is active in the very first state the type can be in and
+    /// no assertion looked.
+    #[test]
+    fn the_matsuoka_output_is_rectified_and_the_drive_inherits_it() {
+        let m = Matsuoka::new(40e-3, 160e-3, 2.5, 2.0, 1.0).unwrap();
+        assert_eq!(m.x, [0.1, -0.1], "the constructor no longer breaks the symmetry this way");
+        assert_eq!(m.output(), [0.1, 0.0], "a negative membrane state reached the output");
+        // So the drive is 0.1·scale and not 0.2·scale: the silent unit contributes NOTHING, which
+        // is what makes this an antagonist pair rather than a difference of two signed numbers.
+        assert_eq!(m.drive(2.0), 0.2, "drive {} — the silent unit pulled on the actuator", m.drive(2.0));
+        // Every sample a run records is non-negative, because `run` records `output`.
+        let mut m = Matsuoka::new(40e-3, 160e-3, 2.5, 2.0, 1.0).unwrap();
+        let [a, b] = m.run(2e-5, 20_000).unwrap();
+        assert!(a.iter().chain(b.iter()).all(|&v| v >= 0.0), "a run recorded a negative output");
+        assert!(a.iter().any(|&v| v > 0.0) && b.iter().any(|&v| v > 0.0), "neither unit fired");
+        // ANTI-VACUITY: the rectifier has work to do over that run — the membrane states go well
+        // below zero (this implementation measures −0.518 model units over the same 0.4 s), so
+        // "every sample is non-negative" is a statement about `output` and not about the orbit.
+        let mut probe = Matsuoka::new(40e-3, 160e-3, 2.5, 2.0, 1.0).unwrap();
+        let mut lowest: f64 = 0.0;
+        for _ in 0..20_000 {
+            probe.step(2e-5).unwrap();
+            lowest = lowest.min(probe.x[0]).min(probe.x[1]);
+        }
+        assert!(lowest < -0.4, "the membrane never went far negative ({lowest}); the test is blind");
+    }
+
+    /// [`HalfCentreRun::phase`] reports the RIGHT side relative to the LEFT, in that order.
+    ///
+    /// ⛔ THE HOLE: the half-centre runs in anti-phase, and π is symmetric under swapping the two
+    /// arguments — `phase(left, right)` and `phase(right, left)` are both π. The quarter-cycle
+    /// calibration that could tell them apart is on [`phase_difference`] directly, not on this
+    /// wrapper, so the wrapper's argument order was free. Built here from two sinusoids a quarter
+    /// cycle apart, where the two orders read π/2 and 3π/2.
+    ///
+    /// The tolerance: with 2,500 samples a cycle the mid-level lands within 4e-7 of zero and the
+    /// linear interpolation of a sine is good to 1e-10 s, so the phase is exact to about 4e-7 rad;
+    /// 1e-6 is that bound and the two answers it must separate are π apart.
+    #[test]
+    fn the_runs_phase_is_the_right_side_relative_to_the_left() {
+        let dt = 1e-4;
+        let n = 40_000; // 4 s; the settled half holds eight cycles of the 0.25 s period
+        let period = 0.25;
+        let left: Vec<f64> = (0..n).map(|i| (TAU * (i as f64 * dt) / period).sin()).collect();
+        // The right side lags the left by a quarter of a cycle: neither the π a walk needs nor
+        // the 0 a hop is, so the two argument orders cannot give the same number.
+        let right: Vec<f64> =
+            (0..n).map(|i| (TAU * (i as f64 * dt - 0.25 * period) / period).sin()).collect();
+        let run = HalfCentreRun { left: left.clone(), right: right.clone(), spikes: [8, 8], dt };
+        let phi = run.phase().unwrap();
+        assert!(
+            (phi - 0.5 * PI).abs() < 1e-6,
+            "the right side lags the left by a quarter cycle; phase() said {phi}, not {}",
+            0.5 * PI
+        );
+        // ANTI-VACUITY: the other order is a DIFFERENT number, so the assertion above pins which
+        // side is which rather than a property of the waveform.
+        let swapped = HalfCentreRun { left: right, right: left, spikes: [8, 8], dt };
+        assert!((swapped.phase().unwrap() - 1.5 * PI).abs() < 1e-6);
+    }
+
+    /// [`phase_difference`] measures to the first `b`-crossing AT OR AFTER `a`'s reference, which
+    /// is what its doc says and what makes the answer a lag rather than a lead.
+    ///
+    /// ⛔ THE HOLE: for two signals of exactly equal period, every `b`-crossing is an integer
+    /// number of periods from every other, and `lag/period` is taken `rem_euclid` 1 — so taking a
+    /// crossing one period earlier, or falling through to the wrap-around branch, gives the SAME
+    /// fraction. Every pair this module measures is exactly period-matched (an oscillator against
+    /// its own partner, a sine against a shifted copy of itself), so the reference crossing was
+    /// unobservable. It becomes observable only inside the band the 5% mismatch guard admits:
+    /// below, two signals 4% apart in period, where one `b`-period of slip is 4% of a cycle.
+    #[test]
+    fn the_lag_runs_to_the_first_b_crossing_at_or_after_the_reference() {
+        let dt = 1e-4;
+        let n = 50_000; // 5 s
+        // a: period 1.000 s, upward zero crossings at 0.25, 1.25, 2.25, 3.25, 4.25.
+        // b: period 1.040 s, upward zero crossings at 0.05, 1.09, 2.13, 3.17, 4.21.
+        let a: Vec<f64> = (0..n).map(|i| (TAU * (i as f64 * dt - 0.25)).sin()).collect();
+        let b: Vec<f64> = (0..n).map(|i| (TAU * (i as f64 * dt - 0.05) / 1.04).sin()).collect();
+        // The reference is a's crossing at 0.25; the first b-crossing at or after it is 1.09, a
+        // lag of 0.84 s over a's 1.000 s period. The crossing BEFORE it, at 0.05, is 0.20 s early
+        // and reads as 0.80 of a cycle — a different answer by exactly the period mismatch.
+        let phi = phase_difference(&a, &b, dt).unwrap();
+        assert!(
+            (phi - 0.84 * TAU).abs() < 1e-6,
+            "phase {phi}; 0.84 of a cycle is {}, 0.80 is {}",
+            0.84 * TAU,
+            0.80 * TAU
+        );
+        // The other branch of the same line: when b has NO crossing before a's reference, the
+        // answer must still be the first one after it and not the wrap-around fallback.
+        // a: crossings at 0.05, 1.05, ...; b: crossings at 0.30, 1.34, 2.38, 3.42, 4.46.
+        let a: Vec<f64> = (0..n).map(|i| (TAU * (i as f64 * dt - 0.05)).sin()).collect();
+        let b: Vec<f64> = (0..n).map(|i| (TAU * (i as f64 * dt - 0.30) / 1.04).sin()).collect();
+        let phi = phase_difference(&a, &b, dt).unwrap();
+        assert!(
+            (phi - 0.25 * TAU).abs() < 1e-6,
+            "phase {phi}; the lag to b's first crossing is 0.25 s of a 1 s period, {}",
+            0.25 * TAU
+        );
+        // ANTI-VACUITY: 4% apart is inside the guard, and 6% is not — so the fixtures above are
+        // measured rather than refused, and the guard is still the thing that refuses a real
+        // mismatch.
+        let c: Vec<f64> = (0..n).map(|i| (TAU * (i as f64 * dt - 0.30) / 1.06).sin()).collect();
+        assert!(matches!(
+            phase_difference(&a, &c, dt),
+            Err(ControlError::PeriodMismatch { .. })
+        ));
+    }
+
+    /// `R` is taken from the Fisher information at the FIXED reference stimulus, not at the
+    /// initial estimate — the property [`PopulationEstimator`]'s doc gives a reason for:
+    /// recomputing it at the current estimate would let the filter tune its own noise model from
+    /// its own output.
+    ///
+    /// ⛔ THE HOLE: every construction in this module passes `reference_x == x0`, where the two
+    /// arguments are literally the same number and no test could tell which one the constructor
+    /// read. Fisher information in a Gaussian population is strongly position-dependent — this
+    /// implementation measures 2,127 at the centre of the coded range against 1,087 at 0.02, a
+    /// factor of 1.96 — so the two choices are two different filters.
+    #[test]
+    fn the_measurement_variance_is_taken_at_the_reference_and_not_at_the_initial_estimate() {
+        let pop = GaussianPopulation::new(24, 0.0, 1.0, 0.09, 80.0, 2.0).unwrap();
+        let (window, reference_x, x0) = (0.05, 0.5, 0.02);
+        let at_reference = pop.fisher_information(reference_x, window).unwrap();
+        let at_x0 = pop.fisher_information(x0, window).unwrap();
+        assert!(
+            at_reference / at_x0 > 1.5,
+            "the two points carry {at_reference} and {at_x0}; too close to tell them apart"
+        );
+        let est = PopulationEstimator::new(pop, 1.0, 1e-5, window, reference_x, x0).unwrap();
+        // Equality, not a tolerance: both sides are `1.0 / info` from the same call.
+        assert_eq!(
+            est.measurement_variance(),
+            1.0 / at_reference,
+            "R came from {}, and 1/I(x0) is {}",
+            1.0 / est.measurement_variance(),
+            1.0 / at_x0
+        );
+        // The prior variance is that same R and the estimate starts at x0, so the two arguments
+        // are both in use and neither is standing in for the other.
+        assert_eq!(est.filter.p, 1.0 / at_reference, "p0 did not come from the reference either");
+        assert_eq!(est.filter.x, x0, "the filter did not start at x0");
     }
 }

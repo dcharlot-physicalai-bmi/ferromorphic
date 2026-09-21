@@ -2323,6 +2323,68 @@ mod tests {
         }
     }
 
+    /// The two `erfcx` arguments nothing in this crate reaches, and which therefore had no test.
+    ///
+    /// [`siegert_integral`] refuses a non-finite argument before `erfcx` can see one, and its own
+    /// `hi > 26.7` guard returns before the reflection can overflow — so both of these refusals
+    /// could be deleted and every other assertion in the module would still pass. What each one
+    /// costs is a number that reads as an answer: a `NaN` argument falls through to the reflection,
+    /// whose overflow branch fires because `NaN` is not finite, and comes back as `+inf`; and an
+    /// overflowing reflection that returned `0.0` would say `erfcx` VANISHED at the one place its
+    /// true value is past [`f64::MAX`].
+    ///
+    /// The overflow point is arithmetic, not a constant: `exp(x^2)` overflows at
+    /// `x^2 = 709.7827`, which is `x = 26.6416`, so -26 is finite and -27 is not.
+    #[test]
+    fn erfcx_propagates_a_nan_and_saturates_upward_where_its_reflection_overflows() {
+        assert!(erfcx(f64::NAN).is_nan(), "erfcx(NaN) = {}", erfcx(f64::NAN));
+        let inside = erfcx(-26.0);
+        assert!(inside.is_finite(), "erfcx(-26) = {inside}");
+        // 2 exp(676) = 7.66e293, which is what this implementation measures.
+        assert!(inside > 1e293, "erfcx(-26) = {inside}, which is not 2 exp(676)");
+        assert_eq!(erfcx(-27.0), f64::INFINITY, "erfcx(-27) is past f64::MAX and must say so");
+        assert_eq!(erfcx(f64::NEG_INFINITY), f64::INFINITY);
+        // The positive tail goes the other way and is the same branch's opposite limit.
+        assert_eq!(erfcx(f64::INFINITY), 0.0);
+    }
+
+    /// The crossover at `x = 2` is INCLUSIVE, and 2 is the only argument at which that can be seen.
+    ///
+    /// Neither existing test can: `erfcx_matches_published_values` compares `erfcx(2)` against a
+    /// published 0.2553956763105189 to 1e-11 relative, and the two paths agree to 1.3e-14, so both
+    /// satisfy it; and `erfcx_is_continuous_across_its_crossover` compares `erfcx(2.0)` against the
+    /// series, which under a crossover of `x > 2.0` is the series compared with itself — the
+    /// mutation makes that test vacuous rather than failing it.
+    ///
+    /// This asserts the identity of the value instead. At exactly 2 the answer must be the
+    /// continued fraction's, bit for bit, because the recurrence below is the same operations in the
+    /// same order; the series is a different number, 1.33e-14 away, which the first assertion pins
+    /// so that the second is a real constraint and not a restatement.
+    #[test]
+    fn erfcx_takes_the_continued_fraction_at_exactly_the_crossover() {
+        let x = 2.0f64;
+        let mut t = 0.0f64;
+        for k in (1..=200u32).rev() {
+            // Written in two statements rather than one so that this transcription is not also an
+            // anchor for the mutations of the recurrence itself; the arithmetic is unchanged, and
+            // it has to be, because the assertion below is a bit-for-bit equality.
+            let half_k = f64::from(k) * 0.5;
+            t = half_k / (x + t);
+        }
+        let continued_fraction = 1.0 / ((x + t) * PI.sqrt());
+        let series = (x * x).exp() * (1.0 - erf(x));
+        assert!(
+            (continued_fraction - series).abs() > 1e-15,
+            "the two paths agree bit for bit at x = 2, so nothing below can distinguish them: \
+             {continued_fraction} vs {series}"
+        );
+        assert_eq!(erfcx(x), continued_fraction, "erfcx(2) took the series path, not the fraction");
+        // And one ulp below the crossover the OTHER path is the one that runs, which is what makes
+        // the line above a statement about 2 rather than about every argument.
+        let below = 2.0f64 - f64::EPSILON;
+        assert_eq!(erfcx(below), (below * below).exp() * (1.0 - erf(below)));
+    }
+
     /// 24-point Gauss-Legendre is exact for polynomials to degree 47. This is the whole quadrature's
     /// foundation and it has an exact answer for every `k`, so there is no tolerance to choose
     /// loosely: `integral of x^k over [-1,1]` is `2/(k+1)` for even `k` and zero for odd.
@@ -2390,6 +2452,64 @@ mod tests {
             assert!(
                 (got - want).abs() / want < 1e-12,
                 "integral({p}, {q}) = {got}, asymptotic {want}"
+            );
+        }
+    }
+
+    /// ⭐ The sub-threshold half of [`siegert_integral`], against a reference that shares neither its
+    /// substitution nor its panel layout: the same 24-point rule on uniform panels of the
+    /// UNSUBSTITUTED axis, where the integrand is `erfcx(w)` itself.
+    ///
+    /// The hole this closes is the lower limit of the substituted branch. `split` is
+    /// `hi.min(1).max(lo)`, and the `max(lo)` matters only when `lo > 1` — when the RESET too sits
+    /// more than one noise unit below the mean, so that the whole integration interval is in the
+    /// far sub-threshold tail. Every probe the rest of the module makes has `lo < 1`, and without
+    /// the `max` the branch starts at `s = 1` and integrates a stretch that is not in the interval
+    /// at all. Measured here against the reference: 59.2% high at `(p, q) = (-5.1, -5)` and 34.1%
+    /// high at `(-1.5, -1.2)`, against 0.17% at `(-3, -1.5)` and 6e-9 at `(-10, -9)`, where the
+    /// wrongly included stretch is `exp(lo^2 - hi^2)` of the answer and vanishes.
+    ///
+    /// The tolerance is the reference's own convergence, not a choice: doubling its panel count
+    /// from 400 to 800 moves it by less than 5e-15 relative at every point below, and the
+    /// implementation agrees with it to 4.5e-15, so 1e-12 is two decades of margin above the
+    /// measurement and eleven below the smallest error above.
+    #[test]
+    fn the_sub_threshold_half_matches_a_uniform_rule_on_the_unsubstituted_axis() {
+        let (xs, ws) = gauss_legendre();
+        // Composite 24-point Gauss-Legendre on `erfcx` itself, in `w`, with no substitution and no
+        // geometric panels: a different quadrature of the same integral.
+        let reference = |p: f64, q: f64, panels: usize| -> f64 {
+            let h = (q - p) / panels as f64;
+            let mut total = 0.0f64;
+            for i in 0..panels {
+                let (a, b) = (p + h * i as f64, p + h * (i + 1) as f64);
+                let (c, half) = (0.5 * (a + b), 0.5 * h);
+                let mut s = 0.0f64;
+                for k in 0..xs.len() {
+                    s += ws[k] * erfcx(c + half * xs[k]);
+                }
+                total += s * half;
+            }
+            total
+        };
+        for &(p, q) in &[
+            (-5.1f64, -5.0f64), // lo = 5: the reset is five noise units below the mean too
+            (-1.5, -1.2),       // lo = 1.2: just past the point where `max(lo)` starts to matter
+            (-6.0, 0.0),        // lo = 0: the ordinary fluctuation-driven case
+            (-10.0, -9.0),
+            (-3.0, -1.5),
+            (-2.0, 0.5), // both halves of the axis at once
+        ] {
+            let coarse = reference(p, q, 400);
+            let fine = reference(p, q, 800);
+            assert!(
+                (coarse - fine).abs() / fine.abs() < 1e-13,
+                "the reference has not converged at ({p}, {q}): {coarse} at 400 panels, {fine} at 800"
+            );
+            let got = siegert_integral(p, q).expect("finite arguments in order");
+            assert!(
+                (got - fine).abs() / fine.abs() < 1e-12,
+                "integral({p}, {q}) = {got}, uniform rule on the w axis {fine}"
             );
         }
     }
@@ -2706,6 +2826,151 @@ mod tests {
         .is_err());
     }
 
+    /// Both constructor refusals AT their own boundary, and the name each one reports.
+    ///
+    /// `the_constructor_refuses_every_parameter_the_formula_is_undefined_on` reaches neither from
+    /// the side that can fail: it passes `v_th = 0` against `v_reset = 1`, which is strictly
+    /// reversed rather than equal, so the comparison could be `<` instead of `<=` and a threshold
+    /// sitting exactly ON the reset — an integration interval of zero width, whose "mean interval"
+    /// is `t_ref` and whose rate is the refractory ceiling for any drive at all — would be accepted.
+    /// And it passes `i_noise = -1.0`, which [`SiegertInput::new`] refuses a second time as a
+    /// negative `sigma`, so `from_current`'s own check could be loosened to `< -1.0` and the call
+    /// would still be an error — reported against `sigma`, a quantity in volts that the caller
+    /// never supplied, instead of against the amperes they did.
+    #[test]
+    fn the_constructor_refuses_the_boundary_itself_and_names_the_argument_it_was_given() {
+        assert!(matches!(
+            SiegertInput::new(1.0, 0.0, 1.0, 1.0, 0.0, 1.0),
+            Err(MeanFieldError::Ordering { larger: "v_th", smaller: "v_reset", .. })
+        ));
+        let lif = brunel_lif();
+        for &i_noise in &[-1e-12f64, -1e-9, -0.5, -1.0, -2.0] {
+            assert!(
+                matches!(
+                    SiegertInput::from_current(&lif, 1e-9, i_noise),
+                    Err(MeanFieldError::OutOfRange { what: "i_noise", .. })
+                ),
+                "i_noise = {i_noise} A was not refused by name: {:?}",
+                SiegertInput::from_current(&lif, 1e-9, i_noise)
+            );
+        }
+    }
+
+    /// The boundary `mu == v_th`, where [`SiegertInput::is_mean_driven`] and the deterministic
+    /// branch of [`SiegertInput::mean_interval`] can each be off by one case.
+    ///
+    /// A membrane whose asymptote is EXACTLY the threshold never reaches it: `v(t)` approaches
+    /// `v_th` from below forever, so "the mean input alone reaches threshold" is false and the
+    /// deterministic interval is `None`. That is also what [`Lif::isi`] says at the same point, and
+    /// it is asserted against it here rather than restated — the two are the same claim about the
+    /// same neuron and the doc says they agree.
+    ///
+    /// Every fixture in this module sits strictly on one side (15, 22, 25 and 30 mV against a 20 mV
+    /// threshold), so both comparisons could be loosened without an assertion moving. Loosening the
+    /// second one is the more expensive: `ln((mu - v_reset) / 0)` is `+inf`, so the neuron that does
+    /// not fire would be reported as one that fires at exactly 0 Hz, which is a rate.
+    #[test]
+    fn a_mean_exactly_at_threshold_neither_drives_the_neuron_nor_gives_it_an_interval() {
+        // r_m = 1 so that `v_rest + r_m i` lands on `v_th` exactly rather than within an ulp of it.
+        let lif = Lif { r_m: 1.0, ..brunel_lif() };
+        let at = SiegertInput::from_lif(&lif, lif.v_th, 0.0).expect("v_th > v_reset");
+        assert!(!at.is_mean_driven(), "mu == v_th was reported as mean-driven");
+        assert_eq!(at.mean_interval(), None, "a membrane that stops AT threshold has no interval");
+        assert_eq!(at.rate(), None);
+        assert_eq!(lif.isi(lif.v_th - lif.v_rest), None, "Lif::isi disagrees at the same point");
+        // A hair above it both say the neuron fires, so the assertions above are about the boundary
+        // and not about the whole sub-threshold half.
+        let above = SiegertInput::from_lif(&lif, lif.v_th * (1.0 + 1e-9), 0.0).unwrap();
+        assert!(above.is_mean_driven());
+        assert!(above.mean_interval().expect("mu > v_th fires").is_finite());
+    }
+
+    /// [`simulate_free_membrane`] removes the threshold, and "removes" has to mean an infinite one
+    /// rather than the input's own.
+    ///
+    /// `the_free_membrane_has_the_exact_ornstein_uhlenbeck_variance_and_autocorrelation` cannot see
+    /// the difference: its threshold sits 5.3 standard deviations above the mean, where two million
+    /// samples hold 0.1 expected crossings. Here it sits 1.06 deviations out, where the Gaussian
+    /// tail is `0.5 erfc((v_th - mu) / sigma)` — the `sqrt(2)` of the error function and the
+    /// `sqrt(2)` between `sigma` and the free membrane's deviation cancel, leaving the argument
+    /// 0.75 — which is 0.1444. This implementation measures 0.1401.
+    ///
+    /// The band is arithmetic: the samples are not independent, their lag-1 correlation is
+    /// `exp(-dt / tau_m) = 0.951`, so the integrated autocorrelation time is `(1 + r) / (1 - r) =
+    /// 39.9` and 200 000 samples are worth 5013. The standard error of the fraction is then
+    /// `sqrt(p (1 - p) / 5013) = 0.0050`, and the band below is four of them. Under a finite
+    /// threshold the fraction is not small but exactly zero: [`Neuron::step`] resets before
+    /// `potential()` is read, so no sample can be above it.
+    #[test]
+    fn the_free_membrane_ignores_the_threshold_it_was_handed() {
+        let input = SiegertInput::new(20e-3, 0.0, 20e-3, 0.0, 5e-3, 20e-3).unwrap();
+        let (dt, ticks) = (1e-3f64, 200_000u64);
+        let mut rng = Rng::new(7);
+        let v = simulate_free_membrane(&input, dt, ticks, &mut rng).unwrap();
+        let above = v.iter().filter(|&&x| x > input.v_th).count();
+        let fraction = above as f64 / v.len() as f64;
+        let want = 0.5 * (1.0 - erf((input.v_th - input.mu) / input.sigma));
+        assert!(
+            (fraction - want).abs() < 0.02,
+            "{above} of {ticks} samples sat above the threshold ({fraction}), against a Gaussian \
+             tail of {want}"
+        );
+        // And the stationary variance is still sigma^2 / 2: a reset would take it apart.
+        let mean = v.iter().sum::<f64>() / v.len() as f64;
+        let var = v.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / v.len() as f64;
+        let want_var = input.sigma * input.sigma / 2.0;
+        assert!(
+            (var - want_var).abs() / want_var < 0.03,
+            "variance {var} V^2 against sigma^2/2 = {want_var} V^2"
+        );
+    }
+
+    /// ⭐ The one line in the private `BoxMuller` that no distribution can see: `1 - u` where the
+    /// comment says the reflection away from zero is deliberate, because [`Rng::next_f64`] can
+    /// return exactly 0 and `ln(0)` is `-inf`. Both forms are uniform on the same interval and both
+    /// produce exactly standard normal deviates, so every statistical assertion in this module
+    /// passes either way — and the module has no golden vector for the normal draws, which is the
+    /// hole `rng` itself had.
+    ///
+    /// The pin is Box-Muller's own identity rather than a transcribed stream. With
+    /// `z1 = m cos(2 pi u2)`, `z2 = m sin(2 pi u2)` and `m^2 = -2 ln(u1)`, the radius recovers the
+    /// first uniform exactly: `exp(-(z1^2 + z2^2) / 2) = u1`, and the angle recovers the second.
+    /// The two deviates come out of the first two samples of [`simulate_free_membrane`], which are
+    /// `mu + z1 c` and `mu + z1 c e^-rho + z2 c` with `c = sigma sqrt((1 - e^(-2 rho)) / 2)` —
+    /// the `exp(rho)` inside `ou_step_sd` and the decay [`Neuron::step`] applies cancel exactly —
+    /// and a second [`Rng`] on the same seed supplies the uniforms the draw consumed. So this is an
+    /// identity between two routes to one stream, not a measurement written down.
+    #[test]
+    fn the_box_muller_radius_is_built_from_one_minus_the_uniform_deviate() {
+        let seed = 0x51EE_0001u64;
+        let mut probe = Rng::new(seed);
+        let (u1, u2) = (probe.next_f64(), probe.next_f64());
+        // The seed is chosen so the two candidate radii are far apart: u1 = 0.0644 against
+        // 1 - u1 = 0.9356, a factor of 6.4 in the radius and so in both deviates.
+        assert!((1.0 - u1 - u1).abs() > 0.5, "u1 = {u1} cannot separate u from 1 - u");
+        // ... and so the recovered angle lands in the half turn `atan2` reports directly.
+        assert!(u2 < 0.5, "u2 = {u2} wraps the angle recovery below");
+
+        let input = SiegertInput::new(20e-3, 0.0, 20e-3, 0.0, 5e-3, 4e-3).unwrap();
+        let rho = 0.5f64;
+        let dt = rho * input.tau_m;
+        let mut rng = Rng::new(seed);
+        let v = simulate_free_membrane(&input, dt, 2, &mut rng).unwrap();
+        let c = input.sigma * ((1.0 - (-2.0 * rho).exp()) / 2.0).sqrt();
+        let z1 = (v[0] - input.mu) / c;
+        let z2 = ((v[1] - input.mu) - (v[0] - input.mu) * (-rho).exp()) / c;
+
+        let recovered = (-(z1 * z1 + z2 * z2) / 2.0).exp();
+        assert!(
+            (recovered - (1.0 - u1)).abs() < 1e-12,
+            "the radius carries u = {recovered}; the draw consumed {u1}, so it must carry \
+             1 - u = {}",
+            1.0 - u1
+        );
+        let angle = z2.atan2(z1) / (2.0 * PI);
+        assert!((angle - u2).abs() < 1e-12, "the angle carries {angle}, the draw consumed {u2}");
+    }
+
     // ---------------------------------------------------------------------------------------
     // Balanced networks
     // ---------------------------------------------------------------------------------------
@@ -3013,6 +3278,140 @@ mod tests {
         assert!(BalancedInput { j: f64::NAN, ..b }.simulate(&lif, 1e-4, 10, &mut rng).is_err());
     }
 
+    /// [`BalancedInput::siegert`] puts `mu` on the absolute voltage scale and keeps its OWN
+    /// `tau_m`, and its doc states both in words. Neither was reachable from a test: every call in
+    /// this module passes `brunel_lif()`, whose `v_rest` is 0 V, and every [`BalancedInput`] here is
+    /// built by [`BrunelNetwork::input`], which copies `neuron.tau_m` into the drive — so
+    /// `lif.v_rest + mu` and `mu` are the same number, and `self.tau_m` and `lif.tau_m` are the
+    /// same number.
+    ///
+    /// This neuron rests at -60 mV and this drive integrates over 8 ms against the neuron's 20 ms,
+    /// so each choice is visible on its own: dropping `v_rest` moves the reported mean by 60 mV,
+    /// three times the whole threshold, and taking the neuron's time constant instead of the
+    /// drive's multiplies the mean by 2.5 and the deviation by `sqrt(2.5)`. Both expected values
+    /// are written out from the doc's formula in the doc's own order of operations, so they are
+    /// equalities rather than tolerances.
+    #[test]
+    fn the_balanced_drive_converts_with_its_own_time_constant_and_the_neurons_resting_potential() {
+        let lif = Lif { v_rest: -60e-3, ..brunel_lif() };
+        let drive = BalancedInput {
+            tau_m: 8e-3,
+            c_exc: 1000.0,
+            c_inh: 250.0,
+            g: 4.0,
+            j: 0.1e-3,
+            nu: 5.0,
+            nu_ext: 9.0,
+        };
+        assert!(
+            (drive.tau_m - lif.tau_m).abs() > 1e-3,
+            "the fixture cannot tell the two time constants apart"
+        );
+        let got = drive.siegert(&lif).expect("v_th > v_reset and sigma >= 0");
+        assert_eq!(got.tau_m, drive.tau_m, "siegert took the neuron's tau_m, not the drive's");
+
+        // mu = v_rest + tau_m j (c_exc (nu + nu_ext) - g c_inh nu), as the doc writes it.
+        let want_mu = -60e-3 + 8e-3 * 0.1e-3 * (1000.0 * (5.0 + 9.0) - 4.0 * 250.0 * 5.0);
+        assert!(f64::abs(want_mu + 52.8e-3) < 1e-15, "the literal is not -52.8 mV: {want_mu}");
+        assert_eq!(got.mu, want_mu, "mu = {} V, want v_rest + tau j (...) = {want_mu} V", got.mu);
+        // sigma^2 = tau_m j^2 (c_exc (nu + nu_ext) + g^2 c_inh nu): inhibition ADDS here.
+        let want_var = 8e-3 * 0.1e-3 * 0.1e-3 * (1000.0 * (5.0 + 9.0) + 4.0 * 4.0 * 250.0 * 5.0);
+        assert_eq!(got.sigma, f64::sqrt(want_var), "sigma = {} V", got.sigma);
+        // The membrane's own parameters still come from the neuron.
+        assert_eq!((got.v_th, got.v_reset, got.t_ref), (lif.v_th, lif.v_reset, lif.t_ref));
+    }
+
+    /// The microscopic simulator's arrival-rate ceiling, which no fixture in this module
+    /// approaches: every drive here has `c_exc (nu + nu_ext) dt` near 2, twelve decades below the
+    /// 1e12 the guard refuses at. Raising the ceiling costs nothing any other test can see, and
+    /// what it costs the caller is the diagnosis — past 9e18 [`crate::coding::poisson_count`]
+    /// refuses, the `unwrap_or(0)` turns that refusal into "no arrivals", and a parameter that was
+    /// rejected is reported as a network that fell silent.
+    #[test]
+    fn an_arrival_rate_past_what_a_poisson_draw_can_hold_is_refused_by_name() {
+        let lif = brunel_lif();
+        let mut rng = Rng::new(1);
+        let base = BalancedInput {
+            tau_m: 20e-3,
+            c_exc: 1e10,
+            c_inh: 1.0,
+            g: 1.0,
+            j: 1e-9,
+            nu: 0.0,
+            nu_ext: 1e3,
+        };
+        assert!(
+            matches!(
+                base.simulate(&lif, 1.0, 10, &mut rng),
+                Err(MeanFieldError::OutOfRange { what: "c_exc * (nu + nu_ext) * dt", value, high, .. })
+                    if value == 1e13 && high == 1e12
+            ),
+            "1e13 excitatory arrivals per tick were accepted: {:?}",
+            base.simulate(&lif, 1.0, 10, &mut rng)
+        );
+        let inhibitory = BalancedInput { c_exc: 1.0, c_inh: 1e10, nu: 1e3, nu_ext: 0.0, ..base };
+        assert!(matches!(
+            inhibitory.simulate(&lif, 1.0, 10, &mut rng),
+            Err(MeanFieldError::OutOfRange { what: "c_inh * nu * dt", .. })
+        ));
+        // Under the ceiling the same shape of parameter is accepted, so this is a ceiling on the
+        // MEAN of one tick's draw and not a refusal of large fan-in as such.
+        let under = BalancedInput { c_exc: 1e8, ..base };
+        assert!(under.simulate(&lif, 1.0, 10, &mut rng).is_ok());
+    }
+
+    /// ⭐ An ASYMMETRIC balance matrix. `the_balance_matrix_moments_grow_as_root_k_and_add_in_quadrature`
+    /// uses `j_ee == j_ie == 1 mV`, and three separate mutations live inside that coincidence:
+    ///
+    /// - Cramer's rule for `nu_inh` can read the excitatory column (`j_ie b1 - j_ee b0`) instead of
+    ///   its own, and with `j_ee == j_ie` that is the same expression;
+    /// - [`BalanceMatrix::mean_drive_exc`] can take the INHIBITORY residual row, and with
+    ///   `j_ee == j_ie` and only `nu_exc` perturbed off balance the two rows are equal;
+    /// - `tau_m` can be dropped from the drive entirely, because every assertion there compares one
+    ///   `mean_drive_exc` against another and the factor cancels out of both sides.
+    ///
+    /// Here `j_ie = 4 j_ee` and the answer is hand-solved. In millivolts per spike per second the
+    /// balance equations are `nu_E - 2 nu_I + 10 = 0` and `4 nu_E - 6 nu_I + 15 = 0`, whose exact
+    /// solution is `(15, 12.5)` Hz; at `(18, 12.5)` Hz the two residual rows are 3 and 12
+    /// mV/spike/s; and the excitatory drive at `K = 100` is `20 ms * 10 * 3 mV/spike/s = 600 uV`.
+    /// Reading the other row gives 2.4 mV and dropping `tau_m` gives 30 mV.
+    #[test]
+    fn an_asymmetric_balance_matrix_pins_which_column_and_which_row_each_quantity_reads() {
+        let m = BalanceMatrix {
+            j_ee: 1e-3,
+            j_ei: 2e-3,
+            j_ie: 4e-3,
+            j_ii: 6e-3,
+            j_e0: 1e-3,
+            j_i0: 1.5e-3,
+        };
+        let (nu_0, tau) = (10.0f64, 20e-3f64);
+        let (nu_e, nu_i) = m.balanced_rates(nu_0).expect("a balanced state exists here");
+        assert!((nu_e - 15.0).abs() < 1e-12, "nu_exc = {nu_e} Hz, hand-solved 15 Hz");
+        assert!((nu_i - 12.5).abs() < 1e-12, "nu_inh = {nu_i} Hz, hand-solved 12.5 Hz");
+        // Both rows vanish there, which is what "balanced" means and is a second route to the pair.
+        // Judged against the external drive they cancel, `j_e0 nu_0 = 10 mV/spike/s`, rather than
+        // against an absolute number: this implementation measures 2.1e-15 of it.
+        let scale = m.j_e0 * nu_0;
+        let (r_e, r_i) = m.residual(nu_e, nu_i, nu_0);
+        assert!(
+            r_e.abs() / scale < 1e-14 && r_i.abs() / scale < 1e-14,
+            "residuals {r_e} and {r_i} V/spike/s against a {scale} V/spike/s drive"
+        );
+
+        // Off balance the two rows differ by a factor of four, so which one the drive reads shows.
+        let (off_e, off_i) = (18.0f64, 12.5f64);
+        let (r_e, r_i) = m.residual(off_e, off_i, nu_0);
+        assert!((r_e - 3e-3).abs() / 3e-3 < 1e-12, "excitatory residual {r_e}, hand-computed 3e-3");
+        assert!((r_i - 12e-3).abs() / 12e-3 < 1e-12, "inhibitory residual {r_i}, hand-computed 12e-3");
+        let drive = m.mean_drive_exc(off_e, off_i, nu_0, 100, tau).expect("k > 0, tau finite");
+        let want = 20e-3 * 10.0 * 3e-3; // tau_m * sqrt(K) * residual_E
+        assert!(
+            (drive - want).abs() / want < 1e-12,
+            "the mean drive at K = 100 is {drive} V, want tau_m sqrt(K) residual_E = {want} V"
+        );
+    }
+
     // ---------------------------------------------------------------------------------------
     // Brunel's phase diagram
     // ---------------------------------------------------------------------------------------
@@ -3229,6 +3628,56 @@ mod tests {
         // for either of them to have been measured.
         assert_eq!(classify(0.99, 0.0, 1.0), Some(Regime::NearlySilent));
         assert_eq!(classify(1.01, 0.0, 1.0), Some(Regime::SynchronousRegular));
+    }
+
+    /// Two claims about [`synchrony`] that its two-anchor test cannot make, both because `chi` is a
+    /// RATIO of a numerator and a denominator built from the same counts.
+    ///
+    /// The first is that a bin holding two spikes from one neuron counts as two. In the locked
+    /// fixture every row IS the population mean, so capping each bin at one spike scales numerator
+    /// and denominator identically and `chi` stays exactly 1; in the independent fixture the same
+    /// cap is a perturbation inside a 40% band. Here the two rows are `[3, 1, 0, 2]` and
+    /// `[1, 1, 2, 0]` spikes per bin, whose index is exact: the population mean is `[2, 1, 1, 1]`
+    /// with variance `1/4`, the two row variances are `5/3` and `2/3` for a mean of `7/6`, and
+    /// `chi = sqrt(3/14) = 0.46291`. Capping every bin at one spike gives `[1, 1, 0, 1]` and
+    /// `[1, 1, 1, 0]`, whose index is `sqrt(1/3) = 0.57735` — a different number, which is what
+    /// makes the accumulation visible.
+    ///
+    /// The second is the zero-denominator refusal the doc states: a population where every neuron
+    /// fires the same number of times in every bin has no variability to share, both moments are
+    /// exactly zero, and `0 / 0` is a `NaN` that would be returned as a synchrony index of its own.
+    #[test]
+    fn the_synchrony_index_counts_every_spike_in_a_bin_and_refuses_a_constant_population() {
+        let (bins, bin_ticks) = (4u64, 8u64);
+        let ticks = bins * bin_ticks;
+        let rows = [[3u64, 1, 0, 2], [1, 1, 2, 0]];
+        let mut spikes = Vec::new();
+        for (src, row) in rows.iter().enumerate() {
+            for (b, &count) in row.iter().enumerate() {
+                for j in 0..count {
+                    spikes.push(Spike { t: b as u64 * bin_ticks + j, source: src as u32 });
+                }
+            }
+        }
+        let train = Train::from_spikes(spikes);
+        assert_eq!(train.len(), 10, "the fixture lost spikes to the binning");
+        let chi = synchrony(&train, 2, ticks, bin_ticks).expect("four bins, two sources");
+        let want = (3.0f64 / 14.0).sqrt();
+        assert!((chi - want).abs() < 1e-15, "chi = {chi}, hand-computed sqrt(3/14) = {want}");
+        // The number a capped count would give, stated so the assertion above is read as a
+        // measurement of the accumulation rather than of the layout.
+        assert!((chi - (1.0f64 / 3.0).sqrt()).abs() > 0.1, "chi = {chi} is the capped value");
+
+        // Every neuron firing once in every bin: no variability anywhere, and no index.
+        let flat: Vec<Spike> = (0..bins)
+            .flat_map(|b| (0..3u32).map(move |src| Spike { t: b * bin_ticks, source: src }))
+            .collect();
+        let flat = Train::from_spikes(flat);
+        assert_eq!(
+            synchrony(&flat, 3, ticks, bin_ticks),
+            None,
+            "a population with no variability was given an index"
+        );
     }
 
     // ---------------------------------------------------------------------------------------
@@ -3462,6 +3911,84 @@ mod tests {
             assert!(text.contains(needle), "{text:?} does not mention {needle}");
             let _: &dyn std::error::Error = &e;
         }
+    }
+
+    /// [`RefractoryDensity::dead_time_renewal`] rounds the dead time to the NEAREST whole bin, and
+    /// every fixture in this module hands it a `t_ref` that is already a whole number of bins — 0,
+    /// 1, 2, 5 and 10 ms, and 37 bins, all against a 0.1 ms step — where rounding down, rounding up
+    /// and rounding to nearest are the same map. These two are 19.6 and 19.4 bins: the first must
+    /// become 20 and the second 19, which no single-direction rule satisfies. Rounding down instead
+    /// would let a synchronised population fire a whole bin early, and the error would be up to a
+    /// full `dt` rather than half of one.
+    ///
+    /// The first firing step is an integer, so there is no tolerance here to loosen.
+    #[test]
+    fn the_dead_time_is_rounded_to_the_nearest_whole_bin() {
+        let dt = 1e-4;
+        for &(t_ref, want_bins) in &[(1.96e-3f64, 20usize), (1.94e-3, 19)] {
+            let mut rd = RefractoryDensity::dead_time_renewal(dt, t_ref, 50.0, 500).unwrap();
+            for step in 0..want_bins {
+                let a = rd.step();
+                assert_eq!(a, 0.0, "t_ref = {t_ref} s: fired at step {step} of {want_bins}");
+            }
+            let a = rd.step();
+            assert!(a > 0.0, "t_ref = {t_ref} s: still silent at step {want_bins}");
+            // And the closed-form interval carries the same rounding: t_ref rounded, plus 1/h.
+            let mean = rd.mean_interval().unwrap();
+            let want = dt * want_bins as f64 + 1.0 / 50.0;
+            assert!(
+                (mean - want).abs() / want < 1e-12,
+                "t_ref = {t_ref} s: mean interval {mean} s against {want} s"
+            );
+        }
+    }
+
+    /// A zero-bin age window is refused as a bin count, not as an empty hazard.
+    ///
+    /// `the_refractory_density_refuses_a_malformed_hazard` asserts only `is_err()` on this call,
+    /// and `bins == 0` produces an empty hazard array, so deleting the check entirely still gives an
+    /// error — `Empty { what: "hazard" }`, about an array the caller never passed and cannot see,
+    /// in a constructor whose hazard argument is a scalar.
+    #[test]
+    fn a_zero_bin_age_window_is_refused_as_a_bin_count_and_not_as_an_empty_hazard() {
+        assert!(matches!(
+            RefractoryDensity::dead_time_renewal(1e-4, 1e-3, 40.0, 0),
+            Err(MeanFieldError::OutOfRange { what: "bins", low, .. }) if low == 1.0
+        ));
+        // The empty-array refusal is still `new`'s own, on the argument that can be empty.
+        assert!(matches!(
+            RefractoryDensity::new(1e-4, vec![]),
+            Err(MeanFieldError::Empty { what: "hazard" })
+        ));
+    }
+
+    /// A SINGLE-bin hazard: the whole population sits in the absorbing bin, and everyone who fires
+    /// returns to age 0 — which is that same bin. It is the only shape in which `next[0] += fired`
+    /// differs from `next[0] = fired`, because with two bins or more the shift writes
+    /// `survivors[0]` into `next[1]` and leaves `next[0]` zero, so the two statements agree. Every
+    /// other fixture in this module has between two and 200 000 bins.
+    ///
+    /// With one bin the process is memoryless: the interval is geometric with `p = h dt`, the mean
+    /// is `dt (1 + (1 - p) / p) = dt / p = 1 / h` exactly, the activity is `h` at every step
+    /// forever, and the coefficient of variation is `sqrt(1 - p)`. Overwriting instead of
+    /// accumulating multiplies the mass by `p = 4e-3` every step, so 6.4e-8 of the population is
+    /// left after three of them and the activity goes with it — while every conserved-mass and rate
+    /// assertion in the module still passes, because all of them have more than one bin.
+    #[test]
+    fn a_single_bin_hazard_keeps_its_whole_population() {
+        let (dt, h) = (1e-4f64, 40.0f64);
+        let mut rd = RefractoryDensity::new(dt, vec![h]).unwrap();
+        for step in 0..200 {
+            let a = rd.step();
+            assert!((a - h).abs() < 1e-12 * h, "step {step}: activity {a} Hz, not {h} Hz");
+            assert!((rd.mass() - 1.0).abs() < 1e-15, "step {step}: mass {}", rd.mass());
+        }
+        assert_eq!(rd.tail_mass(), 1.0, "the one bin holds everyone");
+        let mean = rd.mean_interval().expect("a positive hazard has a mean interval");
+        assert!((mean - 1.0 / h).abs() < 1e-15 * mean, "mean interval {mean} s against 1/h");
+        assert!((rd.activity() - 1.0 / mean).abs() < 1e-10, "activity is not 1 / mean interval");
+        let cv = rd.interval_cv().expect("a positive hazard has a CV");
+        assert!((cv - (1.0 - h * dt).sqrt()).abs() < 1e-12, "cv {cv} against sqrt(1 - p)");
     }
 
     // ---------------------------------------------------------------------------------------
@@ -3755,5 +4282,122 @@ mod tests {
         let q = p.extinction_probability();
         let measured = f64::from(complete) / 3_000.0;
         assert!((measured - q).abs() < 0.03, "completed fraction {measured} vs extinction {q}");
+    }
+
+    /// `m = 0`: the process whose every avalanche is its own trigger and nothing else. The Borel
+    /// pmf is a special case there rather than a limit — `(m k)^(k-1)` is `0^0` at `k = 1` and `0`
+    /// after — and nothing in this module ever called [`BranchingProcess::borel_pmf`] with `m = 0`,
+    /// so the special case could put the mass at `k = 0` instead: a size no avalanche has, since
+    /// the trigger is itself an event, and one the function refuses to answer about at all. The
+    /// whole distribution would then be zero everywhere and would still sum, normalise and compare
+    /// like a probability in any test that only looked at `m > 0`.
+    #[test]
+    fn a_silent_branching_process_puts_all_its_mass_on_the_single_triggering_event() {
+        let p = BranchingProcess::new(0.0).unwrap();
+        assert_eq!(p.borel_pmf(1), Some(1.0), "an avalanche with no offspring is its trigger");
+        assert_eq!(p.borel_pmf(2), Some(0.0));
+        assert_eq!(p.borel_pmf(37), Some(0.0));
+        assert_eq!(p.borel_pmf(0), None, "there is no avalanche of size zero to ask about");
+        let total: f64 = (1..=50u64).map(|k| p.borel_pmf(k).unwrap()).sum();
+        assert_eq!(total, 1.0, "the pmf sums to {total} rather than 1");
+        assert_eq!(p.mean_size(), Some(1.0), "1 / (1 - 0) is 1");
+        // The simulator agrees, which is the other half of the claim: no offspring, no generations.
+        let mut rng = Rng::new(4);
+        for _ in 0..16 {
+            let a = p.avalanche(&mut rng, 100);
+            assert_eq!((a.size(), a.duration(), a.complete), (1, 1, true));
+        }
+    }
+
+    /// A sample that sits ENTIRELY at the lower cut. The log sum is then exactly zero, `1 + n / s`
+    /// is `+inf`, and the refusal that stops it is the `s <= 0.0` half of a guard whose `n < 2` half
+    /// is the only one any fixture reaches. The module's samples are Pareto draws, which never land
+    /// exactly on `x_min`; avalanche sizes are integers and land there constantly — at criticality
+    /// about half of all avalanches are a single event.
+    #[test]
+    fn a_sample_that_is_all_at_the_cut_is_refused_rather_than_fitted_to_infinity() {
+        assert!(matches!(
+            power_law_exponent(&[2.0, 2.0, 2.0], 2.0),
+            Err(MeanFieldError::TooFewSamples { what: "power-law exponent", .. })
+        ));
+        // One sample above the cut makes the sum positive, and then the estimator is a number:
+        // 1 + 3 / ln(3/2), which is what the same three samples give with the third moved.
+        let got = power_law_exponent(&[2.0, 2.0, 3.0], 2.0).expect("a positive log sum");
+        let want = 1.0 + 3.0 / (1.5f64).ln();
+        assert!((got - want).abs() < 1e-12, "alpha = {got}, hand-computed {want}");
+        // The discrete estimator subtracts a half from the cut, so ln(x_min / (x_min - 1/2)) is
+        // positive and the same all-at-the-cut sample IS fitted there. That is the continuity
+        // correction, and it is asserted here so the refusal above reads as being about the log sum.
+        assert!(power_law_exponent_discrete(&[1, 1, 1], 1).is_ok());
+    }
+
+    /// The discrete estimator keeps the sizes sitting exactly AT the cut, and at a small cut those
+    /// are most of the data. The module's only discrete fixtures are 200 000 simulated avalanche
+    /// sizes fitted at `x_min = 8` and at `x_min = 1`, and both bands (`1.45..=1.55` and `< 1.47`)
+    /// are still satisfied when every size equal to the cut is dropped — so the comparison `>=`
+    /// could be `>` and nothing would move.
+    ///
+    /// Here it is arithmetic on three sizes. With `x_min = 1` the shifted cut is `1/2`, the log sum
+    /// is `ln 2 + ln 4 + ln 8 = 6 ln 2`, and `alpha = 1 + 3 / (6 ln 2) = 1.72135`. Dropping the size
+    /// that equals the cut leaves `1 + 2 / (5 ln 2) = 1.57708`. At `x_min = 2` dropping them leaves
+    /// one sample, and the estimator refuses rather than answering.
+    #[test]
+    fn the_discrete_estimator_keeps_the_sizes_sitting_exactly_at_the_cut() {
+        let got = power_law_exponent_discrete(&[1, 2, 4], 1).expect("three sizes at or above 1");
+        let want = 1.0 + 3.0 / (6.0 * 2.0f64.ln());
+        assert!((got - want).abs() < 1e-15, "alpha = {got}, hand-computed {want}");
+        let without = power_law_exponent_discrete(&[2, 4], 1).unwrap();
+        assert!((got - without).abs() > 0.1, "dropping the size at the cut moved nothing: {without}");
+        // Two of the three sizes AT the cut: keeping them is the difference between an estimate and
+        // a refusal for too few samples.
+        assert!(power_law_exponent_discrete(&[2, 2, 8], 2).is_ok());
+        assert!(matches!(
+            power_law_exponent_discrete(&[8], 2),
+            Err(MeanFieldError::TooFewSamples { need: 2, .. })
+        ));
+    }
+
+    /// No lag with a single product may enter the multistep fit.
+    ///
+    /// `k_max` is clamped to `t - 2` because the correlation at lag `t - 1` is one product of two
+    /// deviations rather than an average of any, and at lag `t` it is an empty sum over an empty
+    /// range — `0.0 / 0.0`, a `NaN` that breaks the loop. The clamp is what the doc's "# Panics:
+    /// Never" rests on, and no fixture reached it: no call in this module passes a `k_max` above
+    /// `t - 2` on a series that reaches the loop at all — the long ones are 400 000 samples against
+    /// a `k_max` of 20, and the short ones are refused for their length, for zero variance or for a
+    /// non-finite entry before any lag is computed.
+    ///
+    /// The fixture is the one shape that gets that far. For any series the sample autocorrelations
+    /// satisfy `sum over k = 1..t-1 of (t - k) r_k = -t / 2` exactly, so they cannot all be
+    /// positive and a `floor` of zero or more always stops the fit before lag `t - 1`. The extreme
+    /// case of that identity is a series that is flat except for one step up at the start and one
+    /// down at the end: every lag below `t - 1` is exactly zero in real arithmetic and `r_(t-1)` is
+    /// exactly `-t / 2`. In `f64` those zeros come out as the rounding residue of a mean that is
+    /// not representable — 1.3e-31 here, positive — so the fit is finite, and the lag this clamp
+    /// removes would poison it with the logarithm of `-3`.
+    #[test]
+    fn no_lag_with_a_single_product_enters_the_multistep_fit() {
+        let activity = [2.1f64, 1.1, 1.1, 1.1, 1.1, 0.1];
+        let floor = -1e9; // below -t/2 = -3, so nothing is dropped for being too small
+        let clamped = multistep_regression(&activity, activity.len() - 2, floor)
+            .expect("four lags is enough to fit");
+        assert!(
+            clamped.is_finite(),
+            "the fixture's own residues are not positive on this target, so nothing below can \
+             distinguish the clamp: {clamped}"
+        );
+        assert_eq!(
+            multistep_regression(&activity, 1_000, floor),
+            Some(clamped),
+            "a k_max past the series length changed the fit, so lag {} entered it",
+            activity.len() - 1
+        );
+        // The lag the clamp removes has a negative correlation here — exactly -t/2 = -3 — and its
+        // logarithm is not a number, which is what the fit above would have become.
+        let t = activity.len();
+        let mean = activity.iter().sum::<f64>() / t as f64;
+        let var = activity.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / t as f64;
+        let last = (activity[0] - mean) * (activity[t - 1] - mean) / var;
+        assert!((last + 3.0).abs() < 1e-12, "the lag-5 correlation is {last}, not -t/2");
     }
 }
