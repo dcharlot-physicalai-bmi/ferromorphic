@@ -370,19 +370,33 @@ fn poisson_ln_pmf(k: f64, lambda: f64) -> f64 {
     d - (lambda + d) * (d / lambda).ln_1p() - 0.5 * (TAU * k).ln() - stirling_tail
 }
 
-/// Hörmann's transformed-rejection draw (*Insurance: Mathematics and Economics* 12:39-45, 1993),
-/// the `PTRS` algorithm, in the form `NumPy` uses for `lambda >= 10`.
+/// The four quantities Hörmann's `PTRS` envelope is built from, as `(a, b, inv_alpha, v_r)`.
 ///
-/// Constant time in `lambda`: it proposes from a scaled logistic-like envelope and accepts against
-/// the Poisson log-probability, so the run time does not grow with the mean. The five constants
-/// (`0.931`, `2.53`, `-0.059`, `0.02483`, `1.1239`, `1.1328`, `0.9277`, `3.6224`) are the paper's
-/// own, kept verbatim. Caller guarantees `lambda >= 10`.
-fn poisson_transformed_rejection(rng: &mut Rng, lambda: f64) -> u64 {
+/// Split out of the sampler so a test can read the constants the sampler actually runs on rather
+/// than a second transcription of them: the squeeze `v_r` is only allowed to short-circuit the
+/// acceptance test that `a`, `b` and `inv_alpha` define, and whether it does is a property of
+/// these four numbers together —
+/// `the_transformed_rejection_squeeze_never_accepts_what_its_envelope_rejects` checks it.
+///
+/// The eight literals (`0.931`, `2.53`, `-0.059`, `0.02483`, `1.1239`, `1.1328`, `0.9277`,
+/// `3.6224`) are the paper's own, kept verbatim.
+fn ptrs_constants(lambda: f64) -> (f64, f64, f64, f64) {
     let smu = lambda.sqrt();
     let b = 0.931 + 2.53 * smu;
     let a = -0.059 + 0.02483 * b;
     let inv_alpha = 1.1239 + 1.1328 / (b - 3.4);
     let v_r = 0.9277 - 3.6224 / (b - 2.0);
+    (a, b, inv_alpha, v_r)
+}
+
+/// Hörmann's transformed-rejection draw (*Insurance: Mathematics and Economics* 12:39-45, 1993),
+/// the `PTRS` algorithm, in the form `NumPy` uses for `lambda >= 10`.
+///
+/// Constant time in `lambda`: it proposes from a scaled logistic-like envelope and accepts against
+/// the Poisson log-probability, so the run time does not grow with the mean. The envelope's
+/// constants are in [`ptrs_constants`]. Caller guarantees `lambda >= 10`.
+fn poisson_transformed_rejection(rng: &mut Rng, lambda: f64) -> u64 {
+    let (a, b, inv_alpha, v_r) = ptrs_constants(lambda);
     loop {
         let u = rng.next_f64() - 0.5;
         let v = rng.next_f64();
@@ -2335,12 +2349,12 @@ mod tests {
         Bsa, BurstCode, CodeError, ContrastMode, CosinePopulation, GaussianPopulation, Hsa,
         Oscillator, POISSON_MAX_MEAN, POISSON_REJECTION_FLOOR, PhaseEncoder, RankOrderCode,
         TemporalContrast, angular_difference, fir_hann, fir_lowpass, poisson_count, poisson_ln_pmf,
-        poisson_transformed_rejection, rates_from_counts, rms_error, sinc, spike_convolve,
-        wrap_angle,
+        poisson_transformed_rejection, ptrs_constants, rates_from_counts, rms_error, sinc,
+        spike_convolve, wrap_angle,
     };
     use crate::encode::DeltaEncoder;
     use crate::rng::Rng;
-    use crate::spike::Polarity;
+    use crate::spike::{Event, Polarity, Spike, Train};
     use core::f64::consts::{PI, TAU};
 
     /// `off + amp·sin(2π f t)` at `n` integer sample times. `f` is in cycles per SAMPLE, which is
@@ -2623,6 +2637,128 @@ mod tests {
         assert_eq!(poisson_count(&mut Rng::new(7), 20.0), Some(19));
     }
 
+    /// The squeeze is allowed to be FAST. It is not allowed to be generous.
+    ///
+    /// Its whole job is to accept a proposal without taking a logarithm, so every `(u, v)` it
+    /// accepts must ALSO satisfy the acceptance test it is short-circuiting,
+    /// `ln(v · inv_alpha / (a/us² + b)) ≤ ln P(k | lambda)`. If the rectangle pokes out from under
+    /// that envelope the sampler stops being exact — it keeps proposals the envelope would have
+    /// rejected, near the mode, where the histogram has the most counts and the least room to
+    /// show it.
+    ///
+    /// That is the hole. `the_large_mean_sampler_matches_the_exact_poisson_distribution` is a
+    /// statistical test over 400,000 draws at three means, and this audit found it passing
+    /// unchanged with either constant transposed: the histogram moves by less than its own
+    /// sampling error, and in an independent replica of that histogram — same algorithm, a
+    /// different uniform source — the chi-square at `lambda = 15` moved from 31.1 to 29.5 against
+    /// 31 degrees of freedom, which is the direction of a BETTER fit. The reason is structural.
+    /// Scaling `inv_alpha` scales every acceptance probability by one common factor, which leaves
+    /// the conditional distribution of the draws that survive exactly where it was; only the
+    /// squeeze, which is not scaled with it, can make the sampler inexact. And whether it does is
+    /// not a statistic at all — it is an inequality between two closed forms over a
+    /// two-dimensional region, checked here by scanning that region rather than sampling it.
+    ///
+    /// Measured minimum margin in nats, over `us` in `[0.07, 0.5]` and both signs of `u`: +0.172
+    /// at `lambda = 10`, +0.136 at 15, +0.0631 at 30, +0.0130 at 100, +0.00167 at 1e6 and
+    /// +0.00144 from 1e12 upward, where the envelope has reached its asymptote. It never reaches
+    /// zero, and it is the paper's constants that keep it positive: 1.1239 raised to 1.1932 puts
+    /// it at −0.0444 by `lambda = 100`, and 0.9277 raised to 0.9727 at −0.0044 by `lambda = 30`.
+    #[test]
+    fn the_transformed_rejection_squeeze_never_accepts_what_its_envelope_rejects() {
+        for &lam in &[10.0f64, 15.0, 30.0, 100.0, 1.0e3, 1.0e6, 1.0e12, 5.0e18] {
+            let (a, b, inv_alpha, v_r) = ptrs_constants(lam);
+            assert!(v_r > 0.0 && v_r < 1.0, "lam {lam}: squeeze height {v_r} is not a probability");
+            assert!(a > 0.0 && b > 0.0, "lam {lam}: envelope width {a}, {b}");
+            assert!(inv_alpha > 1.0, "lam {lam}: an envelope of {inv_alpha} does not cover the mass");
+            let steps = 20_000usize;
+            let mut worst = f64::INFINITY;
+            for j in 0..=steps {
+                let us = 0.07 + (0.5 - 0.07) * j as f64 / steps as f64;
+                for &sign in &[1.0f64, -1.0] {
+                    let k = ((2.0 * a / us + b) * (sign * (0.5 - us)) + lam + 0.43).floor();
+                    // The squeeze returns `k as u64` before anything has tested the sign of `k`,
+                    // and a saturating cast of a negative float is 0 — a count, not a refusal. The
+                    // smallest proposal the squeeze region can make is `lambda − 1.86·sqrt(lambda)`
+                    // to within a unit: 4 at `lambda = 10`, 8 at 15, 20 at 30, 81 at 100.
+                    assert!(k >= 0.0, "lam {lam}: the squeeze would return {k} as a count");
+                    // The acceptance test rearranged so that `v = v_r` — the largest value the
+                    // squeeze accepts — is the case under examination. Positive means the squeeze
+                    // sits under the envelope at this proposal.
+                    let margin = (a / (us * us) + b).ln() - inv_alpha.ln() - v_r.ln()
+                        + poisson_ln_pmf(k, lam);
+                    assert!(margin.is_finite(), "lam {lam}: margin {margin} at us {us}");
+                    worst = worst.min(margin);
+                }
+            }
+            assert!(worst > 0.0, "lam {lam}: the squeeze reaches {worst} nats past its envelope");
+        }
+    }
+
+    /// The `NoEvidence` arm of `fir_lowpass` is unreachable, and this is the scan that says so.
+    ///
+    /// The design normalises by the tap sum, which is the filter's gain at DC. A sum of zero would
+    /// divide by zero; a negative one would invert every tap and still normalise to `+1`, which is
+    /// the worse failure because it looks like a filter. The doc claims no cutoff in range
+    /// produces either, and that claim had no test — a guard nothing reaches and a guard that is
+    /// wrong are the same guard until somebody sweeps the domain.
+    ///
+    /// Measured here over 2 to 64 taps and 499 cutoffs spanning `(0, 0.5)`: the smallest
+    /// un-normalised DC gain is 0.1021. A wider sweep outside the test, to 16,384 taps and 20,000
+    /// cutoffs, puts the minimum at 0.10186, attained at two taps as the cutoff approaches
+    /// Nyquist, where the Hamming window's two `0.08` ends multiply `sinc(0.5) = 2/π`.
+    #[test]
+    fn no_cutoff_in_range_can_make_a_low_pass_this_module_refuses_to_normalise() {
+        let mut worst = f64::INFINITY;
+        for taps in 2..=64usize {
+            for j in 1..500usize {
+                let cutoff = 0.5 * j as f64 / 500.0;
+                let h = fir_lowpass(taps, cutoff).expect("a cutoff in range");
+                assert_eq!(h.len(), taps);
+                // The gain that was divided by, rebuilt from the same two factors the designer
+                // multiplies: the window and the sampled sinc.
+                let m = (taps - 1) as f64;
+                let centre = m / 2.0;
+                let raw: f64 = (0..taps)
+                    .map(|k| {
+                        let win = 0.54 - 0.46 * (TAU * k as f64 / m).cos();
+                        win * sinc(2.0 * cutoff * (k as f64 - centre))
+                    })
+                    .sum();
+                worst = worst.min(raw);
+                let unit: f64 = h.iter().sum();
+                assert!((unit - 1.0).abs() < 1e-12, "taps {taps} cutoff {cutoff}: DC gain {unit}");
+            }
+        }
+        assert!(worst > 0.1, "the smallest un-normalised DC gain in range is {worst}");
+    }
+
+    /// Counts become rates by DIVISION by the window, and the window is not always one second.
+    ///
+    /// Every caller of this function in this module feeds a decoder that cannot see the
+    /// difference: the population vector's angle is invariant to any positive rescaling of the
+    /// rates, and the Cramér-Rao fixture reads a ratio of variances. So multiplying by the window
+    /// instead of dividing by it moved no assertion anywhere in the suite. Here the conversion is
+    /// read on its own, at a window of 0.25 s — where `k / T` and `k · T` differ by a factor of
+    /// 16 — and at one of 4 s, so the rate lands on the other side of the count. Every value is a
+    /// dyadic rational, so these are equalities rather than tolerances.
+    #[test]
+    fn counts_become_rates_by_division_and_a_window_of_zero_is_not_a_window() {
+        let fast = rates_from_counts(&[0, 3, 10, 1], 0.25).expect("a positive window");
+        assert_eq!(fast, vec![0.0, 12.0, 40.0, 4.0], "3 spikes in 0.25 s is 12 Hz");
+        let slow = rates_from_counts(&[7, 2], 4.0).expect("a positive window");
+        assert_eq!(slow, vec![1.75, 0.5], "7 spikes in 4 s is 1.75 Hz");
+        assert_eq!(rates_from_counts(&[], 1.0).expect("a positive window"), Vec::<f64>::new());
+        // A window of zero is an infinite rate rather than a large one, and a window that is not
+        // finite is not a duration. Both are refused rather than propagated into the decoders.
+        assert!(matches!(rates_from_counts(&[1], 0.0), Err(CodeError::NotPositive { .. })));
+        assert!(matches!(rates_from_counts(&[1], -0.5), Err(CodeError::NotPositive { .. })));
+        assert!(matches!(rates_from_counts(&[1], f64::NAN), Err(CodeError::NotPositive { .. })));
+        assert!(matches!(
+            rates_from_counts(&[1], f64::INFINITY),
+            Err(CodeError::NotPositive { .. })
+        ));
+    }
+
     #[test]
     fn angular_difference_takes_the_short_way_round() {
         assert!((angular_difference(0.01, TAU - 0.003) - 0.013).abs() < 1e-12);
@@ -2833,6 +2969,40 @@ mod tests {
         assert!(worst_by_n[0] > 5e-3, "rectification ripple vanished: {worst_by_n:?}");
         assert!(worst_by_n[0] < 5e-2, "ripple larger than expected: {worst_by_n:?}");
         assert!(worst_by_n[1] < worst_by_n[0], "more cells did not reduce the ripple: {worst_by_n:?}");
+    }
+
+    /// Two opposed cells span a line, not a plane, and the constructor is where that is caught.
+    ///
+    /// With `n = 2` the preferred directions are `φ` and `φ + π`, so the population vector
+    /// `r₀·(cos φ, sin φ) + r₁·(−cos φ, −sin φ)` is `(r₀ − r₁)·(cos φ, sin φ)` — it lies on ONE
+    /// line through the origin for every stimulus, and the angle it reports can only ever be `φ`
+    /// or `φ + π`. The decoder would run, and it would return a plottable number carrying one bit.
+    /// Three cells are the smallest spanning set on the circle, which is why the refusal is in the
+    /// constructor rather than in the decoder.
+    ///
+    /// The sweep in this module starts at `n = 3`, so nothing here had ever asked for two.
+    #[test]
+    fn a_cosine_population_of_fewer_than_three_cells_is_refused_before_it_can_decode() {
+        for n in 0..3usize {
+            assert!(
+                matches!(CosinePopulation::new(n, 20.0, 10.0, 0.0), Err(CodeError::Empty { .. })),
+                "a population of {n} cells was accepted"
+            );
+        }
+        let three = CosinePopulation::new(3, 20.0, 10.0, 0.0).expect("three cells span the circle");
+        assert_eq!(three.n, 3);
+        // The reason, as arithmetic: whatever the two rates, an antipodal pair's vector sum points
+        // along the first cell's own direction or exactly opposite it, and never anywhere else.
+        let phi = 0.7f64;
+        for &(r0, r1) in &[(30.0f64, 10.0f64), (10.0, 30.0), (25.0, 5.0), (5.0, 5.0e-9)] {
+            let x = r0 * phi.cos() + r1 * (phi + PI).cos();
+            let y = r0 * phi.sin() + r1 * (phi + PI).sin();
+            let off = (y.atan2(x) - phi).rem_euclid(PI);
+            assert!(
+                off < 1e-12 || PI - off < 1e-12,
+                "rates ({r0}, {r1}) left the line by {off} rad"
+            );
+        }
     }
 
     /// Requirement (c): fit the exponent, do not assert the direction. Independent Poisson noise
@@ -3060,6 +3230,182 @@ mod tests {
         assert!(com_v > ml_v, "centre of mass {com_v} was not worse than ML {ml_v}");
     }
 
+    /// The likelihood's `−λT` term is what makes silence evidence, and nothing here could see it.
+    ///
+    /// `L(x) = Σ_i [k_i · ln(λ_i(x)·T) − λ_i(x)·T]`. Flip the sign of the second term and every
+    /// decode in this module still lands where it did, because both populations it is run on are
+    /// tiled so that `Σ_i λ_i(x)` barely moves with `x`: for a cosine population the modulations
+    /// cancel EXACTLY over a uniform tiling, so the term is a constant and cannot move the maximum
+    /// at all, and for a Gaussian one it is a shallow ripple under a data term worth hundreds of
+    /// nats.
+    ///
+    /// Observing zero spikes from every cell deletes the data term and leaves the penalty alone:
+    /// `L(x) = −T · Σ_i λ_i(x)`, whose maximum is where the population is LEAST active, which for
+    /// a bell tiling that stops at its ends is an end. Adding the term instead of subtracting it
+    /// puts the maximum in the middle, where the curves overlap most. Measured on this fixture:
+    /// the total modelled rate is 342.6 Hz at either end against 539.3 Hz at the midpoint, a
+    /// ratio of 0.635.
+    ///
+    /// A grid of 401 points across `[0, 1]` puts a probe exactly on each end, and a maximum at an
+    /// end of a non-wrapping range is returned at the node without refinement, so the decoded
+    /// value is an exact equality.
+    #[test]
+    fn seeing_no_spikes_at_all_decodes_to_where_the_population_is_quietest() {
+        let n = 24usize;
+        let p = GaussianPopulation::new(n, 0.0, 1.0, 2.0 / (n - 1) as f64, 100.0, 2.0)
+            .expect("valid population");
+        let total = |x: f64| p.rates(x).expect("finite").iter().sum::<f64>();
+        let (ends, middle) = (total(0.0), total(0.5));
+        assert!(ends < 0.7 * middle, "the tiling is not quieter at its ends: {ends} vs {middle}");
+        let est = p.decode_max_likelihood(&[0; 24], 0.25, 401).expect("a finite likelihood");
+        assert!(est == 0.0 || est == 1.0, "silence decoded to {est}, not to an end of the range");
+        assert!(total(est) < 0.7 * middle, "the decoded point is not one of the quiet ones");
+    }
+
+    /// Twice the window and twice the spikes is the same stimulus, and no fixture here could tell.
+    ///
+    /// The expected count is `λ_i(x) · T`. Drop the `T` and what is left is not a Poisson
+    /// log-likelihood any more: `Σ k ln λ − Σ λ` rather than `Σ k ln(λT) − Σ λT`. The two agree
+    /// exactly at `T = 1` and differ everywhere else by a reweighting of the data term against the
+    /// penalty — which is invisible to a test that only asks whether the estimate is near the
+    /// stimulus, because the reweighting moves it by far less than the noise does.
+    ///
+    /// The observable is an exact invariance instead. Scale the counts and the window by the same
+    /// `c > 0` and every entry of the log-likelihood array is multiplied by `c` and shifted by the
+    /// same constant `c · (Σk) · ln(cT)`, so the grid maximum is at the same node and the
+    /// parabola's `(y1 − y3) / (y1 − 2·y2 + y3)` is unchanged: the estimate is identical in exact
+    /// arithmetic. Measured residue in `f64` over this 24-cell fixture: 5.2e-15 at worst, against
+    /// a displacement of 7.8e-5 at `c = 2` and 1.4e-4 at `c = 8` when the window is dropped. The
+    /// bound of 1e-11 sits between them with four orders of margin on the residue.
+    #[test]
+    fn scaling_the_counts_and_the_window_together_does_not_move_the_likelihood_estimate() {
+        let n = 24usize;
+        let p = GaussianPopulation::new(n, 0.0, 1.0, 2.0 / (n - 1) as f64, 100.0, 2.0)
+            .expect("valid population");
+        let window = 0.25f64;
+        let x0 = 0.3f64;
+        // Noise-free counts, rounded: the fixture is a fact rather than a draw.
+        let counts: Vec<u64> =
+            (0..n).map(|i| (p.rate_of(i, x0) * window).round() as u64).collect();
+        let base = p.decode_max_likelihood(&counts, window, 401).expect("a finite likelihood");
+        assert!((base - x0).abs() < 2.0e-3, "the fixture does not decode to its own stimulus: {base}");
+        for &c in &[2u64, 8, 64] {
+            let scaled: Vec<u64> = counts.iter().map(|&k| c * k).collect();
+            let longer = c as f64 * window;
+            let got = p.decode_max_likelihood(&scaled, longer, 401).expect("a finite likelihood");
+            assert!(
+                (got - base).abs() < 1.0e-11,
+                "x{c}: {got} against {base}, a shift of {}",
+                got - base
+            );
+        }
+    }
+
+    /// The two tuning-curve constraints the constructor states and no test ever asked for.
+    ///
+    /// A negative baseline makes `rate_of` return a negative firing rate, which `sample_counts`
+    /// hands to a Poisson draw as a negative mean and gets `None` back from — a refusal one call
+    /// too late, reported as an expected count that is not finite rather than as the parameter
+    /// that was wrong. A peak at or below the baseline makes the tuning curve flat or inverted:
+    /// `fisher_information` is then zero everywhere, and `decode_center_of_mass` has no cell above
+    /// baseline to weight, so every decoder on the type fails at once for a reason the constructor
+    /// already knew. The existing constructor fixture covers `n == 0`, an empty range and a
+    /// negative sigma, and stops there.
+    #[test]
+    fn the_gaussian_constructor_refuses_a_negative_baseline_and_a_peak_that_is_not_above_it() {
+        assert!(matches!(
+            GaussianPopulation::new(4, 0.0, 1.0, 0.2, 50.0, -1.0),
+            Err(CodeError::NotPositive { .. })
+        ));
+        // Zero is allowed: a population with no spontaneous activity is a population, and a cell
+        // far from its preferred value is then exactly silent rather than nearly so.
+        let quiet = GaussianPopulation::new(4, 0.0, 1.0, 0.2, 50.0, 0.0).expect("a zero baseline");
+        assert_eq!(quiet.rate_of(0, 10.0), 0.0);
+        assert!(matches!(
+            GaussianPopulation::new(4, 0.0, 1.0, 0.2, 50.0, 50.0),
+            Err(CodeError::NotPositive { .. })
+        ));
+        assert!(matches!(
+            GaussianPopulation::new(4, 0.0, 1.0, 0.2, 10.0, 50.0),
+            Err(CodeError::NotPositive { .. })
+        ));
+    }
+
+    /// A cell firing BELOW its baseline is evidence of nothing, and the positive part says so.
+    ///
+    /// Every centre-of-mass fixture in this module feeds the decoder a noise-free tuning profile,
+    /// and a noise-free Gaussian profile is at or above `r_base` at every cell by construction —
+    /// so `(r − r_base).max(0.0)` and `r − r_base` are the same function on every input the suite
+    /// supplies. A real observation is not: Poisson counts put roughly half of a weakly driven
+    /// population below its own baseline, and a signed weight there does not merely add noise, it
+    /// pulls the estimate away from the driven cell and can cancel the denominator outright.
+    ///
+    /// Pinned as exact equalities because the arithmetic is dyadic: one cell 50 Hz above a
+    /// baseline of 10 Hz at a preferred value of 0.5, and `50 · 0.5 / 50` is 0.5 with no rounding
+    /// anywhere in it.
+    #[test]
+    fn a_cell_below_baseline_gets_no_vote_in_the_centre_of_mass() {
+        let p = GaussianPopulation::new(5, 0.0, 1.0, 0.25, 100.0, 10.0).expect("valid");
+        assert_eq!(p.preferred(2), 0.5, "the fixture's driven cell is not at the midpoint");
+        let est = p.decode_center_of_mass(&[8.0, 4.0, 60.0, 6.0, 2.0]).expect("one driven cell");
+        assert_eq!(est, 0.5, "cells below baseline moved the estimate to {est}");
+        // Move every sub-baseline rate, as noise would. The estimate is the SAME number, not a
+        // close one: a rate below baseline carries no weight at all, not a small weight.
+        let again =
+            p.decode_center_of_mass(&[0.0, 9.999, 60.0, 10.0, 0.5]).expect("one driven cell");
+        assert_eq!(again, est, "the estimate depends on rates that carry no evidence");
+        // Two cells above baseline by equal amounts sit at their midpoint however quiet the rest.
+        let pair = p.decode_center_of_mass(&[0.0, 35.0, 0.0, 35.0, 5.0]).expect("two driven cells");
+        assert_eq!(pair, 0.5, "the midpoint of cells 1 and 3 is 0.5");
+    }
+
+    /// The per-tick spike probability is `1 − exp(−r·dt)`, and `r·dt` stops approximating it as
+    /// soon as the tick is coarse.
+    ///
+    /// Every other fixture drives `encode_train` at `dt = 1e-3` against a peak of 200 Hz, where
+    /// `r·dt = 0.2` and the linear form is 10.3% high — well inside the tolerance a round-trip
+    /// test on a stochastic quantity can carry. Here the tick is 10 ms
+    /// against a 100 Hz peak, so `r·dt` is exactly 1.0: a "probability" of one, at which the
+    /// linear form fires on EVERY tick while the exact form leaves `exp(−1) = 36.8%` of them
+    /// empty.
+    ///
+    /// The tolerance is the binomial standard error of the fraction being measured,
+    /// `sqrt(p(1−p)/ticks)`, five of them — the draw is fixed by its seed, so the bound is a
+    /// statement about the estimator rather than a margin against flakiness. Measured worst
+    /// deviation across the six cells: 2.90 standard errors, against 48 for the best-driven cell
+    /// alone if the probability were the linear `r·dt`.
+    #[test]
+    fn the_per_tick_spike_probability_is_exponential_and_stays_below_one() {
+        let n = 6usize;
+        let p = GaussianPopulation::new(n, 0.0, 1.0, 0.25, 100.0, 5.0).expect("valid");
+        let dt = 0.01f64;
+        let ticks = 4_000u64;
+        let x = 0.4f64;
+        let rates = p.rates(x).expect("finite");
+        let best = (0..n).max_by(|&a, &b| rates[a].total_cmp(&rates[b])).expect("a cell");
+        assert_eq!(rates[best] * dt, 1.0, "the fixture is not at exactly one spike per tick");
+        let mut rng = Rng::new(97);
+        let train = p.encode_train(&mut rng, x, ticks, dt).expect("valid");
+        let mut fired = vec![0u64; n];
+        for sp in train.spikes() {
+            fired[sp.source as usize] += 1;
+        }
+        for i in 0..n {
+            let want = 1.0 - (-rates[i] * dt).exp();
+            assert!(want < 1.0, "cell {i}: {want} is a probability the exact form cannot reach");
+            let got = fired[i] as f64 / ticks as f64;
+            let se = (want * (1.0 - want) / ticks as f64).sqrt();
+            assert!(
+                (got - want).abs() < 5.0 * se,
+                "cell {i}: fired on {got} of its ticks against {want}, {} standard errors",
+                (got - want).abs() / se
+            );
+        }
+        // The best-driven cell must still MISS ticks. A linear rate-times-tick of exactly 1.0 is
+        // above every draw `next_f64` can return, so it would fire on all of them.
+        assert!(fired[best] < ticks, "the most driven cell fired on every one of {ticks} ticks");
+    }
+
     /// A population that says nothing decodes to nothing.
     #[test]
     fn a_silent_gaussian_population_has_no_decoded_value() {
@@ -3222,6 +3568,40 @@ mod tests {
         assert_eq!(code.from_train(&squashed).order, flat.order);
     }
 
+    /// The reader keeps each source's FIRST spike, and a train where that is not also its last
+    /// one is the train this suite never built.
+    ///
+    /// `the_order_round_trips_through_a_real_spike_train` feeds back exactly the train `to_train`
+    /// laid out, which puts one spike on each cell — so first and last are the same spike on every
+    /// source and a reader that kept either would pass. Rank order's tolerance claim is precisely
+    /// that a cell may fire again and be ignored, and it needs a train in which the later spikes
+    /// WOULD reorder the code if they were read.
+    #[test]
+    fn the_rank_order_reader_ignores_every_spike_after_a_cell_s_first() {
+        let code = RankOrderCode::new(4, 0.75).expect("valid");
+        // Source 0 opens the volley and then fires again, last of all; source 1 arrives second and
+        // stops early. Reading each source's LAST spike would swap the two.
+        let train = Train::from_spikes(vec![
+            Spike { t: 0, source: 0 },
+            Spike { t: 1, source: 1 },
+            Spike { t: 2, source: 1 },
+            Spike { t: 10, source: 0 },
+        ]);
+        let ro = code.from_train(&train);
+        assert_eq!(ro.order, vec![0u32, 1], "the order is set by first arrivals");
+        assert_eq!(ro.rank, vec![Some(0), Some(1), None, None]);
+        // A source outside the code is dropped rather than ranked, however early it arrives.
+        let wider = Train::from_spikes(vec![
+            Spike { t: 0, source: 9 },
+            Spike { t: 3, source: 2 },
+            Spike { t: 4, source: 2 },
+        ]);
+        let w = code.from_train(&wider);
+        assert_eq!(w.order, vec![2u32]);
+        assert_eq!(w.fired(), 1);
+        assert_eq!(w.rank, vec![None, None, Some(0), None]);
+    }
+
     /// Thorpe's readout is maximised by the order it was built for. That is the rearrangement
     /// inequality, checked against every one of the 120 permutations of five cells rather than
     /// against a couple of hand-picked ones.
@@ -3262,6 +3642,39 @@ mod tests {
             i = 0;
         }
         assert_eq!(checked, 120, "Heap's algorithm did not enumerate every permutation");
+    }
+
+    /// Thorpe's readout desensitises by ARRIVAL RANK, not by cell index, and the module's own
+    /// readout fixture cannot tell the two apart.
+    ///
+    /// `the_rank_order_readout_is_maximal_for_the_order_it_encodes` uses the weights `w_i = m^i`,
+    /// and under exactly those weights indexing by cell gives `Σ_i m^i · m^i` — the same number
+    /// for every permutation of the drives. Its rearrangement inequality `got <= best` then holds
+    /// with equality on all 120 permutations and cannot fail. Weights that are not the geometric
+    /// series separate the two readings.
+    ///
+    /// Every number here is a dyadic rational (`m = 0.5`, weights 1, 2, 4, 8), so the sums are
+    /// exact in `f64` and these are equalities.
+    #[test]
+    fn the_rank_order_readout_desensitises_by_arrival_rank_and_not_by_cell_index() {
+        let code = RankOrderCode::new(4, 0.5).expect("valid");
+        let w = [1.0f64, 2.0, 4.0, 8.0];
+        // Drives ascending, so cell 3 arrives first: 8·1 + 4·½ + 2·¼ + 1·⅛.
+        let last_first = code.encode(&[1.0, 2.0, 3.0, 4.0]).expect("finite");
+        assert_eq!(last_first.order, vec![3u32, 2, 1, 0]);
+        assert_eq!(code.readout(&last_first, &w).expect("valid"), 10.625);
+        // The reverse arrival order over the SAME weights: 1·1 + 2·½ + 4·¼ + 8·⅛.
+        let first_first = code.encode(&[4.0, 3.0, 2.0, 1.0]).expect("finite");
+        assert_eq!(first_first.order, vec![0u32, 1, 2, 3]);
+        assert_eq!(code.readout(&first_first, &w).expect("valid"), 4.0);
+        // Two cells silent, so rank and cell index part company over a subset: 2·1 + 8·½.
+        let partial = code.encode(&[0.0, 3.0, 0.0, 1.0]).expect("finite");
+        assert_eq!(partial.order, vec![1u32, 3]);
+        assert_eq!(code.readout(&partial, &w).expect("valid"), 6.0);
+        assert!(matches!(
+            code.readout(&partial, &[1.0, 2.0]),
+            Err(CodeError::LengthMismatch { expected: 4, got: 2 })
+        ));
     }
 
     // ---------------------------------------------------------------------------------------
@@ -3401,6 +3814,37 @@ mod tests {
             assert!(d.min(1.0 - d) <= pe.quantisation() + 1e-12, "line {i}: {got} vs {want}");
         }
         assert!(back[5].is_none() && back[6].is_none(), "a line that never fired must decode to None");
+    }
+
+    /// The phase reader keeps each line's FIRST spike, and every phase fixture here puts exactly
+    /// one spike on a line.
+    ///
+    /// A phase code is read once per cycle, and a line that fires twice inside the window the
+    /// reader is holding is the ordinary case for a cell that is driven hard. The value is the
+    /// first arrival; the later one belongs to a phase the reader has already gone past. With one
+    /// spike per source, first and last are the same spike and the two readers are
+    /// indistinguishable on every train the encoder produces.
+    ///
+    /// The fixture is a 1 Hz reference on a `1/1024` s tick, so the tick count per cycle is 1024
+    /// exactly and a tick index divided by it is exact in `f64`: these are equalities.
+    #[test]
+    fn the_phase_reader_keeps_each_line_s_first_spike_and_leaves_a_silent_line_silent() {
+        let osc = Oscillator::new(1.0, 1.0, 0.0).expect("valid");
+        let pe = PhaseEncoder::new(osc, 1.0 / 1024.0).expect("valid");
+        assert_eq!(pe.ticks_per_cycle(), 1024.0);
+        let train = Train::from_spikes(vec![
+            Spike { t: 128, source: 0 },
+            Spike { t: 768, source: 0 },
+            Spike { t: 512, source: 2 },
+        ]);
+        let got = pe.decode_train(&train, 4);
+        assert_eq!(got[0], Some(0.125), "line 0 fired first an eighth of the way into the cycle");
+        assert_eq!(got[1], None, "a line that never fired has no phase");
+        assert_eq!(got[2], Some(0.5));
+        assert_eq!(got[3], None);
+        // The discarded spike is a real, different value: the reader is dropping evidence, not
+        // choosing between two copies of one number.
+        assert_eq!(pe.decode_tick(768), 0.75);
     }
 
     // ---------------------------------------------------------------------------------------
@@ -4008,6 +4452,105 @@ mod tests {
             rms_error(&s, &rec).expect("same length")
         };
         assert!(e_mw > 3.0 * e_sf, "moving window {e_mw} vs step forward {e_sf}");
+    }
+
+    /// Step-forward fires at `>=` its threshold, and the only signal that can tell is one that
+    /// lands exactly on it.
+    ///
+    /// The comment on that line already says so; nothing tested it. Every fixture in this module
+    /// is a sine sampled at phases that are irrational multiples of the sample period, where a
+    /// difference landing exactly on a threshold has probability zero — so `>=` and `>` produce
+    /// the same event stream on all of them, including the fixture that compares this encoder to
+    /// `DeltaEncoder` event for event, which is the assertion the `>=` exists to keep true.
+    ///
+    /// A ramp of exactly one threshold per sample is that signal, and with a threshold of 0.25
+    /// every difference in it is exact in `f64`.
+    #[test]
+    fn a_step_forward_event_fires_on_a_change_of_exactly_one_threshold() {
+        let th = 0.25f64;
+        let rising: Vec<f64> = (0..9).map(|t| th * f64::from(t)).collect();
+        let tc = TemporalContrast::new(th, ContrastMode::StepForward).expect("valid");
+        let up = tc.encode(&rising, 0).expect("finite");
+        assert_eq!(up.len(), 8, "a rise of exactly one threshold per sample emitted {} events", up.len());
+        assert!(up.iter().all(|e| e.polarity == Polarity::On));
+        // The same ramp falling, so the `<=` branch is pinned in its own right rather than by
+        // an appeal to symmetry.
+        let falling: Vec<f64> = rising.iter().rev().copied().collect();
+        let down = tc.encode(&falling, 0).expect("finite");
+        assert_eq!(down.len(), 8);
+        assert!(down.iter().all(|e| e.polarity == Polarity::Off));
+        // And the equivalence with the crate's own delta encoder survives the exact landing, which
+        // is the whole reason both comparisons are written `>=`.
+        let mut de = DeltaEncoder::new(1, th, 1);
+        let mut theirs = Vec::new();
+        for (t, &v) in rising.iter().enumerate() {
+            theirs.extend(de.sample(t as u64, &[v]));
+        }
+        assert_eq!(up, theirs, "the two encoders part company on an exact landing");
+        // The reconstruction is then exact, not merely inside one threshold.
+        assert_eq!(tc.decode(&up, 0, rising.len(), rising[0]), rising);
+    }
+
+    /// Several events on one sample SUM, and the only producer of such a stream is the uncapped
+    /// delta encoder that no other fixture here decodes.
+    ///
+    /// `TemporalContrast::encode` emits at most one event per sample in all three modes, so every
+    /// event stream this suite decodes has at most one event per sample index — and a decoder that
+    /// overwrote instead of accumulating would reconstruct every one of them identically.
+    /// `DeltaEncoder` with a cap above one is the producer that breaks that: a step edge becomes a
+    /// burst at one timestamp, and the reconstruction of that burst has to be the whole edge
+    /// rather than one threshold of it.
+    ///
+    /// The encoder's own `reference()` is the reconstruction it believes it has transmitted, so
+    /// the two are compared sample by sample as exact equalities over dyadic values.
+    #[test]
+    fn a_burst_of_events_on_one_sample_reconstructs_the_whole_jump() {
+        let th = 0.25f64;
+        let signal = [0.0f64, 0.0, 1.0, 1.0, 0.25, 0.25, 2.0];
+        let mut de = DeltaEncoder::new(1, th, 8);
+        let mut events = Vec::new();
+        let mut reference = Vec::new();
+        for (t, &v) in signal.iter().enumerate() {
+            events.extend(de.sample(t as u64, &[v]));
+            reference.push(de.reference()[0]);
+        }
+        assert_eq!(reference, signal, "the uncapped encoder did not catch up within one sample");
+        assert_eq!(
+            events.iter().filter(|e| e.t == 2).count(),
+            4,
+            "the fixture does not put several events on one sample"
+        );
+        let tc = TemporalContrast::new(th, ContrastMode::StepForward).expect("valid");
+        let rec = tc.decode(&events, 0, signal.len(), signal[0]);
+        assert_eq!(rec, reference, "the decoder did not rebuild the encoder's own reference");
+    }
+
+    /// The moving-window decoder's baseline is the MEAN of its own last `window` outputs, and the
+    /// one fixture that reads it grades an error rather than a level.
+    ///
+    /// `the_moving_window_reconstruction_error_is_not_bounded_by_the_threshold` asserts that this
+    /// decoder is worse than step-forward by a factor of three — which a baseline that forgot to
+    /// divide by the window satisfies spectacularly, since a reconstruction that diverges is one
+    /// way of being worse. The level itself was never pinned by anything.
+    ///
+    /// Two closed forms pin it. A receiver handed no events at all must HOLD the level it was
+    /// given, because the mean of a constant is that constant — and only a non-zero starting level
+    /// can show it, since a sum and a mean of zeros are both zero. With one event the trace is a
+    /// short exact sequence of dyadic rationals that can be written down in full.
+    #[test]
+    fn the_moving_window_decoder_averages_its_own_output_rather_than_summing_it() {
+        let mw = TemporalContrast::new(1.0, ContrastMode::MovingWindow { window: 2 })
+            .expect("valid");
+        let flat = mw.decode(&[], 0, 6, 0.75);
+        assert_eq!(flat, vec![0.75; 6], "a silent channel did not hold the level it was given");
+        // One rise at sample 1 over a window of 2: 4, then 4+1, then mean(4, 5), mean(5, 4.5),
+        // mean(4.5, 4.75). The decoder's baseline is its OWN output, so the step decays away.
+        let one = [Event { t: 1, address: 0, polarity: Polarity::On }];
+        assert_eq!(mw.decode(&one, 0, 5, 4.0), vec![4.0, 5.0, 4.5, 4.75, 4.625]);
+        // A window longer than the record so far is the whole record so far, not a short one.
+        let wide = TemporalContrast::new(1.0, ContrastMode::MovingWindow { window: 64 })
+            .expect("valid");
+        assert_eq!(wide.decode(&one, 0, 4, 4.0), vec![4.0, 5.0, 4.5, 4.5]);
     }
 
     #[test]

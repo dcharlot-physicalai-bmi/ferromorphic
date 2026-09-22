@@ -72,7 +72,8 @@
  {
   "label": "the chunk loop subtracts a full 500 whatever it drew",
   "old": "        left -= chunk;",
-  "new": "        left -= 500.0;"
+  "new": "        left -= 500.0;",
+  "equivalent": "the two loops consume the same uniforms in the same order, so the draw is bit-identical. `chunk = left.min(500.0)` splits into two cases. While `left > 500.0`, `chunk` IS exactly `500.0`, so `left -= chunk` and `left -= 500.0` are the same subtraction of the same f64 and produce the same `left`. On the first iteration with `left <= 500.0`, `chunk` is `left` itself, so that iteration draws against the same `limit = exp(-chunk)` in both versions; afterwards the original has `left - left`, which is exactly `+0.0` for every finite `left`, and the mutant has `left - 500.0`, which lies in `[-500, 0]`. `while left > 0.0` is false for both, so both stop after that same iteration. The chunk sequence, the iteration count and hence the RNG consumption are therefore identical on every input. The non-termination this line's doc warns about (`left - 500.0 == left` above 2^62) is not reachable here either: `poisson_count` sends every `lambda >= POISSON_REJECTION_FLOOR = 1e6` to the transformed-rejection path before this loop is entered, so `left <= 1e6` always, and 1e6 - 500.0 != 1e6. Checked as well as argued: 206,015 means spanning 0, the subnormals, every multiple of 500 up to 1e6 with an ulp either side, and 200,000 uniform draws in [0, 1e6) give bit-identical chunk sequences under both forms."
  },
  {
   "label": "the product method's stopping level is the exponential of a positive chunk",
@@ -277,7 +278,8 @@
  {
   "label": "a filter whose taps do not sum to a positive number is normalised anyway",
   "old": "    if !(sum > 0.0) {\n        return Err(CodeError::NoEvidence { what: \"a normalisable filter\" });\n    }",
-  "new": "    if sum < 0.0 {\n        return Err(CodeError::NoEvidence { what: \"a normalisable filter\" });\n    }"
+  "new": "    if sum < 0.0 {\n        return Err(CodeError::NoEvidence { what: \"a normalisable filter\" });\n    }",
+  "equivalent": "`!(sum > 0.0)` and `sum < 0.0` differ on exactly three values of `sum` - NaN, `+0.0` and `-0.0` - and `fir_lowpass` cannot produce any of them from the inputs it has already accepted. NaN first: `taps >= 1` and `cutoff` is finite and in `(0, 0.5)`, the window `0.54 - 0.46*cos` is in `[0.08, 1.0]`, and `sinc` returns 1.0 at exactly zero and `sin(px)/px` with `px != 0` otherwise, so every term is finite and `|sum| <= taps`; `taps` had to be allocated as a `Vec<f64>`, which bounds it far below the point where the sum could overflow. Zero next: the tap sum is the filter's DC gain, `(1/2c) * integral of W(f) over [-c, c]` where `W` is the Hamming window's transform, a `0.54 / 0.23 / 0.23` combination of Dirichlet kernels whose running integrals are sine-integral values with the `0.54` term dominating `2 x 0.23`; it does not reach zero. Measured over 2..=16384 taps by 20,000 cutoffs spanning `(0, 0.5)`, the minimum is 0.10186, attained at two taps as the cutoff approaches Nyquist, where the window's two 0.08 ends multiply `sinc(0.5) = 2/pi` - a factor of 1.8e15 above the nearest f64 to zero. The scan is in the suite as `no_cutoff_in_range_can_make_a_low_pass_this_module_refuses_to_normalise`, over 2..=64 taps and 499 cutoffs, which is the same statement made where it can fail. The two guards therefore take the same branch on every reachable input, and the module's own doc says so: 'which no cutoff in range produces but which would otherwise divide by zero'."
  },
  {
   "label": "the Hann kernel's raised cosine is inverted, so an interior tap vanishes",

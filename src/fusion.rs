@@ -1075,7 +1075,15 @@ pub fn chance_partners_per_anchor(half_window_s: f64, rate_hz: f64) -> Result<f6
 /// one event in the window — one minus the Poisson zero term. The product is the conjunction across
 /// independent partners. This is the number a coincidence detector's output has to be compared
 /// against before any of it means anything: with a 10 ms half-window and two partners at 100 Hz,
-/// **33% of anchors bind by chance alone**, and a detector reporting 40% has found almost nothing.
+/// **75% of anchors bind by chance alone**, and a detector reporting 80% has found almost nothing.
+///
+/// ⚠ CORRECTED, by recomputing it rather than re-reading it. This doc previously gave 33% for
+/// those parameters, against a detector reporting 40%. The arithmetic is `2*w*r = 2 * 0.01 * 100
+/// = 2.0`, so each partner binds by accident with probability `1 - exp(-2) = 0.8647` and the pair
+/// with `0.8647^2 = 0.7476`. The old pair of figures was self-consistent as rhetoric — a floor
+/// and a slightly higher reading just above it — and understated the floor by more than a factor
+/// of two, which is the direction that makes a detector look as though it has found something.
+/// `the_chance_formulae_are_right_at_their_limits` now asserts the worked example itself.
 ///
 /// # Errors
 ///
@@ -2222,8 +2230,20 @@ pub struct SynchronyTask {
     pub trial_s: f64,
     /// Separation between the two modalities on an unbound trial, seconds; zero on a bound one.
     pub async_s: f64,
-    /// Uniform half-width of each event's timing jitter, seconds. Must stay below `async_s / 2` or
-    /// bound and unbound trials overlap.
+    /// Uniform half-width of each event's timing jitter, seconds. [`SynchronyTask::validate`]
+    /// requires it to stay below `async_s / 2`, which is the point at which a single event's
+    /// jitter can carry it across the pair's own centre — past there the half-asynchrony the trial
+    /// was drawn with is no longer a displacement of that event in a known direction.
+    ///
+    /// ⚠ CORRECTED, by recomputing it. This field previously said `async_s / 2` was the bound
+    /// "or bound and unbound trials overlap". It is not the bound for that. A bound trial's
+    /// `|t_a - t_b|` is `|j_b - j_a|` and runs over `[0, 2*jitter_s]`; an unbound trial's runs
+    /// over `[async_s - 2*jitter_s, async_s + 2*jitter_s]`; so the two classes' SUPPORTS are
+    /// disjoint only while `jitter_s < async_s / 4`, and at the enforced bound of `async_s / 2`
+    /// they overlap almost completely. The two bounds answer different questions and this review
+    /// did not tighten the check to the sharper one — it recorded which of them the code applies,
+    /// and `the_synchrony_task_refuses_the_parameters_that_would_erase_its_own_label` pins it. The
+    /// default sits at `async_s / 26.7`, inside both.
     pub jitter_s: f64,
     /// Uniform spread of the pair's centre within the trial, seconds — the nuisance that hides the
     /// label from any single stream. Wide compared with `async_s` is what keeps the marginal leak
@@ -2242,9 +2262,20 @@ impl Default for SynchronyTask {
     /// background per modality and a 55 ms match window.
     ///
     /// Round numbers chosen so the analysis holds with margin, not a fit to anything. At 1 Hz the
-    /// expected clutter pair closer than 40 ms is about 0.2 per trial, which caps early fusion
-    /// near 0.91 rather than at 1.0 — a ceiling below perfection matters, because a task both
-    /// architectures saturate proves nothing about either.
+    /// expected number of clutter events within the asynchrony of the other stream's true event is
+    /// `2 * async_s * background_hz` per stream — 0.08 each, 0.16 for the pair — which caps early
+    /// fusion below 1.0. A ceiling below perfection is the point: a task both architectures
+    /// saturate proves nothing about either, and with `background_hz = 0.0` early fusion measures
+    /// exactly 1.000 on every seed tried.
+    ///
+    /// ⚠ CORRECTED, against a measurement. This doc previously said the clutter "caps early fusion
+    /// near 0.91". It does not: **this implementation measures 0.957 mean over twelve seed pairs,
+    /// range 0.938 to 0.970**, so the ceiling is about 0.96 and the cost of the clutter is 4.3
+    /// accuracy points rather than 9. The 0.91 came from charging half a trial to each of the 0.16
+    /// expected clutter pairs; most of them are farther from the anchor than the true partner and
+    /// cost nothing, and of the rest not every confusion is an error. The number is measured, not
+    /// published, and `the_default_synchrony_task_is_the_experiment_its_doc_describes` asserts the
+    /// band it was measured in.
     fn default() -> Self {
         Self {
             trials: 400,
@@ -2445,9 +2476,9 @@ mod tests {
         Aligned, Clock, CoincidenceDetector, CoincidenceReport, CrossModalAssociator, EarlyFusion,
         FusionError,
         Generated, LateFusion, SynchronyTask, ModalitySpec, MultimodalSource, NearestCentroid,
-        OffsetEstimator, PrecisionGate, RedundantRateTask, Stream, TrialFeatures,
-        chance_binding_probability, chance_partners_per_anchor, gaussian, nearest_cross_pair,
-        poisson_times,
+        OffsetEstimator, OffsetFit, PrecisionGate, RedundantRateTask, Stream, TrialFeatures,
+        block_features, chance_binding_probability, chance_partners_per_anchor, gaussian, median,
+        nearest_cross_pair, poisson_times, to_tick,
     };
     use crate::plasticity::{Bounds, PairStdp, WeightRule};
     use crate::rng::Rng;
@@ -2994,6 +3025,15 @@ mod tests {
         // And the mean is linear in both arguments, exactly.
         let a = chance_partners_per_anchor(3e-3, 40.0).unwrap();
         assert!((a - 0.24).abs() < 1e-15, "{a}");
+        // ⛔ THE WORKED EXAMPLE IN THIS FUNCTION'S OWN DOC, which nothing asserted and which was
+        // wrong by more than a factor of two: a 10 ms half-window and two partners at 100 Hz put
+        // `2*w*r` = 2.0 partner events in the window apiece, so each binds with probability
+        // `1 - exp(-2)` and the pair with its square. The doc said 33%; it is 74.8%.
+        let pair = chance_binding_probability(0.01, &[100.0, 100.0]).unwrap();
+        let single = 1.0 - (-2.0f64).exp();
+        assert!((pair - single * single).abs() < 1e-15, "{pair}");
+        assert!((pair - 0.747_645_072_415_5).abs() < 1e-12, "{pair}");
+        assert!(pair > 0.7, "a 33% chance floor would have passed: {pair}");
     }
 
     // ------------------------------------------------------------------------------------------
@@ -3850,5 +3890,713 @@ mod tests {
         assert!(Clock::with_offset(1e-3, 0.0, -0.5).is_ok());
         assert!(Clock::new(0.0).is_err());
         assert!(Clock::new(f64::INFINITY).is_err());
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // Second mutation audit: the boundary helpers, the two `min_pairs` guards, the classifier's
+    // arithmetic, the late combiner's scale, and the two tasks' own parameters. Each of these was
+    // written because the edit it names left every other test in this module green.
+    // ------------------------------------------------------------------------------------------
+
+    /// `non_negative` runs `finite` first, and nothing here could see that it did. Every existing
+    /// refusal feeds a `NaN`, and `NaN >= 0.0` is already false, so the bare comparison refuses it
+    /// too — for the wrong reason. An INFINITY is where the two readings part: `inf >= 0.0` is
+    /// true, and `chance_partners_per_anchor` would then report an infinite number of accidental
+    /// partners as a legitimate closed-form answer.
+    #[test]
+    fn a_non_negative_parameter_rejects_an_infinity_and_names_a_nan_as_non_finite() {
+        assert!(matches!(
+            chance_partners_per_anchor(f64::INFINITY, 1.0),
+            Err(FusionError::NonFinite { what: "half_window_s" })
+        ));
+        assert!(matches!(
+            chance_partners_per_anchor(1e-3, f64::INFINITY),
+            Err(FusionError::NonFinite { what: "rate_hz" })
+        ));
+        // The `NaN` is refused either way; the REASON is the thing a caller reads.
+        assert!(matches!(
+            chance_partners_per_anchor(1e-3, f64::NAN),
+            Err(FusionError::NonFinite { what: "rate_hz" })
+        ));
+        assert!(matches!(
+            chance_binding_probability(f64::INFINITY, &[10.0]),
+            Err(FusionError::NonFinite { what: "half_window_s" })
+        ));
+        assert!(matches!(
+            chance_binding_probability(1e-3, &[10.0, f64::INFINITY]),
+            Err(FusionError::NonFinite { what: "rate_hz" })
+        ));
+        // And the generator's own non-negative fields, which reach the same helper.
+        let src = two_sensors(0.0, f64::INFINITY, 0.0, 0.0, 1.0);
+        assert!(matches!(
+            src.generate(&mut Rng::new(1)),
+            Err(FusionError::NonFinite { what: "jitter_s" })
+        ));
+    }
+
+    /// `probability` is the only boundary helper with an UPPER bound and `dropout` is its only
+    /// caller, so every test in this module hands it a legal fraction and the upper bound was
+    /// never exercised. A dropout of 1.5 is not a heavier dropout; it is a caller who meant per
+    /// cent, and a generator that took it would emit an empty stream and call that a recording.
+    #[test]
+    fn a_dropout_outside_the_unit_interval_is_refused_rather_than_taken_literally() {
+        let mut src = two_sensors(0.0, 0.0, 0.0, 0.0, 1.0);
+        src.modalities[1].dropout = 1.5;
+        assert!(matches!(
+            src.generate(&mut Rng::new(1)),
+            Err(FusionError::NotAProbability { what: "dropout", value }) if value == 1.5
+        ));
+        src.modalities[1].dropout = -0.25;
+        assert!(matches!(
+            src.generate(&mut Rng::new(1)),
+            Err(FusionError::NotAProbability { what: "dropout", .. })
+        ));
+        src.modalities[1].dropout = f64::NAN;
+        assert!(matches!(
+            src.generate(&mut Rng::new(1)),
+            Err(FusionError::NonFinite { what: "dropout" })
+        ));
+        // Both endpoints ARE legal, and they are the two extremes of the same rule: never miss,
+        // and miss everything.
+        src.modalities[1].dropout = 1.0;
+        let all_gone = src.generate(&mut Rng::new(1)).unwrap();
+        assert_eq!(all_gone.emitted[1], 0);
+        src.modalities[1].dropout = 0.0;
+        let none_gone = src.generate(&mut Rng::new(1)).unwrap();
+        assert_eq!(none_gone.emitted[1], none_gone.source_times_s.len());
+        assert!(none_gone.emitted[1] > 5, "only {} source events", none_gone.emitted[1]);
+    }
+
+    /// ⛔ THE TRANSFORM ITSELF, AGAINST THE STREAM IT CONSUMED. Every other test of `gaussian` in
+    /// this module is a MOMENT — mean, variance, kurtosis — and a moment cannot see which of two
+    /// identically distributed expressions was evaluated: `1 - u` and `u` are both uniform on the
+    /// unit interval, and the sine and the cosine of a uniform angle are both standard normal. So
+    /// the `1.0 - u` that the doc calls "not cosmetic" — `Rng::next_f64` returns `[0, 1)` and
+    /// `ln(0)` is an infinity — was invisible, and so was which of Box–Muller's two outputs is
+    /// returned.
+    ///
+    /// It is observable here because `Rng` is `Copy`: the same stream position can be read a
+    /// second time and the arithmetic written out by hand. Equality rather than a tolerance,
+    /// because the two sides are the same operations on the same two uniforms in the same order.
+    /// The final comparison pins the other half of the doc's promise — one draw costs exactly two
+    /// uniforms, so a caller can reason about stream position.
+    #[test]
+    fn the_normal_draw_is_the_box_muller_transform_of_the_two_uniforms_it_consumed() {
+        for seed in [1u64, 7, 4_242] {
+            let mut rng = Rng::new(seed);
+            let mut probe = rng;
+            let u1 = probe.next_f64();
+            let u2 = probe.next_f64();
+            let want = (-2.0 * (1.0 - u1).ln()).sqrt() * (core::f64::consts::TAU * u2).cos();
+            assert_eq!(gaussian(&mut rng), want, "seed {seed}");
+            assert_eq!(rng, probe, "seed {seed}: the draw did not consume exactly two uniforms");
+        }
+    }
+
+    /// The even-length branch of `median`. Nothing here could see it: every median this module
+    /// takes is over a Poisson-sized sample, so whether the count is odd or even varies with the
+    /// seed, and the two middle differences of a tight cluster agree to within the tick grid —
+    /// taking the upper one instead of their mean moves the answer by less than half a tick,
+    /// which is inside every tolerance in this file.
+    #[test]
+    fn the_median_of_an_even_sample_is_the_mean_of_its_two_middle_values() {
+        assert_eq!(median(&[]), None);
+        assert_eq!(median(&[3.0]), Some(3.0));
+        // Even: the mean of the middle PAIR, not either one of them.
+        assert_eq!(median(&[1.0, 2.0]), Some(1.5));
+        assert_eq!(median(&[4.0, 1.0, 3.0, 2.0]), Some(2.5));
+        // Odd: the middle value itself.
+        assert_eq!(median(&[9.0, 1.0, 5.0]), Some(5.0));
+        // It sorts a copy, so the answer does not depend on the order the values arrived in.
+        assert_eq!(median(&[2.0, 4.0, 1.0, 3.0]), median(&[1.0, 2.0, 3.0, 4.0]));
+        // Robust to an outlier in a way a mean is not — the reason it is here at all.
+        assert_eq!(median(&[1.0, 2.0, 3.0, 1e9]), Some(2.5));
+    }
+
+    /// `Stream::reported_s` is the sensor's OWN frame. Every stream in this suite carries a
+    /// default clock, for which the common-time map is the exact identity, so reading the wrong
+    /// one of the two is invisible everywhere above. The offset estimator is the caller that
+    /// matters: it is the measurement that PRODUCES an offset, so consuming one already recorded
+    /// would make a second estimate of the same pair return zero and look like convergence.
+    #[test]
+    fn a_stream_reports_in_its_own_frame_and_the_estimator_ignores_a_recorded_offset() {
+        let events = vec![
+            Event { t: 0, address: 0, polarity: Polarity::On },
+            Event { t: 1_000, address: 1, polarity: Polarity::Off },
+            Event { t: 2_500, address: 0, polarity: Polarity::On },
+        ];
+        let shifted = Stream::new(0, Clock::with_offset(1e-3, 0.4, 1e-3).unwrap(), events).unwrap();
+        // tick * dt, exactly — not `(tick * dt - offset) / (1 + drift)`, which at tick 1000 would
+        // be 0.5994 s rather than 1.0 s.
+        assert_eq!(shifted.reported_s(), vec![0.0, 1.0, 2.5]);
+        assert_eq!(shifted.len(), 3);
+        assert!(!shifted.is_empty());
+
+        // And feeding a fit back into the clock does not change the next fit.
+        let src = two_sensors(5e-3, 0.5e-3, 0.0, 0.0, 30.0);
+        let g = generate(&src, 607);
+        let est = estimator();
+        let base = est.estimate(&g.streams[0], &g.streams[1]).unwrap().offset_s;
+        assert!((base - 5e-3).abs() < 2e-4, "the fixture did not resolve: {base}");
+        let mut b = g.streams[1].clone();
+        b.clock.offset_s = base;
+        let again = est.estimate(&g.streams[0], &b).unwrap().offset_s;
+        assert_eq!(again, base, "the estimator consumed the offset it had just produced");
+    }
+
+    /// The two `pub` defaults `OffsetEstimator::new` installs, and the refusal the first of them
+    /// exists for. Every refusal test in this module SETS `min_pairs` itself, so the default could
+    /// have been zero and nothing would have failed — and a median over three differences is a
+    /// number rather than an estimate, which is what the field's own doc says it must not be.
+    #[test]
+    fn the_estimator_defaults_refuse_a_median_taken_over_almost_nothing() {
+        let est = estimator();
+        assert_eq!(est.min_pairs, 16);
+        assert_eq!(est.max_pairs, 20_000_000);
+        // Three events a second apart in each stream, against a 120 ms search window: each event
+        // pairs with exactly one partner, so there are three differences in total.
+        let dt = 1e-3;
+        let ticks: Vec<Event> = (0..3u64)
+            .map(|k| Event { t: k * 1_000, address: 0, polarity: Polarity::On })
+            .collect();
+        let a = Stream::new(0, Clock::new(dt).unwrap(), ticks.clone()).unwrap();
+        let b = Stream::new(1, Clock::new(dt).unwrap(), ticks).unwrap();
+        let e = est.estimate(&a, &b).unwrap_err();
+        assert!(matches!(e, FusionError::TooFewPairs { found: 3, needed: 16 }), "{e}");
+    }
+
+    /// Two streams whose differences are a tall cluster at +5 ms plus two thin rails far outside
+    /// the refinement window: 160 differences in the 120 ms search window, 80 of them within
+    /// 8 ms of the peak. It is the only shape in which the estimator's two `min_pairs` guards can
+    /// disagree about how many differences there are, and therefore the only fixture that can
+    /// tell which of them fired.
+    fn split_guard_streams() -> (Stream, Stream) {
+        let dt = 1e-3;
+        let on = Polarity::On;
+        let a: Vec<Event> =
+            (1..=40u64).map(|i| Event { t: i * 1_000, address: 0, polarity: on }).collect();
+        let mut b: Vec<Event> = Vec::new();
+        for i in 1..=40u64 {
+            b.push(Event { t: i * 1_000 - 90, address: 0, polarity: on });
+            b.push(Event { t: i * 1_000 + 5, address: 0, polarity: on });
+            b.push(Event { t: i * 1_000 + 5, address: 1, polarity: on });
+            b.push(Event { t: i * 1_000 + 60, address: 0, polarity: on });
+        }
+        (
+            Stream::new(0, Clock::new(dt).unwrap(), a).unwrap(),
+            Stream::new(1, Clock::new(dt).unwrap(), b).unwrap(),
+        )
+    }
+
+    /// The FIRST `min_pairs` guard, on the whole search window. `too_few_pairs_is_a_refusal_and_
+    /// not_a_number` above cannot see it: on that fixture the refinement window holds every
+    /// difference the search window does, so deleting the first guard leaves the second one to
+    /// return the same variant with the same `needed` — and the test read only the variant. Here
+    /// the two counts are 160 and 80, and `found` says which guard spoke.
+    #[test]
+    fn too_few_differences_in_the_whole_search_window_is_refused_by_the_first_guard() {
+        let (a, b) = split_guard_streams();
+        let mut est = estimator();
+        est.min_pairs = 200;
+        let e = est.estimate(&a, &b).unwrap_err();
+        assert!(matches!(e, FusionError::TooFewPairs { found: 160, needed: 200 }), "{e}");
+    }
+
+    /// The SECOND `min_pairs` guard, on the refinement window alone — the one that decides whether
+    /// the median is an estimate. A window full of differences whose cluster is thin is exactly
+    /// the case it exists for, and no fixture above produces one, so deleting it returned a
+    /// perfectly ordinary-looking `OffsetFit` built on too little.
+    #[test]
+    fn too_few_differences_near_the_peak_is_refused_even_when_the_search_window_is_full() {
+        let (a, b) = split_guard_streams();
+        let mut est = estimator();
+        est.min_pairs = 100;
+        let e = est.estimate(&a, &b).unwrap_err();
+        assert!(matches!(e, FusionError::TooFewPairs { found: 80, needed: 100 }), "{e}");
+        // With a requirement the cluster does meet, the same streams resolve — so the refusal is
+        // about the count and not about the fixture.
+        est.min_pairs = 80;
+        let fit = est.estimate(&a, &b).unwrap();
+        assert_eq!(fit.pairs, 80);
+        assert_eq!(fit.events, 40, "80 differences from 40 anchor events");
+        assert!((fit.offset_s - 5e-3).abs() < 1e-12, "{}", fit.offset_s);
+    }
+
+    /// `standard_error_s` divides by `events`, the number of independent things the median was
+    /// estimated from, and not by `pairs`. The calibration test above compares the reported error
+    /// with a measured scatter across seeds and passes either way when the two counts are close,
+    /// which on a 20 Hz Poisson source they are — `pairs` runs about 15% above `events`, and a 7%
+    /// change in an error bar sits well inside the `[1.0, 1.5]` band that test asserts. Here the
+    /// two counts are set sixteen apart by hand, so the divisor is the only place the answer can
+    /// come from.
+    #[test]
+    fn the_standard_error_divides_by_the_independent_event_count_and_not_the_pair_count() {
+        let fit = OffsetFit { offset_s: 0.0, coarse_s: 0.0, pairs: 400, mad_s: 1e-3, events: 25 };
+        // Both square roots are exact, so this is an equality and not a tolerance.
+        assert_eq!(fit.standard_error_s(), Some(2.0 * 1e-3 / 5.0));
+        assert_ne!(fit.standard_error_s(), Some(2.0 * 1e-3 / 20.0));
+        // No event contributed: there is nothing to divide by, and that is not an error bar of
+        // zero.
+        assert_eq!(OffsetFit { events: 0, ..fit }.standard_error_s(), None);
+        // The factor of two that stands in for the density, stated as arithmetic.
+        assert_eq!(OffsetFit { events: 4, mad_s: 3.0, ..fit }.standard_error_s(), Some(3.0));
+    }
+
+    /// `estimate_drift` divides by the separation between the two half-records' centroids, and
+    /// both drift tests here use a 40 s recording where that separation is about 20 s. A record
+    /// with no lever arm at all — every event at one instant — is the only input that reaches the
+    /// divisor as a zero, and without the guard the answer is a `DriftFit` full of `NaN` rather
+    /// than a refusal that names the reason.
+    #[test]
+    fn a_record_with_no_lever_arm_is_refused_rather_than_divided_by() {
+        let at_one_instant = |m: u16, n: usize| {
+            Stream::new(
+                m,
+                Clock::new(1e-3).unwrap(),
+                (0..n).map(|_| Event { t: 1_000, address: 0, polarity: Polarity::On }).collect(),
+            )
+            .unwrap()
+        };
+        let a = at_one_instant(0, 20);
+        let b = at_one_instant(1, 10);
+        let est = estimator();
+        // Each half resolves on its own — 100 differences, all of them exactly zero — so the
+        // refusal below is about the lever arm and not about a half that could not be measured.
+        assert_eq!(est.estimate(&a, &b).unwrap().pairs, 200);
+        assert_eq!(est.estimate(&a.slice(0, 10), &b).unwrap().pairs, 100);
+        let e = est.estimate_drift(&a, &b).unwrap_err();
+        assert!(matches!(e, FusionError::NoLeverArm { span_s } if span_s == 0.0), "{e}");
+        // And a stream with one event has no two halves to measure from in the first place.
+        assert!(matches!(
+            est.estimate_drift(&at_one_instant(0, 1), &b),
+            Err(FusionError::Empty { .. })
+        ));
+    }
+
+    /// Polarity is carried through the merge untouched, which is exactly why nothing could see it
+    /// go: every assertion in this module is about times, modalities and addresses, and a merge
+    /// that stamped every aligned event `On` would pass all of them. The field's own doc says
+    /// nothing here reads it and that it is preserved because discarding it halves the information
+    /// at no visible cost — "no visible cost" is the property that needs a test.
+    #[test]
+    fn the_merge_carries_the_polarity_the_sensor_reported() {
+        let events = vec![
+            Event { t: 0, address: 3, polarity: Polarity::Off },
+            Event { t: 10, address: 1, polarity: Polarity::On },
+            Event { t: 20, address: 2, polarity: Polarity::Off },
+        ];
+        // Both signs are present in the source, so a constant of EITHER sign is wrong.
+        assert!(events.iter().any(|e| e.polarity == Polarity::On));
+        assert!(events.iter().any(|e| e.polarity == Polarity::Off));
+        let stream = Stream::new(0, Clock::new(1e-3).unwrap(), events).unwrap();
+        let aligned = Aligned::merge(&[stream]).unwrap();
+        let got: Vec<(u32, Polarity)> =
+            aligned.events().iter().map(|e| (e.address, e.polarity)).collect();
+        assert_eq!(got, vec![(3, Polarity::Off), (1, Polarity::On), (2, Polarity::Off)]);
+    }
+
+    /// The interior an anchor's window has to fit inside is TWO half-windows wide, not one. The
+    /// refusal test above uses an interval of exactly one half-window, where both readings refuse,
+    /// so the factor of two was invisible: an interval between `w` and `2w` is the only place the
+    /// two disagree, and there the looser reading reports a binding rate over an interior that
+    /// does not exist — `t0 + w > t1 - w`, so no anchor can be considered and the sweep returns a
+    /// report of nothing at all rather than saying so.
+    #[test]
+    fn the_observation_interval_must_outlast_two_half_windows_and_not_one() {
+        let mut rng = Rng::new(7);
+        let aligned = independent_streams(&mut rng, &[50.0, 50.0], 4.0);
+        let det = CoincidenceDetector::new(1.0, 0, vec![1]).unwrap();
+        // 1.5 s is longer than the half-window and shorter than the window.
+        assert!(matches!(
+            det.detect(&aligned, 0.0, 1.5),
+            Err(FusionError::NotPositive { what: "observation interval minus 2 * half_window_s", .. })
+        ));
+        // Exactly two half-windows is refused too: the interior would be a single instant.
+        assert!(det.detect(&aligned, 0.0, 2.0).is_err());
+        // Just past two, and there is an interior to sweep.
+        assert!(det.detect(&aligned, 0.0, 2.5).is_ok());
+    }
+
+    /// A variance needs at least two residuals, and the existing refusal list could not see the
+    /// bound: with a single residual the `n − 1` denominator is zero, so the sample variance is
+    /// `0/0` and the call refuses anyway — as a non-finite number rather than as a sample too
+    /// small to measure anything from. The reason is what a caller reads and acts on.
+    #[test]
+    fn a_variance_measured_from_one_residual_is_refused_as_too_small_a_sample() {
+        assert!(matches!(
+            PrecisionGate::from_residuals(&[vec![1.0]]),
+            Err(FusionError::Empty { what }) if what.contains("two")
+        ));
+        assert!(matches!(
+            PrecisionGate::from_residuals(&[vec![]]),
+            Err(FusionError::Empty { what }) if what.contains("two")
+        ));
+        // Two is enough, and it is the SAMPLE variance: residuals at ±1 give exactly 2.
+        let tiny = PrecisionGate::from_residuals(&[vec![-1.0, 1.0]]).unwrap();
+        assert_eq!(tiny.fused_variance(), Some(2.0));
+    }
+
+    /// A zero-width feature vector is refused as an empty feature vector, not as a single class.
+    /// With one row the width check and the class check both fire, so the existing `is_err` could
+    /// not tell them apart; with two rows and two labels only the width check stands between a
+    /// caller and a fitted classifier that measures a distance in no dimensions at all — one that
+    /// returns a tie on every input and calls it a prediction.
+    #[test]
+    fn a_classifier_with_no_features_is_refused_before_it_counts_its_classes() {
+        assert!(matches!(
+            NearestCentroid::fit(&[vec![], vec![]], &[0, 1]),
+            Err(FusionError::Empty { what: "feature vector" })
+        ));
+        assert!(matches!(
+            NearestCentroid::fit(&[vec![]], &[0]),
+            Err(FusionError::Empty { what: "feature vector" })
+        ));
+    }
+
+    /// ⛔ THE STANDARDISED SCORE, AS ARITHMETIC. The scale is the ROOT MEAN SQUARE deviation — the
+    /// training standard deviation the type's doc promises — and every accuracy in this module is
+    /// blind to it: multiplying every feature's scale by one common factor divides every squared
+    /// distance by the same amount and moves no arg-max anywhere. `score` is public, is documented
+    /// as a squared distance in standardised units, and is the only place the numbers themselves
+    /// are readable.
+    #[test]
+    fn a_standardised_score_is_the_squared_distance_the_doc_writes_down() {
+        // Four rows at 0 and 2: the mean is 1, the summed squared deviation is 4, so the scale is
+        // sqrt(4/4) = 1 and the standardised rows are -1, -1, +1, +1. The class centroids are
+        // therefore -1 and +1, and every number below is exact in binary.
+        let x = vec![vec![0.0], vec![0.0], vec![2.0], vec![2.0]];
+        let y = vec![0u32, 0, 1, 1];
+        let clf = NearestCentroid::fit(&x, &y).unwrap();
+        assert_eq!(clf.classes(), &[0, 1]);
+        assert_eq!(clf.score(&[0.0], &[true]).unwrap(), vec![0.0, -4.0]);
+        assert_eq!(clf.score(&[2.0], &[true]).unwrap(), vec![-4.0, 0.0]);
+        // The grand mean is equidistant from both centroids, and the tie resolves to the lowest
+        // label.
+        assert_eq!(clf.score(&[1.0], &[true]).unwrap(), vec![-1.0, -1.0]);
+        assert_eq!(clf.predict(&[1.0], &[true]).unwrap(), 0);
+        // A row four standardised units out is sixteen away from the near centroid, which is the
+        // squaring stated as a number rather than as a shape.
+        assert_eq!(clf.score(&[6.0], &[true]).unwrap(), vec![-36.0, -16.0]);
+    }
+
+    /// ⛔ A CLASS CENTROID IS THE MEAN OF ITS MEMBERS, NOT THEIR SUM. Every fixture in this module
+    /// draws its label from a fair coin, so the two classes are the same size to within sampling
+    /// noise — and with equal counts a sum keeps the two centroids symmetric about the grand mean,
+    /// which leaves the decision boundary exactly where it was. Three rows of one class against
+    /// one of the other is the smallest fixture where a sum moves it.
+    ///
+    /// Nearest-centroid on one feature puts the boundary at the midpoint of the two class MEANS —
+    /// here x = 2.0, whatever the standardising scale, because a common scale cancels out of a
+    /// comparison of two distances. A sum puts it at the grand mean, x = 1.0, and hands every row
+    /// between them to the wrong class.
+    #[test]
+    fn a_class_centroid_is_the_mean_of_its_members_and_not_their_sum() {
+        let x = vec![vec![0.0], vec![0.0], vec![0.0], vec![4.0]];
+        let y = vec![0u32, 0, 0, 1];
+        let clf = NearestCentroid::fit(&x, &y).unwrap();
+        assert_eq!(clf.predict(&[1.5], &[true]).unwrap(), 0);
+        assert_eq!(clf.predict(&[1.9], &[true]).unwrap(), 0);
+        assert_eq!(clf.predict(&[2.1], &[true]).unwrap(), 1);
+        assert_eq!(clf.predict(&[2.5], &[true]).unwrap(), 1);
+        // And the training rows themselves, which a sum still gets right — the boundary is what
+        // moves, not the corners.
+        for (row, &lab) in x.iter().zip(&y) {
+            assert_eq!(clf.predict(row, &[true]).unwrap(), lab);
+        }
+    }
+
+    /// A masked-out feature contributes EXACTLY nothing — not its centroid, not a constant. The
+    /// standardised value of a masked feature is left at zero, so a distance that forgot its own
+    /// mask adds that feature's `c_k²` to every class; with balanced classes the two class
+    /// centroids are symmetric about the grand mean, those two additions are equal, and they
+    /// cancel in the arg-max and in every score DIFFERENCE the tests above read. They do not
+    /// cancel when the classes are different sizes, which is the fixture here.
+    ///
+    /// The assertion is an identity rather than a tolerance: scoring a two-column classifier with
+    /// the second column masked must give the same numbers, bit for bit, as scoring a classifier
+    /// fitted on the first column alone. The per-feature mean, scale and centroid are accumulated
+    /// over the same values in the same order either way, so there is nothing for a tolerance to
+    /// absorb.
+    #[test]
+    fn a_masked_feature_contributes_exactly_nothing_to_the_distance() {
+        let x = vec![vec![0.0, 0.0], vec![0.0, 1.0], vec![0.0, 2.0], vec![3.0, 9.0]];
+        let y = vec![0u32, 0, 0, 1];
+        let full = NearestCentroid::fit(&x, &y).unwrap();
+        let only_first: Vec<Vec<f64>> = x.iter().map(|r| vec![r[0]]).collect();
+        let sub = NearestCentroid::fit(&only_first, &y).unwrap();
+        for row in &x {
+            assert_eq!(
+                full.score(row, &[true, false]).unwrap(),
+                sub.score(&row[..1], &[true]).unwrap(),
+                "row {row:?}"
+            );
+        }
+        // The masked column's own class centroids are far apart and far from symmetric here, so a
+        // leak would be worth more than two squared units — the fixture can see one.
+        let leak = full.score(&x[0], &[false, true]).unwrap();
+        assert!((leak[0] - leak[1]).abs() > 2.0, "the fixture cannot see a leak: {leak:?}");
+    }
+
+    /// A branch that is perfect in sample weighs `ln(2n - 1)`, not infinity. Every task in this
+    /// module leaves its branches strictly inside `(0, 1)` — the synchrony task's sit near chance
+    /// and the redundant task's near 0.8 — so the clamp never engaged and removing it changed
+    /// nothing anywhere. A separable branch is not an exotic case: it is what a good sensor looks
+    /// like, and an infinite vote weight makes every other sense unreadable.
+    #[test]
+    fn a_branch_that_is_perfect_in_sample_weighs_a_finite_amount() {
+        let n = 200usize;
+        let mut rng = Rng::new(9_001);
+        let trials: Vec<TrialFeatures> = (0..n)
+            .map(|_| {
+                let label = u32::from(rng.next_u32() & 1 == 1);
+                TrialFeatures {
+                    per_modality: vec![vec![f64::from(label) * 50.0], vec![gaussian(&mut rng)]],
+                    cross_modal: vec![0.0],
+                    label,
+                }
+            })
+            .collect();
+        let late = LateFusion::fit(&trials).unwrap();
+        assert_eq!(late.reliability()[0], 1.0, "the fixture's first branch is not separable");
+        let w = late.vote_weights()[0];
+        assert!(w.is_finite(), "a perfect branch weighed {w}");
+        // The clamp is half the finest resolution 200 trials can express, so `p` is `1 - 1/400`
+        // and the weight is `ln(399)`. The two sides reach it by different arithmetic — measured
+        // 2.1e-14 apart — so this is a tolerance, and it is the size of that gap.
+        let want = (2.0 * n as f64 - 1.0).ln();
+        assert!((w - want).abs() < 1e-12, "{w} against ln(2n - 1) = {want}");
+        // And the vote still decides rather than becoming a `NaN`.
+        assert_eq!(late.accuracy(&trials, &[]).unwrap(), 1.0);
+    }
+
+    /// ⛔ THE PER-BRANCH SCALE, which `centring_stops_a_branchs_absolute_distance_from_silencing_
+    /// it` above cannot see: there the branch with more features is also the branch that deserves
+    /// to win, so dropping the division entirely still lets it win. The fixture that separates
+    /// them is a LOUD WEAK branch — forty exact copies of one mediocre feature, which carries
+    /// exactly as much information as a single copy of it and produces a centred score forty times
+    /// as large. Its log-odds vote weight already says it is mediocre; without the division by its
+    /// own root-mean-square score it shouts straight over that weight.
+    ///
+    /// Measured in this implementation: with the scale, fusing the two branches gives 0.837
+    /// against the strong branch's own 0.828; with the scale dropped, 0.693; with the scale
+    /// multiplied in rather than divided out, 0.575. The bound is the strong branch's own accuracy
+    /// less two points, which is the claim being made — adding a weaker sense must not cost you
+    /// the stronger one.
+    #[test]
+    fn a_loud_branch_does_not_outvote_a_more_reliable_quiet_one() {
+        let mut rng = Rng::new(4_242);
+        let trials: Vec<TrialFeatures> = (0..600)
+            .map(|_| {
+                let label = u32::from(rng.next_u32() & 1 == 1);
+                let strong = vec![f64::from(label) * 2.0 + gaussian(&mut rng)];
+                let copied = f64::from(label) * 0.6 + gaussian(&mut rng);
+                TrialFeatures {
+                    per_modality: vec![strong, vec![copied; 40]],
+                    cross_modal: vec![0.0],
+                    label,
+                }
+            })
+            .collect();
+        let late = LateFusion::fit(&trials).unwrap();
+        let r = late.reliability();
+        assert!(r[0] > 0.80 && r[0] < 0.88, "the strong branch reported {:.3}", r[0]);
+        assert!(r[1] > 0.52 && r[1] < 0.62, "the loud branch reported {:.3}", r[1]);
+        let fused = late.accuracy(&trials, &[]).unwrap();
+        let strong_alone = late.accuracy(&trials, &[1]).unwrap();
+        let loud_alone = late.accuracy(&trials, &[0]).unwrap();
+        assert!(loud_alone < 0.62, "the loud branch was not the weak one: {loud_alone:.3}");
+        assert!(
+            fused > strong_alone - 0.02,
+            "the loud branch outvoted the reliable one: fused {fused:.3} against \
+             strong-alone {strong_alone:.3}"
+        );
+    }
+
+    /// The tick guard is written `!(ticks >= 0.0)` rather than `ticks < 0.0`, and the whole of the
+    /// difference is `NaN`: a `NaN` fails every comparison, so `ticks < 0.0` waves it through and
+    /// `ticks as u64` then saturates it to tick zero — an event at the start of the recording with
+    /// nothing anywhere to say it was ever anything else. Nothing in the generator can produce a
+    /// non-finite reported time (every field is checked finite first, and `1 + drift` is finite and
+    /// positive), so the branch is reachable only from here, which is why no test in this module
+    /// could see it.
+    #[test]
+    fn a_tick_index_that_is_not_a_number_is_refused_rather_than_saturated_to_zero() {
+        assert!(matches!(
+            to_tick(f64::NAN, 1e-3),
+            Err(FusionError::TickOverflow { t_s }) if t_s.is_nan()
+        ));
+        assert!(matches!(to_tick(f64::INFINITY, 1e-3), Err(FusionError::TickOverflow { .. })));
+        assert!(matches!(to_tick(-1.0, 1e-3), Err(FusionError::TickOverflow { .. })));
+        assert!(matches!(to_tick(1e16, 1e-3), Err(FusionError::TickOverflow { .. })));
+        // And the values it does accept, including the rounding at the half tick.
+        assert_eq!(to_tick(0.0, 1e-3).unwrap(), 0);
+        assert_eq!(to_tick(1.4e-3, 1e-3).unwrap(), 1);
+        assert_eq!(to_tick(1.5e-3, 1e-3).unwrap(), 2);
+    }
+
+    /// ⛔ THE DEFAULT SYNCHRONY TASK IS THE EXPERIMENT, not a convenience. Two of its seven numbers
+    /// are load-bearing in ways no accuracy bound above could see. The ASYNCHRONY is what the label
+    /// IS; at a tenth of it the task is still separable, so `ea > 0.85` holds and the number the
+    /// doc states costs nothing. The BACKGROUND is what stops early fusion saturating: at zero it
+    /// reaches exactly 1.000 on every seed tried, and a task an architecture saturates cannot
+    /// measure anything about that architecture.
+    ///
+    /// The ceiling below is a measured number, not a published one: this implementation measures
+    /// 0.957 mean over twelve seed pairs, range 0.938 to 0.970.
+    #[test]
+    fn the_default_synchrony_task_is_the_experiment_its_doc_describes() {
+        let task = SynchronyTask::default();
+        assert_eq!(task.trials, 400);
+        assert_eq!(task.trial_s, 0.4);
+        assert_eq!(task.async_s, 40e-3);
+        assert_eq!(task.jitter_s, 1.5e-3);
+        assert_eq!(task.onset_span_s, 0.2);
+        assert_eq!(task.background_hz, 1.0);
+        assert_eq!(task.match_half_window_s, 55e-3);
+        task.validate().expect("the defaults are consistent with each other");
+
+        // The clutter the background buys, from the task's own closed form: the expected number of
+        // background events within the asynchrony of the other stream's true event is
+        // `2 * async_s * background_hz` per stream, so 0.08 each and 0.16 for the pair.
+        let clutter = 2.0 * chance_partners_per_anchor(task.async_s, task.background_hz).unwrap();
+        assert_eq!(clutter, 0.16);
+
+        // And therefore early fusion lands below one rather than on it.
+        let train = task.generate(&mut Rng::new(70)).unwrap();
+        let test = task.generate(&mut Rng::new(71)).unwrap();
+        let ea = EarlyFusion::fit(&train).unwrap().accuracy(&test, &[]).unwrap();
+        assert!(ea < 0.99, "early fusion saturated at {ea:.4}; the task has no clutter in it");
+        assert!(ea > 0.90, "early fusion reached only {ea:.4}");
+    }
+
+    /// The three cross-parameter checks `SynchronyTask::validate` makes, each at the boundary
+    /// where it is the only thing standing. No test in this module builds an ILLEGAL task — every
+    /// one uses the default or a deliberate variation of it — so all three could be widened or
+    /// deleted and nothing would fail.
+    #[test]
+    fn the_synchrony_task_refuses_the_parameters_that_would_erase_its_own_label() {
+        let d = SynchronyTask::default();
+        // Zero trials is not a small experiment.
+        assert!(matches!(
+            SynchronyTask { trials: 0, ..d }.validate(),
+            Err(FusionError::Empty { what: "trials" })
+        ));
+        assert!(SynchronyTask { trials: 0, ..d }.generate(&mut Rng::new(1)).is_err());
+
+        // The jitter must stay below HALF the asynchrony, not below twice it: at 30 ms of jitter
+        // against a 40 ms asynchrony a single event's jitter carries it clean across the pair's
+        // own centre, and the half-asynchrony it was drawn with stops being a displacement in a
+        // known direction.
+        assert!(matches!(
+            SynchronyTask { jitter_s: 30e-3, ..d }.validate(),
+            Err(FusionError::NotPositive { what: "async_s / 2 - jitter_s", .. })
+        ));
+        // The boundary itself: exactly half is refused, just under it is accepted.
+        assert!(SynchronyTask { jitter_s: 20e-3, ..d }.validate().is_err());
+        assert!(SynchronyTask { jitter_s: 19e-3, ..d }.validate().is_ok());
+        // ⚠ And what that bound does NOT deliver, pinned so it is on the record rather than
+        // assumed: 19 ms of jitter against a 40 ms asynchrony IS accepted, and its two classes
+        // overlap — a bound trial's separation reaches `2 * jitter_s` = 38 ms while an unbound
+        // one's falls to `async_s - 2 * jitter_s` = 2 ms. Disjoint supports need
+        // `jitter_s < async_s / 4`, which this task does not enforce and whose field doc now
+        // says so.
+        let loose = SynchronyTask { jitter_s: 19e-3, ..d };
+        assert!(2.0 * loose.jitter_s > loose.async_s - 2.0 * loose.jitter_s);
+        assert!(2.0 * d.jitter_s < d.async_s - 2.0 * d.jitter_s, "the default itself overlaps");
+
+        // The match window must STRICTLY exceed the asynchrony. At exactly `async_s` an unbound
+        // pair sits on the window's edge, and the jitter carries half of them outside it — so the
+        // task becomes separable on "no pair at all", the degeneracy the check exists to prevent.
+        assert!(matches!(
+            SynchronyTask { match_half_window_s: 40e-3, ..d }.validate(),
+            Err(FusionError::NotPositive { what: "match_half_window_s - async_s", .. })
+        ));
+        assert!(SynchronyTask { match_half_window_s: 41e-3, ..d }.validate().is_ok());
+    }
+
+    /// ⛔ THE ASYNCHRONY IS SPLIT BETWEEN THE TWO MODALITIES — each moves half of it, in opposite
+    /// directions — so the separation the label names is `async_s` and not twice it. Nothing above
+    /// could see the factor: both readings give a bound class at zero separation and an unbound
+    /// class at a fixed non-zero one, which is separable either way, and the accuracies barely
+    /// move. What moves is the separation's relationship to the match window: at twice the
+    /// asynchrony an unbound pair is 80 ms apart against a 55 ms window, the pair search finds
+    /// NOTHING, and the task becomes separable on the absence of a partner — the exact degeneracy
+    /// the window check exists to prevent.
+    ///
+    /// The fixture removes the background so that each stream holds exactly one event and the
+    /// cross-modal block is the two events' own difference and nothing else.
+    #[test]
+    fn the_asynchrony_is_split_between_the_two_modalities() {
+        let task = SynchronyTask {
+            trials: 300,
+            background_hz: 0.0,
+            jitter_s: 1e-3,
+            ..SynchronyTask::default()
+        };
+        let trials = task.generate(&mut Rng::new(64)).unwrap();
+        let (mut bound, mut unbound) = (0usize, 0usize);
+        for t in &trials {
+            assert_eq!(t.per_modality[0][0], 1.0, "the fixture grew a background event");
+            assert_eq!(t.per_modality[1][0], 1.0, "the fixture grew a background event");
+            let gap = t.cross_modal[1];
+            if t.label == 1 {
+                bound += 1;
+                assert!(gap <= 2.0 * task.jitter_s, "a bound pair was {gap} s apart");
+            } else {
+                unbound += 1;
+                assert!(
+                    (gap - task.async_s).abs() <= 2.0 * task.jitter_s,
+                    "an unbound pair was {gap} s apart against an asynchrony of {}",
+                    task.async_s
+                );
+            }
+        }
+        assert!(bound > 100 && unbound > 100, "{bound} bound against {unbound} unbound");
+    }
+
+    /// `block_features` is the whole of what a late branch is allowed to see, and its three
+    /// numbers are a count, a MEAN and a FIRST. Both tasks hide it: the synchrony task's trials
+    /// carry one true event plus a background that is empty on two thirds of them, so on most
+    /// trials there is a single event — and the total of one number is that number, and the first
+    /// of one event is also its last.
+    #[test]
+    fn a_per_modality_block_is_a_count_a_mean_and_a_first_event_time() {
+        // Two events: the total (6) and the mean (3) differ, and so do the first (1) and the last
+        // (5). Every value here is exact in binary.
+        assert_eq!(block_features(&[1.0, 5.0], 8.0), vec![2.0, 3.0, 1.0]);
+        // Four events, so that a total is four times the mean rather than twice it.
+        assert_eq!(block_features(&[0.0, 1.0, 2.0, 5.0], 8.0), vec![4.0, 2.0, 0.0]);
+        // One event: the case that hides the other two, stated so the fixture's blindness is on
+        // the record.
+        assert_eq!(block_features(&[2.5], 8.0), vec![1.0, 2.5, 2.5]);
+        // A stream that fired nothing has no mean and no first event; the middle of the trial and
+        // its end are the stand-ins, and they are what a classifier sees.
+        assert_eq!(block_features(&[], 0.4), vec![0.0, 0.2, 0.4]);
+    }
+
+    /// The redundant task's two classes ARE its two rates, so `rate_hi_hz` must strictly exceed
+    /// `rate_lo_hz`. Nothing here builds a degenerate one, so the strictness was free: at equal
+    /// rates the generator produces trials whose label is independent of everything in them, and
+    /// every accuracy measured on it is chance with nothing to say so.
+    #[test]
+    fn a_redundant_task_whose_two_classes_are_not_separated_is_refused() {
+        let d = RedundantRateTask::default();
+        let flat = RedundantRateTask { rate_hi_hz: d.rate_lo_hz, ..d };
+        assert!(matches!(
+            flat.validate(),
+            Err(FusionError::NotPositive { what: "rate_hi_hz - rate_lo_hz", .. })
+        ));
+        assert!(flat.generate(&mut Rng::new(1)).is_err());
+        assert!(RedundantRateTask { rate_hi_hz: 19.0, ..d }.validate().is_err());
+        assert!(matches!(
+            RedundantRateTask { trials: 0, ..d }.validate(),
+            Err(FusionError::Empty { what: "trials" })
+        ));
+        // Its own defaults are the ones its doc does arithmetic with: 20 Hz against 40 Hz over
+        // 400 ms is counts of 8 and 16.
+        assert_eq!((d.trials, d.rate_lo_hz, d.rate_hi_hz), (1_200, 20.0, 40.0));
+        assert_eq!(d.trial_s * d.rate_lo_hz, 8.0);
+        assert_eq!(d.trial_s * d.rate_hi_hz, 16.0);
+        d.validate().expect("the defaults are consistent");
     }
 }

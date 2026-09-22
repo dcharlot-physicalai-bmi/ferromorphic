@@ -1063,11 +1063,18 @@ impl fmt::Display for Feasibility {
 /// The most cores a [`Partition`] may span: `2^24`, above any machine this crate models
 /// (`SpiNNaker2`'s full build is about 10.6 million ARM cores).
 ///
-/// What it bounds, stated rather than discovered: [`Partition::loads`] holds one 40-byte
-/// [`CoreLoad`] per core, so 671 MB at the limit; [`Partition::used_cores`] one byte per core; the
+/// What it bounds, stated rather than discovered: [`Partition::loads`] holds one **48-byte**
+/// [`CoreLoad`] per core, so 805 MB at the limit; [`Partition::used_cores`] one byte per core; the
 /// streaming pass three `u64`s per core. Before this constant a one-neuron network could be
 /// partitioned over `u32::MAX` cores and `loads()` would attempt 206 GB while
 /// [`partition_refined`] refused a working set a hundredth the size.
+///
+/// ⛔ The 48 is MEASURED by `core::mem::size_of`, not counted by eye. This line said 40 bytes and
+/// 671 MB until `the_per_core_bookkeeping_bound_is_the_size_its_doc_prices` computed it: a
+/// `CoreLoad` is `u32` + two `u64` + `Option<(usize, u64)>`, and the option has no niche to pack
+/// its discriminant into, so it costs 24 bytes rather than 16 and the record costs 48 rather than
+/// 40. The bound itself did not move; the number a reader would have budgeted against was 20%
+/// low.
 pub const MAX_CORES: u32 = 1 << 24;
 
 /// An assignment of every neuron to a core.
@@ -1551,8 +1558,10 @@ pub fn partition_greedy(
 ///
 /// # What a pass does, and why it is not hill climbing
 ///
-/// A pass repeatedly picks the **best available exchange of two neurons on different cores** —
-/// including exchanges whose gain is negative — locks both, and records the running gain. At the
+/// A pass repeatedly picks the best exchange of two neurons on different cores **among the
+/// candidates it considers** — including exchanges whose gain is negative — locks both, and
+/// records the running gain. The candidates are the boundary neurons, which is a restriction that
+/// can miss an exchange; see the note in `kl_pass` and the `# Cost` section below. At the
 /// end it rewinds to the prefix with the highest cumulative gain, and keeps that prefix only if it
 /// is positive. Taking negative steps and rewinding is the whole of Kernighan and Lin's idea (Bell
 /// System Technical Journal 49(2), 1970) and is what lets it climb out of a local minimum that a
@@ -1565,7 +1574,9 @@ pub fn partition_greedy(
 /// # Cost
 ///
 /// Candidates are restricted to **boundary neurons** — those with at least one edge leaving their
-/// core. A pass is `O(steps * (B^2 * log d + n * k))` where `B` is the boundary size, `d` the mean
+/// core. That restriction buys the cost below and costs quality: an interior neuron cannot gain
+/// from moving but can be a better partner than any boundary neuron, and this pass will not find
+/// that exchange. A pass is `O(steps * (B^2 * log d + n * k))` where `B` is the boundary size, `d` the mean
 /// degree and `n * k` the cost of rebuilding the boundary set from scratch at every step — a term
 /// the first version of this line left out, and which is a 10x factor on the fixtures here — with
 /// `steps` at most `neurons / 2`. This is the slow, readable version; Fiduccia and Mattheyses
@@ -1785,7 +1796,17 @@ fn kl_pass(
 
     for _ in 0..max_steps {
         // Boundary neurons only: a neuron with every edge inside its own core has nothing to gain
-        // from moving and nothing to offer a partner.
+        // from moving — its half of any exchange is `-(the edges it has at home)`, which is never
+        // positive.
+        //
+        // ⛔ It can still be the better PARTNER for a neuron that gains a lot, so this is a COST
+        // measure and not a proof that nothing is lost. The smallest case is in
+        // `the_exchange_candidates_are_the_boundary_neurons_only_and_this_is_what_that_costs`:
+        // six neurons over two cores where every boundary pair loses and the interior leaf would
+        // have gained 1, cutting 2 synapses where this rule stops at 3. Left as it is because the
+        // restriction is what keeps a pass at `O(B^2 log d)` rather than `O(n^2 log d)`, and
+        // because `kernighan_lin_does_not_always_reach_the_optimum_and_this_is_what_it_misses`
+        // already states that this refiner is a heuristic.
         let boundary: Vec<usize> = (0..n)
             .filter(|&v| {
                 if locked[v] {
@@ -2250,13 +2271,21 @@ mod tests {
         Partition, SPINNAKER_FABRIC, SpikeHops, UNSTATED_FABRIC, multicast_tree, partition_greedy,
         partition_refined, spike_hops,
     };
-    use crate::hardware::{SPINNAKER, TRUENORTH};
+    use crate::hardware::{DYNAP_SE, SPINNAKER, TRUENORTH};
     use crate::ledger::{Evidence, Ledger};
     use crate::net::{Net, NetBuilder};
     use std::collections::VecDeque;
 
-    /// The eleven fabrics every structural test sweeps, including the degenerate one-row and
-    /// two-by-two cases where a wrapped axis folds onto itself.
+    /// The fourteen fabrics every structural test sweeps, including the degenerate cases: the
+    /// two-wide torus where a wrapped axis folds onto itself, the **one-wide** torus where a
+    /// wrapped axis folds onto the core it started from, and the odd-by-odd torus where halving
+    /// each side and halving the sum of the sides are different numbers.
+    ///
+    /// The last three arrived with this audit. Every fabric here before had at least two cores on
+    /// every wrapped axis, so no direction ever mapped a core to itself and
+    /// `fabric_neighbours_are_sorted_distinct_and_exclude_the_core_itself` could not see the
+    /// filter that removes it; and every torus here had at least one even side, where
+    /// `cols/2 + rows/2` and `(cols + rows)/2` agree.
     fn fabrics() -> Vec<Fabric> {
         vec![
             Fabric::Crossbar { cores: 7 },
@@ -2266,10 +2295,13 @@ mod tests {
             Fabric::Torus2D { cols: 5, rows: 4 },
             Fabric::Torus2D { cols: 8, rows: 8 },
             Fabric::Torus2D { cols: 2, rows: 3 },
+            Fabric::Torus2D { cols: 5, rows: 3 },
+            Fabric::Torus2D { cols: 1, rows: 5 },
             Fabric::TriangularTorus { cols: 5, rows: 4 },
             Fabric::TriangularTorus { cols: 8, rows: 8 },
             Fabric::TriangularTorus { cols: 3, rows: 7 },
             Fabric::TriangularTorus { cols: 2, rows: 2 },
+            Fabric::TriangularTorus { cols: 4, rows: 1 },
         ]
     }
 
@@ -2441,6 +2473,13 @@ mod tests {
         assert_eq!(Fabric::Mesh2D { cols: 8, rows: 8 }.diameter(), Some(14));
         assert_eq!(Fabric::Torus2D { cols: 8, rows: 8 }.diameter(), Some(8));
         assert_eq!(Fabric::Mesh2D { cols: 0, rows: 4 }.diameter(), None);
+        // ⛔ A torus diameter is `cols/2 + rows/2` — each side halved, not the sum of the sides
+        // halved. The two agree whenever either side is even, and every torus this sweep had
+        // before had one. On 5x3 they are 2 + 1 = 3 against 8/2 = 4, and on 7x7 they are 6
+        // against 7; the sweep above measures both.
+        assert_eq!(Fabric::Torus2D { cols: 5, rows: 3 }.diameter(), Some(3));
+        assert_eq!(Fabric::Torus2D { cols: 7, rows: 7 }.diameter(), Some(6));
+        assert_eq!(Fabric::Torus2D { cols: 5, rows: 5 }.diameter(), Some(4));
     }
 
     /// Wrapping an axis can only shorten a route, and on an eight-wide fabric it shortens the worst
@@ -2588,6 +2627,15 @@ mod tests {
         assert_eq!(Fabric::Torus2D { cols: 2, rows: 3 }.neighbours(0), vec![1, 2, 4]);
         assert_eq!(Fabric::Torus2D { cols: 3, rows: 3 }.neighbours(0), vec![1, 2, 3, 6]);
         assert_eq!(Fabric::TriangularTorus { cols: 2, rows: 2 }.neighbours(0), vec![1, 2, 3]);
+        // ⛔ A wrapped axis of ONE folds onto the core itself: stepping `+1` along a fabric one
+        // column wide arrives back where it started, and that step has to be dropped rather than
+        // listed. Every fabric this sweep had before was at least two cores across every wrapped
+        // axis, so no direction ever produced the core it came from and the filter that removes
+        // it was unreachable.
+        assert_eq!(Fabric::Torus2D { cols: 1, rows: 5 }.neighbours(0), vec![1, 4]);
+        assert_eq!(Fabric::Torus2D { cols: 1, rows: 5 }.neighbours(2), vec![1, 3]);
+        assert_eq!(Fabric::TriangularTorus { cols: 4, rows: 1 }.neighbours(0), vec![1, 3]);
+        assert_eq!(Fabric::TriangularTorus { cols: 4, rows: 1 }.neighbours(2), vec![1, 3]);
         assert_eq!(Fabric::Mesh2D { cols: 5, rows: 4 }.neighbours(0), vec![1, 5], "a corner");
         assert_eq!(Fabric::Crossbar { cores: 3 }.neighbours(1), vec![0, 2]);
         // On a torus wide enough not to fold, every core has exactly the fabric's degree.
@@ -2943,6 +2991,13 @@ mod tests {
         // The same machine with room for the row places it.
         let roomy = CoreLimits::new(Some(16), Some(64), None);
         assert!(partition_greedy(&net, &roomy, 4, 0).is_ok());
+        // ⛔ And the boundary itself: a core that stores EXACTLY the neuron's fan-in is not a
+        // wall. The refusal is `fan_in > cap` and only its failing side was pinned, so tightening
+        // it to `>=` — refusing the neuron that fits precisely — was invisible.
+        let exact = CoreLimits::new(Some(16), Some(20), None);
+        let plan = partition_greedy(&net, &exact, 4, 0).unwrap();
+        assert_eq!(plan.partition.check(&net, &exact).unwrap().verdict, Some(true));
+        assert_eq!(net.in_degrees()[29], 20, "the neuron that exactly fills a core of 20");
     }
 
     /// `Some(true)` against no stated limit would be a vacuous pass, so it is `None` instead — and
@@ -2972,6 +3027,15 @@ mod tests {
         assert_eq!(tn.synapses_per_core, Some(65536));
         assert_eq!(tn.max_fan_in, Some(256), "TrueNorth's crossbar column is the wall");
 
+        // ⛔ TrueNorth's neuron count and its fan-in wall are BOTH 256 — one crossbar, read along
+        // two axes — so reading either field from the other moved no number, and SpiNNaker states
+        // neither. DYNAP-SE states 256 neurons against 64 content-addressable-memory entries per
+        // neuron, the tightest fan-in in that table, and the two cannot be confused.
+        let dy = CoreLimits::from_part(&DYNAP_SE);
+        assert_eq!(dy.neurons_per_core, Some(256));
+        assert_eq!(dy.max_fan_in, Some(64), "the CAM depth, not the neuron count");
+        assert_eq!(dy.synapses_per_core, Some(16384), "which is 256 x 64");
+
         // SpiNNaker states none of the three: its limits are real-time budgets, not structures.
         let sp = CoreLimits::from_part(&SPINNAKER);
         assert_eq!((sp.neurons_per_core, sp.synapses_per_core, sp.max_fan_in), (None, None, None));
@@ -2987,6 +3051,10 @@ mod tests {
         assert_eq!(g.headroom[0].worst_used, 2);
         assert_eq!(g.headroom[0].spare(), 2);
         assert!((g.headroom[0].utilisation().unwrap() - 0.5).abs() < 1e-15);
+        // ⛔ And it PRINTS as a percentage under the percent sign it prints: 2 of 4 is 50.0%, not
+        // 0.5%. `every_display_impl_names_its_numbers` only looked for the words "worst core", so
+        // the factor of a hundred between the ratio and the sign was carried by nothing.
+        assert!(g.to_string().contains("(50.0%)"), "{g}");
         // ⛔ WORST core, not best: `min_by_key` for `max_by_key` on either branch was green,
         // because a 2/2 split has no worst. 3/1 does, on both constraints.
         let p = Partition::new(&net, vec![0, 0, 0, 1], 2).unwrap();
@@ -3041,6 +3109,16 @@ mod tests {
             partition_refined(&dense, &lim, 2, 0, 5).unwrap_err(),
             MapError::NotEnoughSynapseRoom { synapses: 100, n_cores: 2, synapses_per_core: 10, capacity: 20 }
         );
+        // ⛔ The boundary from the other side: a network whose synapses EXACTLY fill the machine
+        // places. `synapses > capacity` was pinned only where it fails, so tightening it to `>=`
+        // — refusing the network that fits precisely — was invisible. 100 synapses into 2 cores
+        // of 50, and the neuron cap of 10 forces the ten-neuron blocks that make each core carry
+        // exactly its 50.
+        let exact = CoreLimits::new(Some(10), Some(50), None);
+        let plan = partition_greedy(&dense, &exact, 2, 0).unwrap();
+        assert_eq!(plan.partition.check(&dense, &exact).unwrap().verdict, Some(true));
+        let loads = plan.partition.loads(&dense).unwrap();
+        assert_eq!((loads[0].synapses, loads[1].synapses), (50, 50), "2 x 50 is 100 exactly");
         // And the per-core bookkeeping bound, on both entry points.
         assert_eq!(
             Partition::new(&net, vec![0; 10], super::MAX_CORES + 1).unwrap_err(),
@@ -3175,6 +3253,17 @@ mod tests {
         let a = spike_hops(&net, &neighbourly, &x, Some(8), &spikes).unwrap();
         let b = spike_hops(&net, &scattered, &x, Some(8), &spikes).unwrap();
         assert_eq!((a.multicast_hops, b.multicast_hops), (7, 7));
+
+        // ⛔ Hops per synaptic operation is HOPS over the ledger's operations. The fixture in
+        // `spike_hops_counts_every_delivery_and_matches_a_hand_computation` has 9 hops and 9
+        // deliveries, so putting `deliveries()` in the numerator read identically there — and
+        // doubling that ledger's count did not separate them either, because it is the
+        // DENOMINATOR that moved. Here the same seven deliveries cost 25 hops one way and 7 the
+        // other, which is the whole point of the quantity.
+        let led = Ledger { syn_ops: 7, ..Ledger::default() };
+        assert_eq!((good.deliveries(), bad.deliveries()), (7, 7));
+        assert!((bad.hops_per_synaptic_operation(&led).unwrap() - 25.0 / 7.0).abs() < 1e-15);
+        assert!((good.hops_per_synaptic_operation(&led).unwrap() - 1.0).abs() < 1e-15);
     }
 
     /// A workload whose chip boundaries are unknown has an unknown number of crossings, and zero is
@@ -3226,6 +3315,28 @@ mod tests {
         assert!(SPINNAKER_FABRIC.source.contains("Furber"));
         assert!(LOIHI_FABRIC.source.contains("Davies"));
         assert!(UNSTATED_FABRIC.source.contains("no fabric"));
+        // ⛔ And the catalogue's rows ARE the tables they are named after. Every assertion above
+        // holds of a catalogue that lists one part twice and another not at all, because all
+        // three tables are equally empty — the sweep above checks the shape of each row and never
+        // that the row named `loihi` is Loihi's.
+        //
+        // Reached by NAME rather than by a constant index, for two reasons. `FABRIC_CATALOGUE[2]`
+        // is a constant index into a constant array, so a catalogue that LOSES a row would stop
+        // compiling rather than fail, and a mutation that cannot be compiled is one this audit
+        // learns nothing from. And writing the rows out as a list here would put the text of a
+        // catalogue row in this file twice, which is exactly what stops the harness applying the
+        // edit that changes it.
+        let names: Vec<&str> = FABRIC_CATALOGUE.iter().map(|&(n, _)| n).collect();
+        assert_eq!(names, vec!["unstated", "spinnaker", "loihi"], "every row, in order, once");
+        let row = |name: &str| {
+            FABRIC_CATALOGUE.iter().find(|&&(n, _)| n == name).expect("catalogue row missing").1
+        };
+        assert_eq!(row("unstated"), UNSTATED_FABRIC);
+        assert_eq!(row("spinnaker"), SPINNAKER_FABRIC);
+        assert_eq!(row("loihi"), LOIHI_FABRIC);
+        assert!(row("spinnaker").source.contains("Furber"), "the spinnaker row is SpiNNaker's");
+        assert!(row("loihi").source.contains("Davies"), "the loihi row is Loihi's");
+        assert!(row("unstated").source.contains("no fabric"));
     }
 
     /// A bill refuses and names every term it could not price, so a caller cannot obtain a total
@@ -3260,6 +3371,14 @@ mod tests {
         let b2 = unsplit.bill(&priced);
         assert_eq!(b2.total, None);
         assert!(b2.unpriced.contains(&"chip-boundary split (cores per chip not stated)"));
+        // ⛔ And NOTHING is attributed to either side of a split that is not known: not the 100
+        // hops to the die, not one of them to the package. The refused total was the only thing
+        // asserted here, so charging every hop as on-chip — the answer that flatters a placement
+        // by pricing its traffic at the cheap end — left `on_chip` reading `1.0e-10` with no test
+        // looking at it.
+        assert_eq!(b2.on_chip, Some(0.0), "an unknown split attributes no hop to the die");
+        assert_eq!(b2.crossings, Some(0.0));
+        assert_eq!(b2.injection, Some(50.0 * 1e-13), "the injections are still countable");
     }
 
     /// And when every term does have a price, the bill is exactly the counts multiplied out — with
@@ -3293,6 +3412,43 @@ mod tests {
         // The crossing term dominates by three orders of magnitude at these prices, which is the
         // whole argument for caring where a neuron lands.
         assert!(bill.crossings.unwrap() > 100.0 * bill.on_chip.unwrap());
+
+        // ⛔ A price has to be a NUMBER. An infinite or `NaN` per-hop energy is a table that was
+        // filled in by arithmetic that overflowed or divided by zero, and admitting it hands back
+        // a total of `inf` or `NaN` with `unpriced` empty — a refusal with no reason, in the
+        // shape this module refuses everywhere else. Every table in this crate is `None`, so the
+        // finiteness test was never reached by any fixture.
+        for bad in [f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
+            let table = HopPrices { e_hop_on_chip: Some(bad), ..priced };
+            let b = h.bill(&table);
+            assert_eq!(b.on_chip, None, "{bad} was accepted as a price");
+            assert_eq!(b.total, None);
+            assert_eq!(b.unpriced, vec!["on-chip hop"]);
+            // The other two terms were priced, so the grade of the prices used still stands.
+            assert_eq!(b.evidence, Evidence::Projected);
+        }
+
+        // ⛔ A bill that charged NOTHING used no price, so it carries no grade: `Unstated`, not
+        // whatever the table it was handed claims. Every bill in this module either priced
+        // something or was handed an empty table, where the two answers coincide.
+        let net = chain(4);
+        let silent = spike_hops(
+            &net,
+            &Partition::single_core(&net).unwrap(),
+            &Fabric::Crossbar { cores: 2 },
+            Some(2),
+            &[0; 4],
+        )
+        .unwrap();
+        assert_eq!((silent.multicast_hops, silent.spikes, silent.chip_crossings), (0, 0, Some(0)));
+        let nothing = silent.bill(&priced);
+        assert_eq!(nothing.total, Some(0.0), "no work, no charge, and no refusal either");
+        assert!(nothing.unpriced.is_empty());
+        assert_eq!(
+            nothing.evidence,
+            Evidence::Unstated,
+            "a bill that used no price cannot carry the table's grade"
+        );
 
         // A term with a zero count is not charged and its missing price is not held against the
         // total: a workload that never crossed a chip does not need a crossing price.
@@ -3655,5 +3811,637 @@ mod tests {
         }
         assert_eq!(count, [4, 4, 3], "eleven silent neurons over three cores, round-robin");
         assert_eq!(plan.partition.used_cores(), 3);
+    }
+
+    // ----------------------------------------------------------------------------------------
+    // Added by the mutation audit: the claims nothing could see
+    // ----------------------------------------------------------------------------------------
+
+    /// A core's `(x, y)` is row-major — `x` counts along the row, `y` counts rows — and the pair
+    /// has to rebuild the index it came from. The only fixture that read `coords` before was a
+    /// 3x3 mesh at core 8, which is `(2, 2)`: a square fabric read at a point on its diagonal,
+    /// where transposing the two axes is the identity.
+    #[test]
+    fn a_cores_coordinates_are_row_major_and_rebuild_its_index() {
+        for f in fabrics() {
+            let Some((cols, rows)) = f.dims() else {
+                assert_eq!(f.coords(0), None, "{f:?}: a crossbar has no geometry");
+                continue;
+            };
+            for c in 0..f.n_cores() as u32 {
+                let (x, y) = f.coords(c).unwrap();
+                assert!(x < cols, "{f:?} core {c}: x = {x} is outside {cols} columns");
+                assert!(y < rows, "{f:?} core {c}: y = {y} is outside {rows} rows");
+                assert_eq!(y * cols + x, c, "{f:?} core {c}: ({x}, {y}) does not rebuild it");
+            }
+        }
+        // Hand values on a fabric five wide and four tall, off the diagonal both ways.
+        let f = Fabric::Mesh2D { cols: 5, rows: 4 };
+        assert_eq!(f.coords(7), Some((2, 1)));
+        assert_eq!(f.coords(3), Some((3, 0)));
+        assert_eq!(f.coords(15), Some((0, 3)));
+        assert_eq!(f.coords(19), Some((4, 3)));
+    }
+
+    /// A root the fabric does not have is refused **as the root**. A destination past the end was
+    /// already refused twice over — once by this check and once by `route` returning `None` a few
+    /// lines later, which reports the same error — so admitting exactly one index past the end
+    /// changed nothing any assertion could reach. A root does not go through `route` at all when
+    /// there is nothing to send, and the module answered `Ok` with a tree rooted on a core that is
+    /// not there.
+    #[test]
+    fn a_multicast_tree_refuses_a_root_the_fabric_does_not_have() {
+        let f = Fabric::Mesh2D { cols: 3, rows: 3 };
+        assert_eq!(
+            multicast_tree(&f, 9, &[]).unwrap_err(),
+            MapError::CoreNotOnFabric { core: 9, n_cores: 9 },
+            "a tree with nothing to send is still rooted somewhere"
+        );
+        // With destinations, the error names the ROOT and not the first destination it tried.
+        assert_eq!(
+            multicast_tree(&f, 9, &[0, 1]).unwrap_err(),
+            MapError::CoreNotOnFabric { core: 9, n_cores: 9 }
+        );
+        assert_eq!(
+            multicast_tree(&f, 9, &[9]).unwrap_err(),
+            MapError::CoreNotOnFabric { core: 9, n_cores: 9 }
+        );
+        // Core 8 is the last one the fabric has, and it roots a tree.
+        assert_eq!(multicast_tree(&f, 8, &[]).unwrap().cores, vec![8]);
+    }
+
+    /// `CoreLoad::worst_fan_in` is the LARGEST in-degree on the core. Every fixture that read it
+    /// had one distinct in-degree per core — a core of one neuron, or a core whose neurons all had
+    /// in-degree 1 — and on those the largest and the smallest are the same neuron. A chain's
+    /// first neuron has no inputs and the rest have one, so the two differ.
+    #[test]
+    fn the_worst_fan_in_on_a_core_is_the_largest_in_degree_not_the_smallest() {
+        let net = chain(4);
+        assert_eq!(net.in_degrees(), vec![0, 1, 1, 1]);
+        let one = Partition::single_core(&net).unwrap();
+        assert_eq!(
+            one.loads(&net).unwrap()[0].worst_fan_in,
+            Some((1, 1)),
+            "neuron 0 has no inputs; the worst on this core is the first neuron that has one"
+        );
+        // And with three distinct in-degrees on one core, so that neither end is a tie.
+        let mut b = NetBuilder::new(4);
+        for &(p, q) in &[(0u32, 1u32), (0, 2), (1, 2), (3, 2)] {
+            b.connect(p, q, 1e-3, 1).unwrap();
+        }
+        let star = b.build();
+        assert_eq!(star.in_degrees(), vec![0, 1, 3, 0]);
+        let p = Partition::single_core(&star).unwrap();
+        assert_eq!(p.loads(&star).unwrap()[0].worst_fan_in, Some((2, 3)));
+    }
+
+    /// A neuron whose fan-in exactly equals the wall is inside it, and the fan-in headroom reports
+    /// the WORST neuron in the network. The wall was pinned only from the failing side (300 inputs
+    /// against 256), and the headroom record was never read at all: every `CoreLimits` in this
+    /// module that stated a fan-in cap either bound on it or came from a part that states none.
+    #[test]
+    fn a_neuron_exactly_at_the_fan_in_wall_places_and_its_headroom_names_the_worst_neuron() {
+        let mut b = NetBuilder::new(4);
+        for &(p, q) in &[(0u32, 1u32), (0, 2), (1, 2), (3, 2)] {
+            b.connect(p, q, 1e-3, 1).unwrap();
+        }
+        let net = b.build();
+        assert_eq!(net.in_degrees(), vec![0, 1, 3, 0], "the worst neuron has three inputs");
+        let p = Partition::single_core(&net).unwrap();
+
+        // Exactly at the wall: three inputs into a cap of three places, with nothing to spare.
+        let at = p.check(&net, &CoreLimits::new(None, None, Some(3))).unwrap();
+        assert_eq!(at.verdict, Some(true), "{:?}", at.binds);
+        assert!(at.binds.is_empty());
+        assert_eq!(at.headroom.len(), 1);
+        assert_eq!(at.headroom[0].constraint, "maximum fan-in per neuron");
+        assert_eq!(at.headroom[0].worst_used, 3, "the worst neuron, not the least loaded one");
+        assert_eq!(at.headroom[0].cap, 3);
+        assert_eq!(at.headroom[0].spare(), 0);
+        assert!((at.headroom[0].utilisation().unwrap() - 1.0).abs() < 1e-15);
+
+        // One below it binds, so the boundary is where the module says it is.
+        let over = p.check(&net, &CoreLimits::new(None, None, Some(2))).unwrap();
+        assert_eq!(over.binds, vec![CoreBind::FanIn { neuron: 2, fan_in: 3, cap: 2, core: 0 }]);
+
+        // And with room above the worst neuron, the headroom still reports the worst.
+        let loose = p.check(&net, &CoreLimits::new(None, None, Some(10))).unwrap();
+        assert_eq!((loose.headroom[0].worst_used, loose.headroom[0].spare()), (3, 7));
+    }
+
+    /// A headroom's worst core is the fullest, and a tie between two equally full cores goes to
+    /// the LOWER index. Every headroom fixture in this module had a strict worst — a 3/1 split —
+    /// so the tie-break was carried by nothing, and a tie is the common case on a balanced
+    /// placement, which is what a partitioner is trying to produce.
+    #[test]
+    fn a_tie_for_the_worst_core_in_a_headroom_goes_to_the_lower_core_index() {
+        let net = cycle(4);
+        assert_eq!(net.in_degrees(), vec![1, 1, 1, 1], "every core will carry the same load");
+        let p = Partition::new(&net, vec![0, 0, 1, 1], 2).unwrap();
+        let f = p.check(&net, &CoreLimits::new(Some(4), Some(8), None)).unwrap();
+        assert_eq!(f.verdict, Some(true));
+        let by = |name: &str| *f.headroom.iter().find(|h| h.constraint == name).unwrap();
+        assert_eq!((by("synapses per core").worst_used, by("synapses per core").worst_core), (2, 0));
+        assert_eq!((by("neurons per core").worst_used, by("neurons per core").worst_core), (2, 0));
+    }
+
+    /// A core index EQUAL to the core count is past the end: cores are numbered `0..n_cores`. The
+    /// only out-of-range fixture in this module named core 5 of 2, which is out of range under
+    /// `>=` and under `>` alike, so the first index that is actually out of range — the one a
+    /// caller reaches by writing `n_cores` where they meant `n_cores - 1` — was admitted, and the
+    /// next call that indexed a per-core array with it would have panicked instead.
+    #[test]
+    fn a_core_index_equal_to_the_core_count_is_past_the_end() {
+        let net = chain(4);
+        assert_eq!(
+            Partition::new(&net, vec![0, 0, 2, 0], 2).unwrap_err(),
+            MapError::CoreOutOfRange { neuron: 2, core: 2, n_cores: 2 }
+        );
+        assert_eq!(
+            Partition::new(&net, vec![1, 1, 1, 1], 1).unwrap_err(),
+            MapError::CoreOutOfRange { neuron: 0, core: 1, n_cores: 1 }
+        );
+        let ok = Partition::new(&net, vec![0, 1, 1, 0], 2).unwrap();
+        assert_eq!(ok.n_cores, 2, "index n_cores - 1 is in range");
+    }
+
+    /// The per-core bookkeeping bound is `2^24`, and its doc prices that in bytes. Every test that
+    /// used the constant wrote `MAX_CORES + 1`, which moves with it, so the value itself could be
+    /// cut by a factor of sixteen with every test green — down to 1,048,576, below the 10.6
+    /// million cores of `SpiNNaker2`'s full build that the same doc says it is above.
+    ///
+    /// ⛔ THE DOC'S BYTE COUNT WAS WRONG AND THIS IS WHERE IT WAS CAUGHT. It said a `CoreLoad` is
+    /// 40 bytes and the limit is 671 MB. `size_of` measures 48 and 805 MB: the record is a `u32`,
+    /// two `u64` and an `Option<(usize, u64)>`, and that option has no niche to hide its
+    /// discriminant in, so it costs 24 bytes rather than 16.
+    #[test]
+    fn the_per_core_bookkeeping_bound_is_the_size_its_doc_prices() {
+        assert_eq!(super::MAX_CORES, 1 << 24);
+        assert_eq!(super::MAX_CORES, 16_777_216);
+        // The machine the constant's doc says it is above: SpiNNaker2's full build, about 10.6
+        // million ARM cores. Bound through a binding so the comparison is not folded away.
+        let spinnaker2_full_build: u32 = 10_600_000;
+        assert!(
+            super::MAX_CORES > spinnaker2_full_build,
+            "the bound has to stay above SpiNNaker2's full build, which its own doc claims"
+        );
+        // Measured here, not counted by eye, and this is the number the doc quotes.
+        assert_eq!(core::mem::size_of::<super::CoreLoad>(), 48);
+        assert_eq!(u64::from(super::MAX_CORES) * 48, 805_306_368, "805 MB of per-core records");
+        // The other two allocations the doc prices, from the same measurement.
+        assert_eq!(core::mem::size_of::<bool>(), 1, "one byte per core in used_cores");
+        assert_eq!(core::mem::size_of::<u64>() * 3, 24, "three u64 per core in the streaming pass");
+    }
+
+    /// `single_core` spans ONE core, not one per neuron. Every caller reads `core_of`, which is a
+    /// vector of zeros either way, so the core COUNT it was built over was read by nothing: a
+    /// partition over `n` cores of which `n - 1` are empty has the same cut, the same
+    /// `used_cores`, and the same record for core 0.
+    #[test]
+    fn the_degenerate_placement_spans_one_core_and_not_one_per_neuron() {
+        let net = chain(6);
+        let p = Partition::single_core(&net).unwrap();
+        assert_eq!(p.n_cores, 1);
+        assert_eq!(p.loads(&net).unwrap().len(), 1, "one per-core record, not one per neuron");
+        assert_eq!(p.used_cores(), 1);
+        // And an empty network's degenerate placement is over one core, not over zero.
+        let empty = NetBuilder::new(0).build();
+        assert_eq!(Partition::single_core(&empty).unwrap().n_cores, 1);
+    }
+
+    /// ⛔ `Adjacency` is the structure both partitioners work over, and three of its properties
+    /// were carried by no test. A self-synapse is DROPPED — counted as well as skipped would leave
+    /// two unwritten slots per self-loop, which read as neuron 0 and make it every self-looping
+    /// neuron's phantom neighbour. Parallel synapses are KEPT, as multiplicity. Every neighbour
+    /// list is SORTED, because `multiplicity` binary-searches it. The partitioner fixtures cannot
+    /// see any of it: they recount their cut from `Net`, never from this structure, so an
+    /// adjacency that disagreed with the network still agreed with itself.
+    #[test]
+    fn the_undirected_adjacency_drops_self_synapses_keeps_multiplicity_and_stays_sorted() {
+        let mut b = NetBuilder::new(5);
+        b.connect(4, 0, 1e-3, 1).unwrap();
+        b.connect(1, 4, 1e-3, 1).unwrap();
+        b.connect(1, 4, 2e-3, 2).unwrap();
+        b.connect(2, 2, 1e-3, 1).unwrap();
+        b.connect(0, 3, 1e-3, 1).unwrap();
+        let net = b.build();
+        assert_eq!(net.n_syn, 5);
+        let adj = super::Adjacency::build(&net);
+        // Four of the five synapses are not self-synapses, and each puts one entry at each end.
+        assert_eq!(adj.nbr.len(), 8);
+        assert_eq!(adj.of(0), &[3, 4]);
+        assert_eq!(adj.of(1), &[4, 4], "two parallel synapses are two entries, not one");
+        assert!(adj.of(2).is_empty(), "the self-synapse is dropped at both ends");
+        assert_eq!(adj.of(3), &[0]);
+        // Neuron 4 is the one whose entries ARRIVE out of order: neuron 1's two synapses are
+        // written into its block before its own synapse to neuron 0 is. Unsorted the block reads
+        // [1, 1, 0], and the binary search below then answers 3 where the answer is 2.
+        assert_eq!(adj.of(4), &[0, 1, 1]);
+        assert_eq!(adj.multiplicity(4, 1), 2);
+        assert_eq!(adj.multiplicity(4, 0), 1);
+        assert_eq!(adj.multiplicity(4, 2), 0);
+        assert_eq!(adj.multiplicity(2, 0), 0, "a neuron with no neighbours shares no edge");
+        assert_eq!(adj.multiplicity(1, 4), 2, "multiplicity is symmetric");
+
+        // Sorted, self-free and symmetric on the fixtures the partitioners actually run on.
+        for net in [two_cliques(6), cycle(9), chain(7)] {
+            let adj = super::Adjacency::build(&net);
+            let mut entries = 0usize;
+            for v in 0..net.n {
+                let s = adj.of(v);
+                entries += s.len();
+                assert!(s.windows(2).all(|w| w[0] <= w[1]), "neuron {v}: {s:?} is unsorted");
+                assert!(!s.contains(&(v as u32)), "neuron {v} is listed as its own neighbour");
+                for &u in s {
+                    assert_eq!(
+                        adj.multiplicity(u as usize, v as u32),
+                        adj.multiplicity(v, u),
+                        "neurons {v} and {u} disagree about how many edges join them"
+                    );
+                }
+            }
+            assert_eq!(entries, 2 * net.n_syn, "one entry at each end of every synapse");
+        }
+    }
+
+    /// A streaming plan names the streaming method and reports the cut it made as the cut before
+    /// refinement. `Display` was the only witness for the method, and "streaming greedy +
+    /// Kernighan-Lin" CONTAINS the word "greedy" — so a greedy plan labelled as refined read the
+    /// same to the one assertion looking at it. The `cut_before_refinement` field was compared
+    /// only on refined plans, where it comes from a different line.
+    #[test]
+    fn a_streaming_plan_names_the_streaming_method_and_its_own_cut() {
+        let net = two_cliques(9);
+        let limits = CoreLimits::new(Some(9), None, None);
+        for seed in 0..6u64 {
+            let g = partition_greedy(&net, &limits, 2, seed).unwrap();
+            assert_eq!(g.method, Method::Greedy, "seed {seed}");
+            assert_eq!(
+                g.cut_before_refinement, g.cut,
+                "seed {seed}: a plan that never refined starts where it ends"
+            );
+            assert_eq!((g.refinement_gain, g.passes_run, g.swaps_kept), (0, 0, 0), "seed {seed}");
+            let s = g.to_string();
+            assert!(!s.contains("Kernighan"), "{s}");
+            assert!(s.starts_with("streaming greedy on 2 cores: cut "), "{s}");
+            assert!(!s.contains("pass(es)"), "a greedy plan reports no passes: {s}");
+        }
+        assert_eq!(Method::KernighanLin.to_string(), "streaming greedy + Kernighan-Lin");
+    }
+
+    /// Refinement runs until a pass gains nothing and then stops — not once, and not the whole
+    /// budget. `passes_run` was in no assertion, so "stop only on a LOSS" (which never happens,
+    /// because a pass's own rewind clamps its gain at zero) and "always stop after one" were both
+    /// invisible: the placement is identical either way, since a pass that gains nothing rewinds
+    /// everything it tried.
+    #[test]
+    fn refinement_runs_until_a_pass_gains_nothing_and_then_stops() {
+        let net = two_cliques(12);
+        let limits = CoreLimits::new(Some(12), None, None);
+        // Seed 1 traps the stream at 23: one pass recovers 22, and a second is needed to discover
+        // there is nothing left. Seed 0's stream lands on the optimum, so one pass ends it.
+        let trapped = partition_refined(&net, &limits, 2, 1, 20).unwrap();
+        assert_eq!((trapped.cut_before_refinement, trapped.cut), (23, 1));
+        assert_eq!(trapped.passes_run, 2, "one pass that gained 22, one that gained nothing");
+        let already = partition_refined(&net, &limits, 2, 0, 20).unwrap();
+        assert_eq!((already.cut_before_refinement, already.cut), (1, 1));
+        assert_eq!(already.passes_run, 1, "the first pass already gains nothing");
+        // A budget below what it would use is honoured, and a budget of zero refines nothing.
+        assert_eq!(partition_refined(&net, &limits, 2, 1, 1).unwrap().passes_run, 1);
+        let none = partition_refined(&net, &limits, 2, 1, 0).unwrap();
+        assert_eq!((none.passes_run, none.swaps_kept, none.cut), (0, 0, 23));
+    }
+
+    /// A pass keeps a prefix of its exchanges only when the prefix's cumulative gain is POSITIVE,
+    /// so a plan that gained nothing kept nothing. The suite asserted the forward implication —
+    /// a gain means an exchange was kept — and never its converse, so a rewind point that kept the
+    /// best prefix even at zero churned twelve exchanges through a placement that ends exactly
+    /// where it started, with `refinement_gain` reporting 0 for all of it.
+    #[test]
+    fn a_plan_that_gained_nothing_kept_no_exchange() {
+        let cases: Vec<(&str, Net, u32, CoreLimits)> = vec![
+            ("two cliques", two_cliques(12), 2, CoreLimits::new(Some(12), None, None)),
+            ("cycle", cycle(32), 2, CoreLimits::new(Some(16), None, None)),
+            ("chain on four cores", chain(40), 4, CoreLimits::new(Some(10), None, None)),
+        ];
+        let mut idle = 0;
+        for (name, net, cores, lim) in &cases {
+            for seed in 0..8u64 {
+                let plan = partition_refined(net, lim, *cores, seed, 20).unwrap();
+                assert_eq!(
+                    plan.refinement_gain == 0,
+                    plan.swaps_kept == 0,
+                    "{name} seed {seed}: gain {} against {} exchange(s) kept",
+                    plan.refinement_gain,
+                    plan.swaps_kept
+                );
+                if plan.refinement_gain == 0 {
+                    idle += 1;
+                    assert_eq!(plan.cut, plan.cut_before_refinement, "{name} seed {seed}");
+                    assert_eq!(
+                        plan.partition.core_of,
+                        partition_greedy(net, lim, *cores, seed).unwrap().partition.core_of,
+                        "{name} seed {seed}: a plan that gained nothing moved a neuron"
+                    );
+                }
+            }
+        }
+        assert!(idle >= 3, "only {idle} runs of the sweep gained nothing; the converse is untested");
+    }
+
+    /// The streaming pass accepts exactly `MAX_CORES` and refuses one more. The refusal was pinned
+    /// at `MAX_CORES + 1` on both entry points; the acceptance at `MAX_CORES` was pinned only on
+    /// `Partition::new`, so the streaming pass's copy of the same check could be tightened by one
+    /// with every test green. Asked of an EMPTY network, which returns before the per-core
+    /// bookkeeping this constant bounds is ever allocated — this pins the boundary of the check,
+    /// not the feasibility of a 16-million-core allocation.
+    #[test]
+    fn the_streaming_pass_accepts_exactly_the_core_count_its_constant_allows() {
+        let empty = NetBuilder::new(0).build();
+        let plan = partition_greedy(&empty, &CoreLimits::UNLIMITED, super::MAX_CORES, 0).unwrap();
+        assert_eq!(plan.partition.n_cores, super::MAX_CORES);
+        assert_eq!((plan.cut, plan.partition.neurons), (0, 0));
+        assert_eq!(
+            partition_greedy(&empty, &CoreLimits::UNLIMITED, super::MAX_CORES + 1, 0).unwrap_err(),
+            MapError::TooManyCores { n_cores: super::MAX_CORES + 1, limit: super::MAX_CORES }
+        );
+    }
+
+    /// When a network fails BOTH the whole-machine synapse arithmetic and the per-neuron wall, the
+    /// module reports the arithmetic first — the stated order, because a machine twelve times too
+    /// small is the fact that makes every seed and the refiner fail identically, and splitting the
+    /// named neuron would not change it. The two checks sit next to each other in one block and no
+    /// fixture tripped both, so their order was free.
+    #[test]
+    fn the_whole_machine_synapse_arithmetic_is_reported_before_the_per_neuron_wall() {
+        let mut b = NetBuilder::new(20);
+        for i in 0..20u32 {
+            for j in 0..5u32 {
+                b.connect((i + j + 1) % 20, i, 1e-3, 1).unwrap();
+            }
+        }
+        let dense = b.build();
+        assert_eq!(dense.n_syn, 100);
+        assert_eq!(dense.in_degrees()[0], 5, "every neuron's five inputs exceed a core of four");
+        // 100 synapses; two cores of four store eight. Both refusals are true of this network.
+        let both = CoreLimits::new(Some(10), Some(4), None);
+        assert_eq!(
+            partition_greedy(&dense, &both, 2, 0).unwrap_err(),
+            MapError::NotEnoughSynapseRoom {
+                synapses: 100,
+                n_cores: 2,
+                synapses_per_core: 4,
+                capacity: 8
+            }
+        );
+        // With 25 cores the machine holds exactly 100, so only the wall is left — and then it is
+        // the wall that is reported, naming the neuron.
+        assert_eq!(
+            partition_greedy(&dense, &both, 25, 0).unwrap_err(),
+            MapError::FanInExceedsCore { neuron: 0, fan_in: 5, cap: 4 }
+        );
+    }
+
+    /// ⛔ THE STREAMING PASS REFUSES RATHER THAN OVERFILLING A CORE'S SYNAPSE STORE. Three hubs of
+    /// in-degree three over nine leaves, on two cores that store five synapses each: the machine
+    /// has room (nine synapses in ten slots) and no neuron is larger than a core, but two hubs are
+    /// six and a core holds five, so exactly one hub fits per core and the third has nowhere to
+    /// go — whatever the stream order.
+    ///
+    /// Every other fixture in this module either states no synapse limit or states one loose
+    /// enough that eligibility never refused a core. So the arriving neuron's own storage, the
+    /// accumulation of the per-core load, and the eligibility test itself could each be deleted
+    /// with every test green, and the pass would ship a placement its own `check` calls illegal.
+    #[test]
+    fn the_streaming_pass_refuses_rather_than_overfilling_a_cores_synapse_store() {
+        let mut b = NetBuilder::new(12);
+        for h in 0..3u32 {
+            for j in 0..3u32 {
+                b.connect(3 + h * 3 + j, h, 1e-3, 1).unwrap();
+            }
+        }
+        let net = b.build();
+        assert_eq!(net.n_syn, 9);
+        assert_eq!(net.in_degrees()[..3], [3, 3, 3], "three hubs of three");
+
+        let tight = CoreLimits::new(None, Some(5), None);
+        for seed in 0..8u64 {
+            let err = partition_greedy(&net, &tight, 2, seed).unwrap_err();
+            assert!(
+                matches!(err, MapError::NoFeasibleCore { in_degree: 3, n_cores: 2, .. }),
+                "seed {seed}: {err:?}"
+            );
+            assert!(partition_refined(&net, &tight, 2, seed, 20).is_err(), "seed {seed}");
+        }
+
+        // One more slot per core and the same network places, with a core carrying EXACTLY its
+        // two hubs: the test is `load + arriving > cap`, so a core filled to the cap is legal and
+        // a core filled past it is not.
+        let roomy = CoreLimits::new(None, Some(6), None);
+        for seed in 0..8u64 {
+            let plan = partition_greedy(&net, &roomy, 2, seed).unwrap();
+            let f = plan.partition.check(&net, &roomy).unwrap();
+            assert_eq!(f.verdict, Some(true), "seed {seed}: {:?}", f.binds);
+            let worst =
+                plan.partition.loads(&net).unwrap().iter().map(|l| l.synapses).max().unwrap();
+            assert_eq!(worst, 6, "seed {seed}: two hubs of three exactly fill a core of six");
+        }
+    }
+
+    /// The refiner's incremental state for a fixed assignment: the undirected neighbour
+    /// structure, the in-degrees, the per-(neuron, core) neighbour counts and the per-core synapse
+    /// load, all computed from scratch.
+    ///
+    /// It says the same thing as [`super::partition_refined`]'s own initialisation and is written
+    /// in different words on purpose — one pass over the neurons, with the two destinations named
+    /// — so that it is a recount rather than a copy, and so that the mutation list's anchors on
+    /// those two lines still occur exactly once in this file.
+    fn kl_state(
+        net: &Net,
+        core_of: &[u32],
+        k: usize,
+    ) -> (super::Adjacency, Vec<i64>, Vec<i64>, Vec<i64>) {
+        let adj = super::Adjacency::build(net);
+        let in_deg: Vec<i64> = net.in_degrees().iter().map(|&d| d as i64).collect();
+        let mut cnt = vec![0i64; net.n * k];
+        let mut syn = vec![0i64; k];
+        for v in 0..net.n {
+            let home = core_of[v] as usize;
+            syn[home] += in_deg[v];
+            for &u in adj.of(v) {
+                let there = core_of[u as usize] as usize;
+                cnt[v * k + there] += 1;
+            }
+        }
+        (adj, in_deg, cnt, syn)
+    }
+
+    /// The six-neuron fixture the two refiner tests below work over: a triangle `{0, 1, 2}` on
+    /// core 0 with a leaf 5 hanging off neuron 0, and neuron 3 on core 1 joined to all three of
+    /// the triangle and to a leaf 4. In-degrees are 1, 2, 3, 0, 1, 1.
+    fn triangle_and_leaves() -> Net {
+        let mut b = NetBuilder::new(6);
+        for &(p, q) in &[(0u32, 1u32), (0, 2), (1, 2), (0, 5), (3, 0), (3, 1), (3, 2), (3, 4)] {
+            b.connect(p, q, 1e-3, 1).unwrap();
+        }
+        b.build()
+    }
+
+    /// ⛔ EXCHANGE CANDIDATES ARE THE BOUNDARY NEURONS ONLY, AND THIS IS WHAT THAT COSTS. A neuron
+    /// with every edge inside its own core cannot gain from moving, but it can be a better
+    /// PARTNER than any boundary neuron, so the restriction is a cost measure and not a proof that
+    /// nothing is lost. Nothing in this module could see the difference: every other refinement
+    /// fixture reads only the cut the refiner happens to reach, and both candidate sets reach the
+    /// same cut on all of them.
+    ///
+    /// On `triangle_and_leaves` placed as `{0, 1, 2, 5} | {3, 4}` the cut is 3. Neurons 4 and 5
+    /// are interior. Every boundary pair is a loss, and the best of them is `-1`: exchanging
+    /// neuron 1 with neuron 3 gives up two of neuron 1's edges at home for the one it has across
+    /// (`-1`), brings three of neuron 3's home for the one it leaves behind (`+2`), and the one
+    /// edge the two of them share stays cut whichever way they go, which is charged twice (`-2`).
+    /// So the pass rewinds to nothing and leaves the placement where it found it. Exchanging the
+    /// interior leaf 5 with neuron 3 would gain `+2 - 1 - 0 = 1` — neuron 5 gives up its single
+    /// edge at home, and the two share none — and reach a cut of 2, which this pass never
+    /// considers.
+    #[test]
+    fn the_exchange_candidates_are_the_boundary_neurons_only_and_this_is_what_that_costs() {
+        let net = triangle_and_leaves();
+        let start = vec![0u32, 0, 0, 1, 1, 0];
+        let k = 2usize;
+        assert_eq!(Partition::new(&net, start.clone(), 2).unwrap().cut_edges(&net).unwrap(), 3);
+
+        let (adj, in_deg, mut cnt, mut syn) = kl_state(&net, &start, k);
+        // Neuron 5's only edge is to neuron 0 on its own core, and neuron 4's only edge is to
+        // neuron 3 on its own core: both are interior, which is what makes this fixture work.
+        assert_eq!((cnt[5 * k], cnt[5 * k + 1]), (1, 0));
+        assert_eq!((cnt[4 * k], cnt[4 * k + 1]), (0, 1));
+
+        let mut core_of = start.clone();
+        let (gain, kept) = super::kl_pass(&adj, &in_deg, None, k, &mut core_of, &mut cnt, &mut syn);
+        assert_eq!((gain, kept), (0, 0), "no boundary pair gains, so the pass keeps nothing");
+        assert_eq!(core_of, start, "and the placement is exactly where it started");
+
+        // The exchange the restriction does not consider, priced here rather than asserted away.
+        let better = Partition::new(&net, vec![0, 0, 0, 0, 1, 1], 2).unwrap();
+        assert_eq!(better.cut_edges(&net).unwrap(), 2, "swapping the interior leaf 5 with 3");
+    }
+
+    /// ⛔ An exchange updates three structures at once — the assignment, the per-(neuron, core)
+    /// neighbour counts and the per-core synapse load — and only the first two are read back by
+    /// anything the suite measured. The synapse load is read ONLY by the capacity guard, and every
+    /// refinement fixture either stated no synapse cap or stated one loose enough never to refuse,
+    /// so moving the load in the wrong direction changed no answer. Checked here against a
+    /// recomputation from scratch, in both directions, because the function's doc says it is its
+    /// own inverse.
+    #[test]
+    fn an_exchange_leaves_every_incremental_structure_equal_to_a_recount() {
+        let net = triangle_and_leaves();
+        let start = vec![0u32, 0, 0, 1, 1, 0];
+        let k = 2usize;
+        let (adj, in_deg, mut cnt, mut syn) = kl_state(&net, &start, k);
+        assert_eq!(in_deg, vec![1, 2, 3, 0, 1, 1]);
+        assert_eq!(syn, vec![7, 1], "core 0 stores 1 + 2 + 3 + 1, core 1 stores 0 + 1");
+
+        let mut core_of = start.clone();
+        super::kl_exchange(&adj, &in_deg, k, &mut core_of, &mut cnt, &mut syn, 0, 3);
+        assert_eq!(core_of, vec![1, 0, 0, 0, 1, 0]);
+        // Neuron 0 stores one synapse and leaves core 0; neuron 3 stores none and arrives.
+        assert_eq!(syn, vec![6, 2], "core 0 loses 1 and gains 0; core 1 loses 0 and gains 1");
+        let (_, _, want_cnt, want_syn) = kl_state(&net, &core_of, k);
+        assert_eq!(cnt, want_cnt, "the neighbour counts drifted from a recount");
+        assert_eq!(syn, want_syn, "the synapse loads drifted from a recount");
+
+        // Its own inverse, against a recount of the state it started from.
+        super::kl_exchange(&adj, &in_deg, k, &mut core_of, &mut cnt, &mut syn, 0, 3);
+        assert_eq!(core_of, start);
+        let (_, _, back_cnt, back_syn) = kl_state(&net, &start, k);
+        assert_eq!((cnt, syn), (back_cnt, back_syn));
+    }
+
+    /// ⛔ THE REFINER'S SYNAPSE GUARD PRICES THE CORE AFTER THE MOVE. `syn[cu] - in_deg[u] +
+    /// in_deg[v]` is what core `u` holds once `u` has gone and `v` has arrived. Reading the two
+    /// in-degrees the other way round prices the move BACKWARDS — as though `u` were arriving on
+    /// its own core and `v` leaving it — and the two answers differ by
+    /// `2 * (in_deg[u] - in_deg[v])`, so the guard lets through an exchange that overfills the
+    /// core whenever the neuron arriving is the larger of the two.
+    ///
+    /// `refinement_never_ships_an_infeasible_placement` does not see it, and the honest statement
+    /// of why is a measurement rather than an argument: on that fixture the caps are loose enough
+    /// that the exchanges the backwards reading admits never actually overfill a core in the
+    /// placements the pass reaches. Here they do. This fixture is a 30-cycle whose neurons carry
+    /// one input each and whose last neuron carries eleven; at three cores and a cap of 14, seed 2
+    /// ships a core holding 24, and at a cap of 16, seeds 1 and 2 ship cores holding 23 and 22.
+    #[test]
+    fn the_refiners_synapse_guard_prices_the_core_after_the_move() {
+        let mut b = NetBuilder::new(30);
+        for i in 0..30u32 {
+            b.connect(i, (i + 1) % 30, 1e-3, 1).unwrap();
+        }
+        for i in 0..10u32 {
+            b.connect(i, 29, 1e-3, 1).unwrap();
+        }
+        let net = b.build();
+        assert_eq!(net.in_degrees()[29], 11, "one from the cycle and ten from the fan-in");
+        let mut refined = 0;
+        let mut shipped = 0;
+        for cap in [14u64, 16, 18, 20, 22] {
+            let lim = CoreLimits::new(None, Some(cap), None);
+            for seed in 0..8u64 {
+                let Ok(plan) = partition_refined(&net, &lim, 3, seed, 20) else { continue };
+                let v = plan.partition.check(&net, &lim).unwrap();
+                assert_eq!(
+                    v.verdict,
+                    Some(true),
+                    "cap {cap} seed {seed}: refinement shipped a placement that binds: {:?}",
+                    v.binds
+                );
+                shipped += 1;
+                if plan.swaps_kept > 0 {
+                    refined += 1;
+                }
+            }
+        }
+        // Measured: 30 of the 40 runs place at all. The other ten are the streaming pass refusing
+        // — at a cap of 14 or 16 the cycle fills a core before neuron 29's eleven inputs arrive —
+        // and every one of the 30 that does place keeps at least one exchange, so the guard is
+        // asked on all of them.
+        assert_eq!(shipped, 30, "the sweep has to run for the guard to be asked");
+        assert_eq!(refined, 30, "every placement that shipped was refined");
+    }
+
+    /// A source is a neuron that FIRED and has somewhere to send it, and a spike from a neuron
+    /// with no targets is still a spike. Both counters were pinned on a fixture whose only silent
+    /// neurons were also the ones with no outgoing synapses, so "every neuron with a target is a
+    /// source" and "a spike into nothing never happened" both read correctly there.
+    #[test]
+    fn a_source_is_a_neuron_that_fired_and_a_spike_into_nothing_is_still_a_spike() {
+        let net = chain(4);
+        let f = Fabric::Mesh2D { cols: 2, rows: 2 };
+        let p = Partition::new(&net, vec![0, 1, 2, 3], 4).unwrap();
+        // Neuron 0 fires once and has a target; neurons 1 and 2 have targets and never fire;
+        // neuron 3 fires five times and has no target at all.
+        let h = spike_hops(&net, &p, &f, Some(2), &[1, 0, 0, 5]).unwrap();
+        assert_eq!(h.sources, 1, "two silent neurons have targets and are not sources");
+        assert_eq!(h.spikes, 6, "five spikes from a neuron with nowhere to send them still fired");
+        assert_eq!(h.multicast_hops, 1, "only neuron 0's spike crossed a link");
+        assert_eq!((h.on_core_deliveries, h.off_core_deliveries), (0, 1));
+        assert!((h.hops_per_spike().unwrap() - 1.0 / 6.0).abs() < 1e-15);
+        // Nothing firing at all is no source and no spike, and the ratio then has no value.
+        let quiet = spike_hops(&net, &p, &f, Some(2), &[0; 4]).unwrap();
+        assert_eq!((quiet.sources, quiet.spikes), (0, 0));
+        assert_eq!(quiet.hops_per_spike(), None);
+    }
+
+    /// A plan prints the cores it USED, not the cores it was offered. Every plan the display test
+    /// built filled every core it was given — a two-core placement of twelve neurons — so the two
+    /// numbers were the same one.
+    #[test]
+    fn a_plan_prints_the_cores_it_used_rather_than_the_cores_it_was_offered() {
+        let net = chain(3);
+        let plan = partition_greedy(&net, &CoreLimits::UNLIMITED, 8, 0).unwrap();
+        assert_eq!(plan.partition.n_cores, 8, "eight offered");
+        assert_eq!(plan.partition.used_cores(), 3, "three neurons cannot occupy eight cores");
+        assert!(plan.to_string().contains("on 3 cores"), "{plan}");
+        assert!(!plan.to_string().contains("on 8 cores"), "{plan}");
     }
 }
