@@ -823,8 +823,7 @@
  {
   "label": "the liquid is run event-driven rather than clocked",
   "old": "        let mut sim = self.to_sim(excitatory, inhibitory, dt, Mode::Clocked)?;",
-  "new": "        let mut sim = self.to_sim(excitatory, inhibitory, dt, Mode::EventDriven)?;",
-  "equivalent": "the crate's seventh invariant is that the two simulation modes produce the same spike train, tick for tick, and `sim::the_two_modes_produce_the_same_spike_train` is the gate on it; `Lif::EXACT_OVER_GAPS` is true, which is exactly the condition `Sim::new` requires before it will accept `Mode::EventDriven`, so this liquid is legal in both. `respond` observes the simulation only through the `fired` ids it feeds to the filter, and never through the ledger, where the two modes do differ (`neuron_updates_idle`). Same ids in the same order gives the same trace, bit for bit, so no assertion on a returned state can tell the two runs apart."
+  "new": "        let mut sim = self.to_sim(excitatory, inhibitory, dt, Mode::EventDriven)?;"
  },
  {
   "label": "the lattice metric drops the z axis",

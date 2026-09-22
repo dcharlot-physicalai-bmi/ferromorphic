@@ -62,14 +62,13 @@
  {
   "label": "latency coding does not clamp to the window",
   "old": "        Some(t.min(self.window - 1))",
-  "new": "        Some(t)",
-  "equivalent": "unreachable. `x` is clipped to at most one and must be strictly positive to get this far, so `(1 - x) * (window - 1)` is below `window - 1` and its rounding is at most `window - 1`. The clamp is there so that a future change to the span cannot silently put a spike outside the window — and the mutation that DOES change that span is caught by the interior values."
+  "new": "        Some(t)"
  },
  {
   "label": "a value above one is not clipped",
   "old": "        let x = x.min(1.0);",
   "new": "        let x = x;",
-  "equivalent": "Rust's float-to-integer cast saturates, so an `x` above one gives a negative product that becomes tick 0 — the same tick the clip produces. The clip states the intent (a value brighter than the brightest is as early as it gets) rather than leaving it to the cast's saturation, but no input can tell the two apart."
+  "equivalent": "the clip is the identity on every input that reaches it, by a bound rather than by a survey of the cast's behaviour. `tick_of` has already returned `None` for a NaN and for `x <= 0`, so the only inputs the clip can move are `x > 1`. For a finite one the next double above 1.0 is 1 + 2^-52, so `1.0 - x <= -2^-52` and that subtraction is exact; the span `(self.window - 1) as f64` is non-negative and is either +0.0 (window 1) or at least 1.0, so the product is either -0.0 or a negative number of magnitude at least 2^-52 — it cannot underflow to a positive — `.round()` of it is at most -0.0, and Rust's saturating float-to-integer cast makes that 0. For `x = inf` the product is -inf when `window > 1` and NaN when `window == 1`, the case the saturation sentence alone does not cover; `as u64` is 0 for both. The clipped path computes `(1.0 - 1.0) * span = +0.0 -> 0` at every window length. Both sides are tick 0 on every input above one, and the trailing `min(self.window - 1)` cannot separate them because `window >= 1` here. Pinned from the other side by `an_over_bright_value_lands_on_tick_zero_at_every_window_length`, which runs five window lengths (1, 2, 10, 1000, u64::MAX) against six over-bright values including `f64::MAX` and `inf`."
  },
  {
   "label": "a value of zero still spikes",

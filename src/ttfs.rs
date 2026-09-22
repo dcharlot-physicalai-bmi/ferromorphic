@@ -731,4 +731,48 @@ mod tests {
         assert_eq!(before.forward(&[Some(0.0); 3]).unwrap().winner(), None);
         assert_eq!(before.forward(&[Some(0.0); 3]).unwrap().spike_count, 0);
     }
+
+    /// The final `slope > 0.0` test is a real gate, not a restatement of each model's own rising
+    /// condition, because the two are computed from DIFFERENT inputs when the crossing lands
+    /// exactly on the prefix's last arrival.
+    ///
+    /// The hole this fills: the suite's crossings all land strictly inside their bracket, where
+    /// every `s = t − t_p` is positive and the recomputed sum really does equal
+    /// `−(x/τ_m)(a₂ − 2a₁x)`. The candidate filter is `t >= last`, which admits `t == last`, and
+    /// there [`Kernel::psp_slope`] returns `0.0` from its own `!(s > 0.0)` guard — so the last
+    /// input's term, the dominant one, is dropped from the recomputed slope while the quadratic's
+    /// rising test counts it at full weight. `t == last` is exactly `x == 1.0`, which the formula
+    /// produces whenever `4a₁θ` is below half an ulp of `a₂²` and `a₂` rounds equal to `a₁`.
+    ///
+    /// Measured on the inputs below: `a₂ = a₁ = disc = 1.0` exactly, `x = 1.0`, the rising test
+    /// `a₂ − 2a₁x = −1.0 < 0` passes, and the recomputed slope is
+    /// `−6.177_801_170_635_097e-19` — NEGATIVE. Accepting a non-zero slope instead of a positive
+    /// one therefore reports a spike on a FALLING membrane, violating [`Spike::slope`]'s own
+    /// "positive" and flipping the sign of every gradient [`gradients`] divides by it.
+    #[test]
+    fn a_crossing_that_lands_on_its_last_input_is_rejected_by_the_slope_and_not_by_the_model() {
+        let k = Kernel::Lif { tau_s: 1.0 };
+        let w = [1e-17, 1.0];
+        let t = [Some(0.0), Some(3.0)];
+        let theta = 1e-17;
+        // The prefix {both inputs}, measured from last = 3.0: the 1e-17 term is below half an ulp
+        // of 1.0 in every coefficient, so a2, a1 and the discriminant all round to exactly one
+        // and the root is exactly one. Spelled here with names of its own, because repeating the
+        // module's own lines verbatim would give the mutation harness two copies of text it
+        // mutates by exact match — which it reports as NOT-APPLIED, not as a catch.
+        let quad_x2 = w[0] * (-1.5f64).exp() + w[1];
+        let quad_x1 = w[0] * (-3.0f64).exp() + w[1];
+        assert_eq!((quad_x2, quad_x1), (1.0, 1.0));
+        let d = quad_x2 * quad_x2 - 4.0 * quad_x1 * theta;
+        assert_eq!(d, 1.0);
+        let root = (quad_x2 + d.sqrt()) / (2.0 * quad_x1);
+        assert_eq!(root, 1.0);
+        // The model's own condition says RISING; the honest slope at that instant says falling.
+        assert!(quad_x2 - 2.0 * quad_x1 * root < 0.0, "the quadratic's rising test passes");
+        let slope = w[0] * k.psp_slope(3.0) + w[1] * k.psp_slope(0.0);
+        assert_eq!(slope, -6.177_801_170_635_097e-19);
+        assert!(slope < 0.0, "the recomputed slope is negative: {slope}");
+        assert_eq!(k.first_spike(&w, &t, theta).unwrap(), None, "a falling membrane is not a spike");
+    }
+
 }

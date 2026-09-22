@@ -5487,4 +5487,36 @@ mod tests {
             other => panic!("expected a cycle refusal, got {other:?}"),
         }
     }
+
+    /// A `LIF` line writes its time constant BEFORE its resistance.
+    ///
+    /// Pins the byte order of one node's parameter keys. `Graph::to_text` is a `pub fn` returning
+    /// a `String` that this module's own doc calls the writer's canonical text, so what it returns
+    /// is the observable — not what the format can carry. The hole is that the round trips compare
+    /// a graph with a graph and a text with a text produced by the SAME writer, where a
+    /// permutation of one node's keys cancels on both sides, and the hand-written fixture texts
+    /// are `Scale`, `SumPool2d` and `Izhikevich` lines. Both needles occur exactly once in this
+    /// text: `MAGIC` is `ferromorphic-nir 1`, `shape=` and `v_reset=` do not contain " r=", and
+    /// the only other `tau` keys in the format are `CubaLIF`'s `tau_syn` and `tau_mem`.
+    #[test]
+    fn a_lif_line_writes_its_time_constant_before_its_resistance() {
+        let mut g = Graph::new();
+        g.push(
+            "l",
+            Node::Lif(Lif {
+                shape: vec![1],
+                tau: vec![2.0e-2],
+                r: vec![1.0e7],
+                v_leak: vec![-6.5e-2],
+                v_threshold: vec![-5.0e-2],
+                v_reset: vec![-6.5e-2],
+            }),
+        );
+        let text = g.to_text();
+        assert_eq!(text.matches(" tau=").count(), 1, "measured text: {text}");
+        assert_eq!(text.matches(" r=").count(), 1, "measured text: {text}");
+        let tau_at = text.find(" tau=").expect("the LIF line carries a tau key");
+        let r_at = text.find(" r=").expect("the LIF line carries an r key");
+        assert!(tau_at < r_at, "measured text: {text}");
+    }
 }

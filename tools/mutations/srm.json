@@ -82,8 +82,7 @@
  {
   "label": "srm0 applies an after-potential with no spike",
   "old": "let after = if last.is_some() { self.kernel.eta(t - t_hat, self.reset) } else { 0.0 };",
-  "new": "let after = self.kernel.eta(t - t_hat, self.reset);",
-  "equivalent": "with `last: None` the last-spike time is negative infinity, so the after-potential's argument is +infinity and eta returns -0.0 whatever the amplitude and time constant are; adding -0.0 leaves the drive exactly unchanged. The conditional states the intent and guards a future eta that is not exponential, but no value of the present one can tell the two apart."
+  "new": "let after = self.kernel.eta(t - t_hat, self.reset);"
  },
  {
   "label": "srm0 has no after-potential at all",
@@ -108,8 +107,7 @@
  {
   "label": "a delta synapse is said to carry current",
   "old": "        if self.kernel.is_delta() {\n            return Ok(0.0);\n        }\n",
-  "new": "",
-  "equivalent": "the filter is `f < t_hat` strictly, so every term's argument is `-(t_hat - f)/0` with a strictly positive numerator, which is negative infinity, and exp of it is exactly zero. The early return says why the answer is zero rather than leaving it to an infinity in an exponent."
+  "new": ""
  },
  {
   "label": "unsorted spikes are accepted",

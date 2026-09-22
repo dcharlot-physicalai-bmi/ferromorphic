@@ -573,4 +573,84 @@ mod tests {
         assert!(SdrError::Mismatched { a: 8, b: 9 }.to_string().contains("8 and 9"));
         assert!(SdrError::OutOfRange { index: 4, n: 4 }.to_string().contains("bit 4"));
     }
+
+    /// [`Sdr::overlap`] counts the size of the multiset intersection: a repeated index in the
+    /// RECEIVER cannot be matched twice against one index in the other.
+    ///
+    /// The hole: every `overlap` fixture in this module reaches the walk through `Sdr::new`,
+    /// `random`, `subsample`, `union` or `with_noise`, and all five end in `Sdr::new`, which
+    /// `sort_unstable`s and `dedup`s. So the whole suite only ever hands the walk strictly
+    /// increasing lists, and "after a match the left value is strictly greater than the right" is
+    /// a property of the CONSTRUCTOR rather than of the type. `Sdr` is
+    /// `pub struct Sdr { pub n: usize, pub on: Vec<usize> }` — the ascending-and-distinct promise
+    /// on the field is the constructor's, not the type's — and `overlap` re-derives nothing, so a
+    /// struct literal or a `push` after construction is one line of safe Rust away.
+    #[test]
+    fn overlap_cannot_match_one_bit_twice_against_a_repeat_in_the_receiver() {
+        let once = Sdr::new(8, vec![3]).unwrap();
+        let repeated = Sdr { n: 8, on: vec![3, 3] };
+        assert_eq!(repeated.w(), 2, "the fixture is not the two-entry list it is meant to be");
+        assert_eq!(repeated.overlap(&once).unwrap(), 1, "one bit of `once` was matched twice");
+        // The same list reached the other way, by pushing onto the public field after a
+        // constructor that would have de-duplicated it.
+        let mut grown = Sdr::new(8, vec![3]).unwrap();
+        grown.on.push(3);
+        assert_eq!(grown.overlap(&once).unwrap(), 1);
+        // The direction matters, and saying so is what makes the two lines above a measurement of
+        // the walk rather than of the fixture: a repeat in the ARGUMENT alone cannot overcount,
+        // because the cursor a match leaves behind is then the one the `Greater` branch advances.
+        assert_eq!(once.overlap(&repeated).unwrap(), 1);
+        assert_eq!(Sdr::new(8, vec![3, 3]).unwrap().on, vec![3], "the constructor stopped de-duplicating");
+        // And the walk still terminates on a longer pair with repeats on both sides.
+        let a = Sdr { n: 8, on: vec![1, 3, 3, 5, 5, 5, 7] };
+        let b = Sdr { n: 8, on: vec![0, 3, 5, 5, 6] };
+        assert_eq!(a.overlap(&b).unwrap(), 3, "3 once and 5 twice is the multiset intersection");
+    }
+
+    /// The upper end of the clamp in [`overlap_probability`] is unreachable, and this pins the
+    /// two facts that make it so rather than the conclusion.
+    ///
+    /// The hole: `every_probability_is_in_range_at_cortical_sizes` asserts `(0.0..=1.0)`, which
+    /// the clamp itself makes true — so no existing assertion can see whether it ever fires. What
+    /// decides that is arithmetic, in two halves.
+    ///
+    /// (a) Where the support is a single point the three log-binomials cancel EXACTLY: `s == n`
+    /// and `w == 0` force `b` and leave `X + 0 - X` with the same `X` from the same three
+    /// [`ln_factorial`] calls, and `w == n` and `s == 0` leave `0 + 0 - 0`. The sum is `+0.0`,
+    /// `exp` is 1.0, and there is nothing to round up.
+    ///
+    /// (b) Everywhere else the mode's probability is at most `1 - 1/n`. For any distribution
+    /// `Var <= diam² · (1 - P(mode))`, because `Var <= E[(B - mode)²]`; the hypergeometric's
+    /// variance is `w s (n-s)(n-w) / (n²(n-1))` and its support's diameter is at most
+    /// `min(w, s, n-w, n-s)`, so that ratio is at least `1/(4(n-1))`. [`MAX_BITS`] caps `n` at
+    /// `2²²`, so the true `ln` is at most `-5.96e-8` — and the exact minimum, by enumeration in
+    /// rationals, is `1 - P = 1/n` attained at `w = s = 1`, i.e. `ln <= -2.38e-7`. Against that
+    /// the computed `ln` carries the rounding of `x · ln(x)` at `x <= 2²²`, whose product lands
+    /// in `[2²⁵, 2²⁶)` — one ulp is `2⁻²⁷ = 7.45e-9`. Measured at `n = MAX_BITS`, `w = s = 1`:
+    /// computed `-2.30967998504638672e-7` against an exact `-2.38418607523276430e-7`, an error of
+    /// exactly one `2⁻²⁷`, 32 times inside the margin.
+    #[test]
+    fn the_overlap_probability_never_reaches_the_clamps_upper_end() {
+        // (a) the degenerate families, where the answer is 1 and the cancellation is exact.
+        for n in [2u64, 3, 255, 256, 257, 65536, 1_000_000, MAX_BITS as u64] {
+            for (w, s, b) in [(1, n, 1), (n, 1, 1), (0, n / 2, 0), (n / 2, 0, 0), (n, n, n)] {
+                let ln = ln_choose(s, b).unwrap() + ln_choose(n - s, w - b).unwrap() - ln_choose(n, w).unwrap();
+                assert_eq!(ln, 0.0, "n = {n}, w = {w}, s = {s}: a single-point support gave ln = {ln:e}");
+                assert!(ln.is_sign_positive(), "n = {n}: the cancellation produced a negative zero");
+                let p = overlap_probability(usize::try_from(n).unwrap(), usize::try_from(w).unwrap(), usize::try_from(s).unwrap(), usize::try_from(b).unwrap());
+                assert_eq!(p, Some(1.0), "n = {n}, w = {w}, s = {s}, b = {b}");
+            }
+        }
+        // (b) the extremal non-degenerate configuration, w = s = 1, where 1 - P is exactly 1/n
+        // and every other configuration is further from 1.
+        let rounding = (2.0f64).powi(-27);
+        for n in [256u64, 65536, 1_000_000, MAX_BITS as u64] {
+            let ln = ln_choose(1, 0).unwrap() + ln_choose(n - 1, 1).unwrap() - ln_choose(n, 1).unwrap();
+            assert!(ln < -0.8 / n as f64, "n = {n}: ln = {ln:e} is above the bound -1/n");
+            assert!(ln.abs() > 25.0 * rounding, "n = {n}: ln = {ln:e} is within 25 roundings of x ln x, {rounding:e}");
+            let p = overlap_probability(usize::try_from(n).unwrap(), 1, 1, 0).unwrap();
+            assert!(p < 1.0, "n = {n}: the mode's probability rounded up to {p}");
+            assert_eq!(p, ln.exp(), "the clamp moved a value it is not supposed to reach");
+        }
+    }
 }

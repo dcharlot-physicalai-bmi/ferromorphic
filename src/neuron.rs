@@ -1212,4 +1212,33 @@ mod tests {
             assert!(n.u.is_finite(), "u went non-finite");
         }
     }
+
+    /// An adapting cell whose steady state only TOUCHES the resting threshold has no interspike
+    /// interval, and [`AdaptiveLif::adapted_isi`] must refuse it from its `V∞ > θ₀` guard.
+    ///
+    /// The hole this fills: the suite's only sub-threshold case is `V∞ = −55 mV` against
+    /// `θ₀ = −50 mV`, STRICTLY below, where `gap(t) → V∞ − θ₀ < 0` and the 200-doubling escape
+    /// really is what refuses. At equality that limit is `0`, not negative, so the escape is
+    /// unreachable: `gap` is exactly `+0.0` as soon as `e^{t/τ_a} − 1` overflows, `0.0 < 0.0` is
+    /// false, the doubling loop stops after eight steps and 200 bisections hand back the overflow
+    /// boundary as if it were an interval. Measured: with only the finiteness half of the guard
+    /// left, this call returns `Some(3.548_913_564_466_92)` — 3.55 s of "interval" for a cell
+    /// whose membrane never reaches its threshold.
+    #[test]
+    fn a_cell_whose_steady_state_only_touches_the_threshold_has_no_adapted_interval() {
+        let cell = AdaptiveLif { lif: Lif::default(), theta_0: -65e-3, tau_a: 5e-3, beta: 3e-3, theta: -65e-3 };
+        // V∞(0) = v_rest + r_m·0 = −65 mV, bit for bit θ₀: approached, never crossed.
+        assert_eq!(cell.lif.v_inf(0.0), cell.theta_0);
+        assert_eq!(cell.adapted_isi(0.0), None, "V∞ = θ₀ is reached only in the limit");
+        // And the bracket search cannot be what refuses. `hi` starts at t_ref + τ_m and doubles;
+        // the eighth doubling is past 3.549 s, where t/τ_a exceeds ln(f64::MAX) and expm1 is +∞.
+        // v_reset = V∞ here, so the charging term is exactly zero and gap is +0.0 — not `< 0.0`.
+        let hi = (cell.lif.t_ref + cell.lif.tau_m) * 256.0;
+        let v_inf = cell.lif.v_inf(0.0);
+        let charged = v_inf + (cell.lif.v_reset - v_inf) * (-(hi - cell.lif.t_ref) / cell.lif.tau_m).exp();
+        assert_eq!(charged, v_inf);
+        assert_eq!((hi / cell.tau_a).exp_m1(), f64::INFINITY, "hi = {hi}");
+        assert_eq!(charged - cell.theta_0 - cell.beta / (hi / cell.tau_a).exp_m1(), 0.0);
+    }
+
 }

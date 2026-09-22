@@ -47,8 +47,7 @@
  {
   "label": "the normal draw takes the sine rather than the cosine of its angle",
   "old": "    (-2.0 * u1.ln()).sqrt() * (core::f64::consts::TAU * u2).cos()",
-  "new": "    (-2.0 * u1.ln()).sqrt() * (core::f64::consts::TAU * u2).sin()",
-  "equivalent": "sin(2*pi*u) and cos(2*pi*u) have exactly the same distribution for u uniform on [0, 1), because\n2*pi*u is uniform on the circle and the circle is invariant under the quarter turn that carries\ncos to sin. Box-Muller's two outputs, R*cos(theta) and R*sin(theta), are both standard normal by\nconstruction — that is the whole content of the transform — so this edit swaps which of the pair\nis returned and changes no moment of the result. Every consumer in this module is statistical\n(a Monte Carlo variance to 3%, a kurtosis to 0.12, a classifier accuracy bound), and no test\npins the stream itself: `the_same_seed_gives_the_same_recording` compares two runs of the\nGENERATOR, which never calls `gaussian`. A test COULD pin the returned sequence against a golden\nvector, but no test could tell the two apart by a moment or by a downstream accuracy."
+  "new": "    (-2.0 * u1.ln()).sqrt() * (core::f64::consts::TAU * u2).sin()"
  },
  {
   "label": "the normal draw does not guard the logarithm against a zero uniform",
@@ -208,8 +207,7 @@
  {
   "label": "the sweep's upper cursor is not pulled up to the lower one after a gap",
   "old": "            if hi < lo {\n                hi = lo;\n            }\n            while hi < b.len() && b[hi] <= ta + self.search_half_s {",
-  "new": "            if false {\n                hi = lo;\n            }\n            while hi < b.len() && b[hi] <= ta + self.search_half_s {",
-  "equivalent": "The fix-up cannot change where `hi` lands, because the loop that follows it always walks `hi` up\nto the same index. `b` is sorted and `lo` has just been advanced to the first index with\nb[lo] >= ta - search_half_s, so every index j < lo has b[j] < ta - search_half_s <= ta +\nsearch_half_s and therefore SATISFIES the loop's own condition `b[hi] <= ta + search_half_s`. The\nloop is monotone and only stops at the first index with b[hi] > ta + search_half_s (or at\nb.len()), which is at or after `lo` either way: starting it at `lo` and starting it at an older,\nsmaller `hi` reach the same index, differing only in how many iterations they take. `lo` and `hi`\nare read afterwards only as the slice `b[lo..hi]` and as the count `hi - lo`, both of which are\ntherefore the same. The fix-up is defensive code, not a correction, and no test could tell."
+  "new": "            if false {\n                hi = lo;\n            }\n            while hi < b.len() && b[hi] <= ta + self.search_half_s {"
  },
  {
   "label": "the histogram covers half the search window it claims to",
@@ -765,7 +763,7 @@
   "label": "the association sweep's upper cursor is not pulled up to the lower one after a gap",
   "old": "            if hi < lo {\n                hi = lo;\n            }\n            while hi < post.len() && post[hi].0 <= tp + self.max_lag_s {",
   "new": "            if false {\n                hi = lo;\n            }\n            while hi < post.len() && post[hi].0 <= tp + self.max_lag_s {",
-  "equivalent": "The same argument as the offset sweep's fix-up. `post` is in non-decreasing time order because it\nis filtered out of an `Aligned`, which is sorted; `lo` has just been advanced to the first index\nwith post[lo].0 >= tp - max_lag_s, so every index j < lo has post[j].0 < tp - max_lag_s <= tp +\nmax_lag_s and passes the following loop's condition. That loop is monotone and stops at the first\nindex past tp + max_lag_s, which is at or after `lo` whether it started from `lo` or from an older\nsmaller `hi`. The only later reads are `post[lo..hi]` and the pair count, both unchanged. No test\ncould tell, because there is nothing to tell."
+  "equivalent": "The pull-up cannot change where `hi` lands, and the reason is the SIGN of the window, not the\nsortedness of `post`. `max_lag_s` is a PRIVATE field and `CrossModalAssociator::new` is its only\nconstructor, which takes it through `positive()`, so `max_lag_s = L > 0` for every value this\ntype can hold. Given L > 0 the two cursors cannot cross: `hi` stops before `lo` only at an index\nj with post[j].0 > tp + L, and `lo` has passed j only if post[j].0 < tp - L, and the two together\nrequire 2L < 0. So every index in [hi, lo) satisfies the following loop's own condition\npost[hi].0 <= tp + L; the loop walks over all of them and stops at the same index whether it\nstarted at `lo` or at an older, smaller `hi`, differing only in how many iterations it takes.\nThat argument needs no ordering assumption on `post` at all, which is why it is written this way\nrather than around `Aligned` being sorted. `lo` and `hi` are read afterwards only as the slice\npost[lo..hi] and through the pair count, both therefore unchanged, so the branch is defensive\ncode against a window the type cannot hold. The identically-shaped pull-up in the OFFSET sweep is\nNOT dead and its `equivalent` key has been removed: `OffsetEstimator::search_half_s` is `pub` and\n`estimate` re-reads it without revalidating, so there L < 0 is reachable and the cursors do cross\n(`the_offset_sweep_answers_rather_than_crossing_its_cursors_on_a_negative_window`)."
  },
  {
   "label": "a learned weight is read out of the transposed cell",
@@ -1020,8 +1018,7 @@
  {
   "label": "the branch scale is the total energy rather than the mean",
   "old": "            let rms = (energy / x.len() as f64).sqrt();",
-  "new": "            let rms = energy.sqrt();",
-  "equivalent": "Every branch is fitted on the same trials, so `x.len()` is the same number n for every b. The edit\ntherefore multiplies EVERY scale[b] by the same sqrt(n) — it is one common factor, not a per-branch\none. The vote is `total[k] += weight[b] * v / scale[b]`, so each class total is divided by that\nsame sqrt(n), and the arg-max over k is unchanged for every trial. `LateFusion::predict` returns\nthe identical class on every input, so `accuracy`, `reliability` and every downstream bound are\nbit-identical. `scale` is not public and `vote_weights` reports `weight`, not `scale`, so no test\ncould read the factor directly either. The mutation that is NOT equivalent, because the square is\na per-branch nonlinearity, is the mean-square entry above it."
+  "new": "            let rms = energy.sqrt();"
  },
  {
   "label": "the per-branch scale is dropped, so a branch with more features shouts louder",
@@ -1196,8 +1193,7 @@
  {
   "label": "the label and the asynchrony are the other way round",
   "old": "            let gap = if label == 1 { 0.0 } else { self.async_s };",
-  "new": "            let gap = if label == 1 { self.async_s } else { 0.0 };",
-  "equivalent": "Both the training set and the test set come from this same generator, so this edit relabels the\ntwo classes consistently on every trial it produces: the trial that used to be drawn with gap 0\nand label 1 is now drawn with gap 0 and label 0, and vice versa. Neither the feature vector for a\ngiven draw of the random stream nor the partition of trials into two groups changes; only the u32\nattached to each group does. `NearestCentroid` accumulates a centroid per label and predicts the\nnearest, so swapping the two labels swaps the two centroids and swaps every prediction with it,\nand `metrics::accuracy` compares prediction against truth — both swapped — giving the identical\nnumber. The bounds on `ea`, `la`, `blind`, `reliability()` and the early/late gap are therefore\nbit-for-bit unchanged, and the one assertion that is not a pure accuracy, the count of trials\npredicted class 1, is bounded symmetrically at one fifth and four fifths of the test set."
+  "new": "            let gap = if label == 1 { self.async_s } else { 0.0 };"
  },
  {
   "label": "the pair's centre is fixed rather than spread through the trial",

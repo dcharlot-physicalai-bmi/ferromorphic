@@ -639,8 +639,7 @@
  {
   "label": "a silent input is multiplied through anyway",
   "old": "                    if drive[j] != 0.0 {\n                        z += row[j] * drive[j];\n                    }",
-  "new": "                    if true {\n                        z += row[j] * drive[j];\n                    }",
-  "equivalent": "the skipped term is row[j] * drive[j] with drive[j] exactly 0.0. For a finite weight that product is +0.0 or -0.0, and adding either to z leaves z bit-identical except when z is -0.0, where -0.0 + 0.0 = +0.0 — and +0.0 and -0.0 produce the same current z * gain, the same membrane update v += i * dt / c and the same comparison against v_th, so the two forms give the same spike train, the same counts and the same ledger for every network this crate can build: DenseRelu::new refuses a non-finite weight and apply_scales scales by a finite, strictly positive ratio. The one state that would differ is an INFINITE weight, where inf * 0.0 is NaN and the mutant poisons the membrane while the original skips the term; that state is unreachable through any constructor and can only be written into the public SpikingLayer::w, which check_structure does not re-check for finiteness. The branch is an arithmetic no-op kept for speed, and the gap in check_structure is a separate finding."
+  "new": "                    if true {\n                        z += row[j] * drive[j];\n                    }"
  },
  {
   "label": "the drive current drops the gain",

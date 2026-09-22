@@ -256,6 +256,19 @@ fn bisect_rest(f: impl Fn(f64) -> f64) -> Option<f64> {
             break;
         }
         let fmid = f(mid);
+        // The guard above tests `f` at the two ENDPOINTS only, and a bracket whose ends are finite
+        // and opposite can still hold a `NaN` strictly inside it. `opposite` reads both arguments
+        // through comparisons and every comparison against `NaN` is false, so `opposite(flo, NaN)`
+        // is false — which is the branch that MOVES `lo` and carries the value with it. A `NaN`
+        // written into `flo` makes `opposite(flo, ·)` false for the rest of the loop, `lo` walks to
+        // the top of the bracket, and the function answers `Some(-40.0)`: the bracket endpoint this
+        // family of functions promises never to answer with (see [`ReducedHh::rest`], where an
+        // audit found exactly that answer). An infinity is a different matter and is NOT refused
+        // here: `opposite` reads `+inf` as positive and `-inf` as negative, which is a true sign
+        // and keeps the bisection a sign search. Only the value with no sign is refused.
+        if fmid.is_nan() {
+            return None;
+        }
         if opposite(flo, fmid) {
             hi = mid;
         } else {
@@ -3470,4 +3483,35 @@ mod tests {
         }
         assert!(y.v < s.peak_mv, "the sample before the peak is {} mV", y.v);
     }
+
+    /// A `NaN` strictly inside the bracket is refused, rather than answered with a bracket
+    /// endpoint. `bisect_rest`'s finiteness guard runs on `f(-90)` and `f(-40)` only; nothing
+    /// looked at the interior, and `opposite(flo, NaN)` is false — every comparison against `NaN`
+    /// is — which is precisely the branch that moves `lo` AND copies the value into `flo`. From
+    /// there `opposite(NaN, .)` is false forever, `lo` climbs, and the answer is `-40.0`: the
+    /// bracket endpoint. MEASURED before the `is_nan` guard was added: this call returned
+    /// `Some(-40.0)` while the same function without the `NaN` returned `-65.0`, the root.
+    ///
+    /// Why the suite could not see it: `the_bisection_refuses_an_infinite_bracket_as_well_as_a_non_finite_one`
+    /// builds three closures that are non-finite at the ENDPOINTS, which the existing guard
+    /// catches, and `a_non_finite_parameter_is_refused_rather_than_answered_with_a_bracket_endpoint`
+    /// poisons a parameter, which poisons the endpoints too. No fixture in this module ever handed
+    /// `bisect_rest` a function that is finite at both ends and singular in between.
+    #[test]
+    fn the_bisection_refuses_a_nan_inside_the_bracket_rather_than_answering_an_endpoint() {
+        // -65 is the first midpoint of [-90, -40] exactly: 0.5 * (-90 + -40).
+        assert_eq!(0.5 * (-90.0_f64 + -40.0), -65.0);
+        let poisoned = super::bisect_rest(|v| if v == -65.0 { f64::NAN } else { v + 65.0 });
+        assert_eq!(poisoned, None, "a bracket with no evaluable interior was answered anyway");
+        // The same function without the singularity still finds its root, so the refusal above is
+        // the NaN and not the bracket.
+        let clean = super::bisect_rest(|v| v + 65.0).expect("a sign change in the bracket");
+        assert!((clean + 65.0).abs() < 1e-12, "found {clean} mV, not the root at -65");
+        // An INFINITY at that same interior point is not refused: it has a sign, `opposite` reads
+        // it as positive, and the bisection stays a sign search. The root of `v + 70` is at -70.
+        let spiked = super::bisect_rest(|v| if v == -65.0 { f64::INFINITY } else { v + 70.0 })
+            .expect("a sign change in the bracket");
+        assert!((spiked + 70.0).abs() < 1e-12, "an infinite interior value lost the bracket: {spiked}");
+    }
+
 }

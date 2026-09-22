@@ -82,8 +82,7 @@
  {
   "label": "the group limit is not enforced",
   "old": "            if firings.len() >= self.n.min(MAX_GROUP) {\n                break;\n            }\n",
-  "new": "",
-  "equivalent": "unreachable as the rule stands: a neuron fires at most once, so a group cannot exceed the neuron count and the bound is never the thing that stops the loop. It is the stop that keeps a future change to the fire-once rule from running forever, and the mutation that removes THAT rule is caught by the exact group census."
+  "new": ""
  },
  {
   "label": "groups shorter than the minimum are kept",

@@ -168,6 +168,17 @@ pub enum MapError {
         /// Which limit was zero: `"neurons per core"` or `"synapses per core"`.
         which: &'static str,
     },
+    /// The fabric claims more cores than a `u32` can name, so no route on it can be described.
+    ///
+    /// [`Fabric::n_cores`] is `cols * rows` in a `u64` over two `u32` dimensions, so
+    /// `100_000 x 100_000` is 1e10 cores against the `u32::MAX + 1` a core index can hold.
+    /// Refused rather than truncated: see [`Fabric::cores_are_addressable`].
+    FabricNotAddressable {
+        /// Cores the fabric claims.
+        n_cores: u64,
+        /// Cores a `u32` index can name, which is `u32::MAX + 1`.
+        nameable: u64,
+    },
     /// The routes from one source did not union into a tree.
     ///
     /// A multicast tree is the union of the point-to-point routes from one root, and that union is
@@ -266,6 +277,10 @@ impl fmt::Display for MapError {
                  with {n_cores} cores; try another seed or refinement"
             ),
             Self::ZeroCapacity { which } => write!(f, "{which} is zero, which holds nothing"),
+            Self::FabricNotAddressable { n_cores, nameable } => write!(
+                f,
+                "the fabric claims {n_cores} cores and a core index names at most {nameable}"
+            ),
             Self::RouteUnionIsNotATree { root, cores, edges } => write!(
                 f,
                 "routes from core {root} touched {cores} cores over {edges} links; a tree needs \
@@ -398,6 +413,27 @@ impl Fabric {
         }
     }
 
+    /// Whether every core on this fabric has an index a `u32` can name.
+    ///
+    /// ⛔ [`Fabric::n_cores`] is `cols * rows` in a `u64` over two `u32` dimensions, so a fabric
+    /// can claim more cores than a core index can hold: `100_000 x 100_000` is 1e10 against
+    /// `u32::MAX + 1`. Everything here that NAMES a core builds the name as `row * cols + col`,
+    /// whose largest value is exactly `n_cores - 1`, so the cast into a `u32` is exact when and
+    /// only when `n_cores <= u32::MAX + 1`.
+    ///
+    /// Past that point [`Fabric::route`] and [`Fabric::neighbours`] refuse and [`multicast_tree`]
+    /// returns [`MapError::FabricNotAddressable`], rather than truncating — the same call
+    /// [`Fabric::diameter`] makes about its own cast. What truncation did instead was **silent**:
+    /// `multicast_tree(&Mesh2D { cols: 100_000, rows: 100_000 }, 4_294_967_295, &[5, 99_999])`
+    /// returned `RouteUnionIsNotATree` with 185,892 cores over 185,892 links, the tree guard
+    /// firing on a mesh, because two of the routes it unioned named cores they never passed
+    /// through. [`Fabric::hops`] is unaffected and stays answerable: it is closed-form `u64` and
+    /// `i64` arithmetic and never forms a core index.
+    #[must_use]
+    pub fn cores_are_addressable(&self) -> bool {
+        self.n_cores() <= u64::from(u32::MAX) + 1
+    }
+
     /// `(cols, rows)` for the two-dimensional fabrics, `None` for a crossbar, which has no geometry.
     #[must_use]
     pub fn dims(&self) -> Option<(u32, u32)> {
@@ -493,10 +529,17 @@ impl Fabric {
     /// Deduplication matters on a small torus: on a fabric two columns wide, stepping `+1` and
     /// stepping `-1` reach the same core, and counting it twice would make a degree histogram wrong
     /// and a breadth-first search do the same work twice.
+    ///
+    /// Empty for a core past the fabric, and empty for a fabric whose cores a `u32` cannot name —
+    /// see [`Fabric::cores_are_addressable`].
     #[must_use]
     pub fn neighbours(&self, c: u32) -> Vec<u32> {
         let n = self.n_cores();
         if u64::from(c) >= n {
+            return Vec::new();
+        }
+        // Same cast, same refusal as `Fabric::route`: a neighbour is a core NAME.
+        if !self.cores_are_addressable() {
             return Vec::new();
         }
         let mut v: Vec<u32> = match *self {
@@ -529,7 +572,8 @@ impl Fabric {
     /// Dimension-order on the mesh and torus — all of the `x` displacement, then all of the `y` —
     /// which is what a mesh network-on-chip implements and what makes it deadlock-free (Dally and
     /// Towles, DAC 2001). Diagonal-first on the triangular torus. `None` for an index past the
-    /// fabric.
+    /// fabric, and `None` for a fabric whose cores a `u32` cannot name — see
+    /// [`Fabric::cores_are_addressable`].
     ///
     /// The length is always `hops(a, b) + 1`, and every consecutive pair is a link. Both are
     /// asserted in `a_route_has_exactly_as_many_steps_as_the_hop_count_and_uses_only_links`.
@@ -537,6 +581,11 @@ impl Fabric {
     pub fn route(&self, a: u32, b: u32) -> Option<Vec<u32>> {
         let n = self.n_cores();
         if u64::from(a) >= n || u64::from(b) >= n {
+            return None;
+        }
+        // A route is a list of core NAMES, and on a fabric past the `u32` index space `walk`
+        // would build them by an arithmetic that wraps. See `Fabric::cores_are_addressable`.
+        if !self.cores_are_addressable() {
             return None;
         }
         if a == b {
@@ -734,11 +783,19 @@ impl McastTree {
 ///
 /// # Errors
 ///
-/// [`MapError::CoreNotOnFabric`] for any index past the fabric, and
-/// [`MapError::RouteUnionIsNotATree`] if the fabric's routing is not prefix-closed, in which case
-/// the union has a cycle and its edge count would understate the replication.
+/// [`MapError::CoreNotOnFabric`] for any index past the fabric;
+/// [`MapError::FabricNotAddressable`] for a fabric whose cores a `u32` cannot name, whose routes
+/// this module declines to invent; and [`MapError::RouteUnionIsNotATree`] if the fabric's routing
+/// is not prefix-closed, in which case the union has a cycle and its edge count would understate
+/// the replication.
 pub fn multicast_tree(fabric: &Fabric, root: u32, dests: &[u32]) -> Result<McastTree, MapError> {
     let n = fabric.n_cores();
+    if !fabric.cores_are_addressable() {
+        return Err(MapError::FabricNotAddressable {
+            n_cores: n,
+            nameable: u64::from(u32::MAX) + 1,
+        });
+    }
     for &c in core::iter::once(&root).chain(dests) {
         if u64::from(c) >= n {
             return Err(MapError::CoreNotOnFabric { core: c, n_cores: n });
@@ -4443,5 +4500,104 @@ mod tests {
         assert_eq!(plan.partition.used_cores(), 3, "three neurons cannot occupy eight cores");
         assert!(plan.to_string().contains("on 3 cores"), "{plan}");
         assert!(!plan.to_string().contains("on 8 cores"), "{plan}");
+    }
+
+    /// Pins the empty-ring guard in `ring_delta`: a ring of no cores has no displacement at all,
+    /// so the guard returns zero and not a hop.
+    ///
+    /// The suite could not see it because `ring_delta` is reached only from the `Torus2D` arms of
+    /// `Fabric::hops` and `Fabric::route`, and both of those return before the match when
+    /// `n_cores()` is zero — which it is for every torus with a zero dimension, since `n_cores()`
+    /// is `cols * rows`. The hole is a private helper whose first branch no PUBLIC entry point can
+    /// reach; a test in this module can reach it by the `super::` path, as `control.rs` already
+    /// does for `clamp_sym`.
+    #[test]
+    fn an_empty_ring_has_no_displacement() {
+        assert_eq!(super::ring_delta(0, 0, 0), 0, "a ring of no cores spans nothing");
+        assert_eq!(super::ring_delta(7, 3, 0), 0, "and says so whatever it is asked about");
+        // The guard is the only special case: on a real ring the answer is the signed short way
+        // round, which is what the two callers take the absolute value of or walk along.
+        assert_eq!(super::ring_delta(0, 1, 4), 1);
+        assert_eq!(super::ring_delta(0, 3, 4), -1, "three forward on a ring of four is one back");
+        assert_eq!(super::ring_delta(0, 2, 4), 2, "the exact tie takes the forward branch");
+    }
+
+    /// Pins that a tree stores each link as `(lower core, higher core)` — the orientation its own
+    /// doc promises — rather than the direction the route happened to walk it in.
+    ///
+    /// The suite could not see it because every multicast fixture reads `hops`, `unicast_hops`,
+    /// `saving` or `crossings`, and all four are blind to the order inside a pair: `hops` is
+    /// `edges.len()`, and `crossings`' predicate `a / cpc != b / cpc` is symmetric in its two
+    /// arguments. `multicast_and_unicast_agree_for_a_single_destination` builds hundreds of these
+    /// trees over eleven fabrics and asserts only on the two hop counts. The hole is a `pub` field
+    /// that no assertion in the module reads.
+    #[test]
+    fn a_tree_stores_each_link_with_its_lower_core_first() {
+        // `route(1, 0)` on a crossbar is [1, 0], so the single window is walked high to low and
+        // the stored pair has to be its reverse.
+        let t = multicast_tree(&Fabric::Crossbar { cores: 2 }, 1, &[0]).unwrap();
+        assert_eq!(t.edges, vec![(0, 1)]);
+        // A longer descent on a fabric the module already uses: `route(3, 0)` is [3, 2, 1, 0], so
+        // every one of the three windows is high to low.
+        let f = Fabric::Mesh2D { cols: 4, rows: 1 };
+        let t = multicast_tree(&f, 3, &[0]).unwrap();
+        assert_eq!(t.edges, vec![(0, 1), (1, 2), (2, 3)]);
+        assert_eq!(t.hops, 3, "the count is blind to the order and is 3 either way");
+        assert_eq!(t.crossings(2), Some(1), "so is the crossing predicate");
+        // And the invariant over every root of a fabric with both axes and wraparound, delivering
+        // to every core: no stored pair is ever descending.
+        let f = Fabric::Torus2D { cols: 3, rows: 3 };
+        let dests: Vec<u32> = (0..9).collect();
+        for root in 0..9u32 {
+            let t = multicast_tree(&f, root, &dests).unwrap();
+            for &(a, b) in &t.edges {
+                assert!(a <= b, "root {root} stored the link ({a}, {b}) high end first");
+            }
+        }
+    }
+
+    /// Pins that a fabric claiming more cores than a `u32` can name is refused by everything that
+    /// NAMES a core, rather than having its core arithmetic truncated into a `u32`.
+    ///
+    /// `n_cores()` is `cols * rows` in a `u64` over two `u32` dimensions, so `100_000 x 100_000`
+    /// is 1e10 cores while a core index is a `u32`. `walk` named every core it emitted as
+    /// `row * cols + col` cast to `u32`, and past `u32::MAX + 1` cores that cast wrapped, so
+    /// `route` returned lists naming cores it had never passed through. Measured on the
+    /// unmutated code before this guard existed:
+    /// `multicast_tree(&Mesh2D { cols: 100_000, rows: 100_000 }, 4_294_967_295, &[5, 99_999])`
+    /// returned `Err(RouteUnionIsNotATree { root: 4_294_967_295, cores: 185_892, edges: 185_892 })`
+    /// — the tree guard firing on a MESH, whose dimension-order routing is prefix-closed, because
+    /// two of the routes it unioned were fiction.
+    ///
+    /// The suite could not see it because every fabric it builds has fewer than 2^32 cores; the
+    /// hole is an input range, not a branch. `Fabric::diameter` already refused its own cast on
+    /// exactly this ground and carries the ⛔ that says so; `walk`'s cast was the one left.
+    #[test]
+    fn a_fabric_with_cores_a_u32_cannot_name_is_refused_rather_than_truncated() {
+        let f = Fabric::Mesh2D { cols: 100_000, rows: 100_000 };
+        assert_eq!(f.n_cores(), 10_000_000_000);
+        assert!(!f.cores_are_addressable());
+        assert_eq!(f.route(4_294_967_295, 5), None, "a route it cannot name is not invented");
+        assert!(f.neighbours(4_294_967_295).is_empty());
+        assert_eq!(
+            multicast_tree(&f, 4_294_967_295, &[5, 99_999]).unwrap_err(),
+            MapError::FabricNotAddressable { n_cores: 10_000_000_000, nameable: 1 << 32 }
+        );
+        // The DISTANCE is closed-form u64 and i64 arithmetic that never forms a core index, so it
+        // is still answerable and still right: 32,704 columns plus 42,949 rows.
+        assert_eq!(f.hops(4_294_967_295, 5), Some(110_239));
+        assert_eq!(f.hops(4_294_967_295, 5), Some(67_290 + 42_949));
+        // The boundary is exact, not conservative: the largest name `walk` can form is
+        // `(rows - 1) * cols + (cols - 1)`, which is `n_cores - 1`. Exactly 2^32 cores fit.
+        let ok = Fabric::Mesh2D { cols: 65_536, rows: 65_536 };
+        assert_eq!(ok.n_cores(), 1u64 << 32);
+        assert!(ok.cores_are_addressable());
+        assert_eq!(ok.route(u32::MAX, u32::MAX - 1), Some(vec![u32::MAX, u32::MAX - 1]));
+        assert_eq!(ok.neighbours(u32::MAX), vec![u32::MAX - 65_536, u32::MAX - 1]);
+        // One core more and no core index can name the last one.
+        let over = Fabric::Torus2D { cols: 65_536, rows: 65_537 };
+        assert_eq!(over.n_cores(), (1u64 << 32) + 65_536);
+        assert!(!over.cores_are_addressable());
+        assert_eq!(over.route(0, 1), None);
     }
 }

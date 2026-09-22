@@ -461,4 +461,59 @@ mod tests {
         assert!(rate_decode(10, 5, 0.0, 100.0).is_none());
         assert!(rate_decode(10, 5, 1e-3, 0.0).is_none());
     }
+
+    /// A window wider than the mantissa still puts its dimmest spike INSIDE the window.
+    ///
+    /// Pins the clamp in [`LatencyEncoder::tick_of`]: `t.min(self.window - 1)` is load-bearing, not
+    /// defensive. The suite could not see it because every latency fixture uses a window of 10, 100
+    /// or 1,000 — the hole is the shape "the fixture's own window is small enough that the
+    /// `u64 -> f64` cast is exact". `window` is a public `u64` with no upper bound, and for
+    /// `window - 1 > 2^53` the cast rounds to NEAREST and can round UP: the product `(1 - x) *
+    /// (window - 1) as f64` is then an f64 strictly greater than the integer `window - 1`, and
+    /// `as u64` converts it back to a tick one past the end.
+    ///
+    /// Measured: `(u64::MAX - 1) as f64` is 2^64 = 18446744073709551616, because the two
+    /// neighbouring doubles are 2^64 (distance 2) and 2^64 - 2048 (distance 2046); without the
+    /// clamp the returned tick is `u64::MAX`, which is the window's length rather than a tick in
+    /// it.
+    #[test]
+    fn a_window_wider_than_the_mantissa_still_spikes_inside_itself() {
+        let e = LatencyEncoder::new(u64::MAX);
+        assert_eq!((e.window - 1) as f64, 18_446_744_073_709_551_616.0, "the cast rounds UP");
+        assert_eq!(1.0 - 1e-300, 1.0, "1e-300 is far below the half-ulp of 1.0");
+        let t = e.tick_of(1e-300).expect("a positive value spikes");
+        assert!(t < e.window, "tick {t} is outside a window of {}", e.window);
+        assert_eq!(t, u64::MAX - 1, "the dimmest value lands on the LAST tick");
+        // The same rounding at the smallest window where it can happen: `window - 1` is then the
+        // exact midpoint of two doubles and the tie goes to the even one, which is upward.
+        let m = LatencyEncoder::new(9_007_199_254_740_996);
+        assert_eq!((m.window - 1) as f64, 9_007_199_254_740_996.0, "the tie rounds UP");
+        assert_eq!(m.tick_of(1e-300), Some(9_007_199_254_740_995));
+    }
+
+    /// Every value brighter than the brightest lands on tick 0, at every window length.
+    ///
+    /// Pins the clip `x.min(1.0)` in [`LatencyEncoder::tick_of`] against the one window the suite
+    /// never uses with an over-bright input: `window == 1`, where `(window - 1) as f64` is `+0.0`
+    /// and the unclipped product `(1 - inf) * 0.0` is NaN rather than a negative number. The hole
+    /// is the shape "the out-of-range sweep runs at one window length only" — the existing sweep
+    /// is a ten-tick window, where the product is `-inf` and the saturating cast is the whole
+    /// story.
+    ///
+    /// This review did not locate an input on which the clip changes the answer: for a finite
+    /// `x > 1` the difference `1.0 - x` is at most `-2^-52` and exactly representable, so the
+    /// product with a non-negative `(window - 1) as f64` is `<= -0.0` and the saturating cast
+    /// gives 0 either way, and the `window == 1` NaN casts to 0 as well.
+    #[test]
+    fn an_over_bright_value_lands_on_tick_zero_at_every_window_length() {
+        for window in [1u64, 2, 10, 1_000, u64::MAX] {
+            let e = LatencyEncoder::new(window);
+            for x in [1.0, 1.0 + f64::EPSILON, 2.0, 1e9, f64::MAX, f64::INFINITY] {
+                assert_eq!(e.tick_of(x), Some(0), "window {window}, x {x}");
+            }
+        }
+        // The two products the clip stands in front of, spelled out: one NaN, one -inf.
+        assert!(((1.0 - f64::INFINITY) * 0.0).is_nan(), "window 1 makes the span +0.0");
+        assert_eq!((1.0 - f64::INFINITY) * 9.0, f64::NEG_INFINITY);
+    }
 }

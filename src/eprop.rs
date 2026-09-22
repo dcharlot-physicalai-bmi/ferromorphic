@@ -994,7 +994,12 @@ impl Tempotron {
     /// `lambda`, and for `tau <= tau_s` — the kernel's normalisation divides by `tau - tau_s`, and
     /// the convention here is the physical one, a membrane slower than its synapses;
     /// [`LearnError::TimeConstantsEqual`] when the two are exactly equal, where the limit exists but
-    /// is a different kernel.
+    /// is a different kernel; and [`LearnError::NonFiniteParam`] naming `v0` when the DERIVED
+    /// normalisation is not finite although every input is — `tau * tau_s` overflowing, or a pair
+    /// close enough together that the two exponentials at the peak round to the same double.
+    /// Without that last check the constructor hands back a tempotron whose every membrane
+    /// potential is `NaN` and whose `train_once` reports `Ok(true)` while writing `NaN` into the
+    /// weights.
     pub fn new(
         n_in: usize,
         tau: f64,
@@ -1017,6 +1022,19 @@ impl Tempotron {
         }
         let peak = (tau * tau_s / (tau - tau_s)) * (tau / tau_s).ln();
         let v0 = 1.0 / ((-peak / tau).exp() - (-peak / tau_s).exp());
+        // ⛔ THE DERIVED CONSTANT IS CHECKED, NOT ONLY THE INPUTS. Every guard above looks at
+        // one number at a time, and `v0` is not a function of any one of them: `tau * tau_s`
+        // overflows for any pair whose product passes ~1.8e308 while each factor is finite on its
+        // own, and two time constants close enough together push `peak` far enough out that both
+        // exponentials round to the same double. Either way the difference is `+0.0` and `v0` is
+        // `+inf`, and `new` used to return `Ok`. From there `kernel(lag > 0.0)` is
+        // `inf * 0.0 = NaN`, so `voltage` is `NaN`; `peak` never beats its `-inf` seed and reports
+        // a maximum the membrane never takes; `fires` says false; and `train_once` writes `NaN`
+        // into every weight and still returns `Ok(true)`. That is precisely the silent failure
+        // `Force::update`'s `Singular` refusal exists to prevent, in this module, for this reason.
+        if !v0.is_finite() {
+            return Err(LearnError::NonFiniteParam { what: "v0 (the kernel normalisation)", value: v0 });
+        }
         Ok(Self { w: vec![0.0; n_in], tau, tau_s, theta, lambda, v0 })
     }
 
@@ -1798,7 +1816,7 @@ mod tests {
     use crate::reservoir::cholesky;
     use crate::rng::Rng;
     use crate::surrogate::{
-        Adam, ArcTan, DelayedXor, LifLayerSpec, Rectangular, Scaled, SpikeFn, Surrogate,
+        Adam, ArcTan, DelayedXor, LifLayer, LifLayerSpec, Rectangular, Scaled, SpikeFn, Surrogate,
         cross_entropy,
     };
 
@@ -3494,4 +3512,143 @@ mod tests {
         assert!(std::error::Error::source(&err).is_some());
         assert!(format!("{err}").contains("non-finite"));
     }
+
+    /// The zero-gradient refusal covers the **e-prop** norm as well as the reference one, and it
+    /// covers it in the `!(norm > 0.0)` sense: a `NaN` e-prop norm is declined rather than reported
+    /// as an agreement whose cosine is `NaN`.
+    ///
+    /// The suite could not reach the third clause, and the recorded argument for why is about a
+    /// zero norm only. Every layer this module hands to `compare_to_bptt` comes from
+    /// `LifLayerSpec::build`, whose readout block `R` is drawn non-zero, so the two gradients always
+    /// share a non-zero readout block and the earlier clauses fire first. The hole is `R` exactly
+    /// zero **together with** an eligibility that overflows: `eps_u`'s drive for an input slot is
+    /// the raw `x[t * n_in + m]`, taken independently of the input weight `W`, so `W = 0` keeps the
+    /// membrane finite while the recursion `alpha * eps_i + xi` runs away, and the readout factor
+    /// `lp` is then exactly `+0.0`, giving `0.0 * inf = NaN` in the input block.
+    ///
+    /// Measured on this two-step layer: the forward pass reaches `u = 5.0` then `u = 13.0` and
+    /// emits a spike at both steps, logits are `[0.0, 0.0]` and `d_logits` is `[-0.5, 0.5]`. BPTT
+    /// moves only the readout block, and the e-prop gradient measures
+    /// `[NaN, 0.0, -0.725_000_000_000_000_1, 0.725_000_000_000_000_1, 0.0]` — the same readout
+    /// block, so `bptt_norm` is `1.025_304_832_720_494` and two coordinates are compared, while
+    /// `eprop_norm` is `NaN` and the third clause is the only one that can refuse.
+    #[test]
+    fn a_non_finite_eprop_norm_is_refused_rather_than_reported_as_an_agreement() {
+        let layer = LifLayer {
+            n_in: 1,
+            n_rec: 1,
+            n_out: 2,
+            alpha: 0.9,
+            beta: 0.9,
+            kappa: 0.9,
+            theta: 1.0,
+            recurrent: false,
+            // W = 0, V = 0, R = [0, 0], b = 5.0.
+            p: vec![0.0, 0.0, 0.0, 0.0, 5.0],
+        };
+        let sur = ArcTan::default();
+        let x = [f64::MAX, f64::MAX];
+        // The forward pass never feels the input, because W is zero; nothing diverges.
+        let logits = logits_streaming(&layer, &sur, &x, SpikeFn::Heaviside).expect("finite forward");
+        assert_eq!(logits, vec![0.0, 0.0]);
+        let (_, d_logits) = cross_entropy(&logits, 0).expect("two classes");
+        assert_eq!(d_logits, vec![-0.5, 0.5]);
+        let ge = eprop_grad_from_dlogits(&layer, &sur, &x, &d_logits, EpropConfig::default())
+            .expect("the gradient itself is computed, not refused");
+        assert!(
+            ge[layer.idx_w(0, 0)].is_nan(),
+            "the input slot should be 0.0 * inf: {}",
+            ge[layer.idx_w(0, 0)]
+        );
+        assert_eq!(
+            (ge[layer.idx_r(0, 0)], ge[layer.idx_r(1, 0)]),
+            (-0.725_000_000_000_000_1, 0.725_000_000_000_000_1),
+            "measured: the readout block, which the reference gradient shares exactly"
+        );
+        assert!(matches!(
+            compare_to_bptt(&layer, &sur, &x, 0, EpropConfig::default()),
+            Err(LearnError::ZeroGradient)
+        ));
+    }
+
+    /// `Tempotron::kernel` returns the **literal** zero at `lag == 0.0` rather than evaluating the
+    /// difference of exponentials there, and the two are not the same number when `v0` is not
+    /// finite.
+    ///
+    /// Nothing in the suite reaches a non-finite `v0`: every fixture is built from
+    /// `Tempotron::gutig_sompolinsky_2006`, whose millisecond time constants cannot produce one.
+    /// The recorded argument for this branch asserted "the finite positive `v0` the constructor
+    /// guarantees", and the constructor did not guarantee it — `tau = 2e200`, `tau_s = 1e200`
+    /// passed every guard and returned `Ok` with `v0 = +inf`. That is fixed above, so this builds
+    /// the degenerate kernel directly; `mod tests` is a child of `eprop`, so the private `v0` is in
+    /// scope here, and the branch itself stays observable.
+    ///
+    /// Measured: at `lag == 0.0` the difference of exponentials is `1.0 - 1.0 = +0.0` exactly, so
+    /// the computed form is `+inf * +0.0 = NaN` where the literal is `0.0`. `Tempotron::voltage`
+    /// checks the pattern and `t` for finiteness but never the kernel, so the `NaN` reaches the
+    /// membrane: `0.0` becomes `NaN` there too.
+    #[test]
+    fn the_kernel_returns_the_literal_zero_at_the_instant_of_the_spike() {
+        let t = Tempotron {
+            w: vec![1.0],
+            tau: 2e200,
+            tau_s: 1e200,
+            theta: 1.0,
+            lambda: 0.1,
+            v0: f64::INFINITY,
+        };
+        assert!(t.peak_time().is_infinite(), "peak_time: {}", t.peak_time());
+        assert_eq!(t.kernel(0.0), 0.0);
+        assert_eq!(t.voltage(&[vec![0.0]], 0.0).expect("finite pattern and time"), 0.0);
+    }
+
+    /// The constructor refuses a `tau`, `tau_s` pair whose **derived** normalisation `v0` is not
+    /// finite, although every input it was handed is.
+    ///
+    /// The suite checked `n_in`, each time constant, `theta`, `lambda` and the two orderings, one
+    /// number at a time. `v0` is a function of two of them together, and no fixture paired them so
+    /// that the product overflows — the hole was a missing INTERACTION, not a missing parameter.
+    ///
+    /// Measured at `tau = 2e200`, `tau_s = 1e200`: `tau * tau_s` overflows to `+inf`, `peak_time()`
+    /// is `+inf`, both exponentials are `exp(-inf) = +0.0`, and `v0 = 1.0 / (+0.0)` is `+inf`.
+    /// Before the guard above this returned `Ok`, and the resulting tempotron reported a peak of
+    /// `-inf` (its scan seed, a value the membrane never takes) and trained itself to `NaN`.
+    #[test]
+    fn the_constructor_refuses_a_normalisation_that_is_not_finite() {
+        assert!(matches!(
+            Tempotron::new(1, 2e200, 1e200, 1.0, 0.1),
+            Err(LearnError::NonFiniteParam { what: "v0 (the kernel normalisation)", value })
+                if value.is_infinite()
+        ));
+        // The parameters the rest of this module uses are unaffected.
+        assert!(Tempotron::gutig_sompolinsky_2006(4, 1e-3).is_ok());
+    }
+
+    /// `Force::update` reads the inverse correlation matrix **by rows**: `P r` takes row `i` of `P`
+    /// against `r`, not column `i`.
+    ///
+    /// No black-box fixture can tell, and `the_inverse_correlation_matrix_stays_exactly_symmetric`
+    /// is the proof of why: `Force::new` writes a diagonal `P`, and `Force::update` computes each
+    /// off-diagonal subtrahend once and stores it into both entries, so `p[i * n + j]` and
+    /// `p[j * n + i]` are bit-equal in every state a caller can reach and a transposed read forms
+    /// the identical partial sums in the identical order. But `p` is a private FIELD, not a private
+    /// type, and `mod tests` is a child of `eprop`, so the storage convention is reachable from
+    /// here — and it stops being unobservable the moment anything (a forgetting factor, a full
+    /// `n * n` downdate sweep) leaves `P` asymmetric.
+    ///
+    /// Measured on `P = [[1, 3], [0, 1]]` with `r = [1, 0]` and `target = -1`, where every quantity
+    /// is a dyadic fraction and the arithmetic is exact: `q = 1.0`, `denom = 2.0` and the a-priori
+    /// error `1.0` are the same either way, but `P r` is `[1.0, 0.0]` read by rows against
+    /// `[1.0, 3.0]` read by columns, so `w` lands on `[-0.5, 0.0]` against `[-0.5, -1.5]`.
+    #[test]
+    fn the_inverse_correlation_matrix_is_read_by_rows() {
+        let mut f = Force::new(2, 1.0).expect("valid");
+        assert_eq!(f.inverse_correlation(), [1.0, 0.0, 0.0, 1.0]);
+        // A state no public call can reach, written directly: the asymmetry is the whole fixture.
+        f.p[1] = 3.0;
+        assert_eq!(f.update(&[1.0, 0.0], -1.0).expect("well conditioned"), 1.0);
+        assert_eq!(f.w, vec![-0.5, 0.0]);
+        assert_eq!(f.inverse_correlation(), [0.5, 3.0, 0.0, 1.0]);
+    }
+
 }

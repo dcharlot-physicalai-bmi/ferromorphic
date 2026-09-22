@@ -122,8 +122,7 @@
  {
   "label": "the stable fixed point is no longer returned exactly",
   "old": "        if y0 == -a {\n            return Flow::Finite(-a);\n        }",
-  "new": "        if false {\n            return Flow::Finite(-a);\n        }",
-  "equivalent": "the guard is provably redundant for this arithmetic. With y0 = -a the tanh form evaluates a*(y0 - a*T)/(a - y0*T) = a*(-a - a*T)/(a + a*T); numerator and denominator are computed from the SAME two roundings fl(a*T) and are exact negatives of one another, so their quotient is -1.0 exactly for every T in [0, 1] including T rounded to 1.0, and the result is -a bit for bit. No test can see the difference because there is none: the guard is a reader's aid, which is what its own doc comment says."
+  "new": "        if false {\n            return Flow::Finite(-a);\n        }"
  },
  {
   "label": "the stable-side flow uses tan rather than tanh",
@@ -424,8 +423,7 @@
  {
   "label": "a membrane with no fixed-point pair below rheobase is assumed to escape",
   "old": "                Some((_, unstable)) => self.v_reset > unstable,\n                None => false,",
-  "new": "                Some((_, unstable)) => self.v_reset > unstable,\n                None => true,",
-  "equivalent": "the arm is unreachable. This match runs only inside `if i <= rheobase`, and `i` has already been checked finite. For a finite `i <= g_L(V_T - E_L - delta_T)` the fixed-point parameter `k = (V_T - E_L - i/g_L)/delta_T` is at least 1 — at i = rheobase exactly it is 1 — so `exp_offset_roots(k)` returns `Some` and `fixed_points` returns `Some`. The `None` arm is never taken here whichever value it yields."
+  "new": "                Some((_, unstable)) => self.v_reset > unstable,\n                None => true,"
  },
  {
   "label": "the quadrature's upper limit no longer protects against a reset above the truncation",

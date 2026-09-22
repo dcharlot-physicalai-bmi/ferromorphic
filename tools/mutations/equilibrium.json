@@ -92,7 +92,6 @@
  {
   "label": "nudged phase restarts from zero",
   "old": "let plus = self.energy_gradient(&self.relax(&free, x, y, beta,",
-  "new": "let plus = self.energy_gradient(&self.relax(&vec![0.0; self.n], x, y, beta,",
-  "equivalent": "the fixed point is unique at these couplings, and a test asserts it does not depend on the start"
+  "new": "let plus = self.energy_gradient(&self.relax(&vec![0.0; self.n], x, y, beta,"
  }
 ]

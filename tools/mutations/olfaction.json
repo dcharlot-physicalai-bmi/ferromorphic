@@ -463,8 +463,7 @@
  {
   "label": "the ensemble activity is normalised by twice the granule ceiling",
   "old": "                    / (per as f64 * granule_ceiling);",
-  "new": "                    / (per as f64 * granule_ceiling * 2.0);",
-  "equivalent": "act[k] is used in exactly two places: the test `act_total > 0.0`, and the weighted average `sum_k act[k]*mask[k][m] / sum_k act[k]`. Halving every act[k] leaves the first unchanged (a positive sum stays positive) and leaves the second bit-for-bit identical, because scaling by a power of two is exact in binary floating point: each act[k]/2 is exact, each product (act[k]/2)*mask = (act[k]*mask)/2 is exact, and a sum of exactly-halved terms is exactly half the sum, so numerator and denominator are both halved by the same exact factor and the quotient is the same f64. Nothing else reads act, and no ledger count or spike depends on it."
+  "new": "                    / (per as f64 * granule_ceiling * 2.0);"
  },
  {
   "label": "a division by zero is allowed when no ensemble fires",

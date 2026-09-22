@@ -76,9 +76,17 @@ use core::fmt;
 
 /// The most neurons a network may have.
 pub const MAX_NEURONS: usize = 4096;
-/// The most spikes one group may contain before the search gives up on it. A group cannot in fact
-/// reach this, because each neuron fires at most once and there are at most [`MAX_NEURONS`] of
-/// them; it is the stop that keeps a future change to that rule from running forever.
+/// The most spikes one group may contain before the search gives up on it.
+///
+/// [`Network::new`] caps a network at [`MAX_NEURONS`], and inside that cap the fire-once rule
+/// already bounds a group by the neuron count, so this stop is redundant for every network the
+/// constructor builds. It is **not** redundant in general, and an earlier version of this doc
+/// said it was: [`Network`]'s fields are public with no `#[non_exhaustive]`, [`Network::connect`]
+/// checks only `index < self.n`, and [`Network::simulate`] re-checks nothing about `n` — so a
+/// network larger than [`MAX_NEURONS`] is reachable through the public API, and there this is a
+/// real truncation. `simulate` returns the first `MAX_GROUP` firings and stops, which the test
+/// `a_group_is_capped_at_max_group_even_when_the_network_is_bigger_than_max_neurons` measures.
+/// It is also the stop that keeps a future change to the fire-once rule from running forever.
 pub const MAX_GROUP: usize = MAX_NEURONS;
 
 /// What went wrong, named rather than guessed around.
@@ -690,4 +698,34 @@ mod tests {
         // which always returned zero would not pass by agreeing with `is_empty`.
         assert!(empty.is_empty() && empty.len() == empty.firings.len() && empty.neurons().is_empty());
     }
+
+    /// The group cap is a real truncation, not a redundant restatement of the fire-once rule.
+    ///
+    /// The hole this fills: every network the suite builds comes from [`Network::new`], which
+    /// refuses `n > MAX_NEURONS`, so `self.n.min(MAX_GROUP)` is always `self.n` and the cap
+    /// coincides with the bound "each neuron fires at most once" already gives. [`Network`] is
+    /// public with public fields and no `#[non_exhaustive]`, [`Network::connect`] checks only
+    /// `index < self.n`, and [`Network::simulate`] re-checks nothing about `n` — so a larger
+    /// network is reachable through the public API, and there the two bounds are different
+    /// numbers and the cap is the one that bites.
+    ///
+    /// A chain of `MAX_NEURONS + 1` neurons, one 1 ms axon each, fired from neuron 0: the
+    /// fire-once rule alone allows 4097 firings, the cap allows 4096. Measured: the group holds
+    /// 4096 firings, the last of them neuron 4095, and neuron 4096 never fires.
+    #[test]
+    fn a_group_is_capped_at_max_group_even_when_the_network_is_bigger_than_max_neurons() {
+        let n = MAX_NEURONS + 1;
+        let mut net = Network { n, out: vec![Vec::new(); n], threshold: 1, window: 1e-3 };
+        for i in 0..n - 1 {
+            net.connect(i, i + 1, 1e-3).unwrap();
+        }
+        // The two bounds are not the same number here, which is the whole point of the fixture.
+        assert_eq!(n.min(MAX_GROUP), MAX_GROUP);
+        assert!(MAX_GROUP < n);
+        let g = net.simulate(&[0], &[0.0]).unwrap();
+        assert_eq!(g.len(), MAX_GROUP, "the cap, not the fire-once rule, is what stops the cascade");
+        assert_eq!(g.firings.last().map(|f| f.neuron), Some(MAX_GROUP - 1));
+        assert_eq!(g.firings.iter().filter(|f| f.neuron == n - 1).count(), 0, "neuron {} fired past the cap", n - 1);
+    }
+
 }

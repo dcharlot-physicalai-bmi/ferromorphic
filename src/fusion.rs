@@ -4599,4 +4599,97 @@ mod tests {
         assert_eq!(d.trial_s * d.rate_hi_hz, 16.0);
         d.validate().expect("the defaults are consistent");
     }
+
+    // ------------------------------------------------------------------------------------------
+    // Values that are part of a contract, not only of a distribution
+    // ------------------------------------------------------------------------------------------
+
+    /// The offset sweep's two cursors never cross, for every value the PUBLIC window field can
+    /// hold. All five of `OffsetEstimator`'s fields are `pub` and `estimate` re-reads them without
+    /// revalidating, so `search_half_s` is not confined to the strictly positive numbers
+    /// `OffsetEstimator::new` accepts: one struct literal, or one assignment of the kind this
+    /// suite already makes to `min_pairs` and `max_pairs`, puts a negative half-width in. With
+    /// `half < 0` the `lo` test `b[lo] < ta - half` is WIDER than the `hi` test
+    /// `b[hi] <= ta + half`, so `lo` can pass an index `hi` has stopped at, and the pull-up
+    /// `if hi < lo { hi = lo; }` is the only thing standing between the caller and a wrapped
+    /// `hi - lo` and a backwards slice `b[lo..hi]`.
+    ///
+    /// The hole: every fixture in this suite builds its estimator through `new` or copies one that
+    /// was, so the suite only ever exercises `half > 0`, where the pull-up is provably dead — an
+    /// index `lo` has passed satisfies `b[j] < ta - half <= ta + half`, so the `hi` loop walks over
+    /// it and lands in the same place. A dead branch and a load-bearing one are indistinguishable
+    /// until the input that separates them is written down.
+    #[test]
+    fn the_offset_sweep_answers_rather_than_crossing_its_cursors_on_a_negative_window() {
+        let est = OffsetEstimator {
+            search_half_s: -1.0,
+            bin_s: 1.0,
+            refine_half_s: 1.0,
+            min_pairs: 1,
+            max_pairs: 1_000,
+        };
+        // ta = 0, so the lo-loop's bound is ta - half = +1.0 and the hi-loop's is ta + half = -1.0:
+        // lo walks past b[0] = 0.0 and stops at index 1, while hi cannot leave index 0 on its own.
+        // No difference is inside a negative window, so the answer is the empty sweep.
+        let got = est
+            .differences_indexed(&[0.0], &[0.0, 1.0, 2.0])
+            .expect("a negative window holds no pairs; it is not a cap violation");
+        assert!(got.is_empty(), "a negative window returned {} pairs", got.len());
+
+        // The same state through the public path, one second per tick so the ticks ARE the times.
+        let a = Stream::new(
+            0,
+            Clock::new(1.0).unwrap(),
+            vec![Event { t: 0, address: 0, polarity: Polarity::On }],
+        )
+        .unwrap();
+        let b = Stream::new(
+            1,
+            Clock::new(1.0).unwrap(),
+            vec![
+                Event { t: 0, address: 0, polarity: Polarity::On },
+                Event { t: 1, address: 0, polarity: Polarity::On },
+                Event { t: 2, address: 0, polarity: Polarity::On },
+            ],
+        )
+        .unwrap();
+        let e = est.estimate(&a, &b).unwrap_err();
+        assert!(
+            matches!(e, FusionError::TooFewPairs { found: 0, needed: 1 }),
+            "a negative window should find nothing and say so; it said {e}"
+        );
+    }
+
+    /// The late branch's scale is the root of the MEAN square, not the root of the total: the
+    /// division by `n` happens under the root. `LateFusion` derives `Debug`, and a derived `Debug`
+    /// prints every field whatever its visibility, so the number is readable from outside the type
+    /// even though `scale` is private and `vote_weights` reports `weight`.
+    ///
+    /// The hole: scaling every branch's `scale[b]` by one common factor divides each class total
+    /// in `total[k] += weight[b] * v / scale[b]` by that same factor and leaves the arg-max over
+    /// `k` exactly where it was, so every accuracy, reliability, dropout margin and early/late gap
+    /// in this suite is blind to it. The quantity is only visible as itself.
+    #[test]
+    fn the_late_branch_scale_is_the_root_of_the_mean_square_and_not_of_the_total() {
+        // Four trials, one modality, one feature, every step exact in binary64: mean 0 and sd 1, so
+        // z = x; centroids -1 and +1; each row scores [-0.0, -4.0] or [-4.0, -0.0], which centres
+        // to (+2, -2) or (-2, +2) with squared length 8.0; energy = 4 * 8 = 32.
+        let trials: Vec<TrialFeatures> = [(-1.0, 0u32), (-1.0, 0), (1.0, 1), (1.0, 1)]
+            .iter()
+            .map(|&(v, label)| TrialFeatures {
+                per_modality: vec![vec![v]],
+                cross_modal: Vec::new(),
+                label,
+            })
+            .collect();
+        let lf = LateFusion::fit(&trials).expect("four trials over two classes");
+        let printed = format!("{lf:?}");
+        let rms = (32.0f64 / 4.0).sqrt();
+        assert!(printed.contains(&format!("scale: [{rms:?}]")), "fitted {printed}");
+        // MEASURED: the mean-first form is 2.8284271247461903 and the total-energy form is
+        // 5.656854249492381 — exactly twice it, because n = 4 is a power of four, so the two are a
+        // bit-for-bit factor apart and the printed strings differ in that one field alone.
+        assert_eq!(32.0f64.sqrt(), 2.0 * rms);
+        assert!(!printed.contains(&format!("scale: [{:?}]", 32.0f64.sqrt())), "fitted {printed}");
+    }
 }

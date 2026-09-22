@@ -58,7 +58,7 @@
   "label": "the probability is not clamped",
   "old": "    Some(ln.exp().clamp(0.0, 1.0))",
   "new": "    Some(ln.exp())",
-  "equivalent": "unreachable. The value is exp of a finite logarithm, so it is never negative; and it can only exceed one if rounding lifts a probability that is exactly one, which happens only where the support is a single point — and every such configuration (w = n, or b forced to min(w, s) with w + s = n + b) has all three log-binomials exactly zero, so there is nothing to round."
+  "equivalent": "unreachable, and the margin is stateable. IDENTITY, for the degenerate half: where the support is a single point the three log-binomials cancel EXACTLY rather than being individually zero - `s == n` or `w == n` forces `b` and leaves `X + 0 - X` with `X` the SAME f64 from the same `ln_factorial` calls (overlap_probability(4, 2, 4, 2) has ln_choose(4, 2) = 1.791759469228055 on both sides, not zero), and `w == 0` or `s == 0` leaves `0 + 0 - 0`. `ln` is therefore exactly +0.0, `exp` is exactly 1.0, and the clamp has nothing to round. BOUND, for everywhere else: the mode's probability is at most 1 - 1/n. For any distribution Var <= diam^2 * (1 - P(mode)), since Var <= E[(B - mode)^2] <= diam^2 * Pr[B != mode]; the hypergeometric's variance is w s (n-s)(n-w) / (n^2 (n-1)) and its support's diameter is at most min(w, s, n-w, n-s), so 1 - P >= 1/(4(n-1)) for every non-degenerate configuration. MAX_BITS caps n at 2^22, so the true ln is at most -5.96e-8 - and the exact minimum, by exhaustive enumeration in rationals for every n <= 39, is 1 - P = 1/n attained at w = s = 1, i.e. ln <= -2.38e-7. Against that, the computed ln's error is dominated by the single rounding of x * ln(x), whose product lands in [2^25, 2^26) for x <= 2^22, one ulp of which is 2^-27 = 7.45e-9. MEASURED at that extremal configuration (n = MAX_BITS, w = s = 1, b = 0): computed -2.30967998504638672e-7 against an exact -2.38418607523276430e-7, an error of exactly one 2^-27, 32 times inside the margin; over a scan of 200,000 random (n, w, s) with b at the mode plus the near-degenerate families at and below n = 2^22, the largest computed ln found anywhere was that same -2.3096799850463867e-7, and every degenerate configuration returned exactly +0.0. The clamp's LOWER end is unreachable for the separate reason that exp of a finite logarithm is never negative. `the_overlap_probability_never_reaches_the_clamps_upper_end` pins both halves, so the bound and the identity are executed rather than asserted."
  },
  {
   "label": "overlap_probability accepts w past n",
@@ -131,8 +131,7 @@
  {
   "label": "overlap advances only one cursor on a match",
   "old": "                    count += 1;\n                    i += 1;\n                    j += 1;",
-  "new": "                    count += 1;\n                    i += 1;",
-  "equivalent": "both index lists are strictly increasing, so after a match the left cursor's new value is strictly greater than the right cursor's; the next comparison therefore advances the right cursor and the walk continues from the same place. The count is identical and the loop takes one extra iteration per match."
+  "new": "                    count += 1;\n                    i += 1;"
  },
  {
   "label": "overlap does not check the populations match",

@@ -353,8 +353,7 @@
  {
   "label": "the silent constructor's own zero-token check is removed",
   "old": "        if tokens == 0 {\n            return Err(AttnError::Empty { what: \"tokens\" });\n        }\n        if channels == 0 {\n            return Err(AttnError::Empty { what: \"channels\" });\n        }\n        let n = tokens.checked_mul(channels).ok_or(AttnError::Overflow { what: \"tensor\" })?;\n        Self::new(tokens, channels, vec![0.0; n], Domain::Binary)",
-  "new": "        if channels == 0 {\n            return Err(AttnError::Empty { what: \"channels\" });\n        }\n        let n = tokens.checked_mul(channels).ok_or(AttnError::Overflow { what: \"tensor\" })?;\n        Self::new(tokens, channels, vec![0.0; n], Domain::Binary)",
-  "equivalent": "`Tensor::new`, which this constructor delegates to on its last line, performs exactly the same `tokens == 0` check first and returns exactly the same value, `Err(AttnError::Empty { what: \"tokens\" })`. With tokens = 0 the intermediate steps are total: `0usize.checked_mul(channels)` is `Some(0)` for every channels, and `vec![0.0; 0]` is an empty allocation that cannot fail, so nothing panics on the way to that delegated check. The only observable difference the early return could have is on which line the error is constructed, and `AttnError` carries no location. No test could tell the two apart; what the early check buys is the OVERFLOW case (`tokens * channels` past a usize), and that is the `checked_mul` on the line below, which this edit leaves in place."
+  "new": "        if channels == 0 {\n            return Err(AttnError::Empty { what: \"channels\" });\n        }\n        let n = tokens.checked_mul(channels).ok_or(AttnError::Overflow { what: \"tensor\" })?;\n        Self::new(tokens, channels, vec![0.0; n], Domain::Binary)"
  },
  {
   "label": "the sinusoidal schedule drops the factor of two in its exponent",
@@ -645,8 +644,7 @@
  {
   "label": "the first-spike step is not floored at one",
   "old": "        Some((t as u32).max(1))",
-  "new": "        Some(t as u32)",
-  "equivalent": "`.max(1)` can never fire. By the time this line is reached the guard above has established x > v_th - v_reset > 0, so x > 0 and the numerator x + v_reset - v_th is strictly positive; therefore r = (x + v_reset - v_th)/x = 1 - (v_th - v_reset)/x lies strictly between 0 and 1, and r.ln() is strictly negative. The tau = 1 case (d == 0) returned earlier and tau >= 1 is enforced at construction, so here 0 < d < 1 and d.ln() is strictly negative too. A negative divided by a negative is positive, so (r.ln()/d.ln()).ceil() is at least 1 for every input that reaches the cast, and the `t > f64::from(u32::MAX)` guard above has already excluded the values where the cast itself would misbehave. `t as u32` and `(t as u32).max(1)` therefore agree on every reachable input and no test could distinguish them."
+  "new": "        Some(t as u32)"
  },
  {
   "label": "resetting the layer's state parks every membrane at zero rather than at the reset potential",

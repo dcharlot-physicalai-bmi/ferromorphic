@@ -1729,7 +1729,7 @@ mod tests {
         in_weight_sums, layer_ranges, norm, path_stats, power_law_exponent, shuffled_partition,
         undirected_degrees, watts_strogatz, weak_components, winner_take_all, wta_inhibition_floor,
     };
-    use crate::net::NetBuilder;
+    use crate::net::{NetBuilder, NetError};
     use std::collections::BTreeSet;
     use crate::neuron::Lif;
     use crate::rng::Rng;
@@ -4022,5 +4022,37 @@ mod tests {
             }
         }
         assert!(extra > 0, "no seed of the first twelve rejected a draw at n = 3 * 2^62");
+    }
+
+    /// Pins that `reciprocal` hands the FORWARD synapse of each pair to the builder before the
+    /// return one, by the index the builder names when it refuses.
+    ///
+    /// `NetBuilder::connect` validates `for idx in [pre, post]` — `pre` first — so whichever call
+    /// is made first decides which endpoint the error carries, and the same holds for the
+    /// non-finite-weight check, whose payload is the whole ordered pair. The suite could not see
+    /// the order because both callers of `reciprocal` (`watts_strogatz` and `barabasi_albert`)
+    /// only ever hand it in-range endpoints and finite weights, so its two error paths are
+    /// unreachable from the generators: the hole is a private helper's refusal that no public
+    /// entry point can reach. This module already closes that shape of hole by calling the helper
+    /// directly — see
+    /// `the_preferential_attachment_probe_refuses_rather_than_returning_a_short_edge_list`.
+    #[test]
+    fn the_forward_synapse_of_a_reciprocal_pair_is_offered_to_the_builder_first() {
+        let w = Wiring::excitatory_only(1e-3, 1);
+        // Both endpoints are past the two neurons, so `connect` refuses on whichever it was given
+        // as `pre`: 5 for the forward call `connect(5, 7, ..)`, 7 for the return one.
+        assert_eq!(
+            super::reciprocal(2, &[(5u32, 7u32)], &w).unwrap_err(),
+            TopologyError::Net(NetError::OutOfRange { index: 5, n: 2 }),
+            "the forward endpoint is the one the builder sees first"
+        );
+        // The same order shows through the weight check, which `connect` reaches only once both
+        // endpoints are in range. The forward synapse of the pair (0, 1) is 0 -> 1.
+        let nan = Wiring { w_exc: f64::NAN, w_inh: f64::NAN, delay: 1, inhibitory_fraction: 0.0 };
+        assert_eq!(
+            super::reciprocal(2, &[(0u32, 1u32)], &nan).unwrap_err(),
+            TopologyError::Net(NetError::NonFiniteWeight { pre: 0, post: 1 }),
+            "the forward synapse is 0 -> 1, not 1 -> 0"
+        );
     }
 }

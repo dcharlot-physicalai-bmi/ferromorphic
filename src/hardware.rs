@@ -4723,4 +4723,56 @@ mod tests {
         assert!(one.rms_error.is_finite(), "rms_error {}", one.rms_error);
         assert_eq!(one.clipped, 0);
     }
+
+    /// The stochastic comparison is STRICT, on a draw the test chooses rather than waits for.
+    ///
+    /// Pins `u < frac` against `u <= frac` in `quantise_with`. The suite could not see it because
+    /// every stochastic fixture reasons about the PROBABILITY of the tie — the hole is the shape
+    /// "a deterministic stream argued about as a random variable". `Rng::new(seed)` is a function
+    /// of the seed, so a test can read the first draw off the stream and then hand the quantiser a
+    /// WEIGHT whose fractional part is that same double, bit for bit. A step of exactly 1.0 is
+    /// what makes `x = v / step` the weight itself and `frac = x - 0.0` the weight again.
+    ///
+    /// Measured: the first draw of seed 42 is 0.02018426063644785 (181803657362111 · 2^-53), so
+    /// `u == frac` exactly; the strict form rounds DOWN to code 0 and an inclusive one would round
+    /// up to code 1, a whole step of error on a weight two hundredths of a step above zero.
+    #[test]
+    fn a_weight_whose_fraction_is_exactly_the_draw_rounds_down() {
+        let q = Quantiser::symmetric(4, 7.0).unwrap();
+        assert_eq!(q.step, 1.0, "a unit step makes the weight its own fractional part");
+        let u = Rng::new(42).next_f64();
+        assert_eq!(u, 0.02018426063644785, "the measured first draw of seed 42");
+        let out = q.quantise_stochastic(&[u], &mut Rng::new(42)).unwrap();
+        assert_eq!(out.codes, vec![0], "a draw EQUAL to the fraction must not round up");
+        // `f64::from(code) * step - v` is the module's own error expression, so this is exact.
+        assert_eq!(out.max_abs_error, u);
+        assert_eq!(out.mean_error, -u);
+        assert_eq!(out.clipped, 0);
+    }
+
+    /// Stochastic rounding with no generator takes the draw to be 0.0, so it rounds UP.
+    ///
+    /// Pins the `map_or(0.0, ..)` default in `quantise_with`. The record called the pair
+    /// `(Stochastic, None)` unconstructible because the only two callers are `quantise_nearest`
+    /// and `quantise_stochastic` — the hole is the shape "a survey of today's callers, offered as
+    /// an impossibility". `quantise_with` is private to this module and `mod tests` is a CHILD of
+    /// it, so a test reaches the pair directly, exactly as this crate's tests already reach other
+    /// private items. The two defaults are not near neighbours: 0.0 rounds every non-integral
+    /// weight UP and 1.0 rounds every one DOWN.
+    ///
+    /// Measured at a step of exactly 1.0 and a weight of 0.3: the default of 0.0 gives code 1 and
+    /// a signed error of +0.7; a default of 1.0 would give code 0 and -0.3.
+    #[test]
+    fn stochastic_rounding_without_a_generator_rounds_up() {
+        let q = Quantiser::symmetric(4, 7.0).unwrap();
+        let out = q.quantise_with(&[0.3], Rounding::Stochastic, None).unwrap();
+        assert_eq!(out.codes, vec![1], "a draw of 0.0 is below every positive fraction");
+        assert_eq!(out.max_abs_error, q.step - 0.3);
+        assert!(out.mean_error > 0.0, "the default rounds UP, mean error {}", out.mean_error);
+        // An integral weight has frac == 0.0, which no draw in [0, 1) is below, so the default
+        // cannot move it either way.
+        let whole = q.quantise_with(&[2.0], Rounding::Stochastic, None).unwrap();
+        assert_eq!(whole.codes, vec![2]);
+        assert_eq!(whole.max_abs_error, 0.0);
+    }
 }

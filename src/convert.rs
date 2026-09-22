@@ -3928,4 +3928,37 @@ mod tests {
         assert_eq!(Reset::ToZero.spikes_in(0.5, 1000), Some(500));
     }
 
+
+    /// A silent input line cannot carry a non-finite weight into the membrane. With
+    /// `drive[j] == 0.0` the skipped term `row[j] * drive[j]` is a signed zero for every FINITE
+    /// weight, and `+0.0` and `-0.0` give the same current, the same `v += i * dt / c` and the same
+    /// comparison against `v_th` — so the guard is an arithmetic no-op for every network
+    /// `from_ann` can build. It is not a no-op for a network the PUBLIC fields can hold:
+    /// [`SpikingMlp::layers`] and [`SpikingLayer::w`] are both `pub`, `check_structure` re-checks
+    /// lengths, shapes and the `cfg` scalars but never weight finiteness, and `inf * 0.0` is `NaN`,
+    /// which poisons the membrane for the whole run because `NaN >= v_th` is false forever.
+    ///
+    /// The hole: every other fixture in this module builds its weights through `DenseRelu::new`,
+    /// which refuses a non-finite weight, so the suite only ever runs the case where the branch has
+    /// nothing to guard against.
+    #[test]
+    fn a_silent_input_line_cannot_carry_a_non_finite_weight_into_the_membrane() {
+        let ann = Mlp::new(vec![DenseRelu::new(2, 1, vec![1.0, 1.0], vec![0.0]).unwrap()]).unwrap();
+        let cfg = Config { norm: Norm::ModelBased { input_max: 1.0 }, ..Config::default() };
+        let mut snn = SpikingMlp::from_ann(&ann, &[], cfg).unwrap();
+        // Model-based normalisation gives λ₀ = 1 and λ₁ = 1·1 + 1·1 = 2, so both weights are 0.5.
+        assert_eq!(snn.lambdas, vec![1.0, 2.0]);
+        assert_eq!(snn.layers[0].w, vec![0.5, 0.5]);
+        // Written AFTER conversion, which is the only way this state is reachable — and it is
+        // reachable, through a `pub` field, without touching anything private.
+        snn.layers[0].w[0] = f64::INFINITY;
+        // Input 0 is exactly 0.0, so drive[0] = 0.0 / λ₀ = 0.0 and the infinite weight sits on the
+        // silent line. The other line gives z = 0.5, i = z · c · v_th / dt = 5e-7 A and
+        // v += i · dt / c = 0.5 per tick: the unit crosses a 1 V threshold on every second tick,
+        // 50 spikes in 100 ticks, decoded as 50 / 100 · λ₁ = 1.0. Every step is exact in binary64,
+        // so this is an equality.
+        let out = snn.run(&[0.0, 1.0], 100).expect("the structure is intact");
+        assert_eq!(snn.total_spikes(), 50);
+        assert_eq!(out, vec![1.0]);
+    }
 }

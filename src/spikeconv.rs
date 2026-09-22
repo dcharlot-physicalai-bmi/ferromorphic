@@ -2157,7 +2157,7 @@ mod tests {
     };
     use crate::metrics::{ActivationKind, SynOps};
     use crate::neuron::{Lif, Neuron};
-    use crate::surrogate::{ArcTan, FastSigmoid, Surrogate};
+    use crate::surrogate::{ArcTan, FastSigmoid, SigmoidDeriv, Surrogate};
 
     fn t(c: usize, h: usize, w: usize, d: &[f64]) -> Tensor3 {
         Tensor3::new(c, h, w, d.to_vec()).expect("test tensor is well formed")
@@ -4046,4 +4046,52 @@ mod tests {
         assert_eq!(off.step(&x, ActivationKind::Spiking).expect("fits").data, vec![0.0; 4]);
         assert_eq!(off.ledger.neuron_updates_idle, 4);
     }
+
+    /// The surrogate offset is measured FROM the threshold TO the membrane, and the sign of that
+    /// subtraction is observable. The recorded argument for the swapped-operand mutation says every
+    /// surrogate family here is an even function of its argument; [`SigmoidDeriv`] is not, in
+    /// binary64. Its `logistic` branches on the sign of `z` deliberately — for `z >= 0` it is
+    /// `1/(1 + exp(-z))`, which is EXACTLY 1.0 once `exp(-z) < 2^-53`, i.e. `z >= 53 ln 2 =
+    /// 36.7368`, so `s * (1 - s)` is exactly 0.0 there; for `z < 0` it is `e/(1 + e)`, a small
+    /// positive number. The algebraic identity `s(-z) = 1 - s(z)` holds as real numbers and is lost
+    /// to rounding well before that: at `|z| = 0.2` the two sides are 0.24751657271185995 and
+    /// 0.24751657271185998.
+    ///
+    /// MEASURED at a resting unit one full threshold below firing, `beta = 40`, so `z = -40.0`
+    /// exactly: this module answers `1.6993417021166355e-16`, and with the subtraction reversed it
+    /// answers exactly `0.0` — the dead-neuron failure the module's own documentation warns about,
+    /// from a sign rather than from the physics.
+    ///
+    /// Why the suite could not see it: `the_surrogate_mask_is_exact_at_threshold_and_depends_on_the_scale`
+    /// is the only fixture that calls `surrogate_mask`, and it passes a [`FastSigmoid`], whose
+    /// backward is written on `x.abs()` and therefore cannot see the sign at all.
+    #[test]
+    fn the_surrogate_offset_runs_from_the_threshold_to_the_membrane_and_the_sign_is_visible() {
+        let spec = Conv2dSpec::new(1, 1, 1, 1).expect("valid");
+        let conv = Conv2d::zeros(spec).expect("valid");
+        let layer = SpikingConv2d::new(conv, 1, 2, Lif::default(), 1e-3).expect("valid");
+        let lif = Lif::default();
+        let scale = lif.v_th - lif.v_rest;
+        // The offset is exact: `v_rest - v_th` and `v_th - v_rest` are the same subtraction with
+        // the operands swapped, so their quotient is -1.0 to the last bit, and `beta * -1.0` is
+        // -40.0 to the last bit. No tolerance is needed anywhere below.
+        assert_eq!((lif.v - lif.v_th) / scale, -1.0);
+        let s = SigmoidDeriv::new(40.0).expect("a positive sharpness");
+        let m = layer.surrogate_mask(&s, lif.v_th, scale).expect("valid");
+        assert_eq!(m.data[0], s.backward(-1.0));
+        assert_eq!(m.data[1], s.backward(-1.0));
+        // The far side of the threshold is where this family saturates to an exact zero, and it is
+        // the answer the reversed subtraction would give: 1.0 / (1.0 + exp(-40)) rounds to 1.0, so
+        // beta * s * (1 - s) is beta * 1.0 * 0.0.
+        assert_eq!(s.backward(1.0), 0.0, "the family is not saturating, so this fixture is blunt");
+        assert!(
+            m.data[0] > 0.0,
+            "a unit one threshold below firing got no gradient at all: {}",
+            m.data[0]
+        );
+        // And the two sides are not merely unequal in the last place: one is zero and the other is
+        // 40 * exp(-40), which is what `SigmoidDeriv::logistic`'s negative branch computes exactly.
+        assert_eq!(m.data[0], 40.0 * (-40.0_f64).exp() * (1.0 - (-40.0_f64).exp()));
+    }
+
 }

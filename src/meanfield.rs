@@ -883,6 +883,30 @@ impl BalancedInput {
             self.sigma(),
         )
     }
+    /// Expected excitatory and inhibitory arrivals in **one tick** of `dt` seconds:
+    /// `(c_exc (nu + nu_ext) dt, c_inh nu dt)`.
+    ///
+    /// The quantity [`BalancedInput::simulate`] draws its Poisson counts from, and the one a caller
+    /// wants before committing to a run: at 1000 excitatory synapses, 19 Hz of combined drive and
+    /// `dt = 1e-4` it is 1.9 arrivals a tick, and the run costs about that many random draws per
+    /// tick. Multiply the same rates by `1 / dt` and it is 19,000 — the same simulation, and hours
+    /// of it.
+    ///
+    /// ⚠ **It is public because the factor of `dt` had no fast observable.** Dropping it from
+    /// `simulate` does not change an answer, it changes a RUNNING TIME: this module's own
+    /// balanced-drive fixture went from seconds to hours, so the mutation harness reported
+    /// `TIMEOUT` rather than `caught` — and a timeout says nothing either way. An accessor turns
+    /// "wait and see" into an assertion, and
+    /// `a_balanced_drive_gives_irregular_firing_and_an_unbalanced_one_does_not` now checks its
+    /// arrival rate before it starts four hundred seconds of simulated time.
+    ///
+    /// No validation of its own: [`BalancedInput::simulate`] refuses a non-finite or negative
+    /// parameter and a count past `1e12`, and this is the expression it refuses.
+    #[must_use]
+    pub fn arrivals_per_tick(&self, dt: f64) -> (f64, f64) {
+        (self.c_exc * (self.nu + self.nu_ext) * dt, self.c_inh * self.nu * dt)
+    }
+
 
     /// Run the **microscopic** drive — actual Poisson spike counts, actual voltage steps — through a
     /// [`Lif`] and return the spike train.
@@ -939,8 +963,7 @@ impl BalancedInput {
                 });
             }
         }
-        let lambda_exc = self.c_exc * (self.nu + self.nu_ext) * dt;
-        let lambda_inh = self.c_inh * self.nu * dt;
+        let (lambda_exc, lambda_inh) = self.arrivals_per_tick(dt);
         // Checked here rather than left to `poisson_count`'s own refusal inside the loop, where an
         // `unwrap_or(0)` would turn "this mean is past what a u64 count can hold" into "no input
         // arrived", and the run would look like a silent network rather than like a rejected
@@ -2179,7 +2202,7 @@ mod tests {
     use super::{
         Avalanche, BalanceMatrix, BalancedInput, BranchingProcess, BrunelNetwork, MeanFieldError,
         Regime, RefractoryDensity, SiegertInput, beggs_plenz_ratio, branching_parameter, classify,
-        erfcx, gauss_legendre, multistep_regression, power_law_exponent,
+        erfcx, gauss_legendre, gl_panel, multistep_regression, power_law_exponent,
         power_law_exponent_discrete, siegert_integral, simulate_diffusion,
         simulate_free_membrane, synchrony,
     };
@@ -2187,6 +2210,58 @@ mod tests {
     use crate::neuron::Lif;
     use crate::rng::Rng;
     use crate::surrogate::erf;
+
+    /// `BalancedInput::simulate`'s arrival rate is a COUNT PER TICK, so the rate is multiplied by
+    /// `dt` — and the refusal it raises carries that product, which is what pins it FAST.
+    ///
+    /// Dropping the `* dt` is a mutation no ordinary fixture can afford to catch: at this module's
+    /// own `dt = 1e-4` it multiplies every arrival rate by ten thousand, and the simulation then
+    /// spends hours drawing Poisson counts. The full-record verification reported it as `TIMEOUT`
+    /// rather than `caught`, which the harness's own doc says to read as "it says nothing either
+    /// way". A refusal is the fast observable: both versions refuse the parameters below, and the
+    /// value each reports is its own arrival rate, so the two are told apart in microseconds
+    /// instead of being waited out.
+    #[test]
+    fn the_arrival_rate_is_a_count_per_tick_and_its_refusal_reports_that_product() {
+        let b = BalancedInput {
+            tau_m: 20e-3,
+            c_exc: 1000.0,
+            c_inh: 250.0,
+            g: 5.0,
+            j: 0.1e-3,
+            nu: 0.0,
+            nu_ext: 2e12,
+        };
+        let lif = Lif::default();
+        let mut rng = Rng::new(1);
+        // c_exc * (nu + nu_ext) * dt = 1000 * 2e12 * 1e-3 = 2e12, over the 1e12 ceiling.
+        match b.simulate(&lif, 1e-3, 1, &mut rng) {
+            Err(MeanFieldError::OutOfRange { what, value, high, .. }) => {
+                assert_eq!(what, "c_exc * (nu + nu_ext) * dt");
+                assert_eq!(value, 2e12, "the reported rate is not the per-tick count");
+                assert_eq!(high, 1e12);
+            }
+            other => panic!("expected a refused arrival rate, got {other:?}"),
+        }
+        assert_eq!(b.arrivals_per_tick(1e-3).0, 2e12, "and the accessor says the same");
+        // The same rates at a hundredth of the step are a hundredth of the count, and are accepted.
+        // Without the `dt` this is 1e14 and is refused, so the two versions differ on BOTH sides of
+        // the ceiling rather than only inside it.
+        let ok = BalancedInput { nu_ext: 1e11, ..b };
+        assert!(
+            ok.simulate(&lif, 1e-5, 1, &mut rng).is_ok(),
+            "1000 * 1e11 * 1e-5 = 1e9 arrivals in a tick is under the ceiling"
+        );
+        // And the inhibitory half carries its own product, named separately.
+        let inh = BalancedInput { nu: 1e13, nu_ext: 0.0, c_exc: 0.0, ..b };
+        match inh.simulate(&lif, 1e-3, 1, &mut rng) {
+            Err(MeanFieldError::OutOfRange { what, value, .. }) => {
+                assert_eq!(what, "c_inh * nu * dt");
+                assert_eq!(value, 250.0 * 1e13 * 1e-3, "2.5e12, over the ceiling");
+            }
+            other => panic!("expected a refused inhibitory rate, got {other:?}"),
+        }
+    }
     use crate::spike::{Spike, Train};
     use core::f64::consts::PI;
 
@@ -3151,6 +3226,14 @@ mod tests {
         let mu_u = lif.v_rest + unbalanced.mu();
         assert!(mu_b < lif.v_th, "the balanced mean must sit below threshold: {mu_b} V");
         assert!(mu_u > lif.v_th, "the unbalanced mean must sit above it: {mu_u} V");
+
+        // Before four hundred seconds of simulated time: the per-tick arrival counts this run
+        // will draw from. 1000 * 19 * 1e-4 = 1.9 and 250 * 10 * 1e-4 = 0.25. A change that drops
+        // the factor of `dt` makes them 19,000 and 2,500 — the same simulation and hours of it —
+        // so it is asserted HERE, where it costs microseconds, rather than discovered by waiting.
+        let (le, li) = balanced.arrivals_per_tick(dt);
+        assert!((le - 1.9).abs() < 1e-12, "excitatory arrivals per tick: {le}");
+        assert!((li - 0.25).abs() < 1e-12, "inhibitory arrivals per tick: {li}");
 
         let mut rng = Rng::new(0xBA1A_4CED);
         let tb = balanced.simulate(&lif, dt, ticks, &mut rng).unwrap();
@@ -4399,5 +4482,108 @@ mod tests {
         let var = activity.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / t as f64;
         let last = (activity[0] - mean) * (activity[t - 1] - mean) / var;
         assert!((last + 3.0).abs() < 1e-12, "the lag-5 correlation is {last}, not -t/2");
+    }
+
+    /// The panel width on the substituted axis is CONVERGED, not merely tolerable.
+    ///
+    /// The hole: every other check on [`siegert_integral`] compares a firing rate or an integral
+    /// at a tolerance of `1e-9` or looser, and the substituted axis carries about fifteen decades
+    /// of quadrature margin — so a panel twenty-five times too wide lands inside every one of
+    /// them, and the width was defended by a BOUND on tolerability rather than by a measurement
+    /// of convergence. What nothing asked was whether halving the width moves the answer. That
+    /// question is portable in a way an assertion against a transcribed constant is not: it runs
+    /// the same nodes, the same `erfcx` and the same `exp` on the same target twice and compares
+    /// the two, so a target whose `exp` rounds differently moves both sides together.
+    ///
+    /// `(p, q) = (-10, -5)` and `(-13.5, -11.5)` isolate the loop: `lo > 1` collapses the
+    /// pre-split loop to nothing and `q < 0` leaves no supra-threshold part, so the whole answer
+    /// is the substituted loop over `x` from `q²` to `p²`.
+    ///
+    /// MEASURED here, in ulps of the answer's own exponent. Widths of 1, 1/2, 1/4 and 1/8 — 600
+    /// panels down to 75 at the first point — return the identical f64 `2.7017645613438443e42`
+    /// there, and span one ulp at the second; the implementation's width of 2 is 1.6 and 2.0 ulps
+    /// from that limit; a width of 50 is 38 and 70 ulps out (`2.7017645613438616e42` and
+    /// `1.049627796513307e78`). The gap is QUADRATURE error and not the rounding of the panel
+    /// sum: at the first point widths of 50, 25, 10, 4 and 2 give `…8616`, `…8616`, `…850`,
+    /// `…849` and `…845`, a monotone fall that then stops — which an accumulation difference
+    /// would not do.
+    #[test]
+    fn the_substituted_axis_is_converged_at_the_width_it_uses() {
+        let (xs, ws) = gauss_legendre();
+        let g = |x: f64| {
+            let s = x.sqrt();
+            (2.0 * x.exp() - erfcx(s)) / (2.0 * s)
+        };
+        let by_width = |x0: f64, x1: f64, width: f64| {
+            let mut x = x0;
+            let mut total = 0.0f64;
+            while x < x1 {
+                let next = (x + width).min(x1);
+                total += gl_panel(x, next, &xs, &ws, g);
+                x = next;
+            }
+            total
+        };
+        // The third column is the floor the 25x width clears at that point, set at about half the
+        // measured 6.2e-15 and 1.5e-14 — it is what makes the convergence bound a measurement.
+        for (p, q, wide_floor) in [(-10.0f64, -5.0f64, 3e-15), (-13.5, -11.5, 5e-15)] {
+            let (x0, x1) = (q * q, p * p);
+            let value = siegert_integral(p, q).expect("both ends are finite and q > p");
+            let fine = by_width(x0, x1, 0.125);
+            let rel = |a: f64| (a - fine).abs() / fine;
+            // Converged: four widths spanning 8x agree to within five ulps of each other.
+            for w in [0.25f64, 0.5, 1.0] {
+                assert!(rel(by_width(x0, x1, w)) < 1e-15, "the reference is not converged at a width of {w}: {}", rel(by_width(x0, x1, w)));
+            }
+            // The width the implementation uses is at that limit, to ten ulps.
+            assert!(rel(value) < 2e-15, "siegert_integral({p}, {q}) = {value} is {} from the converged {fine}", rel(value));
+            // And the same sum with panels 25x wider is not, which is what the line above refuses.
+            assert!(rel(by_width(x0, x1, 50.0)) > wide_floor, "a 25x panel at ({p}, {q}) was only {} out", rel(by_width(x0, x1, 50.0)));
+        }
+    }
+
+    /// The variance estimator's Bessel correction survives the ratio.
+    ///
+    /// [`synchrony`] divides a numerator variance by a mean of denominator variances, and every
+    /// vector handed to the estimator has the same length — so in REAL arithmetic the `bins - 1`
+    /// cancels and the correction is invisible. The hole is that both existing fixtures are built
+    /// where the cancellation is also exact in binary64: the locked population makes every row
+    /// equal to the population mean, so the ratio is 1 whatever the divisor, and the independent
+    /// population is only asserted to 40% of `1/sqrt(400)`. Neither can see a divisor that is
+    /// exact against one that is not.
+    ///
+    /// This fixture is chosen so that it can. Three bins: row 0 is `[0, 0, 1]`, row 1 is
+    /// `[1, 2, 1]`, and the population mean is `[1/2, 1, 1]`. Both rows have deviation-square sum
+    /// `2/3` and the population's is `1/6`, so the ratio is exactly `1/4` and `chi` is exactly
+    /// `1/2` under EITHER divisor. In binary64 they land on opposite sides of it: dividing by
+    /// `bins - 1 = 2` is exact, dividing by `bins = 3` is not, and the two roundings do not
+    /// cancel. Measured: the correction gives the f64 one ulp BELOW `1/2`, and dropping it gives
+    /// `1/2` exactly.
+    #[test]
+    fn the_bessel_correction_moves_the_synchrony_index_off_one_half() {
+        let train = Train::from_spikes(vec![
+            Spike { t: 4, source: 0 },
+            Spike { t: 0, source: 1 },
+            Spike { t: 2, source: 1 },
+            Spike { t: 3, source: 1 },
+            Spike { t: 4, source: 1 },
+        ]);
+        let chi = synchrony(&train, 2, 6, 2).expect("three bins, two sources, a live denominator");
+        // The exact answer is 1/2; the computed one is the next f64 below it, and every operation
+        // between the counts and this number is an IEEE-754 add, subtract, multiply, divide or
+        // square root, so that is the same value on every conforming target.
+        assert!(chi < 0.5, "chi = {chi} did not land below the exact 1/2");
+        assert_eq!(chi, f64::from_bits(0.5f64.to_bits() - 1), "chi = {chi} is not one ulp below 1/2");
+        // What the uncorrected estimator gives, stated so the line above reads as a measurement
+        // of the divisor rather than of the fixture: the same arithmetic with `v.len()` in place
+        // of `v.len() - 1` returns 1/2 exactly.
+        let uncorrected = |v: &[f64]| {
+            let m = v.iter().sum::<f64>() / v.len() as f64;
+            v.iter().map(|x| (x - m) * (x - m)).sum::<f64>() / v.len() as f64
+        };
+        let num = uncorrected(&[0.5, 1.0, 1.0]);
+        let den = (uncorrected(&[0.0, 0.0, 1.0]) + uncorrected(&[1.0, 2.0, 1.0])) * 0.5;
+        assert_eq!((num / den).sqrt(), 0.5, "the uncorrected estimator no longer returns 1/2");
+        assert!(chi != (num / den).sqrt(), "the two divisors are not separated by this fixture");
     }
 }

@@ -4416,4 +4416,71 @@ mod tests {
         // Same seed, same bundle.
         assert_eq!(b3, Hypervector::bundle(&even, &mut Rng::new(1)).expect("valid"));
     }
+
+    /// The fit writes each coupling into the ROW of the unit whose conditional it read, and the
+    /// slot is not a relabelling: the transposed write stores a different number.
+    ///
+    /// ⛔ THE HOLE: `W_kj` and `W_jk` are the same four log-weights with the same signs, so the
+    /// record argued a transposed write differs "by at most a couple of ulps". That is an ulp of
+    /// the LARGEST log-weight, and `Target::from_log_weights` gates length, unit count and
+    /// finiteness and nothing else — it does not bound the magnitude. Every fixture in this module
+    /// carries log-weights of order 1, where that ulp is 1e-16 and the tightest assertion on
+    /// `coupling` is 1e-13, so nothing pinned which slot the value lands in.
+    #[test]
+    fn the_fit_writes_each_coupling_into_the_row_of_the_unit_whose_conditional_it_read() {
+        // Ordinary magnitudes, and every quantity below is exact in binary64.
+        let e = 2f64.powi(-53);
+        let t = Target::from_log_weights(2, &[0.0, e, 3.0 * e, 1.0 + 2.0 * e]).expect("valid");
+        let fit = PairwiseFit::of(&t).expect("small");
+        // Equality, not a tolerance: the right-hand sides are the same two calls the fit makes, in
+        // the same order, so anything but the identical f64 means the value landed elsewhere.
+        assert_eq!(
+            fit.coupling[1],
+            t.conditional_log_odds(0b10, 0).expect("in range") - fit.bias[0],
+            "row 0, column 1 does not hold the coupling read at unit 0"
+        );
+        assert_eq!(
+            fit.coupling[2],
+            t.conditional_log_odds(0b01, 1).expect("in range") - fit.bias[1],
+            "row 1, column 0 does not hold the coupling read at unit 1"
+        );
+        // Measured: the two slots hold 1 − 2^-52 = 0.9999999999999998 and 1 − 3·2^-53 =
+        // 0.9999999999999997, which differ by 2^-53 = 1.1102230246251565e-16. They differ because
+        // (1 + 2^-52) − 2^-53 is a tie that rounds to 1.0 while (1 + 2^-52) − 3·2^-53 is exact:
+        // the four log-weights are associated in a different order, so the sum is a different f64.
+        assert_eq!(fit.coupling[1], 1.0 - 2.0 * e, "row 0, column 1");
+        assert_eq!(fit.coupling[2], 1.0 - 3.0 * e, "row 1, column 0");
+        // And the gap scales with the log-weights, so 1e-16 is a property of the fixtures and not
+        // of the arithmetic. At 2^53 + 2 — finite, so the constructor accepts it — the same two
+        // slots are measured a whole nat apart.
+        let big = Target::from_log_weights(2, &[0.0, 1.0, 3.0, 9007199254740994.0]).expect("valid");
+        let big = PairwiseFit::of(&big).expect("small");
+        assert_eq!(big.coupling[1], 9007199254740990.0, "row 0, column 1 at magnitude 2^53");
+        assert_eq!(big.coupling[2], 9007199254740989.0, "row 1, column 0 at magnitude 2^53");
+    }
+
+    /// The fit SKIPS the diagonal rather than writing a zero into it: at `j == k` the value it
+    /// would write is `x − x`, which is `+0.0` only while `x` is finite.
+    ///
+    /// ⛔ THE HOLE: `Target`'s invariant is that every LOG-WEIGHT is finite, not that a DIFFERENCE
+    /// of two of them is. `conditional_log_odds` returns `log_w[on] − log_w[off]`, which overflows
+    /// to `±inf` for two finite weights of opposite sign near `f64::MAX`; the bias is such a
+    /// difference, and `inf − inf` is NaN. Every fixture in this module holds log-weights of order
+    /// 1, where the subtraction is exact and a filled-in diagonal writes back the `+0.0` that
+    /// `vec![0.0; n * n]` already put there — which is why
+    /// `the_fitted_coupling_is_symmetric_because_of_where_the_fit_reads_it` makes this very
+    /// assertion and stays green. `coupling` is a `pub` field, so the entry is an observable
+    /// whether or not the residual loop reads it.
+    #[test]
+    fn the_fit_leaves_the_diagonal_of_the_coupling_alone_rather_than_writing_a_difference_in() {
+        // Both log-weights are finite, so the constructor accepts; their difference is not.
+        let t = Target::from_log_weights(1, &[-1e308, 1e308]).expect("valid");
+        let fit = PairwiseFit::of(&t).expect("small");
+        // Measured: bias[0] = 1e308 − (−1e308) = 2e308, past f64::MAX, so +inf. The diagonal a
+        // filled-in write would store is conditional_log_odds(1, 0) − bias[0] = inf − inf = NaN.
+        assert_eq!(fit.bias[0], f64::INFINITY, "this fixture no longer overflows the bias");
+        let diagonal = fit.coupling[0];
+        assert_eq!(diagonal, 0.0, "the fit wrote a self-coupling of {diagonal} nats");
+        assert!(fit.coupling.iter().all(|c| c.is_finite()), "the fitted coupling is not finite");
+    }
 }

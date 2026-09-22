@@ -3781,4 +3781,77 @@ mod tests {
         assert_eq!(integrate(&e_to_x, 1.0, 1.0, 1e-12), 0.0);
         assert_eq!(integrate(&e_to_x, 1.0, 0.0, 1e-12), 0.0);
     }
+
+    /// The stable fixed point comes back bit for bit at an `η` where the `tanh` form does not.
+    ///
+    /// Pins the `y0 == -a` guard in `canonical_flow`, which the record called a reader's aid. The
+    /// suite could not see it because the sweep in
+    /// `the_divergence_time_is_accurate_next_to_the_unstable_fixed_point` uses η = -0.37, -1 and
+    /// -4, three values at which the round trip closes by luck; the hole is the shape "every
+    /// fixture is a point where the identity being relied on happens to be exact".
+    ///
+    /// The arithmetic the guard stands in front of is `a * (y₀ - a·T) / (a - y₀·T)`, which Rust
+    /// evaluates LEFT TO RIGHT at equal precedence: with `y₀ = -a` the numerator and denominator
+    /// are exact negatives, `±fl(a + T)`, but the product `a · (-2a) = -2a²` is ROUNDED BEFORE the
+    /// division, and `fl(fl(a·D)/D) == a` is not an identity in binary64. Measured, at `h = 1e6`
+    /// where `T` is exactly 1.0: η = -1/2 gives -0.7071067811865477 against a `-a` of
+    /// -0.7071067811865476, η = -2 gives -1.4142135623730954 against -1.4142135623730951, η = -8
+    /// gives -2.8284271247461907 against -2.8284271247461903, and η = -1e308 OVERFLOWS the product
+    /// to -inf before any division can undo it.
+    #[test]
+    fn the_stable_fixed_point_is_exact_where_the_tanh_form_loses_an_ulp() {
+        for &eta in &[-0.5f64, -2.0, -8.0, -1e308] {
+            let a = (-eta).sqrt();
+            let t = (a * 1e6).tanh();
+            assert_eq!(t, 1.0, "η {eta}: a long step must saturate the tanh");
+            // The same operations in the same order as the branch the guard skips.
+            let through_tanh = a * (-a - a * t) / (a + a * t);
+            assert!(through_tanh < -a, "η {eta}: {through_tanh} is not strictly below {}", -a);
+            assert_eq!(canonical_flow(-a, eta, 1e6), Flow::Finite(-a), "η {eta}, stable point");
+        }
+        // The overflow spelled out, since it is the one that is not a one-ulp matter.
+        let a = 1e308f64.sqrt();
+        assert_eq!(a, 1e154, "the root of 1e308 is 1e154 exactly");
+        assert_eq!(a * (-a - a), f64::NEG_INFINITY, "-2a² overflows at a = 1e154");
+    }
+
+    /// At exactly rheobase the fixed-point pair can be GONE to rounding, and the cell must still
+    /// refuse to fire.
+    ///
+    /// Pins the `None` arm of `Eif::isi`'s escape test, which the record called unreachable. The
+    /// suite could not see it because every `NoFiring` fixture uses parameters whose two rounding
+    /// chains agree; the hole is the shape "real-number algebra applied to two DIFFERENT rounding
+    /// chains". `rheobase()` computes `g_L · fl(fl(V_T - E_L) - Δ_T)` while the fixed-point
+    /// parameter computes `k = fl(fl(fl(V_T - E_L) - fl(i/g_L)) / Δ_T)`, so `i <= rheobase` in
+    /// binary64 does not imply the computed `k >= 1.0` — and `exp_offset_roots` refuses `k < 1`,
+    /// which lands in the arm.
+    ///
+    /// Measured at `g_L` = 1 nS, `E_L` = -70 mV, `V_T` = -50 mV, `Δ_T` = 0.1 mV:
+    /// `fl(V_T - E_L)` = 0.020000000000000004, rheobase = 1.9900000000000007e-11, feeding it back
+    /// gives `A - i/g_L` = 9.99999999999994e-05 — BELOW `Δ_T` — so `k` = 0.9999999999999939 and
+    /// there is no pair. With the arm reading `true` the call returns an interval from the
+    /// quadrature instead of the refusal a reset at -58 mV has earned.
+    #[test]
+    fn an_eif_whose_fixed_points_round_away_at_rheobase_still_refuses_to_fire() {
+        let e = Eif::new(200e-12, 1e-9, -70e-3, -50e-3, 0.1e-3, 0.0, -58e-3, 0.0).unwrap();
+        let i = e.rheobase();
+        assert_eq!(i, 1.9900000000000007e-11, "the rheobase chain is the measured one");
+        assert!((e.v_t - e.e_l - i / e.g_l) / e.delta_t < 1.0, "k came back at or above one");
+        assert!(e.fixed_points(i).is_none(), "the pair survived the round trip");
+        assert!(
+            matches!(e.isi(i), Err(ModelError::NoFiring { .. })),
+            "a reset below V_T with no fixed-point pair answered {:?}",
+            e.isi(i)
+        );
+        // The other way into the same arm: `k` overflows for a large hyperpolarising current, and
+        // `exp_offset_roots` refuses a non-finite `k` too.
+        let d = Eif::default();
+        assert!(!((d.v_t - d.e_l - -1e300 / d.g_l) / d.delta_t).is_finite(), "k is finite");
+        assert!(d.fixed_points(-1e300).is_none());
+        assert!(
+            matches!(d.isi(-1e300), Err(ModelError::NoFiring { .. })),
+            "a current of -1e300 A answered {:?}",
+            d.isi(-1e300)
+        );
+    }
 }

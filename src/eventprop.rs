@@ -709,4 +709,51 @@ mod tests {
         assert_eq!(busy.backward(&record, &bad), Err(EventPropError::NonFinite { what: "dl_dt" }));
         assert!(EventPropError::Silent { neuron: 2 }.to_string().contains("did not fire"));
     }
+
+    /// The `i0 > v0` guard in [`Network::time_to_threshold`] is load-bearing, not a fast path: it
+    /// is the only thing keeping the stationary-point search out of the regime where `flow` cannot
+    /// evaluate `V` to a useful number of bits. With `tau_syn = tau_mem (1 + 2^-49)` the factor
+    /// `k = tau_syn / (tau_syn - tau_mem)` is 5.6e14, `es - em` cancels to a handful of bits, and
+    /// the arithmetic reports both a positive `peak` (the true stationary point is at a NEGATIVE
+    /// time, because `V` falls monotonically from `v0` toward zero when `i0 <= v0`) and a
+    /// `V(peak)` ABOVE `v0`, which no real trajectory does from a non-rising start.
+    ///
+    /// Why the suite could not see it: every fixture in this module, and the 86,400-start survey
+    /// the entry's recorded argument rests on, uses well-separated time constants (20 ms against
+    /// 5 ms or 10 ms), where `k` is order one and the subtraction does not cancel. Nothing here
+    /// exercised a near-degenerate tau pair, which [`Network::new`] accepts: it refuses only
+    /// `tau_mem == tau_syn` exactly.
+    #[test]
+    fn the_non_rising_guard_is_what_keeps_the_peak_search_out_of_the_degenerate_tau_regime() {
+        let tau_mem = 20e-3;
+        let tau_syn = tau_mem * (1.0 + 2.0_f64.powi(-49));
+        // MEASURED on this machine: the cancelled evaluation of V at the computed stationary
+        // point, 100.591..., against a start of 100.0 that the true V never rises above.
+        let net = Network::new(1, 1, tau_mem, tau_syn, 100.5).unwrap();
+        let v0 = 100.0;
+        let i0 = v0 * (1.0 - 2.0_f64.powi(-49));
+        assert!(i0 < v0, "the fixture needs a non-rising start");
+        // The degeneracy is real, not a typo: k is 5.6e14 and the two exponentials agree to 14
+        // digits at the reported peak.
+        let k = tau_syn / (tau_syn - tau_mem);
+        assert!(k > 5e14, "k = {k}, so this tau pair is not degenerate enough to cancel");
+        // What the unguarded path would compute, spelled out so the failure is readable.
+        let a = v0 - i0 * k;
+        let q = -(i0 * k * tau_mem) / (a * tau_syn);
+        let peak = q.ln() / (1.0 / tau_syn - 1.0 / tau_mem);
+        let at_peak = net.flow(v0, i0, peak).0;
+        assert!(peak > 0.0, "the cancelled peak is {peak}, so this fixture no longer bites");
+        assert!(at_peak > net.theta, "the cancelled V(peak) is {at_peak}, below theta = {}", net.theta);
+        // `V` is bounded by `v0` on `[0, inf)` from a non-rising start: `tau_mem V' = I - V`, and
+        // `I - V` starts non-positive and V decays toward I which decays toward zero. 100.0 is
+        // under a threshold of 100.5, so the honest answer is None whatever the arithmetic does at
+        // the stationary point.
+        assert_eq!(
+            net.time_to_threshold(v0, i0),
+            None,
+            "reported a crossing of theta = {} from V = {v0}, I = {i0}, which never rises",
+            net.theta
+        );
+    }
+
 }

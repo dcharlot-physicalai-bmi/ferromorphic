@@ -58,13 +58,12 @@
   "label": "the spike count in a step truncates towards zero rather than flooring",
   "old": "        let n = self.acc.floor();",
   "new": "        let n = self.acc.trunc();",
-  "equivalent": "the accumulator is never negative, so the two functions agree on every value it can hold. `acc` starts at 0.0, every increment is `gain * max(x, 0) * dt` with `gain` validated strictly positive at construction and `dt` validated strictly positive on entry, and the only decrement subtracts `n = floor(acc) <= acc`, which leaves `acc` in [0, 1). `floor` and `trunc` are the same function on a non-negative finite argument, and on the NaN this line can also see (an infinite product) both return NaN, which the `n < U64_EXACT` line below refuses either way."
+  "equivalent": "the guard immediately above the mutation is `if self.acc < 1.0 { return Ok(0); }`, so `.floor()` is only ever evaluated on the set `{acc : !(acc < 1.0)}` = `[1.0, +inf] ∪ {NaN}`, and `floor` and `trunc` are the SAME FUNCTION on every member of that set: for a finite `x >= 1 > 0` truncation towards zero is the floor, `floor(inf) = trunc(inf) = inf`, and `floor(NaN) = trunc(NaN) = NaN`, which the `!(n < U64_EXACT)` line below refuses either way. It is the guard and not the sign of the accumulator that makes the two agree — `acc` and `gain` are `pub` fields that no method re-validates, so a negative accumulator IS reachable in safe code, and every negative value returns at that guard without reaching the mutated line at all (measured 2026-09-22: a fixture poking acc = -5.7, -0.5, -1e300 and -0.0, and gain = -1e9, leaves the mutant alive — every one of those steps returns Ok(0) at the guard with `acc` untouched, under both texts)."
  },
  {
   "label": "the closed-form count is not rectified",
   "old": "        let n = (self.gain * x.max(0.0) * t).floor();",
-  "new": "        let n = (self.gain * x * t).floor();",
-  "equivalent": "both forms return 0 for every negative input, so nothing downstream can separate them. With `gain > 0` and `t > 0` a negative `x` makes the product negative, `floor` of a negative number is negative, `!(n < U64_EXACT)` is therefore false, and `n as u64` is a saturating cast that yields 0 — exactly what the rectified form computes as floor(gain * 0 * t) = 0. A non-finite `x` is refused by `need_finite` on the line above, before either form is evaluated."
+  "new": "        let n = (self.gain * x * t).floor();"
  },
  {
   "label": "the closed-form count rounds up rather than down",
@@ -580,7 +579,7 @@
   "label": "the degenerate-signal guard is removed",
   "old": "    if !(hi > lo) {\n        return Vec::new();\n    }",
   "new": "    if false {\n        return Vec::new();\n    }",
-  "equivalent": "the guard cannot change any result, because the crossing test below already refuses every case it exists for. When the samples are constant, hi == lo == mid, and `a < mid` is false for every sample, so no crossing is pushed. When the slice is empty, hi and lo keep their initial NEG_INFINITY and INFINITY, mid is NaN, and the loop `for i in 1..samples.len()` does not run at all. In both cases the function returns an empty vector with or without the early return, and an empty vector is what `measure_period` turns into TooFewCycles either way."
+  "equivalent": "`!(hi > lo)` holds exactly when the slice holds no two distinct non-NaN samples, and in EVERY such case the crossing test `a < mid && b >= mid` is false at every i, whichever value `mid` takes. (i) All samples equal a finite v with |v| <= f64::MAX/2: lo = hi = v, `lo + hi` = 2v exactly, mid = v, and `a < v` is false because v is the minimum. (ii) All samples equal v with |v| > f64::MAX/2: `lo + hi` overflows, so mid = +inf for v > 0 — where `a < mid` is TRUE and it is the other half, `b >= +inf`, that is false for every finite b — and mid = -inf for v < 0, where `a < mid` is false. (iii) lo = hi = ±inf behaves as (i), mid = ±inf and the comparison against an equal value is false. (iv) No non-NaN sample at all: lo and hi keep INFINITY and NEG_INFINITY (`s < lo` and `s > hi` are both false for NaN), mid is `0.5 * (inf + -inf)` = NaN, and every comparison against NaN is false; the empty slice is this case with `1..samples.len()` = `1..0` yielding nothing rather than underflowing. The guard therefore cannot change the returned vector, and an empty vector is what `measure_period` turns into TooFewCycles either way (measured 2026-09-22: a fixture calling `up_crossings` on constant slices of f64::MAX, -f64::MAX, +inf, -inf, 1.0 and ±0.0, on an all-NaN slice, on a NaN-interleaved one and on an empty one returns an empty vector under both texts, and the mutant survives)."
  },
  {
   "label": "crossings are measured against the minimum rather than the mid-level",
@@ -605,8 +604,7 @@
  {
   "label": "every crossing is placed one whole sample late",
   "old": "            out.push((i - 1) as f64 * dt + frac * dt);",
-  "new": "            out.push(i as f64 * dt + frac * dt);",
-  "equivalent": "every consumer of this list reads only DIFFERENCES of crossing times, and a constant offset of one sample cancels out of all of them. `measure_period` maps the list to `w[1] - w[0]` and then to deviations from their own mean; `phase_difference` takes `t - t0` between two lists built by this same function, and its wrap-around branch takes `xb[last] + period - t0`, also a difference. The `t >= t0` comparison that selects b's crossing shifts both sides by the same dt. No quantity this module reports is an absolute crossing instant."
+  "new": "            out.push(i as f64 * dt + frac * dt);"
  },
  {
   "label": "a single interval is enough to report a period",

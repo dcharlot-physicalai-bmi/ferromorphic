@@ -69,7 +69,7 @@
   "label": "the energy reads the coupling transposed",
   "old": "                        e += 0.5 * self.coupling[k * self.units + j];\n                    }",
   "new": "                        e += 0.5 * self.coupling[j * self.units + k];\n                    }",
-  "equivalent": "`Boltzmann::new` refuses any matrix with `coupling[k*units+j] != coupling[j*units+k]`, and that comparison is exact f64 equality, not a tolerance — so for every model this type can hold the two reads return the identical bit pattern. Term by term the mutated sum is the same sequence of f64 additions on the same values in the same order, so the energy is bit-for-bit what it was. A test could only tell the two apart on a matrix the constructor does not allow to exist, and the only route into the struct is `new` (and `independent`, which goes through it)."
+  "equivalent": "the two reads return values that are EQUAL but not necessarily bit-identical, and the accumulator is what makes the difference unobservable. `Boltzmann::new` refuses a matrix with `coupling[k*units+j] != coupling[j*units+k]`, and f64 equality is not bit equality: `+0.0 != -0.0` is false, so a model carrying `+0.0` in one slot and `-0.0` in the transposed one is accepted (the diagonal screen `d != 0.0` admits `-0.0` for the same reason), and `0.5 * +0.0` against `0.5 * -0.0` are then different bit patterns. A signed zero is the ONLY such pair the constructor admits — every other two f64 values that compare equal are bit-identical, and a NaN is refused twice, by `finite` and by `NaN != NaN`. It cannot reach the result: `energy_of` starts `let mut e = 0.0` at `+0.0`, and under round-to-nearest a sum is `-0.0` only when BOTH operands are `-0.0` (`x + (-x)` is `+0.0`), so no partial sum of this loop is ever `-0.0` and `e + (+0.0)` and `e + (-0.0)` are the identical f64 for every value `e` can hold. Term by term the mutated sum is then the same sequence of f64 additions, with the same results, in the same order. (measured 2026-09-22: the adversarial model — bias [1.0, -1.0] and coupling [-0.0, +0.0, -0.0, -0.0], where the biases cancel to zero immediately before a signed-zero coupling is added — gives bit-identical energies at all four configurations under both texts, and the mutant survives.)"
  },
  {
   "label": "the bias is counted for every unit rather than only the ones that are on",
@@ -169,14 +169,12 @@
  {
   "label": "the fit writes the coupling transposed",
   "old": "                    coupling[k * n + j] = t.conditional_log_odds(1u64 << j, k)? - bias[k];\n                }\n            }",
-  "new": "                    coupling[j * n + k] = t.conditional_log_odds(1u64 << j, k)? - bias[k];\n                }\n            }",
-  "equivalent": "the fit's own doc derives why: W_kj = [w(e_k+e_j) − w(e_j)] − [w(e_k) − w(0)] and W_jk = [w(e_j+e_k) − w(e_k)] − [w(e_j) − w(0)] are the same four log-weights with the same signs, for ANY target, third-order terms included. The two differ only in the order the four are associated, so the transposed write stores a value that differs from the original by at most a couple of ulps of the largest log-weight — of order 1e-16 nats for the models in this file, where the smallest tolerance any assertion on `coupling` or `residual` uses is 1e-13 and the planted residuals the fit is measured against are 0.8 and 1.7 nats. No assertion in this module distinguishes two matrices that agree to 1e-16."
+  "new": "                    coupling[j * n + k] = t.conditional_log_odds(1u64 << j, k)? - bias[k];\n                }\n            }"
  },
  {
   "label": "the diagonal of the fitted coupling is filled in rather than skipped",
   "old": "                if j != k {\n                    coupling[k * n + j]",
-  "new": "                if true {\n                    coupling[k * n + j]",
-  "equivalent": "the entry the mutant adds is exactly 0.0, which is what the diagonal already held. At j == k the value written is `conditional_log_odds(1 << k, k) - bias[k]`, and `conditional_log_odds` forces bit k in BOTH of its reads: off = (1<<k) & !(1<<k) = 0 and on = 0 | (1<<k) = 1<<k. That is the identical pair of indices `bias[k] = conditional_log_odds(0, k)` used, so the subtraction is x − x = 0.0 exactly, not approximately. The residual loop skips j == k independently, so nothing downstream reads the entry either way."
+  "new": "                if true {\n                    coupling[k * n + j]"
  },
  {
   "label": "the residual is the smallest disagreement rather than the largest",

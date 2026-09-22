@@ -4381,4 +4381,103 @@ mod tests {
         assert!(wide < 0.50, "retention at a target norm of 10: {wide}");
     }
 
+
+    /// Backward transfer reads the last accuracy row no further than column `t - 2`, so a row that
+    /// is exactly one entry short still produces the mean, and a non-finite diagonal entry never
+    /// enters the sum.
+    ///
+    /// `a_ragged_accuracy_matrix_refuses_rather_than_panicking` cannot see the loop bound at all:
+    /// both of its short rows are `Vec::new()`, so `last.get(j)?` fails at `j = 0` for any bound
+    /// whatsoever. The hole was a missing LENGTH rather than a missing case — the only row that
+    /// separates `0..t - 1` from `0..t` is one of length exactly `t - 1`. The second fixture pins
+    /// the other half: the recorded argument that the extra term is `x - x == 0.0` holds only for
+    /// finite `x`, and `Results::r` is a public field that this module's own doc says a caller
+    /// fills by hand, so nothing enforces that precondition.
+    #[test]
+    fn backward_transfer_reads_no_further_than_the_second_to_last_column() {
+        // t = 2, last row of length exactly t - 1. The mean runs over j = 0 alone and every
+        // quantity in it is a dyadic fraction, so the value is exact: (0.25 - 0.5) / 1.
+        let short_by_one = Results {
+            r: vec![vec![0.5, 0.3], vec![0.25]],
+            baseline: vec![0.2, 0.2],
+            cost: Cost::default(),
+        };
+        assert_eq!(short_by_one.backward_transfer(), Some(-0.25));
+        // Full width, but the diagonal term the wider loop would add is `inf - inf`, which is NaN
+        // rather than the zero the argument assumes.
+        let infinite_diagonal = Results {
+            r: vec![vec![0.5, 0.5], vec![0.25, f64::INFINITY]],
+            baseline: vec![0.2, 0.2],
+            cost: Cost::default(),
+        };
+        assert_eq!(infinite_diagonal.backward_transfer(), Some(-0.25));
+    }
+
+    /// The untrained baseline row is **measured** on each task's own test split, not read off
+    /// `Task::chance`, and the two differ the moment the split is not balanced.
+    ///
+    /// `the_untrained_baseline_is_exactly_chance` cannot see the difference, and worse: it compares
+    /// `res.baseline[j]` against `c.tasks[j].chance`, so replacing the measurement by the constant
+    /// turns its own assertion into `chance[j] == chance[j]`, a tautology. Every curriculum that
+    /// suite reaches comes from `crate::tasks`, whose test splits hold the same number of examples
+    /// per class, so measurement and constant coincide there by construction. `Curriculum` is built
+    /// here through the public `from_examples`, which validates widths and labels and says nothing
+    /// about class balance — the hole was that no fixture ever presented an unbalanced split.
+    ///
+    /// Measured: on a two-class test split of four examples, one labelled 0 and three labelled 1,
+    /// the zero-initialised readout answers class 0 everywhere (every logit is `+0.0`, and
+    /// `Linear::predict` breaks that tie to the lowest index), so its accuracy is exactly 1/4 while
+    /// `Task::chance` is 1/2.
+    #[test]
+    fn the_untrained_baseline_is_measured_rather_than_declared() {
+        let train = vec![
+            Example { x: vec![1.0, 0.0], label: 0 },
+            Example { x: vec![0.0, 1.0], label: 1 },
+        ];
+        let test = vec![
+            Example { x: vec![1.0, 0.0], label: 0 },
+            Example { x: vec![0.0, 1.0], label: 1 },
+            Example { x: vec![0.0, 1.0], label: 1 },
+            Example { x: vec![0.0, 1.0], label: 1 },
+        ];
+        let c = Curriculum::from_examples("unbalanced", train, test, 2, 1, 7).unwrap();
+        assert_eq!(c.tasks[0].chance, 0.5);
+        // Both sides of the mutation, before the training loop is involved at all.
+        assert_eq!(evaluate(&Linear::new(2, 2).unwrap(), &c).unwrap(), vec![0.25]);
+        let res = run(&c, &Protocol::plain(Schedule::default())).unwrap();
+        assert_eq!(res.baseline, vec![0.25]);
+    }
+
+    /// The learning probability is conditioned on the mass of the **opposing** polarity, and on a
+    /// reducible cascade the two halves of the stationary distribution are not bit-identical, so
+    /// the choice of half is observable — and conditioning on the wrong one returns a number above
+    /// one.
+    ///
+    /// `the_stationary_distribution_is_exactly_symmetric_under_polarity` cannot see it: both of its
+    /// parameter sets have `p0 > 0` and `x > 0`, which is exactly the condition under which
+    /// `Cascade::stationary_by_flux_balance` succeeds and writes `pi[k]` and `pi[d + k]` from the
+    /// same `f64`. The hole was the OTHER path — `p0 == 0` makes every `deepen_k` zero, flux
+    /// balance returns `None`, and `Cascade::stationary` falls back to the power iteration, whose
+    /// column sums are accumulated in index order so that the polarity-image column lands one ulp
+    /// away. That test also asserts a `1e-15` tolerance rather than the bit equality its name
+    /// claims, so it could not have pinned this even on the flux-balance path.
+    ///
+    /// Measured on `Cascade { depth: 3, q0: 1.0, p0: 0.0, x: 1.0 }`, whose power iteration
+    /// converges in 51 steps: `pi[3..].iter().sum()` is `0.499_999_999_999_999_94` and
+    /// `pi[..3].iter().sum()` is `0.499_999_999_999_999_9`. The numerator is accumulated from
+    /// `pi[d + k]` in the same order as the first of those, so the quotient is exactly 1.0;
+    /// against the other half it is `1.000_000_000_000_000_2`, a probability above one.
+    #[test]
+    fn the_learning_probability_is_conditioned_on_the_opposing_polarity_half() {
+        for &(depth, x) in &[(3usize, 1.0f64), (4, 0.5), (8, 0.5)] {
+            let c = Cascade { depth, q0: 1.0, p0: 0.0, x };
+            // The reducible parameterisation: flux balance refuses it and the iteration answers.
+            let p = c.learning_probability().unwrap();
+            assert!(p <= 1.0, "depth {depth}: a probability exceeded one: {p}");
+        }
+        // The exact witness at depth 3: numerator and denominator are the same three f64s summed
+        // in the same order, so the quotient is 1.0 and not merely near it.
+        assert_eq!(Cascade { depth: 3, q0: 1.0, p0: 0.0, x: 1.0 }.learning_probability().unwrap(), 1.0);
+    }
+
 }

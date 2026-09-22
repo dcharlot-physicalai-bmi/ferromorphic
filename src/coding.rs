@@ -2348,9 +2348,9 @@ mod tests {
     use super::{
         Bsa, BurstCode, CodeError, ContrastMode, CosinePopulation, GaussianPopulation, Hsa,
         Oscillator, POISSON_MAX_MEAN, POISSON_REJECTION_FLOOR, PhaseEncoder, RankOrderCode,
-        TemporalContrast, angular_difference, fir_hann, fir_lowpass, poisson_count, poisson_ln_pmf,
-        poisson_transformed_rejection, ptrs_constants, rates_from_counts, rms_error, sinc,
-        spike_convolve, wrap_angle,
+        TemporalContrast, angular_difference, fir_hann, fir_lowpass, ml_on_grid, poisson_count,
+        poisson_ln_pmf, poisson_transformed_rejection, ptrs_constants, rates_from_counts, rms_error,
+        sinc, spike_convolve, wrap_angle,
     };
     use crate::encode::DeltaEncoder;
     use crate::rng::Rng;
@@ -4636,5 +4636,87 @@ mod tests {
         };
         assert_eq!(run(1234), run(1234), "the same seed produced different spikes");
         assert_ne!(run(1234).0, run(9999).0, "two seeds produced the same draw");
+    }
+
+    /// Cell `i`'s preferred direction runs COUNTERCLOCKWISE from the offset, and a rate vector the
+    /// decoder did not produce is read against that map.
+    ///
+    /// Pins the index-to-direction map as part of the public interface: `CosinePopulation`'s doc
+    /// prints it, `preferred` returns it, and `population_vector` takes an externally indexed
+    /// slice. Reflecting the tiling about the offset axis (`phi_i -> 2*offset - phi_i`) leaves the
+    /// SET of directions alone, so it is invisible to every existing fixture — they all feed
+    /// `p.rates(theta)` straight back into the decoder, where the relabelling cancels by
+    /// construction. That is the hole: no test names a direction for a cell, and no test hands the
+    /// decoder a rate vector of its own.
+    #[test]
+    fn cell_one_of_four_prefers_a_quarter_turn_counterclockwise_from_the_offset() {
+        let p = CosinePopulation::new(4, 10.0, 5.0, 0.0).expect("a valid population");
+        // TAU * 1 / 4 is exact: a division by a power of two. The reflected tiling puts cell 1 at
+        // 3*TAU/4 instead, which is PI away.
+        assert_eq!(p.preferred(1), TAU / 4.0);
+        // The peak is on cell 1, and the vector is the caller's, not `p.rates`'s.
+        let rates = [10.0, 15.0, 10.0, 5.0];
+        let got = p.decode_population_vector(&rates).expect("a vector of length 10");
+        // The only error is the 1e-16 dust in cos(PI/2) and sin(PI); the reflection costs PI.
+        assert!((got - TAU / 4.0).abs() < 1e-12, "measured decode: {got}");
+    }
+
+    /// The final clamp on a non-wrapping likelihood estimate is load-bearing: `x0 + shift` can
+    /// land one ulp OUTSIDE `[lo, hi]`.
+    ///
+    /// Pins the input class where the parabolic shift saturates its own `+/-h` clamp. For an
+    /// argmax at `best` the exact ratio `(y1 - y3) / (2*(y1 - 2*y2 + y3))` is bounded by 1/2 — put
+    /// `a = y2 - y1 >= 0` and `b = y2 - y3 >= 0`, then it is `(a - b) / (2*(a + b))` — so the
+    /// shift cannot normally reach `h`. But `h * (y1 - y3)` is a multiplication that can OVERFLOW
+    /// while `2.0 * denom` stays finite, and `inf / finite` saturates the clamp at exactly `h`.
+    /// With `lo = 0`, `hi = 100`, `grid = 7` the step is `h = 16.666666666666668`, so
+    /// `x0 = lo + 5*h = 83.33333333333334` and `x0 + h = 100.00000000000001`, past `hi`. The hole
+    /// is that every fixture for this decoder draws its counts from the population's own tuning
+    /// curves, where the log-likelihoods sit within a few hundred of each other and the shift
+    /// stays near zero; the helper is driven directly because no public population puts a
+    /// -8e307 log-likelihood at one interior grid point and 0.0 at the two above it.
+    #[test]
+    fn the_likelihood_grid_holds_an_estimate_whose_shift_saturated_inside_its_range() {
+        // One cell, no spikes: acc = -mu wherever mu > 0, and exactly 0.0 where the modelled rate
+        // is zero, so logl = [-1, -1, -1, -1, -8e307, 0, 0] and the first argmax is grid point 5.
+        let h = 100.0 / 6.0;
+        let got = ml_on_grid(&[0u64], 1.0, 0.0, 100.0, 7, false, |_, x| {
+            if x == h * 4.0 {
+                8e307
+            } else if x > h * 4.0 {
+                0.0
+            } else {
+                1.0
+            }
+        })
+        .expect("grid point 5 has a finite log-likelihood");
+        assert_eq!(got, 100.0, "the estimate escaped its own range");
+    }
+
+    /// A NaN log-likelihood neighbour returns the grid point itself, and never reaches the
+    /// parabola.
+    ///
+    /// Pins the reachability of a NaN entry in the likelihood scan, which the recorded reasoning
+    /// for the finiteness guard assumed away: every field of `GaussianPopulation` is public and
+    /// `decode_max_likelihood` validates none of them, so `r_max = f64::MAX` with `window_s = 2.0`
+    /// makes `mu` infinite at a grid point that lands on a cell, and `k as f64 * mu.ln() - mu` is
+    /// `0.0 * inf - inf = NaN` for a cell that recorded no spike. The hole is that every other
+    /// fixture here builds its population through `GaussianPopulation::new`, which refuses a
+    /// non-finite rate, so no test has ever put a NaN in `logl`.
+    #[test]
+    fn a_nan_log_likelihood_neighbour_returns_its_grid_point_unrefined() {
+        let p = GaussianPopulation {
+            n: 5,
+            lo: 0.0,
+            hi: 1.0,
+            sigma: 0.05,
+            r_max: f64::MAX,
+            r_base: 0.0,
+        };
+        // Cells at 0, 0.25, 0.5, 0.75, 1; grid points every 0.125. The even grid points sit on a
+        // cell, where mu is infinite and the term is NaN; the odd ones are 0.125 from their two
+        // nearest cells, where mu is 1.6e307 and finite.
+        let decoded = p.decode_max_likelihood(&[0, 0, 0, 0, 0], 2.0, 9).expect("a finite maximum");
+        assert_eq!(decoded, 0.125, "the argmax grid point, returned without refinement");
     }
 }

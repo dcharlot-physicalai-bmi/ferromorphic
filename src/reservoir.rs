@@ -4847,4 +4847,58 @@ mod tests {
             g.state()[0]
         );
     }
+
+    /// [`Liquid::respond`] runs the liquid [`Mode::Clocked`], and the two modes are NOT
+    /// interchangeable here. [`crate::sim::Sim::step`]'s event-driven arm iterates over `touched`,
+    /// and a neuron is touched only when a delivery lands on it or its external current is
+    /// non-zero; a neuron with neither is never advanced at all, so it cannot appear in `fired`.
+    /// The clocked arm advances every neuron on every tick unconditionally. The crate's
+    /// mode-agreement invariant is about spike TIMES of neurons that are driven, not about
+    /// neurons nothing is driving.
+    ///
+    /// The fixture is a pacemaker liquid: `v_rest = 0` is above `v_th = -50 mV`, so every cell
+    /// climbs to threshold from its own leak with no input whatsoever. Closed form, decay
+    /// `exp(-dt/tau_m) = exp(-0.005)` per tick from `v = -65 mV` toward `v_inf = 0`:
+    /// `-65 mV * exp(-0.005 * 52) = -50.118 mV`, still under threshold, and
+    /// `-65 mV * exp(-0.005 * 53) = -49.868 mV`, over it. So the whole liquid fires on the 53rd
+    /// tick, index 52, and on no earlier one.
+    ///
+    /// Why the suite could not see it: every other fixture in this module drives the liquid with a
+    /// non-zero input current, which touches every neuron on every tick and makes the two arms
+    /// iterate over the same set.
+    #[test]
+    fn the_liquid_is_run_clocked_so_a_cell_with_no_input_is_still_advanced() {
+        let spec = LiquidSpec::maass_column();
+        let l = Liquid::build(&spec).expect("the reference column builds");
+        let n = l.n();
+        assert_eq!(n, 135, "15 x 3 x 3");
+        let pacemaker = Lif { v_rest: 0.0, ..Lif::default() };
+        let quiet = vec![vec![0.0; n]; 60];
+        let out = l
+            .respond(pacemaker, pacemaker, spec.dt, 30e-3, &quiet)
+            .expect("a liquid with no input is still a legal run");
+        // The closed form the tick index above comes from, recomputed rather than quoted.
+        let decay = (-spec.dt / pacemaker.tau_m).exp();
+        assert!(pacemaker.v * decay.powi(52) < pacemaker.v_th, "the fixture's crossing moved");
+        assert!(pacemaker.v * decay.powi(53) >= pacemaker.v_th, "the fixture's crossing moved");
+        for (tick, state) in out.iter().enumerate().take(52) {
+            assert!(
+                state.iter().all(|&x| x == 0.0),
+                "tick {tick} has a trace before any cell reached threshold: {state:?}"
+            );
+        }
+        // Decay-then-add makes a spike's own tick worth exactly 1, and the traces are all zero
+        // going in, so this is an equality and not a tolerance.
+        assert_eq!(out[52], vec![1.0; n], "the liquid did not fire on the tick the leak says");
+        // MEASURED, for contrast, straight from the simulator: the same liquid stepped
+        // `Mode::EventDriven` fires 0 times over the same 60 ticks, because `touched` is empty
+        // on every one of them and the arm's loop body never runs.
+        let mut event_driven = l
+            .to_sim(pacemaker, pacemaker, spec.dt, Mode::EventDriven)
+            .expect("Lif is exact over gaps, so event-driven is legal");
+        let zeros = vec![0.0; n];
+        let spikes: usize = (0..quiet.len()).map(|_| event_driven.step(&zeros).len()).sum();
+        assert_eq!(spikes, 0, "the event-driven arm advanced a cell nothing had touched");
+    }
+
 }

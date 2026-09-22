@@ -322,8 +322,7 @@
  {
   "label": "the cascade's singular branch is chosen by the rate difference rather than by z",
   "old": "            let shape = if z == 0.0 { dt * e4 } else { dt * e4 * z.exp_m1() / z };",
-  "new": "            let shape = if (self.k4 - a).abs() <= 1e-9 * self.k4.max(a) { dt * e4 } else { dt * e4 * z.exp_m1() / z };",
-  "equivalent": "the threshold is not what was wrong with the first version; the subtraction was. Both branches here keep the accurate expm1 form, and they differ only where 0 < |k4 - a| <= 1e-9 max(k4, a), inside which expm1(z)/z = 1 + z/2 + O(z^2) with |z| <= 1e-9 max(k4, a) dt: below 1e-9 relative for any step this crate can be driven with. The mutation that DOES reinstate the original bug is the entry above it, and that one is caught."
+  "new": "            let shape = if (self.k4 - a).abs() <= 1e-9 * self.k4.max(a) { dt * e4 } else { dt * e4 * z.exp_m1() / z };"
  },
  {
   "label": "the cascade's transient term drops the exp_m1 shape entirely",

@@ -4009,4 +4009,63 @@ mod tests {
         };
         assert_eq!(run(), run());
     }
+
+    /// The cascade's singular branch is selected by the PRODUCT `z = (K4 − a)·dt`, and a band on
+    /// the rate difference alone is a different test with a different error.
+    ///
+    /// The hole this fills: `the_cascade_handles_its_removable_singularity` — the only fixture
+    /// that reaches this branch on purpose — drives the cascade at `dt = 1e-4`, so `K4·dt` is
+    /// 3.4e-3 and every rate band agrees with the `z == 0` branch to about 1e-12 relative. But
+    /// `advance` accepts any finite positive `dt` (the private `steppable` sets no upper bound)
+    /// and `k4` is a public field, so `K4·dt` is unbounded — it may reach ~745 before
+    /// `e^{−K4·dt}` underflows. Dropping `expm1(z)/z` costs `z/2` relative, and inside a band
+    /// `|K4 − a| <= 1e-9·max(K4, a)` that is `1e-9·(K4·dt)/2`, which GROWS with the step. The
+    /// recorded argument reads the same bound as "below 1e-9 for any step", which it is only for
+    /// `K4·dt <= 2`.
+    ///
+    /// Here `K4·dt = 8` and `(K4 − a)/K4 = 9.375e-10`, inside a 1e-9 rate band. Measured: the
+    /// exact solution is `0.015_095_818_312_222_35` and the `dt·e4` branch gives
+    /// `0.015_095_818_255_613_033` — 5.66e-11 absolute, 3.75e-9 relative, six orders above the
+    /// 1e-15 this test asserts and above this module's own 1e-15/1e-12 tolerances.
+    #[test]
+    fn the_cascades_singular_branch_is_chosen_by_the_product_not_by_the_rate_difference() {
+        let mut c = GabaBCascade {
+            k1: 0.0,
+            k2: 32.0 - 3e-8,
+            k3: 180.0,
+            k4: 32.0,
+            r: 1.0,
+            g_conc: 0.0,
+            pulse_left: 0.0,
+            ..GabaBCascade::default()
+        };
+        let (k3, k4, dt) = (c.k3, c.k4, 0.25);
+        // No transmitter left, so `a = K1·[T] + K2` is exactly K2 and the whole step is `relax`.
+        let a = c.k2;
+        assert!(
+            (k4 - a).abs() <= 1e-9 * k4.max(a),
+            "rate difference {} is not inside the 1e-9 band {}",
+            (k4 - a).abs(),
+            1e-9 * k4.max(a)
+        );
+        assert_eq!(k4 * dt, 8.0, "the PRODUCT is eight, which is what the error scales with");
+        c.advance(dt);
+        // With r(0) = 1, r_inf = 0 and G(0) = 0, the exact solution is
+        // G(dt) = K3·r₀·(e^{−a·dt} − e^{−K4·dt})/(K4 − a) = K3·dt·e^{−K4·dt}·expm1(z)/z,
+        // whose series is K3·dt·e4·(1 + z/2 + z²/6 + …). Here z²/6 is 9.4e-18 relative — below
+        // the f64 rounding of the chain itself — so the two-term form IS the reference, and the
+        // 1e-15 below is that rounding (a few ulps), not a knob.
+        let e4 = (-(k4 * dt)).exp();
+        let z = (k4 - a) * dt;
+        let want = k3 * (dt * e4) * (1.0 + 0.5 * z);
+        let got = c.g_conc;
+        let rel = (got - want) / want;
+        assert!((got - want).abs() <= 1e-15 * want, "measured {got}, series {want}, relative {rel}");
+        // And the correction is not nothing: the singular branch's answer differs by z/2.
+        let singular = k3 * (dt * e4);
+        let dropped = (want - singular) / want;
+        assert!(dropped > 3.7e-9 && dropped < 3.8e-9, "the expm1 correction is {dropped} relative");
+        assert!((got - singular).abs() > 1e-12 * want, "measured {got}, singular branch {singular}");
+    }
+
 }

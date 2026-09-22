@@ -405,13 +405,12 @@
   "label": "the neighbour-finiteness guard before the parabola is dropped",
   "old": "    if !y1.is_finite() || !y3.is_finite() {\n        return Ok(x0);\n    }\n",
   "new": "",
-  "equivalent": "the only non-finite value `logl` can hold is `f64::NEG_INFINITY`: the scan assigns each entry either a finite `acc` or exactly that. And `y2 = logl[best] = best_l` has already been checked finite by the `!best_l.is_finite()` refusal above. So if `y1` or `y3` is non-finite it is −∞, and `denom = y1 − 2·y2 + y3` is then exactly −∞ — a finite `y2` cannot cancel it. The very next guard, `denom == 0.0 || !denom.is_finite()`, is therefore true and returns the same `Ok(x0)` this one would have returned, on exactly the same inputs. No call can make the two paths disagree."
+  "equivalent": "the guard immediately below covers every case this one does, for ANY non-finite neighbour and not only for −∞. Two facts about `best` carry it. `y2 = logl[best] = best_l` is finite, by the `!best_l.is_finite()` refusal above; and `best` can never point at a NaN entry, because `acc > best_l` is false for NaN. So `2.0 * y2` is finite or ±∞ and never NaN, and any non-finite `y1` or `y3` sends `denom = y1 − 2·y2 + y3` non-finite by cases: a NaN operand propagates NaN, a single ±∞ against a finite remainder gives that ±∞, and the one mixed case (+∞ with −∞) gives NaN. `denom == 0.0 || !denom.is_finite()` is true in all three — `!is_finite()` is true for NaN — and returns the same `Ok(x0)` this guard would have returned, on exactly the same inputs. REWRITTEN 2026-09-22: the record previously argued from the premise that `logl` can hold only a finite value or `f64::NEG_INFINITY`, and that premise is FALSE. `acc += k as f64 * mu.ln() - mu` is `0.0 * inf - inf = NaN` when a cell with no spikes meets an infinite `mu`, which is reachable because every field of `GaussianPopulation` is public and `decode_max_likelihood` validates none of them. `a_nan_log_likelihood_neighbour_returns_its_grid_point_unrefined` builds exactly that with `r_max = f64::MAX`, `window_s = 2.0`, `sigma = 0.05` and nine grid points, putting NaN at every even grid point, and measures the decode returning its argmax grid point 0.125 unrefined. That fixture was run against this mutation: it still survives, and the case exhaustion above is why."
  },
  {
   "label": "the linear estimate is not clamped back into its range",
   "old": "        Ok((x0 + shift).clamp(lo, hi))",
-  "new": "        Ok(x0 + shift)",
-  "equivalent": "this line is reached only when `wrap` is false and the early return above did not fire, which means `best` is strictly interior: `1 <= best <= grid - 2`. Then `x0 = lo + h·best` lies in `[lo + h, lo + h·(grid - 2)]`, and `shift` is already clamped to `[-h, h]`, so `x0 + shift` lies in `[lo, lo + h·(grid - 1)]` — the interval the clamp would hold it to — before the clamp is applied. The one residue is that `lo + h·(grid - 1)` need not be bit-identical to `hi` once `h = (hi - lo) / (grid - 1)` has been rounded, so the two forms can differ by an ulp of `hi`, and only for an estimate that has ALSO saturated the shift clamp at exactly ±h. That is 1e-16 relative, against the 1e-3 bias bound and the variance ratios this module grades its linear decoder with."
+  "new": "        Ok(x0 + shift)"
  },
  {
   "label": "an empty range is accepted by the Gaussian population",
@@ -577,8 +576,7 @@
  {
   "label": "the preferred directions are laid out the other way round the circle",
   "old": "        wrap_angle(self.offset + TAU * i as f64 / self.n as f64)",
-  "new": "        wrap_angle(self.offset - TAU * i as f64 / self.n as f64)",
-  "equivalent": "the SET of preferred directions is unchanged: {offset − 2πi/n : i = 0..n−1} is {offset + 2π(n−i)/n} = {offset + 2πj/n}, so the mutation only relabels which cell holds which direction. Every decoder here is a symmetric function of the (φ_i, r_i) pairs — the population vector is a sum over cells, the likelihood is a sum over cells, and every test that names a cell reads `p.preferred(i)` or `p.rate_of(i, ·)` and is therefore relabelled with it. What changes is the ORDER of two floating-point summations and the rounding of `rem_euclid`, worth about 1e-16 relative, against tolerances of 1e-12 and 1e-11 in the tests that could see it."
+  "new": "        wrap_angle(self.offset - TAU * i as f64 / self.n as f64)"
  },
  {
   "label": "a two-cell population is given a population vector",

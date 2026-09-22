@@ -5152,4 +5152,51 @@ mod tests {
             "the burst's largest sample was {extreme}, not near the amplitude of 2 it was asked for"
         );
     }
+
+    /// The pole sits in the UPPER half plane, and the derived `Debug` prints its sign.
+    ///
+    /// Pins the imaginary part of `p = r·e^{i·2π·f_c/fs}` as an observable. The cascade is
+    /// conjugation-symmetric — `step` returns the real part and `envelope` returns the hypot of
+    /// the two parts — so every driven measurement in this suite is bit-for-bit unchanged when
+    /// `p_im` flips sign, and that is the shape of the hole: no fixture reads the pole itself.
+    /// `Gammatone` derives `Debug`, which prints the private field by name, so the sign IS
+    /// caller-visible. The expectation is rebuilt from the public accessors with the
+    /// constructor's own operations in the constructor's own order, so equality is exact rather
+    /// than toleranced.
+    #[test]
+    fn the_gammatone_pole_is_in_the_upper_half_plane_and_its_debug_shows_it() {
+        let g = Gammatone::new(1000.0, 16_000.0).expect("a valid channel");
+        let r = (-g.decay_rate() / g.fs()).exp();
+        let theta = 2.0 * PI * g.f_c() / g.fs();
+        // `f_c` is in (0, NYQUIST_GUARD·fs], so theta is in (0, 0.8·π] where the sine is
+        // strictly positive: this holds for every admissible channel, not just this one.
+        let p_im = r * theta.sin();
+        assert!(p_im > 0.0, "measured imaginary part of the pole: {p_im}");
+        let shown = format!("{g:?}");
+        assert!(shown.contains(&format!("p_im: {p_im:?}")), "measured Debug: {shown}");
+    }
+
+    /// `permeability` takes its clamp BRANCH at `s + A == 0`, rather than an equal-valued ratio.
+    ///
+    /// Pins that the comparison is strict. Every field of `Meddis` is public and `permeability`
+    /// calls no validator — `Meddis::validate` is a separate method whose own doc advertises this
+    /// hazard — so `b` is whatever the caller put there. The hole is that every `Meddis` in this
+    /// suite arrives through `Meddis::default` or `Filterbank` with the 1986 `b = 300`, where the
+    /// two branches do agree at `num == 0`; at `b == 0` the taken branch is `0.0/0.0`, and at
+    /// `b < 0` it is a negative zero that propagates into the rate.
+    #[test]
+    fn the_permeability_clamp_is_a_branch_and_not_an_algebraic_coincidence() {
+        // num = -5.0 + A = -5.0 + 5.0 = +0.0 exactly, so the ratio would be 2000.0·0.0/(0.0+0.0).
+        let shut = Meddis { b: 0.0, ..Meddis::default() };
+        assert_eq!(shut.permeability(-5.0), 0.0, "the clamp must not evaluate the ratio");
+        let inverted = Meddis { b: -300.0, ..Meddis::default() };
+        assert!(
+            inverted.permeability(-5.0).is_sign_positive(),
+            "the clamp returns +0.0; the ratio returns 2000.0·0.0/(0.0 - 300.0) = -0.0"
+        );
+        assert!(
+            inverted.steady_state_rate(-5.0).is_sign_positive(),
+            "a negative zero permeability propagates through the cleft into the rate"
+        );
+    }
 }

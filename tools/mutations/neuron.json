@@ -67,8 +67,7 @@
  {
   "label": "adapted interval offered below threshold",
   "old": "if !(v_inf > self.theta_0) || !v_inf.is_finite()",
-  "new": "if !v_inf.is_finite()",
-  "equivalent": "the search for an upper bracket gives up after 200 doublings and returns None for the same input; the guard only makes the refusal immediate"
+  "new": "if !v_inf.is_finite()"
  },
  {
   "label": "threshold frozen during the refractory period",

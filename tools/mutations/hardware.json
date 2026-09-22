@@ -634,14 +634,12 @@
  {
   "label": "the stochastic draw is compared inclusively",
   "old": "                    if u < frac { floor + 1.0 } else { floor }",
-  "new": "                    if u <= frac { floor + 1.0 } else { floor }",
-  "equivalent": "the two forms differ only on the event u == frac exactly. `u` is a draw from `Rng::next_f64` and `frac` is `x - x.floor()`, a value fixed by the weight and the step; for the fixtures in this module frac is 0.3, 0.1, 0.25 or 0.5 and u is one of 2^53 equally likely values, so P(u == frac) is 2^-53 per weight, about 1e-16, against the 40,000-weight vectors these tests use — an expected 4e-12 occurrences across the whole suite. The one input on which the difference is systematic is a weight that is an exact multiple of the step, where frac is exactly 0.0 and a u of exactly 0.0 would round up by a whole step; no fixture in this module quantises an exact multiple stochastically, and a rng draw of exactly 0.0 has probability 2^-53 in any case. Neither the codes, the bias, the binomial count nor the RMS closed form can distinguish the two at any tolerance these tests use."
+  "new": "                    if u <= frac { floor + 1.0 } else { floor }"
  },
  {
   "label": "the fallback for a missing generator rounds up rather than down",
   "old": "                    let u = rng.as_deref_mut().map_or(0.0, Rng::next_f64);",
-  "new": "                    let u = rng.as_deref_mut().map_or(1.0, Rng::next_f64);",
-  "equivalent": "the default is reached only when `rng` is None, and `mode` is Stochastic. The only two callers of `quantise_with` are `quantise_nearest`, which passes `(Rounding::Nearest, None)`, and `quantise_stochastic`, which passes `(Rounding::Stochastic, Some(rng))`; `quantise_with` is private, so no third caller can exist outside this file. In the Nearest arm the match never evaluates this line at all. The pair (Stochastic, None) is therefore unconstructible from outside the module, and no test — indeed no code path in the crate — can observe which default this `map_or` carries."
+  "new": "                    let u = rng.as_deref_mut().map_or(1.0, Rng::next_f64);"
  },
  {
   "label": "a weight past the top code is not clamped to it",

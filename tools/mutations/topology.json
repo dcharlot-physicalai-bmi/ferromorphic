@@ -268,8 +268,7 @@
  {
   "label": "the reciprocal pair is emitted in the other order",
   "old": "        b.connect(u, v, wiring.weight_of(n, u as usize), wiring.delay)?;\n        b.connect(v, u, wiring.weight_of(n, v as usize), wiring.delay)?;",
-  "new": "        b.connect(v, u, wiring.weight_of(n, v as usize), wiring.delay)?;\n        b.connect(u, v, wiring.weight_of(n, u as usize), wiring.delay)?;",
-  "equivalent": "`NetBuilder::build` sorts the edge list by `(pre, post)` before laying out the CSR arrays, and the two calls produce different keys — `(u, v)` and `(v, u)` — so the sorted order, and therefore every field of the resulting `Net`, is the same whichever call is made first. Only the order of two pushes into a vector that is about to be sorted changes."
+  "new": "        b.connect(v, u, wiring.weight_of(n, v as usize), wiring.delay)?;\n        b.connect(u, v, wiring.weight_of(n, u as usize), wiring.delay)?;"
  },
  {
   "label": "the seed clique joins a node to itself",

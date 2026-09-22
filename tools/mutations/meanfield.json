@@ -108,8 +108,7 @@
  {
   "label": "the panels on the substituted axis are twenty-five times too wide",
   "old": "                let next = (x + 2.0).min(x1);",
-  "new": "                let next = (x + 50.0).min(x1);",
-  "equivalent": "The width of 2 carries about fifteen decades of margin, and 50 is still inside it. For `exp` on a panel of width h, 24-point Gauss-Legendre has relative error bounded by exp((h/4)(rho + 1/rho) - 48 ln rho - h/2) over Bernstein ellipses rho, minimised at rho = 8n/h; at h = 50 that is rho = 3.84 and exp(-38.4) = 2e-17, below f64 epsilon, and the rule only starts to lose digits near h = 100 (1.5e-9). The only non-entire factor is 1/(2 sqrt(x)), whose branch point at x = 0 sits at rho >= 1.33 for the widest panel the substitution can produce, contributing rho^-48 = 1.3e-6 of a term of size O(1) against a panel integral of at least e^51 - i.e. 1e-27 relative. Measured as well as bounded: over a 500-point grid of (p, q) covering the whole sub-threshold half (hi from 1.2 to 26.5, lo from 0 to hi) the largest relative difference between the two widths is 1.5e-13, and it occurs where the integral is of order 1e280 and the implementation's OWN disagreement with an independent 600-panel uniform rule on the unsubstituted w axis is 1.4e-13, with that reference's own 300-to-600-panel convergence 2e-13 - the difference is the rounding of the panel sum, not quadrature error. Over the 713 grid points the worst disagreement with that reference is 1.88e-13 for the mutant and 1.4e-13 for the implementation, and where the integral is below 1e100 they are 3.1e-14 and 4.5e-15 - the same order, and both under the reference's own convergence. One shape of test could still see it: at some points, (p, q) = (-6.69, -4.15) among them, the implementation happens to agree with the 600-panel reference to the last bit and the mutant does not, so an assertion of BIT equality against one particular reference would separate them. That is a coincidence of rounding rather than a property - it depends on the panel count the reference is given and on the last-place rounding of exp, sqrt and erfcx on one target, and this crate is built for several - so this is recorded as equivalent for every test that compares values with a tolerance, which is every test a portable crate can carry. What the mutation does leave behind is the margin: the width of 2 is about fifteen decades tighter than this integrand needs."
+  "new": "                let next = (x + 50.0).min(x1);"
  },
  {
   "label": "the sub-threshold integrand loses its erfcx correction",
@@ -313,13 +312,13 @@
  },
  {
   "label": "the excitatory arrival rate is not scaled by the time step",
-  "old": "        let lambda_exc = self.c_exc * (self.nu + self.nu_ext) * dt;",
-  "new": "        let lambda_exc = self.c_exc * (self.nu + self.nu_ext);"
+  "old": "        (self.c_exc * (self.nu + self.nu_ext) * dt, self.c_inh * self.nu * dt)",
+  "new": "        (self.c_exc * (self.nu + self.nu_ext), self.c_inh * self.nu * dt)"
  },
  {
   "label": "the inhibitory population also receives the external drive",
-  "old": "        let lambda_inh = self.c_inh * self.nu * dt;",
-  "new": "        let lambda_inh = self.c_inh * (self.nu + self.nu_ext) * dt;"
+  "old": "        (self.c_exc * (self.nu + self.nu_ext) * dt, self.c_inh * self.nu * dt)",
+  "new": "        (self.c_exc * (self.nu + self.nu_ext) * dt, self.c_inh * (self.nu + self.nu_ext) * dt)"
  },
  {
   "label": "a negative recurrent rate is no longer checked",
@@ -439,8 +438,7 @@
  {
   "label": "the variance estimator loses its Bessel correction",
   "old": "        v.iter().map(|x| (x - m) * (x - m)).sum::<f64>() / (v.len() as f64 - 1.0)",
-  "new": "        v.iter().map(|x| (x - m) * (x - m)).sum::<f64>() / v.len() as f64",
-  "equivalent": "chi is the RATIO num/den and every vector this closure is handed has the same length: `pop` is `bins` long and so is each row `counts[i * bins .. (i + 1) * bins]`. Dividing all of them by `bins` instead of `bins - 1` multiplies numerator and denominator by exactly the same factor (bins - 1) / bins, which cancels out of the ratio. The locked fixture makes `pop` and each row the identical array, so the ratio is exactly 1 either way, and the independent fixture is only asserted to 40% of 1/sqrt(400). No test could tell."
+  "new": "        v.iter().map(|x| (x - m) * (x - m)).sum::<f64>() / v.len() as f64"
  },
  {
   "label": "a zero denominator is divided by",

@@ -608,8 +608,7 @@
  {
   "label": "the surrogate offset is measured from the threshold to the membrane",
   "old": "            out.data[j] = s.backward((unit.potential() - v_th) / scale);",
-  "new": "            out.data[j] = s.backward((v_th - unit.potential()) / scale);",
-  "equivalent": "Every surrogate family in this crate is an EVEN function of its argument, so negating the offset returns a bit-identical value. `FastSigmoid::backward` is `1/(1 + beta*|x|)^2`, `ArcTan::backward` is `alpha / (2*(1 + (pi*alpha*x/2)^2))`, `SuperSpike`'s is `beta*s*(1 - s)` with `s = logistic(beta*x)` which satisfies `s(-z) = 1 - s(z)` and therefore leaves the product unchanged, and the triangular and rectangular kernels are written on `x.abs()` directly. `the_surrogate_mask_is_exact_at_threshold_and_depends_on_the_scale` is the only test that calls `surrogate_mask` and it passes a `FastSigmoid`. No test could tell without an asymmetric surrogate, which this crate does not provide."
+  "new": "            out.data[j] = s.backward((v_th - unit.potential()) / scale);"
  },
  {
   "label": "the footprint counts one state scalar per unit whatever the model carries",

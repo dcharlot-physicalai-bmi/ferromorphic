@@ -4803,4 +4803,61 @@ mod tests {
         assert_eq!(outs.len(), 1);
         assert_eq!(audit.timesteps(), 1);
     }
+
+    /// Pins that a silent tensor with no tokens is refused by its TOKEN count, so the error names
+    /// the dimension the caller has to fix.
+    ///
+    /// `Tensor::silent` checks `tokens == 0` and then `channels == 0`, and `Tensor::new`, which it
+    /// delegates to, checks them again in the same order. The two checks are distinguishable only
+    /// at the PAIR `(0, 0)`, where the earlier of them decides which `&'static str` the
+    /// `Empty { what }` payload carries. The suite could not see it because every fixture that
+    /// exercises a zero dimension holds the other dimension non-zero; the hole is an untaken
+    /// corner of a two-dimensional input space, not a branch.
+    #[test]
+    fn a_silent_tensor_with_no_tokens_is_refused_by_its_token_count() {
+        assert_eq!(
+            Tensor::silent(0, 0).unwrap_err(),
+            AttnError::Empty { what: "tokens" },
+            "with both dimensions zero the token count is still the first thing wrong"
+        );
+        assert_eq!(Tensor::silent(0, 0).unwrap_err().to_string(), "tokens is zero");
+        // The two one-sided cases, which agree whichever check runs first.
+        assert_eq!(Tensor::silent(0, 3).unwrap_err(), AttnError::Empty { what: "tokens" });
+        assert_eq!(Tensor::silent(3, 0).unwrap_err(), AttnError::Empty { what: "channels" });
+        // And `Tensor::new` — the constructor `silent` delegates to — orders them the same way, so
+        // the two entry points cannot disagree about which dimension a caller is told about.
+        assert_eq!(
+            Tensor::new(0, 0, Vec::new(), Domain::Binary).unwrap_err(),
+            AttnError::Empty { what: "tokens" }
+        );
+    }
+
+    /// Pins that a first spike is never reported before the first timestep.
+    ///
+    /// The closed form's `.max(1)` is argued dead on the grounds that `ln(r) / ln(d)` is strictly
+    /// positive for every input that reaches the cast. That is exact-real algebra; the code is
+    /// binary64, and the guard `x <= v_th - v_reset` rounds `v_th - v_reset` while the numerator
+    /// rounds `(x + v_reset) - v_th`. Whenever `0 < v_th - v_reset < ulp(x) / 2` the numerator
+    /// rounds back to `x`, so `r` is exactly `1.0`, `ln(r)` is `+0.0`, `t` is `-0.0`, and
+    /// `-0.0 as u32` is `0` — a first spike one step before the first integration step. The suite
+    /// could not see it because its 48-combination sweep uses thresholds of the same order as the
+    /// drive, where that subtraction is exact; the hole is a fixture family, not a branch.
+    #[test]
+    fn a_first_spike_is_never_reported_before_the_first_timestep() {
+        // Measured in binary64: 1e-30 is far below half an ulp of 1.0, which is 2^-54 = 5.55e-17.
+        assert_eq!(1.0f64 + 0.0 - 1e-30, 1.0, "the numerator rounds back to the drive");
+        assert_eq!((1.0f64 / 1.0).ln(), 0.0);
+        assert!((0.0f64 / (0.5f64).ln()).is_sign_negative(), "and the quotient is a NEGATIVE zero");
+        let n = LifLayer::new(1, 1, 2.0, 1e-30, 0.0).expect("tau >= 1 and v_th > v_reset");
+        assert_eq!(n.first_spike_step(1.0), Some(1));
+        // Step 1 is not a floor papering over a wrong answer, it is the answer: the membrane is at
+        // v_reset = 0 < v_th before any input, and the first integration takes it to
+        // v_reset + (1 / tau) * (x - (v_reset - v_reset)) = 0.5, which is over threshold.
+        let mut layer = LifLayer::new(1, 1, 2.0, 1e-30, 0.0).expect("tau >= 1 and v_th > v_reset");
+        assert_eq!(layer.membranes(), [0.0]);
+        let mut audit = Audit::new();
+        let drive = Tensor::new(1, 1, vec![1.0], Domain::Real).expect("one real value");
+        let out = layer.forward(&drive, "lif", &mut audit).expect("shape matches");
+        assert_eq!(out.values(), [1.0], "the neuron fires on timestep 1, as the closed form says");
+    }
 }

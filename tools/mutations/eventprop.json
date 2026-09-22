@@ -32,8 +32,7 @@
  {
   "label": "a falling potential is searched anyway",
   "old": "        if !(i0 > v0) {\n            return None;\n        }\n",
-  "new": "",
-  "equivalent": "a fast path only: with i0 <= v0 < theta the potential never rises to threshold (at I = V the gap I-V moves as -V/tau_syn, so they cross only below zero and V then approaches 0 from below), so the peak check that follows returns None anyway. Checked over 86,400 starts spanning four time-constant pairs and three thresholds: the unguarded path reported a crossing for none of them."
+  "new": ""
  },
  {
   "label": "a neuron already at threshold waits",

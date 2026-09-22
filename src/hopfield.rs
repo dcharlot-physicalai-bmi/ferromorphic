@@ -907,4 +907,42 @@ mod tests {
         assert_eq!(r.energy.1, dense.energy(&r.state).unwrap());
         assert_eq!(r.energy, (-64.0, -512.0));
     }
+
+    /// **Recorded as an equivalent mutation: `worst_increase.max(0.0 * (e_flip - last))` in
+    /// [`Dense::recall`].** This is the fixture that decides whether it is, and the two steps the
+    /// recorded argument leaves out.
+    ///
+    /// The shape of the hole: every assertion on a dense `worst_increase` in this module is
+    /// `<= 0.0` or `== 0.0`, and `+0.0 == -0.0` under every f64 comparison Rust has — so no
+    /// comparison in the suite can separate the monitor from one whose argument has been
+    /// multiplied by zero. Two things do differ. First, `0.0 * (a strictly negative double)` is
+    /// `-0.0`, so the mutant evaluates `0.0f64.max(-0.0)`, whose result Rust documents as
+    /// non-deterministic for inputs that compare equal; the SIGN of the reported zero is
+    /// therefore an observable that no `assert_eq!` can reach. Second, the recorded argument is
+    /// about the wrong subtraction: the accept test is `e_flip < e_now` but the code records
+    /// `e_flip - last`, and those agree only because `last` is bit-identical to `e_now` at every
+    /// accepted flip — the incremental `*d -= 2.0 * p[i] * x[i]` is character for character the
+    /// expression `e_flip` was evaluated on, and [`Dense::energy`] folds the same per-pattern
+    /// terms in the same order. Both are pinned here.
+    #[test]
+    fn the_dense_energy_monitor_differences_the_energy_it_accepted_and_reports_a_positive_zero() {
+        let p = vec![1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, -1.0];
+        let mut dense = Dense::new(8, 3).unwrap();
+        dense.store(&p).unwrap();
+        let mut cue = p.clone();
+        cue[0] = -cue[0];
+        cue[5] = -cue[5];
+        let r = dense.recall(&cue, 5).unwrap();
+        // The monitor only runs on an accepted flip, so the fixture has to take some.
+        assert_eq!(r.state, p);
+        assert_eq!(r.energy, (-64.0, -512.0), "measured: two wrong bits out of eight, degree 3");
+        // `last` is the energy of the state the recall ended on, bit for bit. That identity is
+        // what makes `e_flip - last` the same number as `e_flip - e_now`.
+        assert_eq!(r.energy.1, dense.energy(&r.state).unwrap());
+        // The monitor's own value: not merely `<= 0.0`, which `-0.0` satisfies too, but the
+        // `+0.0` the accumulator was initialised to and never moved off.
+        let worst = r.worst_increase;
+        assert!(worst.is_sign_positive(), "the reported zero is negative: measured {worst:?}");
+        assert_eq!(format!("{worst:?}"), "0.0");
+    }
 }

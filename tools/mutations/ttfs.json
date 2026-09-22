@@ -22,8 +22,7 @@
  {
   "label": "downward crossing accepted",
   "old": "                if slope > 0.0 {\n                    return Ok(Some(Spike",
-  "new": "                if slope != 0.0 {\n                    return Ok(Some(Spike",
-  "equivalent": "each model's own condition already selects the rising root (non-leaky: the weighted sum A > 0; leaky: a2 - 2 a1 x < 0), so the final slope check is a second statement of it"
+  "new": "                if slope != 0.0 {\n                    return Ok(Some(Spike"
  },
  {
   "label": "inputs not taken in order of arrival",

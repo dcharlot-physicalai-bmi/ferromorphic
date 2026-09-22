@@ -480,8 +480,7 @@
  {
   "label": "the zero-gradient refusal is no longer symmetric",
   "old": "    if compared == 0 || !(bptt_norm > 0.0) || !(eprop_norm > 0.0) {",
-  "new": "    if compared == 0 || !(bptt_norm > 0.0) {",
-  "equivalent": "the third clause is the one this function's own doc says is unreachable, and it gives the argument: the two gradients share their readout block exactly, so a zero e-prop gradient forces a zero BPTT gradient, and the first two clauses fire first on every such input. `compare_to_bptt` is only reachable from outside through a `LifLayer` plus an input, and no such pair is known that produces a zero e-prop gradient against a non-zero reference. The clause is written for symmetry of policy, not because an input reaches it, so no test can distinguish its presence."
+  "new": "    if compared == 0 || !(bptt_norm > 0.0) {"
  },
  {
   "label": "a tempotron with no afferents is accepted",
@@ -536,8 +535,7 @@
  {
   "label": "the kernel fires at the instant of the spike",
   "old": "        if lag > 0.0 { self.v0 * ((-lag / self.tau).exp() - (-lag / self.tau_s).exp()) } else { 0.0 }",
-  "new": "        if lag >= 0.0 { self.v0 * ((-lag / self.tau).exp() - (-lag / self.tau_s).exp()) } else { 0.0 }",
-  "equivalent": "at `lag == 0.0` the two exponentials are `exp(-0.0)` and `exp(-0.0)`, both exactly `1.0`, and `1.0 - 1.0` is exactly `+0.0` in IEEE-754 round-to-nearest. `v0 * 0.0` is `+0.0` for the finite positive `v0` the constructor guarantees. The `>` branch would have returned the literal `0.0`, the same bit pattern, so the two forms agree at the only argument where they differ."
+  "new": "        if lag >= 0.0 { self.v0 * ((-lag / self.tau).exp() - (-lag / self.tau_s).exp()) } else { 0.0 }"
  },
  {
   "label": "a pattern with the wrong number of afferents is accepted",
@@ -775,8 +773,7 @@
  {
   "label": "the matrix-vector product reads P transposed",
   "old": "                s += self.p[i * n + j] * r[j];",
-  "new": "                s += self.p[j * n + i] * r[j];",
-  "equivalent": "`P` is exactly symmetric at every step and for every input — `self.p[i * n + j]` and `self.p[j * n + i]` hold the same bit pattern, not merely the same value, which is what `the_inverse_correlation_matrix_stays_exactly_symmetric` asserts as an equality and what `Force::update` guarantees by computing each off-diagonal subtrahend once and storing it into both entries. The loop order over `j` is unchanged, so every partial sum is formed from the same f64s in the same order and `pr` comes out bit-identical. No test could tell."
+  "new": "                s += self.p[j * n + i] * r[j];"
  },
  {
   "label": "the least-squares denominator drops its one",

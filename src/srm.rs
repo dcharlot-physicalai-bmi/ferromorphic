@@ -733,4 +733,76 @@ mod tests {
             assert_eq!(e.hazard(theta, theta), 10.0);
         }
     }
+
+    /// A neuron that has never fired applies no after-potential — not even one that happens to
+    /// vanish.
+    ///
+    /// The hole: `srm0_is_exact_for_delta_synapses_and_not_otherwise` already asserts
+    /// `potential_srm0(t, inputs, None) == potential(t, inputs, &[])`, and widens `tau_m` to
+    /// `1e12` so that an applied after-potential could not hide inside an exponential. But what
+    /// makes the conditional invisible there is that `eta(+inf, reset)` is
+    /// `-reset * exp(-inf/tau_m)`, i.e. `-reset * 0.0`, which is `-0.0`, and `x + (-0.0) == x`.
+    /// That holds for every FINITE reset and for no other: `inf * 0.0` is a `NaN`. `Srm::reset`
+    /// is a `pub` field on a struct this module's own tests build by literal and by assignment,
+    /// and `potential_srm0` validates `t`, the weights and `last` — nothing else. So the identity
+    /// being pinned is over ALL resets: with `last: None` the reset is not an argument to any
+    /// arithmetic, so a reset that would poison the sum cannot reach it.
+    #[test]
+    fn a_neuron_that_never_fired_applies_no_after_potential_whatever_its_reset() {
+        let inputs = [(1e-3, 2.0), (4e-3, -0.5)];
+        let t = 5e-3;
+        let kernel = Kernel::new(20e-3, 0.0).unwrap();
+        // The same operations in the same order as the drive the module sums, so this is an
+        // equality and not a tolerance. Measured: 2 e^{-0.2} - 0.5 e^{-0.05} = 1.1618467939056067,
+        // which is of order one — so a NaN or an infinity landing on it could not hide.
+        let drive: f64 = inputs.iter().map(|(f, w)| w * (-(t - f) / kernel.tau_m).exp()).sum();
+        assert!((drive - 1.161_846_79).abs() < 1e-8, "the fixture's drive is {drive}");
+        for reset in [1.0, 0.0, -3.0, 1e300, f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
+            let srm = Srm { kernel, theta: 1.0, reset };
+            let none = srm.potential_srm0(t, &inputs, None).unwrap();
+            assert_eq!(none, drive, "a reset of {reset} reached the sum");
+            assert_eq!(none, srm.potential(t, &inputs, &[]).unwrap(), "SRM₀ with no own spike is not the full sum over no own spikes, at a reset of {reset}");
+        }
+        // Why the finite half of that loop cannot see it, stated so the non-finite half reads as
+        // the measurement it is: at a finite reset the after-potential a spike at minus infinity
+        // WOULD contribute is exactly -0.0, and the drive is a `sum()` folded from +0.0, so it
+        // can never itself be -0.0 for the addition to expose.
+        assert_eq!(kernel.eta(f64::INFINITY, 1e300), -0.0);
+        assert!(kernel.eta(f64::INFINITY, 1e300).is_sign_negative());
+        assert!(kernel.eta(f64::INFINITY, f64::INFINITY).is_nan(), "an infinite reset no longer poisons the after-potential, and this test has stopped measuring anything");
+    }
+
+    /// A delta synapse carries no current, and the early return that says so is load-bearing at
+    /// two edges the rest of the suite cannot reach.
+    ///
+    /// The hole: `srm0_is_exact_for_delta_synapses_and_not_otherwise` asserts
+    /// `carried_current(t_hat, &inputs) == 0.0` for `tau_s = 0.0` with weights of order one, and
+    /// the argument that the early return is redundant there is sound — every term is
+    /// `w * exp(-(t_hat - f)/0)` with a strictly positive numerator, `w * exp(-inf)`, `w * 0`.
+    /// It stops being sound twice. (a) `Kernel::new` ACCEPTS a `tau_s` of `-0.0` — its guard is
+    /// `!(tau_s >= 0.0) || !tau_s.is_finite()`, and `-0.0 >= 0.0` is true and `-0.0` is finite —
+    /// while `is_delta` is `tau_s == 0.0`, which `-0.0` also satisfies. Dividing the strictly
+    /// NEGATIVE numerator by a negative zero gives `+inf`, and `exp(+inf)` is `+inf`. (b)
+    /// `carried_current` is the one entry point in this module that does not check the weights;
+    /// `potential` and `potential_srm0` both refuse a non-finite one. `inf * exp(-inf)` is
+    /// `inf * 0.0`, a `NaN`.
+    #[test]
+    fn a_delta_synapse_carries_no_current_at_a_negative_zero_or_an_infinite_weight() {
+        let inputs = [(2e-3, 0.7), (5e-3, 1.1), (11e-3, 0.5), (15e-3, 0.8)];
+        let t_hat = 13e-3;
+
+        let signed = Kernel::new(20e-3, -0.0).expect("the constructor accepts a tau_s of -0.0");
+        assert!(signed.tau_s.is_sign_negative() && signed.is_delta(), "the fixture is no longer a negative-zero delta kernel");
+        let srm = Srm::subtracting(signed, 1.0).unwrap();
+        assert_eq!(srm.carried_current(t_hat, &inputs).unwrap(), 0.0);
+        // The term the sum would otherwise take, so the line above reads as a measurement of the
+        // early return rather than of the fixture's weights.
+        assert_eq!((-(t_hat - 2e-3) / signed.tau_s).exp(), f64::INFINITY, "a negative zero no longer flips the sign of the exponent");
+
+        let plain = Kernel::new(20e-3, 0.0).unwrap();
+        let srm = Srm::subtracting(plain, 1.0).unwrap();
+        assert_eq!(srm.carried_current(t_hat, &[(2e-3, f64::INFINITY)]).unwrap(), 0.0);
+        let term = f64::INFINITY * (-(t_hat - 2e-3) / plain.tau_s).exp();
+        assert!(term.is_nan(), "an infinite weight no longer makes the dropped term a NaN, and this half of the test has stopped measuring anything");
+    }
 }

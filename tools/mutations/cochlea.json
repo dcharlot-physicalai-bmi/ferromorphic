@@ -162,8 +162,7 @@
  {
   "label": "the pole is conjugated",
   "old": "            p_re: r * theta.cos(),\n            p_im: r * theta.sin(),",
-  "new": "            p_re: r * theta.cos(),\n            p_im: -r * theta.sin(),",
-  "equivalent": "conjugation commutes with the whole cascade. Every input sample is real and every state starts at exactly 0.0, so by induction on both the stage index and the sample index the state under the conjugated pole is the complex conjugate of the state under the original: if y = x + p*z then conj(y) = conj(x) + conj(p)*conj(z), and conj(x) = x for a real input. `step` returns the REAL part, which conjugation leaves bit-for-bit unchanged, and `envelope` returns the hypot of the two parts, which is unchanged because only the sign of the imaginary part moves. No test can tell, and neither can any caller, because nothing in this module exposes the imaginary part. The defect this would be in a module that did expose it is a spectrum mirrored about DC."
+  "new": "            p_re: r * theta.cos(),\n            p_im: -r * theta.sin(),"
  },
  {
   "label": "the decay rate is computed from the centre frequency rather than the ERB",
@@ -438,8 +437,7 @@
  {
   "label": "the permeability law's own clamp is loosened by one comparison",
   "old": "        let num = s + self.a;\n        if num > 0.0 {",
-  "new": "        let num = s + self.a;\n        if num >= 0.0 {",
-  "equivalent": "at num == 0.0 the two branches return the same number. The taken branch evaluates g*num/(num + b) = g*0.0/(0.0 + b) = 0.0, since `b` is validated strictly positive and finite, so the denominator is b != 0 and the quotient is exactly +0.0; the untaken branch returns the literal 0.0. The only input the mutation moves between branches is the one where they agree bit for bit, so no test and no caller can distinguish them. The clamp that DOES matter, and that a test could see, is the one on num < 0, which this edit leaves in place."
+  "new": "        let num = s + self.a;\n        if num >= 0.0 {"
  },
  {
   "label": "the permeability law does not shut the channels at large inward displacement",

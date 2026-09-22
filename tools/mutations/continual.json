@@ -619,8 +619,7 @@
  {
   "label": "backward transfer sums over the last task as well as the earlier ones",
   "old": "        for j in 0..t - 1 {\n            acc += last.get(j)? - self.r[j].get(j)?;",
-  "new": "        for j in 0..t {\n            acc += last.get(j)? - self.r[j].get(j)?;",
-  "equivalent": "the extra term is j = t - 1, which contributes last.get(t-1)? - self.r[t-1].get(t-1)?. `last` IS `self.r[t-1]`, so that term is x - x = 0.0 exactly for any finite x, and the divisor (t - 1) is untouched. The sum and the mean are therefore bit-identical. The only thing that changes is the refusal behaviour on a ragged matrix — a last row shorter than t would now return None one index earlier — and `a_ragged_accuracy_matrix_refuses_rather_than_panicking` already gets None from both forms, because its short last row is empty and fails at j = 0. No test could tell."
+  "new": "        for j in 0..t {\n            acc += last.get(j)? - self.r[j].get(j)?;"
  },
  {
   "label": "backward transfer is reported for a single-task sequence",
@@ -715,8 +714,7 @@
  {
   "label": "the untrained baseline row is a declared constant rather than a measurement",
   "old": "    let baseline: Vec<f64> = evaluate(&model, curriculum)?;",
-  "new": "    let baseline: Vec<f64> = tasks.iter().map(|t| t.chance).collect();",
-  "equivalent": "the model here is `Linear::new(nf, nc)`, which is all zeros, so every logit is exactly the same 0.0 for every class on every example. `predict` breaks that tie to the lowest index, so the untrained readout answers class 0 for every test example, and its accuracy on a task is exactly the fraction of that task's test split labelled 0. Every dataset this module's tests reach comes from `crate::tasks`, whose test splits are balanced (`per_class_test` examples of each of `n_classes` classes), so that fraction is exactly 1/n_classes, which is what `Task::chance` holds — the same f64, computed as 1.0 / n_classes in both places. `the_untrained_baseline_is_exactly_chance` asserts that equality with assert_eq!, so it is pinned rather than assumed. No test could tell the measurement from the constant; only an unbalanced test split could, and this module cannot construct one through `run`."
+  "new": "    let baseline: Vec<f64> = tasks.iter().map(|t| t.chance).collect();"
  },
  {
   "label": "the rehearsal set is empty whatever the replay policy holds",
@@ -1032,8 +1030,7 @@
  {
   "label": "the learning probability is conditioned on the agreeing polarity",
   "old": "        let mass: f64 = pi[d..].iter().sum();",
-  "new": "        let mass: f64 = pi[..d].iter().sum();",
-  "equivalent": "`transition_matrix` gives a potentiating and a depressing stimulus probability one half each and uses the SAME q0, p0 and x for both polarities, so the chain is invariant under the swap k <-> d + k and its stationary distribution satisfies pi[k] == pi[d + k] exactly. `stationary_by_flux_balance` builds it that way by construction — it solves the d-level quotient chain once and writes `pi[k] = level[k] / total` and `pi[d + k] = level[k] / total` from the same f64 — so the two halves are bit-identical, not merely equal to a tolerance, and the two sums are the same number. This is the mutation that survived a previous audit; `the_stationary_distribution_is_exactly_symmetric_under_polarity` is the test that records the symmetry so that anyone adding per-polarity rates finds out which half was meant."
+  "new": "        let mass: f64 = pi[..d].iter().sum();"
  },
  {
   "label": "the learning probability weights the stationary mass by the deepening rate",

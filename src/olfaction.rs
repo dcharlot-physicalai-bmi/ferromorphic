@@ -3217,4 +3217,81 @@ mod tests {
             );
         }
     }
+
+    /// The ensemble activity is normalised by `per * granule_ceiling()`, and NOT by twice that.
+    /// The recorded argument for the doubling mutation is that scaling by a power of two is exact
+    /// in binary floating point and cancels between the numerator and the denominator of the
+    /// activity-weighted mask average. The cancellation algebra is right; the premise is not,
+    /// because the mutation scales the DIVISOR. `per as f64 * granule_ceiling * 2.0` parses as
+    /// `(per * granule_ceiling) * 2.0`, and the doubling overflows to `+inf` as soon as
+    /// `per * granule_ceiling` passes `f64::MAX / 2 = 8.988465674311579e307`. Every `act[k]` is
+    /// then exactly `+0.0`, `act_total > 0.0` is false, and the whole odour-specific limb of the
+    /// inhibition is dropped.
+    ///
+    /// The divisor is unbounded above: `granule_ceiling()` is
+    /// `floor(window / granule_cell.t_ref).max(1.0)`, and [`Epl::new`] validates
+    /// `mitral_cell.t_ref > 0.0` but never bounds `granule_cell.t_ref`.
+    ///
+    /// MEASURED with a granule `t_ref` of 1e-310 s over a granule window of 125 ticks at 1e-4 s:
+    /// `granule_ceiling()` is 1.2500000000000038e308, finite, and twice it is `inf`. The ensemble
+    /// fires 8 times a gamma cycle, so `act[0]` is 8 / 1.2500000000000038e308 = 6.4e-308, a normal
+    /// f64 and strictly positive; the delivered inhibition is `i_specific * mask` channel by
+    /// channel — 1.7500000000000002e-9 A where the mask is 0.875 — and with the divisor doubled
+    /// every channel is exactly 0.0.
+    ///
+    /// Why the suite could not see it: every fixture in this module takes the default granule
+    /// `t_ref` of 1e-3 s, where `granule_ceiling()` is 12 and the factor of two cancels exactly as
+    /// the argument says. Nothing here put the divisor anywhere near the top of the exponent range.
+    #[test]
+    fn the_specific_limb_survives_a_granule_ceiling_near_the_top_of_the_exponent_range() {
+        let p = EplParams {
+            mitral: 16,
+            granule_per_odour: 1,
+            // Zero broad cells, so `a_broad` is exactly 0.0 by its own branch and the only thing
+            // moving in `inhibition` is the specific limb this mutation reaches.
+            broad_granule: 0,
+            granule_cell: Lif { t_ref: 1e-310, ..EplParams::default().granule_cell },
+            ..EplParams::default()
+        };
+        let i_specific = p.i_specific;
+        let per = p.granule_per_odour;
+        let mut epl = Epl::new(p).expect("granule_cell.t_ref is positive, which is all that is asked");
+        // The hole, stated as arithmetic rather than as a fixture: the divisor is finite, and
+        // twice it is not.
+        let divisor = per as f64 * epl.granule_ceiling();
+        assert!(divisor.is_finite(), "divisor {divisor:e} is already infinite, so this test is blunt");
+        assert!(divisor > f64::MAX / 2.0, "divisor {divisor:e} is below the overflow point");
+        assert_eq!(divisor * 2.0, f64::INFINITY, "the doubled divisor did not overflow");
+
+        let mut source = OdourGenerator::new(7, 16, 0.4).expect("valid");
+        let odour = source.next_odour().expect("valid");
+        assert_eq!(epl.learn(&odour).expect("one-shot learning"), 0);
+        let r = epl.present(&odour, 2).expect("the circuit is not silent on its own odour");
+
+        // The precondition the mutation destroys: the ensemble actually fired, so `act_total` is
+        // strictly positive on the unmutated divisor.
+        let granule_spikes = r.train.spikes().iter().filter(|s| s.source >= 16).count();
+        assert!(granule_spikes > 0, "the ensemble was silent, so this fixture proves nothing");
+
+        // One ensemble, so the activity-weighted average of the masks is the mask itself, and the
+        // delivered inhibition is `i_broad * 0 + i_specific * mask`. Three roundings separate the
+        // two sides (the division that makes act, the product, the division that averages), so the
+        // comparison is to four epsilons of the full-scale current and not to a chosen number.
+        let mask = epl.ensembles()[0].mask.clone();
+        let mut delivered = 0usize;
+        for (m, &want) in mask.iter().enumerate() {
+            let got = r.inhibition[m];
+            assert!(
+                (got - i_specific * want).abs() <= 4.0 * f64::EPSILON * i_specific,
+                "channel {m}: delivered {got} A against i_specific * mask = {} A",
+                i_specific * want
+            );
+            if want > 0.0 {
+                assert!(got > 0.0, "channel {m} has mask {want} and got no specific inhibition");
+                delivered += 1;
+            }
+        }
+        assert!(delivered > 0, "every mask entry was zero, so this fixture proves nothing");
+    }
+
 }

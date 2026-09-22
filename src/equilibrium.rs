@@ -597,4 +597,64 @@ mod tests {
         assert_eq!(g.relative_mismatch(&zero), None);
         assert_eq!(zero.relative_mismatch(&g), Some(1.0));
     }
+
+    /// [`Network::estimate`]'s nudged phase starts from the FREE FIXED POINT, as the hardware
+    /// would, and restarting it from the origin is not a detail of the relaxation but a different
+    /// answer. Two things are pinned here. First the identity: the estimate is exactly
+    /// `(dE/dtheta(s^beta) - dE/dtheta(s^0)) / beta` with `s^beta` relaxed FROM `s^0`, recomputed
+    /// here out of the same public calls in the same order, so it is an equality and not a
+    /// tolerance. Second the size of the difference: this network is bistable, so the two starts
+    /// do not merely land on two neighbouring floats, they land in opposite wells.
+    ///
+    /// MEASURED with `w_01 = w_10 = 5`, `b = (0.05, 0)`, `x = (0)`, `y = (-1)`, `beta = 0.3`,
+    /// `dt = 0.1`, `tol = 1e-12`: the free phase settles at `(1.2317852546420964,
+    /// 1.2276313692648493)` in 100 steps and the nudged phase started there settles at
+    /// `(1.2002315072202903, 1.0384855022129875)`, giving `g.b = (0.0312, 0.2153)`. Started from
+    /// the origin instead, the spring's `-0.3` on the output unit's velocity carries the pair into
+    /// the NEGATIVE well, `(-1.2191621872510363, -1.2058895935460854)`, and `g.b = (5.608, 5.591)`
+    /// -- a gradient of the opposite sign and eighteen times the size, not a last-bit difference.
+    ///
+    /// Why the suite could not see it: every relaxation fixture in this module runs on `net()`,
+    /// `Network::random(7, 2, 3, 0.8)`, whose couplings are small enough that the energy has a
+    /// single minimum -- the module doc says so in as many words. The start-independence test
+    /// compares two starts at `beta = 0.0` only, for one `(x, y)`, to a tolerance of `1e-13`; what
+    /// it records is that two starts give two DIFFERENT f64 states, which `estimate` then divides
+    /// by a `beta` it will accept as small as `1e-13`. Every field of [`Network`] is public and
+    /// nothing bounds `w`, so "at these couplings" was never a statement about the code.
+    #[test]
+    fn the_nudged_phase_starts_from_the_free_fixed_point_and_a_bistable_network_says_so() {
+        const DT: f64 = 0.1;
+        const TOL: f64 = 1e-12;
+        const STEPS: u64 = 200_000;
+        let beta = 0.3;
+        let n = Network {
+            n: 2,
+            n_out: 1,
+            m: 1,
+            w: vec![0.0, 5.0, 5.0, 0.0],
+            u: vec![0.0, 0.0],
+            b: vec![0.05, 0.0],
+        };
+        let (x, y) = ([0.0], [-1.0]);
+        let origin = vec![0.0; n.n];
+        let free = n.relax(&origin, &x, &y, 0.0, DT, TOL, STEPS).expect("the free phase settles");
+        let from_free = n.relax(&free, &x, &y, beta, DT, TOL, STEPS).expect("the nudged phase settles");
+        let from_origin = n.relax(&origin, &x, &y, beta, DT, TOL, STEPS).expect("the nudged phase settles");
+        // The fixture is bistable, and that is what makes this test about physics rather than
+        // about the last bit of a relaxation.
+        assert!(free[0] > 1.0 && free[1] > 1.0, "the free phase left the positive well: {free:?}");
+        assert!(from_free[0] > 1.0, "the nudged phase left the positive well: {from_free:?}");
+        assert!(from_origin[0] < -1.0, "the fixture is no longer bistable: {from_origin:?}");
+        // The identity. Same calls, same order, so equality.
+        let plus = n.energy_gradient(&from_free, &x).expect("a finite state");
+        let minus = n.energy_gradient(&free, &x).expect("a finite state");
+        let want: Vec<f64> = plus.b.iter().zip(&minus.b).map(|(p, q)| (p - q) / beta).collect();
+        let got = n.estimate(&x, &y, beta, false, DT, TOL, STEPS).expect("both phases settle");
+        assert_eq!(got.b, want, "the nudged phase did not start at the free fixed point");
+        // And the size of it: the origin-started estimate is in the other well and the other sign.
+        let wrong = n.energy_gradient(&from_origin, &x).expect("a finite state");
+        let other: Vec<f64> = wrong.b.iter().zip(&minus.b).map(|(p, q)| (p - q) / beta).collect();
+        assert!(got.b[1] < 1.0 && other[1] > 5.0, "measured {} against {}", got.b[1], other[1]);
+    }
+
 }

@@ -3713,4 +3713,63 @@ mod tests {
         assert_eq!(est.filter.p, 1.0 / at_reference, "p0 did not come from the reference either");
         assert_eq!(est.filter.x, x0, "the filter did not start at x0");
     }
+
+    /// `spikes_in` rectifies its INPUT and not the product: the count is `floor(gain · max(x, 0) ·
+    /// t)`, which is 0 for every `x ≤ 0` whatever `gain` happens to be.
+    ///
+    /// ⛔ THE HOLE: the sign screen on `gain` runs once, inside `SigmaDeltaEncoder::new`, and
+    /// `spikes_in` re-reads the `pub` field without re-checking it. While `gain > 0` the rectifier
+    /// is invisible — for `x < 0` the unrectified product is negative, `floor` keeps it negative,
+    /// and the saturating `as u64` returns the same 0 the rectified form computes, including the
+    /// overflow-to-`-inf` case. Every fixture in this module leaves `gain` as constructed, so
+    /// dropping `.max(0.0)` was green. A negative `gain` is one assignment away in safe code and
+    /// separates the two forms by six whole spikes.
+    #[test]
+    fn the_closed_form_rectifies_its_input_and_not_the_product() {
+        let mut e = SigmaDeltaEncoder::new(1.0).unwrap();
+        e.gain = -2.0; // the field's doc says strictly positive; the type does not enforce it
+        // Every value here is exact in binary64. Rectified: `-2 · max(-3, 0) · 1` is `-0.0`, whose
+        // `floor` is `-0.0` and whose saturating cast is 0. Unrectified: `-2 · -3 · 1` is `6.0`,
+        // which is below `U64_EXACT`, so the cast is 6 and a negative input reports six spikes.
+        assert_eq!(
+            e.spikes_in(-3.0, 1.0).unwrap(),
+            0,
+            "a rectified encoder counted spikes from a negative input"
+        );
+        // The regime the rest of the suite lives in, where the two forms genuinely do agree: with
+        // a positive gain the saturating cast covers for the missing rectifier.
+        let g = SigmaDeltaEncoder::new(2.0).unwrap();
+        assert_eq!(g.spikes_in(-3.0, 1.0).unwrap(), 0, "a positive gain must count nothing either");
+        assert_eq!(g.rate(-3.0), 0.0, "the rate is rectified whatever the count does");
+    }
+
+    /// A crossing is timestamped from the sample BEFORE it — `(i − 1)·dt + frac·dt` — and the
+    /// one-sample offset does not cancel out of what this module reports.
+    ///
+    /// ⛔ THE HOLE: `period_s` is a mean of differences and `phase_difference` is a difference of
+    /// two instants, so both are invariant under a shift that is constant — which is what the
+    /// record argued from. The shift is not constant in binary64: `(i − 1) as f64 * dt` and
+    /// `i as f64 * dt` are separately rounded products, so it varies by up to an ulp from crossing
+    /// to crossing, and that variation lands in `jitter_s`, which is a deviation from the mean
+    /// rather than a difference of instants. A square wave at `dt = 0.1` s makes the whole
+    /// computation exact enough to assert on the nose.
+    #[test]
+    fn a_crossing_is_timestamped_from_the_sample_before_it_not_the_one_after() {
+        let dt = 0.1;
+        let s = [0.0, 2.0, 0.0, 2.0, 0.0, 2.0, 0.0, 2.0];
+        let p = measure_period(&s, dt).unwrap();
+        // mid = 1.0 and frac = 0.5 exactly at each of the four crossings (i = 1, 3, 5, 7).
+        assert_eq!(p.cycles, 3, "this fixture is meant to hold four crossings");
+        // The spacing of binary64 at 0.2, and the whole scale of this test.
+        let ulp = 2f64.powi(-55);
+        // Measured, both forms: intervals [0.2, 0.2, 0.2 + 4·ulp] from instants 0.05, 0.25, 0.45,
+        // 0.6500000000000001, against [0.2, 0.2, 0.2 + 2·ulp] from 0.15000000000000002,
+        // 0.35000000000000003, 0.55, 0.7500000000000001 one sample later. The sums round to the
+        // same f64, so the mean is bit-identical and the period cannot tell the two apart.
+        assert_eq!(p.period_s, 0.2 + ulp, "the mean interval is not the one this test reasons about");
+        // The largest deviation from that mean is 3·ulp = 8.326672684688674e-17 s from the sample
+        // before, and 1·ulp = 2.7755575615628914e-17 s from the sample after: a factor of three.
+        let jitter = p.jitter_s;
+        assert_eq!(jitter, 3.0 * ulp, "measured jitter {jitter} s, not 3 ulp of 0.2 s");
+    }
 }

@@ -5446,7 +5446,16 @@ mod tests {
             }
             let a = d.score_of_patch(&pattern, side).unwrap();
             let b = d.score_of_patch(&t, side).unwrap();
-            assert!((a - b).abs() < 1e-9, "the Harris response is not transpose-invariant: {a} vs {b}");
+            // EQUALITY, not a tolerance. The transpose reverses the order the interior is summed
+            // in, and floating-point addition is not associative, so the invariance is bit-for-bit
+            // only because the patch is BINARY: every `gx`, `gy` is an integer with |g| <= 8, every
+            // product is an integer of magnitude at most 64, and the whole interior sums to less
+            // than 64 * (side - 2)^2 = 1.1e12 at the largest patch `radius_within` admits
+            // (side <= 131069) — far below 2^53, so every accumulation is exact and the order
+            // cannot matter. A tolerance here would pass just as well on a NON-binary patch, where
+            // the reordering is real and the claim is false. That is the step the recorded
+            // equivalence argument for "the binarised patch is written column-major" was missing.
+            assert_eq!(a, b, "the Harris response is not transpose-invariant: {a} vs {b}");
         }
     }
 
@@ -7523,5 +7532,165 @@ mod tests {
         }
         assert_eq!(total, evs.len());
         assert!(checked > 200, "only {checked} annulus pixels were compared");
+    }
+
+    /// **Mutation found: the directionless branch of [`Hots::learn`] can hand back the constant
+    /// `1.0` instead of `0.0` and every test still passes.**
+    ///
+    /// The shape of the hole: the one fixture that reaches that branch,
+    /// [`the_hots_cosine_factor_is_exercised_off_the_ray`], drives it with a prototype of literal
+    /// zeros, and there `beta * ci` is `0.0` for *any* finite `beta` — the branch's value is
+    /// multiplied by zero before anything can read it. That is a property of the fixture, not of
+    /// the branch. `nc` is `sqrt(sum a*a)` and `a * a` underflows to `+0.0` for every
+    /// `|a| < 1.6e-162` (the square falls below the smallest subnormal, `2^-1074`), so
+    /// `nc == 0.0` does NOT mean the prototype is zero. A prototype of `1e-200` takes the same
+    /// branch with entries that are not zero, and there the two constants give different numbers.
+    #[test]
+    fn a_directionless_prototype_is_one_whose_squares_underflow_not_one_that_is_zero() {
+        let g = geom(8, 8);
+        let tiny = 1e-200_f64;
+        // The premise of the branch, stated as arithmetic rather than assumed.
+        assert_eq!(tiny * tiny, 0.0, "the square must underflow, or `nc` is not zero");
+        assert!(tiny > 0.0, "while the entry itself is not zero");
+        let mut h = Hots::with_centers(g, 1, 1e-3, vec![vec![tiny; 9]]).unwrap();
+        h.learn(PixelEvent { t_s: 0.0, x: 4, y: 4, polarity: Polarity::On }).unwrap();
+        let alpha = Hots::alpha_for(0);
+        // The eight neighbours never fired, so their patch entries are exactly 0.0 and the update
+        // is `ci + alpha * (0.0 - beta * ci)`: exactly `ci` at beta = 0, and `ci * (1 - alpha)` at
+        // beta = 1. Measured: 1e-200 against 9.9e-201, a 1% separation that survives the `+=`.
+        for i in [0usize, 1, 2, 3, 5, 6, 7, 8] {
+            assert_eq!(h.centers()[0][i], tiny, "a directionless prototype's mass was decayed at {i}");
+        }
+        // The centre entry is the patch's own `exp(-0) = 1`, and it agrees under BOTH constants,
+        // because `1.0 - 1e-200` rounds back to `1.0`. That is why the zero-prototype fixture
+        // above, which only reads this entry, could not see the branch.
+        assert_eq!(h.centers()[0][4], tiny + alpha * 1.0);
+        assert_eq!(h.centers()[0][4], alpha, "measured: 0.01, the tiny entry vanishing in the sum");
+    }
+
+    /// **Mutation found: disabling [`Hots::new`]'s own zero-radius guard survived every test.**
+    ///
+    /// The shape of the hole: every fixture reads only the `Err` value that comes back, and
+    /// [`Hots::with_centers`] carries the identical guard, so the *error* is the same either way.
+    /// What is not the same is the generator. With the guard gone, `radius_within(geom, 0)` is
+    /// `Ok(0)`, `side` is `(2*0 + 1)^2 = 1`, and `n_centers` draws are taken before the refusal
+    /// arrives from the inner constructor. [`crate::rng::Rng`] is `Copy` and `PartialEq` over its
+    /// whole 128-bit state, so a caller can compare the generator it lent against the one it got
+    /// back: a constructor that refuses must not have spent it.
+    #[test]
+    fn a_refused_hots_constructor_does_not_spend_the_callers_generator() {
+        let g = geom(8, 8);
+        let mut rng = Rng::new(7);
+        let before = rng;
+        assert!(matches!(
+            Hots::new(g, 0, 1e-3, 3, &mut rng),
+            Err(VisionError::TooFew { what: "patch radius", have: 0, need: 1 })
+        ));
+        // Six `next_u32` steps of a full-period 64-bit LCG cannot return to their start, so this
+        // equality is exactly the claim "no draw was taken".
+        assert_eq!(rng, before, "a refused constructor drew from the generator before refusing");
+        assert_eq!(rng.next_f64(), Rng::new(7).next_f64(), "the stream is still at its start");
+    }
+
+    /// **Mutation found: `sweeps = per_pixel as u64` — one crossing slot fewer — survived every
+    /// test.**
+    ///
+    /// The shape of the hole: every rotating-bar fixture in this module has a `theta0` small
+    /// enough that `base + k0 * period` carries far less error than one period, and there the
+    /// first slot always lands in `[0, period)` and is emitted, so the `+ 1` really is margin.
+    /// The slot stops being margin exactly when the first one is WASTED, and in binary64 that is
+    /// reachable: `k0 = ceil(-base/period)` puts the first crossing at or after zero in REAL
+    /// arithmetic only, and once `|base / period| = |phi - theta0| / pi` reaches `2^52` the ulp of
+    /// `base` exceeds `period`, so the cancellation `base + k0 * period` can land below zero and
+    /// consume a slot. The last slot then falls inside the duration and is the one the mutant
+    /// gives up.
+    ///
+    /// This fixture is exact and portable, not a rounding accident of one libm: at
+    /// `(x, y) = (2, 1)` the offset is `(1, 0)`, so `phi = atan2(+0.0, 1.0)` is `+0.0` with no
+    /// rounding, `omega = 1` makes `period` exactly `pi` and `base` exactly `-theta0`, and every
+    /// step from there is one correctly-rounded operation on values IEEE 754 fixes.
+    #[test]
+    fn the_rotating_bars_last_sweep_slot_is_load_bearing_once_the_first_is_lost_to_cancellation() {
+        let g = geom(3, 3);
+        // An even integer just above `pi * 2^52`, so `-b / pi` is already an f64 integer and the
+        // division rounded away from zero.
+        let b = 14148475504056882.0_f64;
+        let pi = core::f64::consts::PI;
+        assert_eq!((-b / pi).ceil(), -b / pi, "the quotient is already an integer: ceil is identity");
+        assert!(b + (-b / pi).ceil() * pi < 0.0, "the first slot is below zero and is discarded");
+        // duration / period = 12 / pi = 3.8197, so per_pixel = 4 and the original has 5 slots.
+        let evs = rotating_bar(g, (1.0, 1.0), 1.0, -b, 0.5, 1.5, 12.0, Polarity::On).unwrap();
+        let at: Vec<f64> =
+            evs.iter().filter(|e| e.x == 2 && e.y == 1).map(|e| e.t_s).collect();
+        // Measured on the unmutated generator: slots -2, 2, 6, 8, 12 at this pixel, of which the
+        // first is discarded by `t >= 0.0` and the last is kept because `12.0 > 12.0` is false.
+        assert_eq!(at, vec![2.0, 6.0, 8.0, 12.0], "four crossings at (2, 1)");
+    }
+
+    /// **Mutation found: taking the first crossing index as `floor` rather than `ceil` survived
+    /// every test.**
+    ///
+    /// The shape of the hole: `floor(u)` is `ceil(u) - 1` whenever `u` is not an integer, and the
+    /// argument that the extra slot is harmless — its time lies in `[-period, 0)` and the
+    /// `t >= 0.0` filter drops it — is a statement about real arithmetic. The emitted number is
+    /// `base + fl(floor(u) * period)`, and when that product rounds to exactly `-base` the sum is
+    /// `+0.0`, which passes the filter and is PUSHED. So the mutant emits an event the original
+    /// never emits, at `t_s` exactly zero.
+    ///
+    /// The fixture forces that round trip: `theta0 = fl(m * pi)` for an integer `m` whose
+    /// round trip `theta0 / pi` lands one ulp ABOVE `m`, so `floor` returns `m` and
+    /// `base + fl(m * pi)` is `-theta0 + theta0 = +0.0` exactly. As above, the separating pixel is
+    /// `(2, 1)`, where `atan2` is exact, so nothing here depends on a libm.
+    #[test]
+    fn the_rotating_bars_first_crossing_index_is_the_ceiling_so_nothing_is_emitted_at_zero() {
+        let g = geom(3, 3);
+        let pi = core::f64::consts::PI;
+        let m = -1400000000000.0_f64;
+        let theta0 = m * pi;
+        // The round trip is one ulp above m: floor gives m back, ceil gives m + 1.
+        assert_eq!((theta0 / pi).floor(), m);
+        assert_ne!(theta0 / pi, m);
+        // `base` is what the generator forms at this pixel: `(phi - theta0) / omega` with
+        // `phi = +0.0` and `omega = 1`. The mutant's first slot is `base + floor(-base/pi) * pi`.
+        let base = -theta0;
+        assert_eq!(base + (-base / pi).floor() * pi, 0.0, "the floor slot cancels to exactly zero");
+        assert!(base + (-base / pi).ceil() * pi > 3.0, "the ceil slot is a whole period later");
+        let evs = rotating_bar(g, (1.0, 1.0), 1.0, theta0, 0.5, 1.5, 10.0, Polarity::On).unwrap();
+        let at: Vec<f64> =
+            evs.iter().filter(|e| e.x == 2 && e.y == 1).map(|e| e.t_s).collect();
+        // Measured on the unmutated generator: three crossings, the first near pi. The resolution
+        // here is ulp(4.4e12) = 2^-9, which is why they are not pi, 2pi, 3pi exactly.
+        assert_eq!(at.len(), 3, "measured: {at:?}");
+        assert!(at.iter().all(|t| *t > 0.0), "an event at or before the start of the recording: {at:?}");
+        assert_eq!(at[0], 3.1416015625);
+    }
+
+    /// The `suu == 0` arm of the collinearity guard, on support whose centred x-coordinates are
+    /// NOT zero.
+    ///
+    /// The shape of the hole: every degenerate fixture above reaches `suu == 0.0` through a
+    /// literally vertical line (`x = 3.0` at every point), where each centred `u` really is
+    /// exactly zero — so the suite can only ever see the guard on support where "no x variance"
+    /// and "every u is zero" are the same statement. They are not the same statement. `u * u`
+    /// underflows to `+0.0` for every `|u| < 1.6e-162` (the square falls below `2^-1074`) while
+    /// `u * v` stays normal for a large `v`, so `suu` can be `+0.0` with `suv` nowhere near it.
+    /// What makes the refusal hold in that case is the SIGN OF THE DETERMINANT and nothing else:
+    /// with `suu == 0.0` the threshold `1e-9 * suu * svv` is exactly `+0.0` while
+    /// `det = 0.0 * svv - suv * suv` is at most zero, so `det > threshold` is false whatever
+    /// `suv` is.
+    #[test]
+    fn an_underflowed_x_variance_is_refused_by_the_determinant_not_by_its_own_clause() {
+        let support =
+            [(1e-200_f64, 1e100_f64, 0.0_f64), (2e-200, -1e100, 1.0), (3e-200, 0.0, 2.0)];
+        // The premise, computed the way `fit_plane` computes it: a left fold from 0.0.
+        let sx: f64 = support.iter().map(|p| p.0).sum();
+        let xm = sx / 3.0;
+        let suu: f64 = support.iter().map(|p| (p.0 - xm) * (p.0 - xm)).sum();
+        let suv: f64 = support.iter().map(|p| (p.0 - xm) * p.1).sum();
+        assert_eq!(suu, 0.0, "the centred squares must underflow, or the branch is not reached");
+        assert_ne!(support[0].0 - xm, 0.0, "while the centred coordinates are not themselves zero");
+        assert_ne!(suv, 0.0, "measured: suv = {suv}, which the old argument said had to be zero");
+        assert!(suu * 0.0 - suv * suv <= 0.0, "det is at most zero, so it cannot exceed +0.0");
+        assert!(matches!(fit_plane(&support), Err(VisionError::Degenerate { .. })));
     }
 }
