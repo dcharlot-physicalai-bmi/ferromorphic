@@ -336,8 +336,23 @@ mutations than they have public items — `aer`, `vsa`, `sparse`, `phasor`, `hop
 and `metrics` — and almost all of them date from the early waves. `aer` is the clearest: 2,971 lines
 and 91 public items against 13 mutations, all of which aim at one reader and one slicer, so whole
 formats in that module have no recorded edit at all. Those lists run clean, and running clean is a
-weaker statement for them than it is for `continual` at 226. The next wave is to deepen them, and
-this paragraph is here so that nobody reads the sentence above it as more than it says.
+weaker statement for them than it is for `continual` at 226.
+
+**⚠ And that metric is not the sharp one.** Counting mutations per public item misses a small module
+whose few items are badly probed. Anchoring every recorded mutation to its line and asking what
+fraction of the **mutable** lines any mutation touches — excluding declarations, `use`, braces,
+struct fields and enum variants — gives a median of **42.8%**, a maximum of 94.7% and a floor of
+**14.2%** in `aer`. By that measure twenty-six further modules sit below the median, and they are
+not the same twenty-six: `neuron` is at **16.6%**, and the whole of `AdaptiveLif`'s `Neuron`
+implementation — the adaptation decay `theta_0 + (theta - theta_0) exp(-dt/tau_a)`, the
+`theta += beta` on a spike, both `v_th` assignments and `reset` — carries **no recorded mutation at
+all**. That is the crate's adaptive neuron and the model's defining equations. `equilibrium` is at
+15.6% and `cerebellum` at 19.5%.
+
+Line coverage is itself a crude proxy: one mutation can pin a claim that spans twenty lines, and
+the tests cover far more than the mutations probe. It is a place to look, not a verdict. But it
+looks in a place the first metric did not, and this paragraph is here so that nobody reads either
+sentence above it as more than it says.
 
 The crate family is not built yet. Planned
 siblings, each following the same rule that a dependency lives outside the core:
