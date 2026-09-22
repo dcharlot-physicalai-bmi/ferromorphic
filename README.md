@@ -9,7 +9,7 @@ hardware constraint models, analog device non-idealities, NIR, event-camera deco
 metrics, teaching tasks — and a joules ledger that charges for the memory traffic a synaptic
 operation needs.
 
-**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 71 modules, 1,829 tests.**
+**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 71 modules, 2,252 tests.**
 
 Run it in a browser without installing anything:
 **[energy.physicalai-bmi.org/neuromorphic](https://energy.physicalai-bmi.org/neuromorphic)** — the
@@ -40,7 +40,8 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 | `reservoir` | liquid state machines and echo state networks, with a pure-Rust ridge solve and power iteration |
 | `encode`, `coding` | rate, latency, delta; population, rank-order, phase, burst, BSA/HSA, temporal contrast — and their decoders |
 | `topology` | Erdős-Rényi, Watts-Strogatz, Barabási-Albert, distance-dependent, layered, winner-take-all, Dale's law |
-| `hardware` | constraint models for Loihi, Loihi 2, `TrueNorth`, `NorthPole`, Akida, `SpiNNaker`, Xylo, Speck, ODIN, DYNAP and more — every field graded and provenanced |
+| `hardware` | constraint models for Loihi, Loihi 2, `TrueNorth`, `NorthPole`, Akida, `SpiNNaker`, Xylo, Speck, ODIN, DYNAP and more — | `hardware` | constraint models for Loihi, Loihi 2, `TrueNorth`, `NorthPole`, Akida, `SpiNNaker`,
+Xylo, Speck, ODIN, DYNAP and more — ten graded figures per part, each with its provenance string | |
 | `nir` | the Neuromorphic Intermediate Representation graph, validation, and a bridge to this crate's networks |
 | `aer` | AEDAT 2.0, 3.1 and 4.0, Prophesee EVT2/EVT3 and N-MNIST decoders, total and panic-free, with rollover-correct timestamps; the DVS128 Gesture label reader that cuts a recording into its gestures |
 | `metrics` | `NeuroBench` complexity metrics: activation sparsity, effective MACs and ACs, footprint |
@@ -78,7 +79,13 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 | `localise` | sound localisation by coincidence: the Jeffress delay-line array against the path-difference geometry, the half-spacing quantisation bound, the aliasing frequency and the coincidence probability under spike jitter |
 | `cerebellum` | the cerebellum as a machine: an adaptive filter that converges on the Wiener solution at `1 − βλ` an epoch and stops when its error is decorrelated from every input, and Albus's CMAC with its triangular generalisation |
 | `grid` | grid cells: the hexagonal firing map, path integration that is exact in phase space, the modular code — 9009 positions from 40 cells — decoded by the Chinese remainder theorem, and its error correction: two spare modules survive any corruption of any one, exhaustively |
-| `proprio` | proprioception: the power-law muscle spindle and the fusimotor gains that retune it (dynamic `γ_d`, static `γ_s`, and the synaptic gain of the reflex arc), an intrafusal fibre with its gamma drive, spike-driven fusimotor activation, the tendon organ and its two-rate overshoot, a rate-to-spike encoder that emits exactly the integral of its rate, and a stretch reflex whose stiffness is `g γ_s k_L` and whose clonus threshold is the delay's ceiling `π/2τ` on the PRODUCT of those gains |
+| `proprio` | proprioception: the power-law muscle spindle and the fusimotor gains that retune it (dynamic `γ_d`, static `γ_s`, and the synaptic gain of the reflex arc), an intrafusal fibre with its gamma drive, spike-driven fusimotor activation, the tendon organ and its two-rate overshoot, a rate-to-spike encoder that emits exactly the integral of its rate, and | `proprio` | proprioception: the power-law muscle spindle and the fusimotor gains that retune it
+(dynamic `γ_d`, static `γ_s`, and the synaptic gain of the reflex arc), an intrafusal fibre with its
+gamma drive, spike-driven fusimotor activation, the tendon organ and its two-rate overshoot, a
+rate-to-spike encoder that emits exactly the integral of its rate, and a stretch reflex whose
+stiffness is `g γ_s k_L` and which breaks into clonus when `g γ_s k_L / b` crosses the delayed
+loop's own ceiling — Levin and May's discrete boundary `(2/h)·sin(π/(2(2m+1)))`, which converges on
+the continuous `π/2τ` | |
 | `delays` | delays as a resource: the spatiotemporal pattern a set of synaptic delays is matched to, a delay-learning rule that contracts every arrival's deviation by exactly `1 − η`, the `(D+1)ⁿ − Dⁿ` patterns a neuron can stand for, and the buffer bits that costs |
 | `distance` | how different two spike trains are: the Victor–Purpura edit distance and the van Rossum distance (closed form against its own quadrature), vector strength against the jitter's characteristic function, the Fano factor of a clock, `f(1 − f)/(m + f)`, and the parameter-free ISI- and SPIKE-distances, integrated exactly and refereed by the quadrature of their definitions |
 | `field` | the Amari neural field of dynamic field theory: the kernel integral `W`, the narrow unstable bump below which activity dies and the wide stable one it settles at, both as roots of `W(a) + h = 0` and both found in the simulated field — on a line, and on a sheet, where the rim integral is `πσ²[1 − e^{−R²/σ²} I₀(R²/σ²)]` |
@@ -104,6 +111,7 @@ cargo add ferromorphic
 ```
 
 ```rust
+// Inside `fn main() -> Result<(), Box<dyn std::error::Error>>`, for the `?`s below.
 use ferromorphic::{ledger::TRUENORTH_2014, net::NetBuilder, neuron::Lif, sim::{Mode, Sim}};
 
 // A five-neuron chain: each cell drives the next after two ticks.
@@ -120,7 +128,6 @@ let bill = sim.ledger.bill(&TRUENORTH_2014);
 assert!(bill.total.is_none());
 assert!(bill.unpriced.contains(&"synapse memory fetch"));
 assert!(bill.synaptic.unwrap() > 0.0);            // the term that IS priced still reports
-# Ok::<(), Box<dyn std::error::Error>>(())
 ```
 
 ## The position this crate takes
@@ -142,8 +149,12 @@ So `Prices` carries `e_syn_fetch`, **every device table in this crate leaves it 
 > This review did not locate a published per-synapse memory-fetch energy for any commercially
 > available neuromorphic processor.
 
-If you have one — measured, for a stated device, at a stated boundary — supply it and the ledger
-prices your workload. The flattering figure the literature reports is still computable as
+If you have one — measured, for a stated device, at a stated boundary — supply it. **It will not by
+itself complete the bill**, and this README used to imply it would: both device tables in this
+module leave FOUR of the five terms unpriced — `e_syn_fetch`, `e_neuron_update`, `e_spike_out` and
+`e_read` — so a fetch price removes one refusal and leaves three, and `Ledger::joules` still returns
+`None` for any run a `Sim` produces, because a run always has neuron updates and spikes out. The
+flattering figure the literature reports is still computable as
 `Ledger::joules_synops_only`, with its doc saying exactly what it omits, because a user needs to
 reproduce published numbers in order to argue with them and hiding it would not stop anyone using it.
 
@@ -166,7 +177,11 @@ meter.
 **How badly the unchecked models disagree is measurable.** SpikingJelly ships its own
 cross-validation of five literature-sourced energy models. On identical workloads they disagree by a
 **median factor of 556, spanning 218× to 753×** — one network priced at 553.4 µJ by one model and
-1.13 µJ by another. Five published methods, one workload, three orders of magnitude. This ledger
+1.13 µJ by another. **How badly the unchecked models disagree is measurable.** SpikingJelly ships its own
+cross-validation of five literature-sourced energy models. On identical workloads they disagree by a
+**median factor of 556, spanning 218× to 753×** — one network priced at 553.4 µJ by one model and
+1.13 µJ by another. Five published methods, one workload, a factor of 753 between the extremes. This
+ledger declines to be the sixth. This ledger
 declines to be the sixth.
 
 ### ⛔ A correction to this crate, in this crate
@@ -181,8 +196,13 @@ It is now `Evidence::Simulated`, with a regression test pinning it and the capti
 source line. The error is left visible because an `Evidence` enum does not help if the value handed
 to it was copied from the citing literature instead of the cited table.
 
-And the direction matters: per-synaptic-operation energies actually measured on fabricated silicon
-sit **above** this simulated figure — TrueNorth at 26 pJ in 28 nm. A field benchmarking against a
+And the direction matters: And the direction is not uniform. The two per-synaptic-operation energies this crate records from
+fabricated silicon straddle this simulated figure: `TrueNorth` at 26 pJ in 28 nm sits above it, and
+ODIN at 12.7 pJ in 28 nm (Frenkel et al., IEEE TBioCAS 13(1), 2019, in `hardware::ODIN`) sits 46%
+below it. So the defect in benchmarking against 23.6 pJ is not that it is known to flatter — it is
+that a pre-silicon simulation is standing in for a measurement, and every efficiency ratio computed
+from it inherits that. **Exactly one price in this crate came from fabricated silicon**, and a test
+asserts the count. A field benchmarking against a
 pre-silicon simulation is benchmarking against a number that flatters it, and every efficiency ratio
 computed from it inherits that. **Exactly one price in this crate came from fabricated silicon**, and
 a test asserts the count.
@@ -198,7 +218,7 @@ wins. At least six papers give a number for it. **Every one is below 2. Several 
 |---|---|---|
 | **~1.72** | Davidson & Furber, *Front. Neurosci.* 15:651141 (2021) | "most rate-coded spiking network implementations will not be more energy or resource efficient than the original ANN" |
 | **0.15 – 1.38** | Dampfhoffer et al., *IEEE TETCI* 7(3):731–741 (2023) | "many previous studies did not consider **memory accesses**, which account for an important fraction of the energy consumption" |
-| **~0.06 – 0.35** | Yan, Bai, Tang & Wong (NUS), arXiv:2409.08290 | op-count evaluations "neglect critical overheads like comprehensive data movements and memory accesses" and reach "misleading conclusions"; under a fair mapping the SNN reaches **0.78×** — a 22% saving, not a 100× one |
+| **~0.06 – 0.35**, this review's arithmetic | Yan, Bai, Tang & Wong (NUS), arXiv:2409.08290 | op-count evaluations "neglect critical overheads like comprehensive data movements and memory accesses" and reach "misleading conclusions"; under a fair mapping the SNN reaches **0.78×** — a 22% saving, not a 100× one — at 94.19% sparsity with T=6. The band is that sparsity read as spike density across those timesteps, which is this review's reading of their figure and not a number they print |
 
 Steve Furber designed SpiNNaker, so the first of those is the field auditing itself, not an outsider
 objecting to it.
@@ -228,8 +248,12 @@ checkable.
 
 **An event-driven claim is a measurement, not an adjective.** `Mode::Clocked` and
 `Mode::EventDriven` run the same network and are *required to produce the same spike train*; the
+difference between them is `Ledger::idle_fraction`, a number. **An event-driven claim is a measurement, not an adjective.** `Mode::Clocked` and
+`Mode::EventDriven` run the same network and are *required to produce the same spike train*; the
 difference between them is `Ledger::idle_fraction`, a number. On the chain above the clocked run
-spends over 80% of its membrane updates on neurons that received nothing, and the event-driven run
+spends 79.52% of its membrane updates on neurons that received nothing — measured: 7,952 idle out of
+10,000 — and the event-driven run spends none, which is the case for the hardware, stated as a count
+rather than asserted., and the event-driven run
 spends none — which is the case for the hardware, stated as a count rather than asserted.
 
 And jumping a neuron across quiet ticks is only legal for a model whose state composes across an
@@ -247,7 +271,11 @@ depend on which ticks happened to be quiet.
 
 ## Verified against closed forms, not against yesterday's output
 
-Every neuron model here has a test that runs it against an analytic solution.
+Every neuron model here whose equations have a closed form is run against it. `Izhikevich`,
+quadratic under forward Euler, and the Hodgkin-Huxley cells, four coupled nonlinear equations, have
+none — so they are held to the strongest check available instead: a second integrator that shares no
+update rule, agreeing on the spike time and on the peak, and a convergence order that is measured
+rather than assumed.
 
 - **Free decay matches the exponential to 1e-12**, not to a discretisation tolerance, because the
   integrator is exponential Euler. The same test run at `dt = 1e-5` and `dt = 1e-2` agrees to 1e-12,
@@ -260,10 +288,13 @@ Every neuron model here has a test that runs it against an analytic solution.
 - **A sub-threshold current returns `None`, not a large number.** "Fires rarely" and "does not fire"
   are different statements and a rate-coded readout cannot recover the difference later.
 
-1,829 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
+2,252 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
 `#![forbid(unsafe_code)]`, and `cargo build --target wasm32-unknown-unknown` compiles the library
-unchanged. Three of the `examples/` are verification gates that exit non-zero when a closed form
-disagrees with the simulator.
+unchanged. All three `examples/` are verification gates that exit non-zero when a check fails. Two of them run
+a closed form against the simulator — the LIF's analytic inter-spike interval, and the STDP pair
+rule `Δw = ±A·exp(∓Δt/τ)`. The third checks that the two simulation modes produce the identical
+spike train, that the event-driven run touches no idle neuron, that the idle fraction depends on the
+workload, and that `Sim::new` refuses an event-driven `Izhikevich`.
 
 ## What the encoders cost, on the page
 
@@ -284,8 +315,10 @@ energy figure is then divided by.
 
 `RateEncoder` uses `1 − exp(−rate·dt)` rather than `rate·dt`. The naive form is 0.5% high at an
 ordinary operating point and exceeds 1.0 outright at `rate·dt > 1`, where the encoder saturates at
+one spike per tick while still reporting that it produces `max_hz`. `RateEncoder` uses `1 − exp(−rate·dt)` rather than `rate·dt`. The naive form is 0.5% high at an
+ordinary operating point and exceeds 1.0 outright at `rate·dt > 1`, where the encoder saturates at
 one spike per tick while still reporting that it produces `max_hz`. Both facts are asserted in the
-tests, in the second case against the series expansion so the size of the error is on the page.
+tests, the 0.5% against the series expansion `x²/2 − x³/6` so the size of the error is on the page.
 
 `DeltaEncoder` is what an event camera does: it emits nothing at all for a static input, which is
 why an event sensor staring at a still scene costs nothing and why it cannot tell you what it is
@@ -314,7 +347,7 @@ For six releases that sentence carried an exception. Thirty-six modules were aud
 0.6.0 by an adversarial auditor that never wrote its edits down, so their verdict was a historical
 claim about the code as it stood then rather than a property of the code as it stands now.
 Twenty-two of them still had no list at 0.18.1. Closing that gap is what the backfill below was
-for, and **the survivor rate in those twenty-two was 464 in 4,228 — 10.8%.** That number is the
+for, and **the survivor rate in those twenty-two was 464 in 4,228 — 10.97%.** That number is the
 honest size of what an audit which does not record its edits leaves behind, and it is the argument
 for the whole exercise.
 
@@ -323,8 +356,13 @@ for the whole exercise.
 passes. The key is prose in a JSON file. There were 139 of them; read adversarially, **46 were
 refused and 15 more were judged to have a bad argument even where the conclusion held**. Every one
 of those was then BUILT AND RUN against the actual mutation, because a refutation that has not been
-executed is the same mistake one level up. **48 came back `caught`** — 45 of the 46 refusals, and 3
-of the 15 that had only been flagged as weakly argued. Five refusals did not hold, and those entries
+executed is the same mistake one level up. There were 142 of them; read adversarially, **46 were refused and 15 more were judged to have a bad
+argument even where the conclusion held**. Every one of those 61 was then BUILT AND RUN against the
+actual mutation, because a refutation that has not been executed is the same mistake one level up.
+**48 came back `caught`** — 41 of the 46 refusals, and 7 of the 15 that had only been flagged as
+weakly argued. Five refusals did not hold, and those entries keep their arguments with a note
+recording what was tried. Forty-eight keys are gone and thirteen arguments are rewritten onto an
+identity, a bound or an invariant rather than a survey of the fixtures. Ninety-four remain, each Five refusals did not hold, and those entries
 keep their arguments with a note recording what was tried. Forty-five keys are gone and thirteen
 arguments are rewritten onto an identity, a bound or an invariant rather than a survey of the
 fixtures. Ninety-four remain, each
@@ -333,8 +371,8 @@ argument about the SUITE presented as an argument about the CODE** — "no test 
 as "no test could tell".
 
 **⚠ "Every module has a list" is not "every list is adequate", and the density varies
-forty-five-fold.** Across the crate there are 2.06 recorded mutations per public item, but `rng` has
-18.6 per hundred lines of production code and `aer` has 0.4. Sixteen modules hold fewer recorded
+forty-two-fold.** Across the crate there are 2.06 recorded mutations per public item, but `rng` has
+18.6 mutations per hundred lines of production code and `aer` has 0.44, a spread of 42.5. Sixteen modules hold fewer recorded
 mutations than they have public items — `aer`, `vsa`, `sparse`, `phasor`, `hopfield`, `touch`,
 `dendrite`, `reinforce`, `nef`, `resonate`, `oscillator`, `optimise`, `predictive`, `graph`, `sim`
 and `metrics` — and almost all of them date from the early waves. `aer` is the clearest: 2,971 lines
@@ -345,8 +383,8 @@ weaker statement for them than it is for `continual` at 226.
 **⚠ And that metric is not the sharp one.** Counting mutations per public item misses a small module
 whose few items are badly probed. Anchoring every recorded mutation to its line and asking what
 fraction of the **mutable** lines any mutation touches — excluding declarations, `use`, braces,
-struct fields and enum variants — gives a median of **42.8%**, a maximum of 94.7% and a floor of
-**14.2%** in `aer`. By that measure twenty-six further modules sit below the median, and they are
+struct fields and enum variants — gives a median of **42.8%**, a maximum of 94.7% and gives a median of **42.8%**, a maximum of 94.7% and a floor of **1.7%** in `aer`, whose thirteen
+recorded mutations anchor to sixteen of its 921 mutable lines.. By that measure twenty-six further modules sit below the median, and they are
 not the same twenty-six: `neuron` is at **16.6%**, and the whole of `AdaptiveLif`'s `Neuron`
 implementation — the adaptation decay `theta_0 + (theta - theta_0) exp(-dt/tau_a)`, the
 `theta += beta` on a spike, both `v_th` assignments and `reset` — carries **no recorded mutation at
@@ -382,11 +420,17 @@ The three that mattered most, all shipped in 0.4.0 and all now fixed:
   false, so a wrong `true` silently permits spike times that depend on which ticks happened to be
   quiet. Both are now `false`, each with a test that demonstrates the divergence rather than asserting
   the constant.
-- **`Eif::isi` panicked** on parameters `Eif::new` accepts. `f64::clamp` panics when its bounds
-  cross, and a reset above the truncation point crosses them — which the shipped firing-pattern
-  taxonomy already does.
-- **AEDAT 2.0 ate valid records.** Any event whose first byte is `0x23` was consumed as a `#` header
-  line.
+- **`Eif::isi` panicked** on parameters `Eif::new` accepts. - **`Eif::isi` panicked** on parameters `Eif::new` accepts. `f64::clamp` panics when its bounds
+cross, and a reset above the truncation point `V_T + 50·Δ_T` crosses them — a 0.1 mV onset with a
+reset 6 mV above `V_T` is enough, and the constructor takes it. The firing-pattern taxonomy ships
+resets above `V_T` but not above the truncation: its highest is −46 mV against a truncation at +50
+mV.
+- - **AEDAT 2.0 ate valid records.** The header has no terminator, so the decoder took `#`-prefixed
+lines from the front of the file until one did not begin with `#` — and a `DAVIS346` event on rows
+140 to 143 puts `0x23`, `#`, in the big-endian address MSB. A file whose FIRST record sat on one of
+those rows lost it, and every byte up to the next `0x0A` with it: measured before the fix, 4 of that
+sensor's 260 rows destroyed their own round trip, and a three-event stream beginning on row 140 came
+back `Ok` with two events.
 
 The repair brief forbade the obvious cheat — making a finding go away by loosening a tolerance or
 deleting an assertion — and a second pass diffed every test module against the original to check.
@@ -408,7 +452,9 @@ What the mutations found, the ones that changed a number rather than a comment:
   `1/(2f(0)·sqrt(n))` under a doc that said the two agree "to about 25%"; for a triangular
   difference they disagree by 41%, and `pairs` over-counted the independent events by a third.
   Measured over 300 seeds, then fixed: `2·mad / sqrt(events)`, a re-centred refinement window that
-  cuts the estimate's own scatter to 0.6–0.67 of the single pass, and a calibration test that
+  Measured over 300 seeds, then fixed: `2·mad / sqrt(events)`, a re-centred refinement window that
+cuts the estimate's own scatter to 0.67, 0.60 and 0.56 of the single pass at 0, 1 and 5 Hz of
+background, and a calibration test that, and a calibration test that
   holds the reported-to-actual ratio inside `[1.0, 1.5]` (measured 1.17 and 1.25).
 - **`spikeconv` charged a multiply-accumulate at the accumulate price.** A graded and a binary
   workload produced byte-identical ledgers — the crate had silently supplied exactly the AC:MAC
@@ -485,16 +531,18 @@ never beats the least-squares floor) and what is measured and falsifiable (it ke
 0.10.0 added `cerebellum`, `grid`, `proprio` and `delays`: 85 mutations, 2 survivors closed and 1
 equivalent by a stated argument. Both survivors were the mechanism named above — a fixture at the
 value that hides the term: quadrature inputs have no off-diagonal correlation, so a stability
-bound that ignored the off-diagonals passed; and 15 ms − 12 ms is `2.9999999999999996` ms in
-binary, so a test of a *closed* 3 ms window never stood on its edge until it was rewritten in
+bound that ignored the off-diagonals passed; bound that ignored the off-diagonals passed; and the 15 ms and 12 ms arrivals differ by
+`2.9999999999999975` ms in binary — measured, `0.014999999999999998 − 0.012` — so a test of a
+*closed* 3 ms window never stood on its edge until it was rewritten in binary fractions., so a test of a *closed* 3 ms window never stood on its edge until it was rewritten in
 binary fractions. `proprio` ships the FORM of the cat hamstring spindle model with its exponent
 and baseline, and leaves the two gains as parameters: this review confirmed the first two from
 open sources and did not locate the others in one it could read.
 
 0.11.0 added `distance`, `field` and `resonance`: 65 mutations, 2 survivors closed. A spike a
 million cycles late lost 7e-10 of a radian when its phase was not reduced before multiplying by
-`2π`, under a tolerance of 1e-9 — it is tested at 10¹² cycles now, where the loss is a
-milliradian. And every bump in `field` sat mid-domain, where a kernel that forgot to wrap its
+`2π`, under a tolerance of 1e-9 — `2π`, under a tolerance of 1e-9 — it is tested at 10¹² cycles now, where the same omission moves the
+reported phase by 2.3e-5 radians (measured) against a tolerance of 1e-12, and where one ulp of
+`2π·10¹²` is already a milliradian.. And every bump in `field` sat mid-domain, where a kernel that forgot to wrap its
 distances on the ring is indistinguishable; one now straddles the seam. Two first drafts fell to
 their own tests again: `field` bounded the activation next to a bump's edge by the wrong
 derivative (the slope there is `w(0) − w(a)`), and `resonance`'s doc claimed Stocks's
@@ -573,8 +621,10 @@ feedback alignment and its direct variant: the error crosses the network through
 matrix instead of the transpose of the forward weights, which is the wiring a chip can actually
 build. Two closed forms pin it — with `B = Wᵀ` it IS backpropagation entry for entry, and in a
 LINEAR network direct feedback through the collapsed product `W₂ᵀW₃ᵀ⋯` is backpropagation too —
-and then the alignment itself is measured: the layer nearest the output starts unrelated to the
-gradient and ends about 60° from it, while the layer below is still unaligned, so alignment
+and then the alignment itself is measured: and then the alignment itself is measured: the layer nearest the output starts unrelated to the
+gradient and ends about 60° from it under either rule — 0.22 → 0.53 sequential, 0.08 → 0.46 direct —
+while the layer below ends inside the random-direction scatter under sequential feedback (0.06) and
+only reaches 0.37 under direct, so alignment arrives from the output downward., so alignment
 arrives from the output downward. `decolle` gives every spiking layer its own loss through a fixed
 random readout: three factors available at the synapse, nothing stored over time, nothing from the
 layer above — and the update is checked as the exact gradient of that layer's own loss, with a
@@ -647,15 +697,12 @@ in a different order.
 
 `polychron` closes the gap `delays` had been carrying, and is the module that most changed its
 mind. It enumerates the time-locked groups a network with axonal delays holds: anchors timed so
-their spikes coincide at a shared target, plus everything that coincidence goes on to fire. The
-count does exceed the neuron count — 3,736 groups for 120 neurons — but the module says plainly
-what that number is not. With as many anchors as the firing threshold, the anchors are timed to
+their spikes coincide at a shared target, plus everything that coincidence goes on to fire. count does exceed the neuron count — 3,730 groups for 120 neurons — but the module says plainly With as many anchors as the firing threshold, the anchors are timed to
 coincide BY CONSTRUCTION, so the target always fires and every anchor set sharing a target is a
 group; the count is combinatorics of the connectivity and barely moves when the delays change
-(3,736 spread, 3,556 narrow, 3,123 uniform). Worse for the expectation this module started with:
+(3,730 spread, 3,554 narrow, 3,118 uniform). Worse for the expectation this module started with:. Worse for the expectation this module started with:
 it was written expecting a spread of delays to make cascades LONGER, and the measurement says
-the opposite. Four delays gave 167 groups of length four or more and a longest of 6; a single
-delay gave 657 and a longest of 25. Identical delays put every arrival on one grid, so
+the opposite. the opposite. Four delays gave 176 groups of length four or more and a longest of 5; a single; delay gave 665 and a longest of 40. Identical delays put every arrival on one grid, so. Identical delays put every arrival on one grid, so
 coincidences downstream are easy, while scattered arrivals rarely land inside a 0.1 ms window
 together. The test asserts the measured direction, and the documentation says which claim was
 refuted.
@@ -710,8 +757,10 @@ asserted that every draw still came back with the full complement of bits — on
 duplicates would be de-duplicated away. They would not: a swap cannot produce a duplicate however
 the partner is chosen, so the pool stays a permutation and the count is always right. What the
 naive shuffle breaks is not the count but the DISTRIBUTION, and the second repair measures that
-instead: at twenty bits with five active, correct sampling holds every marginal within a percent
-of `w/n` and the naive version misses by more than half.
+instead: at twenty bits with five active over forty thousand draws, correct sampling holds every marginal
+within 2.2% of `w/n` — measured worst 2.17%, against the 0.87% standard deviation a binomial
+marginal carries at that count — and the naive version misses by 55.6%, which is its exact marginal
+and not a draw.
 
 One more thing the audit found, and it was about the audit itself. Running every list against the
 finished code showed nine entries whose text no longer matched the source EXACTLY ONCE — seven of
@@ -739,7 +788,7 @@ equivalent by their stated arguments, none survived and none stale.** That is th
 entire record has been re-run in one pass.
 
 And three of the thirty were written: `rng`, `spike` and `encode`, 72 mutations between them. The
-result is the argument for doing the other twenty-seven. `spike` had TWELVE of its twenty-two
+result is the argument for doing the other thirty. `spike` had TWELVE of its twenty-two
 mutations survive, and `encode` seven of twenty-nine — a coefficient of variation that could
 report a variance, a standard deviation or a population estimator and pass either way, because
 the only test of it used a perfectly regular train whose variance is zero however you normalise
@@ -803,8 +852,9 @@ target's — a perfect fit, the mean itself, a symmetric error — so all of the
 centre taken from the wrong list. The new fixture has means of 2 and 4, where the two choices give
 −0.75 and 0.3.
 
-`synapse` (81 mutations) and `plasticity` (99) are the two largest modules in the crate and came
-back with six survivors between them. Three of `synapse`'s mutations are not caught by a test at
+`synapse` (81 mutations) and `plasticity` (99) are the two largest of the eleven modules this
+release wrote lists for — measured 4,071 and 4,268 lines against `vision`'s 7,696, the largest in
+the crate — and came back with six survivors between them. Three of `synapse`'s mutations are not caught by a test at
 all — they are caught by the **compiler**, because the receptor table's claims about itself are
 written as `const { assert!(..) }` and a mutant that falsifies one cannot be built. The harness
 used to report that as `COMPILE-ERROR`, the verdict that means "your edit was malformed, it says
@@ -825,9 +875,12 @@ What the six survivors were:
   restores `(er - e4)/(k4 - a)` is caught by the same test whose doc says so, on the assertion that
   the centring error must shrink quadratically.
 - **`MultiplicativeDepression`'s factor is the weight in its own unit, not a fraction of the span.**
-  Every fixture in `plasticity` bounds weights to `[0, 1]`, whose span is exactly one, and the one
-  test that varies the floor asserts only ratios of two steps — a common normalisation cancels out
-  of a ratio. Dividing by the span passed the whole module. The new test uses a span of four and
+  Every fixture that pins the SIZE of a `MultiplicativeDepression` step bounds weights to `[0, 1]`,
+whose span is exactly one — `src/plasticity.rs:2085` and `:4154` — and the one test that varies the
+floor uses `[0.25, 1]` and asserts only ratios of two steps, where a common normalisation cancels.
+The module's other intervals run out to `Bounds::wide()`'s span of 2.0e12, but the only one of them
+that reaches this rule's depression factor is the adversarial sweep's `[-0.6, 1.9]`, and that sweep
+asserts the clamp, never the step. Dividing by the span passed the whole module. The new test uses a span of four and
   compares against the additive rule at one unit above the floor, where the factor is exactly one.
 - **A refused spike was allowed to register itself, three times over.** `on_pre` and `on_post` both
   document that a refused call leaves the traces exactly as it found them. The test that checked it
@@ -869,13 +922,16 @@ The rest, briefly:
   constant mass. The fixtures now run `Scaled` too.
 - **The logistic's two branches are not cosmetic.** `1 / (1 + exp(-z))` overflows its denominator
   below `z = -709.78` and returns exactly `0.0` where the true value is a representable subnormal;
-  measured across `[-900, 900]` the two forms differ by up to 25% relative. A `SigmoidDeriv` neuron
+  measured across `[-900, 900]` the two forms agree to 8.9e-16 relative wherever the naive one is
+finite, and differ by 100% — exactly zero against a positive subnormal — throughout `z` in
+`[-745.13, -709.79]`, below which both are zero. A `SigmoidDeriv` neuron
   710 thresholds below firing gets a real gradient from the branch form and none from the naive one.
 - **The spike detector re-arms below `detect_reset`, not below `v_detect`,** and on a healthy action
   potential the two are indistinguishable — a spike that reaches +40 mV passes -20 mV on the way
   down anyway. They part on the small oscillation, which is the regime `voltage_range_mv`'s doc is
   about. Tested now against `detect_crossing` itself on a synthetic trajectory.
-- **`repetitive_onset_ua_cm2` scans before it bisects**, and every fixture passed an `i_max` of 40 —
+- **`repetitive_onset_ua_cm2` scans before it bisects**, and the module's one existing fixture
+passed an `i_max` of 20 —
   inside the firing band, where a plain bisection happens to land on the same answer. At `i_max =
   200`, above the band, a plain bisection converges on `i_max` itself. The method's own doc warns
   about exactly this and nothing held it to the warning.
@@ -937,8 +993,8 @@ module's full list came back with zero survivors. What they found:
   from the fixtures rather than from the arithmetic — `compress`'s said in so many words "every
   fixture in this module has a positive scaled maximum" — and both fell to a fixture the repair
   agent built specifically to break them. A retracted equivalence is the audit record getting
-  stricter, and the merge script now accepts a retraction while still refusing any edit that
-  changes an entry's label, `old` or `new`.
+  stricter. Nothing in this repository enforces that: `tools/mutate.py` only reads the lists, and an
+edit that changed an entry's `label`, `old` or `new` would pass unremarked.
 
 - **`tasks::SpokenDigits::generate` printed a bound that never converges.** It refuses a window that
   is too short and tells the caller what to raise `ticks` to — computing that floor from the peak's
@@ -946,9 +1002,9 @@ module's full list came back with zero survivors. What they found:
   `ticks / 2 + slope * (channel - mid)`, so widening the window carries the centre and every peak
   with it, and the two quantities differ by a whole half-window. At the defaults it asked for 289
   where the module's own doc put the floor at 145; and a peak clipped at the BOTTOM of the window
-  has a small absolute tick, so a down-sweep at 200 ticks reported `low = 97` — a bound the refused
-  value already satisfies — and obeying it refuses again asking for 177, which refuses again asking
-  for 97. The floor is now the largest peak offset from the centre, and it reproduces the module's
+  has a small absolute tick, so and a peak clipped at the BOTTOM of the window has a small absolute tick, so a down-sweep of
+`slope_step_ticks = -7` refused at 177 ticks reported `low = 97` — a bound the refused value already
+satisfies — and obeying it refuses again asking for 177, which refuses again asking for 97. The floor is now the largest peak offset from the centre, and it reproduces the module's
   own derived numbers exactly: 145, 185, 273, 273.
 - **`continual::latency_features` silently DROPPED a spike.** It refused a declared channel that
   carried no spike by name, and then dropped any spike whose source sat at or past `n_inputs`
@@ -981,7 +1037,11 @@ module's full list came back with zero survivors. What they found:
   claimed; and `jitter_s`'s doc named `async_s / 2` as the bound below which bound and unbound
   trials do not overlap, when the supports are disjoint only below `async_s / 4`.
 
-**A statistical test could not have found the Poisson one at any sample size.** Two transposed
+**A statistical test could not have found the Poisson one at the 400,000 draws this suite runs, and
+the sample that could is about five hundred times larger.** Both transposed constants leave the
+squeeze poking out from under the envelope, so the bias is fixed rather than vanishing: integrating
+the acceptance region at `lambda = 100` gives a per-draw chi-square noncentrality of `3.4e-7`, an
+expected excess of 0.14 over 79 degrees of freedom at 400,000 draws and five sigma at about `2e8`. Two transposed
 digits in Hörmann's transformed-rejection constants (`1.1239 → 1.1932`, `0.9277 → 0.9727`) survived
 a 400,000-draw chi-square at three means without moving a single assertion in it — and in an
 independent replica of that histogram the chi-square at `lambda = 15` IMPROVED, 31.1 to 29.5 against
@@ -1023,8 +1083,7 @@ could** distinguish the edit — and when it does, `tools/mutate.py` relabels th
 run passes. Nothing checks the argument.
 
 There were 139. Reading them adversarially refused 46 and judged 15 more to have a bad argument
-even where the conclusion held. Of the 61, **48 came back `caught` when built and run** — 45 of the
-46 refusals and 3 of the 15 weak ones — and 5 refusals did not hold. **Every refusal was then built as a fixture and run against the
+even where the conclusion held. Of the 61, **48 came back `caught` when built and run** — 41 of the 46 refusals and 7 of the 15 weak ones — and 5 refusals did not hold. **Every refusal was then built as a fixture and run against the
 actual mutation**, because a refutation that has not been executed is the same mistake one level
 up — and the reviewers had been told to default to refusing, which biases the other way. 48 came
 back `caught`. Five did not, and those entries keep their arguments with a note recording exactly
@@ -1063,9 +1122,8 @@ reached on its own:
 - **`mapping::walk` wrapped its core index.** It named cores as `(py * ci + px) as u32` while
   `Fabric::n_cores()` is a `u64` over two `u32` dimensions, so `Mesh2D { cols: 100_000, rows:
   100_000 }` claims `1e10` cores against a nameable `2^32`. Past that the cast wrapped and `route`
-  returned lists naming cores it had never passed through, with no error: measured, a 110,240-core
-  route whose 67,297th entry was `0`, and the multicast tree guard firing on a **mesh**, whose
-  dimension-order routing is prefix-closed, because two of the routes it unioned were fiction.
+  returned lists naming cores it had never passed through, with no error: measured, a 75,654-core route whose second entry was `0` and 32,704 of whose entries wrapped, and the multicast tree guard firing on a **mesh**, whose
+  dimension-order routing is prefix-closed, because one of the two routes it unioned was fiction.
   `Fabric::diameter` already refused its own cast on exactly this ground; `walk`'s was the one left.
 - **`eprop::Tempotron::new` validated every input on its own and never the derived normalisation.**
   `v0` is a function of two parameters together, so it can leave the finite numbers while each of
@@ -1080,15 +1138,17 @@ The harness and every mutation THIS repository has recorded are in it: `tools/mu
 list per module in `tools/mutations/`, for **all seventy-one modules**. There is no longer a
 subset to name: the claim anyone can check by running the harness is the whole crate.
 `python3 tools/mutate.py nef` applies each recorded edit to
-`src/nef.rs` in turn, runs that module's tests, restores the file and prints `caught`, `SURVIVED`,
-or — for the mutations no test could distinguish, each with its stated reason —
-`equivalent`.
+`src/nef.rs` in turn, runs that module's tests, restores the file and prints one of eight verdicts: `caught`; `caught(const)` for an edit that
+falsifies a `const { assert!(..) }` and cannot be compiled at all; `SURVIVED`; `equivalent`, for the
+mutations no test could distinguish, each with its stated reason; and `COMPILE-ERROR`,
+`NOT-APPLIED(n)`, `TIMEOUT` and `KILLED`, which say nothing either way and are not coverage.
 It prints the number of tests that ran unmutated first, because a test that has vanished looks
 exactly like a test that passes.
 
 `tools/slim.py` is what makes that affordable. The harness rebuilds the crate once per mutation,
-and building all seventy-one modules takes about a hundred seconds; a copy holding only the module
-under audit and the modules it names through `crate::` builds in about six. `python3
+and building all seventy-one modules takes about a hundred seconds; a copy holding only the module under audit and the transitive closure of the modules it names
+through `crate::` builds in about six — nine modules and 11,157 lines for `nef`, against 156,934 for
+the whole crate. `python3
 tools/slim.py . /tmp/slim_nef nef` writes that copy and `python3 tools/mutate.py --root
 /tmp/slim_nef nef` audits it, which is the difference between one module in an afternoon and nine
 at once. The copy is a build artefact; the lists in `tools/mutations/` are written against `src/`
@@ -1113,8 +1173,9 @@ instead of reading it.
   unit mapping is stated in the source so a reader comparing against the paper knows what was done.
 - **Two device tables is not a survey.** Per-operation energies for current commercial parts are
   quoted in units — TOPS/W, "1000× more efficient" — that do not reduce to a joule-per-operation
-  figure anyone can put in a table. That shortness is a finding about the field, not a gap in the
-  reading.
+  figure anyone can put in a table. That shortness is a finding about the field and, in part, a gap in the reading: `ODIN`'s 12.7 pJ/SOP
+is a silicon measurement that would reduce to a table entry, and it is priced nowhere here because
+this crate has not read Frenkel et al., 2019 itself.
 
 ## Licence
 
