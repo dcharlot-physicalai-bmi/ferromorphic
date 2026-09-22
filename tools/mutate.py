@@ -22,6 +22,22 @@ a verdict:
 A run that is KILLED exits 128 + the signal (143 for SIGTERM) and restores the file on its way out.
 Read the exit code, not the tail: a truncated sweep and a finished one print the same kind of lines.
 
+What this harness does NOT see, stated because a limit that is not written down reads as absent:
+
+  - DOCTESTS. Every run is `cargo test --release --lib`, which does not build them. A mutation that
+    only a doc example could catch is therefore reported `SURVIVED`, and a slim copy that does not
+    compile its doc examples is green here — which is exactly how `tools/slim.py` came to omit the
+    crate's `pub use` re-exports for six releases. The bound on that gap is the release gate, which
+    runs the full `cargo test --release`; what is lost is the ATTRIBUTION, not the coverage. Running
+    doctests per mutation costs about five seconds on top of six to fifteen, so it is a deliberate
+    trade and not an oversight.
+  - Anything a test does not ASSERT. The harness measures whether the suite fails, and a suite that
+    computes a quantity and never reads it fails at nothing. That is what the numbered register of
+    vacuous-test mechanisms is for.
+  - The `equivalent` key. It is prose, and the harness believes it. Of 139 such arguments in this
+    repository, 45 turned out to be false when somebody built the fixture. Audit them separately;
+    they are the one verdict here that is an assertion rather than a measurement.
+
 Rules the harness exists to enforce:
   - One mutation in flight at a time, and the file is restored even if the harness is killed: the
     in-flight edit is recorded in target/mutate/ and undone at the next start. (An interrupted
