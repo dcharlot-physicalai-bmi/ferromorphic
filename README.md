@@ -306,21 +306,29 @@ be reproduced cannot be checked against anything, including itself.
 
 ## Status
 
-**0.18.0.** Seventy-one modules, every one audited by mutation: thirty-six by an adversarial
-auditor in 0.5.0 and 0.6.0, the ten of the third wave by hand in 0.8.0 (156 mutations, 36
-survivors, every one now caught — see below), and everything since mutated as it was written.
+**0.19.0.** Seventy-one modules, 2,252 tests, and **5,826 recorded mutations — at least one list
+per module**, every one of them applicable to today's source by `python3 tools/mutate.py`.
 
-**What of that is RE-RUNNABLE, which is a different question and the one that matters.** As of
-2026-09-21, **all seventy-one**. The repository holds **5,826 recorded mutations, at least one
-list per module**, and every one of them can be applied to today's source by
-`python3 tools/mutate.py`. For six releases that sentence had an exception in it: thirty-six
-modules were audited in 0.5.0 and 0.6.0 by an adversarial auditor that never wrote its edits down,
-so their verdict was a historical claim about the code as it stood then rather than a property of
-the code as it stands now. Closing that gap is what the backfill below was for, and it is closed.
+**What of that is RE-RUNNABLE is the question that matters, and the answer is now: all of it.**
+For six releases that sentence carried an exception. Thirty-six modules were audited in 0.5.0 and
+0.6.0 by an adversarial auditor that never wrote its edits down, so their verdict was a historical
+claim about the code as it stood then rather than a property of the code as it stands now.
+Twenty-two of them still had no list at 0.18.1. Closing that gap is what the backfill below was
+for, and **the survivor rate in those twenty-two was 464 in 4,228 — 10.8%.** That number is the
+honest size of what an audit which does not record its edits leaves behind, and it is the argument
+for the whole exercise.
 
-Every one of the 999 mutations recorded before this release was re-run in full against 0.18.0:
-**985 caught, 14 equivalent by their stated arguments, none survived, none stale.** That is the
-whole record, not a sample of it. The crate family is not built yet. Planned
+**And then the part of the record that nothing measures.** A list entry may carry an
+`"equivalent"` key, and when it does the harness relabels that mutation's survival and the run
+passes. The key is prose in a JSON file. There were 139 of them; read adversarially, 46 were
+refused, every refusal was BUILT AND RUN against the actual mutation, and **48 came back
+`caught`**. Forty-five of those arguments are gone and thirteen more are rewritten onto an
+identity, a bound or an invariant rather than a survey of the fixtures. Ninety-four remain, each
+with an argument that reasons from the arithmetic. The failure was the same one every time: **an
+argument about the SUITE presented as an argument about the CODE** — "no test does tell" written
+as "no test could tell".
+
+The crate family is not built yet. Planned
 siblings, each following the same rule that a dependency lives outside the core:
 
 | crate | what it would add | why separate |
@@ -853,7 +861,12 @@ The rest, briefly:
   loop keeps the half without the root. It is sign comparisons now, and the fixture scales a root
   into that range.
 
-### The backfill, finished (2026-09-21)
+### 0.19.0 — the backfill, finished (2026-09-21)
+
+0.19.0 adds no modules and no features. It is the release in which the crate's central claim stopped
+having an exception in it, and then the claim's own escape hatch was audited. What follows is what
+that cost and what it found.
+
 
 Twenty-two modules had no recorded list. Writing them by hand was running at two modules a session,
 so this round used **one reader per module in parallel**, each with the same brief: read the module
@@ -866,12 +879,12 @@ tree, and a kill between mutate and restore left a live mutant in `src/`.
 in the production path and again in the test module's independent reimplementation of it — and were
 widened by hand. Nothing else needed fixing.
 
-Then the audits, six at a time against slim copies. **The survivor rate is 12 to 13 per cent**,
-several times the rate the crate's hand-written waves were finding. That number is the honest size
-of what an audit that does not write its edits down leaves behind.
+Then the audits, six at a time against slim copies. **464 survivors in 4,228 mutations — 10.97 per
+cent**, several times the rate the crate's hand-written waves were finding. That number is the
+honest size of what an audit which does not write its edits down leaves behind.
 
-Repairs run the same way: one agent per module, each in its own crate copy, iterating until its
-module's full list comes back with zero survivors. What they found, in the first eleven:
+Repairs ran the same way: one agent per module, each in its own crate copy, iterating until its
+module's full list came back with zero survivors. What they found:
 
 - **`convert::Reset::spikes_in` read an OVERFLOWED interval as saturation.** It returns `ticks`
   when the inter-spike interval `ceil(1/z)` is not finite — but the only way that happens for an
@@ -897,6 +910,59 @@ module's full list comes back with zero survivors. What they found, in the first
   stricter, and the merge script now accepts a retraction while still refusing any edit that
   changes an entry's label, `old` or `new`.
 
+- **`tasks::SpokenDigits::generate` printed a bound that never converges.** It refuses a window that
+  is too short and tells the caller what to raise `ticks` to — computing that floor from the peak's
+  ABSOLUTE tick, when the floor is set by the peak's distance from the window CENTRE. `peak_tick` is
+  `ticks / 2 + slope * (channel - mid)`, so widening the window carries the centre and every peak
+  with it, and the two quantities differ by a whole half-window. At the defaults it asked for 289
+  where the module's own doc put the floor at 145; and a peak clipped at the BOTTOM of the window
+  has a small absolute tick, so a down-sweep at 200 ticks reported `low = 97` — a bound the refused
+  value already satisfies — and obeying it refuses again asking for 177, which refuses again asking
+  for 97. The floor is now the largest peak offset from the centre, and it reproduces the module's
+  own derived numbers exactly: 145, 185, 273, 273.
+- **`continual::latency_features` silently DROPPED a spike.** It refused a declared channel that
+  carried no spike by name, and then dropped any spike whose source sat at or past `n_inputs`
+  without a word — the same failure in the other direction, with the caller receiving a feature
+  vector missing a measurement and nothing saying so.
+- **`device::Crossbar::residual`'s doc argued for deleting a guard that is load-bearing.** It said
+  one finiteness check covers both node sets BECAUSE the two residuals share the term `g*(a-b)` —
+  an argument which, taken at face value, licenses deleting the bit-line clause, and that is exactly
+  the mutation that survived. It is wrong in the direction that matters, because the poison also
+  enters through the WIRE term, where the two sides are not symmetric. Measured on a 2x1 crossbar at
+  `gw = 0`: both word-line residuals are finite at `1.797e302 A` while both bit-line residuals are
+  `NaN` — and `f64::max` DROPS a NaN, so the fold returns the finite number instead of `INFINITY`.
+- **`control`'s three constructors documented the wrong error variant.** Each said
+  `ControlError::NotPositive` for a non-finite gain or time constant, but `need_positive` runs
+  `need_finite` first, so the real variant is `NotFinite`. Only visible because the surviving
+  mutation deleted the finiteness screen — and with it gone the module accepts an INFINITE encoder
+  gain, synaptic time constant and pendulum length, since infinity satisfies `value > 0.0`.
+- **`MAX_CORES` priced its allocation at 40 bytes a core.** `size_of::<CoreLoad>()` is 48: the
+  record is a `u32`, two `u64` and an `Option<(usize, u64)>`, and that option has no niche to pack
+  its discriminant into, so it costs 24 bytes rather than 16. At the limit the real figure is
+  805 MB, 20 per cent above the 671 MB quoted. The new test MEASURES the size rather than restating
+  it.
+- **Three numbers in `fusion` were wrong, and one of them flatters a detector.**
+  `chance_binding_probability`'s worked example said that with a 10 ms half-window and two partners
+  at 100 Hz, "33% of anchors bind by chance alone, and a detector reporting 40% has found almost
+  nothing". The closed form the function itself implements gives `2wr = 2.0` per partner, so each
+  binds with `1 - exp(-2) = 0.8647` and the pair with `0.7476`. **The chance floor is 75%, not 33%**
+  — understated by a factor of 2.3, and a detector reporting 40% against it is far BELOW chance.
+  `SynchronyTask`'s measured early-fusion ceiling is 0.957 over twelve seed pairs, not the 0.91
+  claimed; and `jitter_s`'s doc named `async_s / 2` as the bound below which bound and unbound
+  trials do not overlap, when the supports are disjoint only below `async_s / 4`.
+
+**A statistical test could not have found the Poisson one at any sample size.** Two transposed
+digits in Hörmann's transformed-rejection constants (`1.1239 → 1.1932`, `0.9277 → 0.9727`) survived
+a 400,000-draw chi-square at three means without moving a single assertion in it — and in an
+independent replica of that histogram the chi-square at `lambda = 15` IMPROVED, 31.1 to 29.5 against
+31 degrees of freedom. The reason is structural: **scaling the rejection constant scales every
+acceptance probability by one common factor**, so the conditional distribution of the surviving
+draws is exactly where it was. What can make the sampler inexact is the squeeze poking out from
+under the envelope it short-circuits, and that is an inequality between two closed forms over a
+two-dimensional region, not a statistic. Scanning it gives a minimum margin of `+0.172` nats at
+`lambda = 10` falling to `+0.00144` from `1e12` up with the paper's constants, against `-0.0444` at
+`lambda = 100` with 1.1932 and `-0.0044` at `lambda = 30` with 0.9727.
+
 Two things about the harness came out of the same week, and both were reachable rather than
 theoretical:
 
@@ -917,6 +983,65 @@ theoretical:
 the crate's `pub use` re-exports, so a doc example that writes `ferromorphic::Rng::new(1)` did not
 compile in a slim copy — invisible to the harness, which runs `cargo test --release --lib` and does
 not build doc tests.
+
+### 0.19.0 — the equivalence arguments, audited (2026-09-22)
+
+A mutation that survives is normally a finding: a test that cannot fail. The harness has one
+escape from that, and it is the only place this repository's audit record rests on prose rather
+than on a measurement. A list entry may carry an `"equivalent"` key — an argument for why **no test
+could** distinguish the edit — and when it does, `tools/mutate.py` relabels the survival and the
+run passes. Nothing checks the argument.
+
+There were 139. Reading them adversarially refused 46 and judged 15 more to have a bad argument
+even where the conclusion held. **Every refusal was then built as a fixture and run against the
+actual mutation**, because a refutation that has not been executed is the same mistake one level
+up — and the reviewers had been told to default to refusing, which biases the other way. 48 came
+back `caught`. Five did not, and those entries keep their arguments with a note recording exactly
+what was tried and what it showed.
+
+**The failure mode was the same one every time: an argument about the SUITE, presented as an
+argument about the CODE.**
+
+- **"No caller this crate has" became "no test could tell".** Those are different claims. A
+  `#[cfg(test)] mod tests` is a descendant module and can reach a private free function by
+  `super::` path — and this crate already does exactly that, at `src/control.rs:3166`. Two lines
+  kill the mutant.
+- **An argument enumerated the two INTERNAL consumers of an edge list** and concluded nothing else
+  could see the order its elements were stored in. `edges` is a `pub` field on the returned struct,
+  documented in as many words as "each as `(lower core, higher core)`". The caller's most direct
+  observable was the one the argument did not list.
+- **"`nc == 0` means every entry is ±0.0."** It does not. `nc` is `sqrt(sum a*a)`, and `a*a`
+  **underflows to +0.0** for every `|a|` below about `1.57e-162`, so a prototype whose entries are
+  all `1e-200` has a norm of exactly zero and no entry that is zero. Measured: the two constants
+  then separate eight of nine entries by 1%.
+- **An argument named its own observable and then dismissed it by surveying the suite** — "the
+  `Rng` is passed by `&mut` from a caller that has just been handed an `Err`, and nothing in the
+  crate reads that generator again". `Rng` is `PartialEq` over a 128-bit state and the caller still
+  holds it. Measured: the refused constructor spends three draws.
+
+Chasing those refutations turned up **three defects in the code**, none of which any mutation had
+reached on its own:
+
+- **`hh::bisect_rest` answers a bracket endpoint when a NaN appears inside the bracket.** It
+  guarded finiteness at the two endpoints and nothing in the interior. `opposite` is written as
+  comparisons, every comparison against NaN is false, so `opposite(flo, NaN)` is false — and that
+  is the branch which moves `lo` *and copies the value into `flo`*. From then on every test is
+  false, `lo` walks to the top of the bracket, and the function returns `Some(-40.0)`: the endpoint
+  its own doc promises it will never answer with. Measured against the same function without the
+  NaN, which returns exactly `-65.0`.
+- **`mapping::walk` wrapped its core index.** It named cores as `(py * ci + px) as u32` while
+  `Fabric::n_cores()` is a `u64` over two `u32` dimensions, so `Mesh2D { cols: 100_000, rows:
+  100_000 }` claims `1e10` cores against a nameable `2^32`. Past that the cast wrapped and `route`
+  returned lists naming cores it had never passed through, with no error: measured, a 110,240-core
+  route whose 67,297th entry was `0`, and the multicast tree guard firing on a **mesh**, whose
+  dimension-order routing is prefix-closed, because two of the routes it unioned were fiction.
+  `Fabric::diameter` already refused its own cast on exactly this ground; `walk`'s was the one left.
+- **`eprop::Tempotron::new` validated every input on its own and never the derived normalisation.**
+  `v0` is a function of two parameters together, so it can leave the finite numbers while each of
+  them is finite: at `tau = 2e200, tau_s = 1e200` the product overflows, `v0` is `+inf`, and
+  `train_once` then writes `NaN` into every weight and returns `Ok(true)` — a run that trains
+  itself to NaN while reporting a plausible error rate. That is the failure `LearnError`'s own doc
+  names.
 
 ### Re-running the audit
 
