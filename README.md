@@ -1145,6 +1145,13 @@ mutations no test could distinguish, each with its stated reason; and `COMPILE-E
 It prints the number of tests that ran unmutated first, because a test that has vanished looks
 exactly like a test that passes.
 
+`tools/merge_repair.py` is the one path from a repair copy back into this repository, and it is
+strict about the RECORD rather than about the source: the module's `src/<m>.rs` is copied wholesale,
+but the mutation list is merged entry by entry. It accepts an equivalence argument added, one
+retracted, or one replaced by a **longer** one; it refuses a shorter replacement, any change to an
+entry's `label`, `old` or `new`, and any entry added or removed. The asymmetry on length is
+deliberate — a rewrite that shortens an argument is what softening one looks like.
+
 `tools/slim.py` is what makes that affordable. The harness rebuilds the crate once per mutation,
 and building all seventy-one modules takes about a hundred seconds; a copy holding only the module under audit and the transitive closure of the modules it names
 through `crate::` builds in about six — nine modules and 11,157 lines for `nef`, against 156,934 for
