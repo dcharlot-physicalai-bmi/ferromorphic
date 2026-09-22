@@ -328,6 +328,17 @@ with an argument that reasons from the arithmetic. The failure was the same one 
 argument about the SUITE presented as an argument about the CODE** — "no test does tell" written
 as "no test could tell".
 
+**⚠ "Every module has a list" is not "every list is adequate", and the density varies
+forty-five-fold.** Across the crate there are 2.06 recorded mutations per public item, but `rng` has
+18.6 per hundred lines of production code and `aer` has 0.4. Sixteen modules hold fewer recorded
+mutations than they have public items — `aer`, `vsa`, `sparse`, `phasor`, `hopfield`, `touch`,
+`dendrite`, `reinforce`, `nef`, `resonate`, `oscillator`, `optimise`, `predictive`, `graph`, `sim`
+and `metrics` — and almost all of them date from the early waves. `aer` is the clearest: 2,971 lines
+and 91 public items against 13 mutations, all of which aim at one reader and one slicer, so whole
+formats in that module have no recorded edit at all. Those lists run clean, and running clean is a
+weaker statement for them than it is for `continual` at 226. The next wave is to deepen them, and
+this paragraph is here so that nobody reads the sentence above it as more than it says.
+
 The crate family is not built yet. Planned
 siblings, each following the same rule that a dependency lives outside the core:
 
