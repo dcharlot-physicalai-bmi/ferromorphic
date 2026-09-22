@@ -1143,7 +1143,12 @@ falsifies a `const { assert!(..) }` and cannot be compiled at all; `SURVIVED`; `
 mutations no test could distinguish, each with its stated reason; and `COMPILE-ERROR`,
 `NOT-APPLIED(n)`, `TIMEOUT` and `KILLED`, which say nothing either way and are not coverage.
 It prints the number of tests that ran unmutated first, because a test that has vanished looks
-exactly like a test that passes.
+exactly like a test that passes. And it refuses a run that produced **fewer verdicts than the list
+has entries**, because an empty run has no bad verdicts and therefore used to exit `0`. That is not
+hypothetical: in the full-record verification of this release, one module's log held a single line
+— `EXIT 0` — and the sweep reported 71 of 71 finished with none unclean. The 300 mutations of the
+crate's largest module had not run. Read the exit code, read the tail, and then count the verdicts;
+the first two agreed with each other and with nothing.
 
 `tools/merge_repair.py` is the one path from a repair copy back into this repository, and it is
 strict about the RECORD rather than about the source: the module's `src/<m>.rs` is copied wholesale,

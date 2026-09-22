@@ -18,6 +18,7 @@ a verdict:
     NOT-APPLIED    the `old` text is not in the file exactly once; the list has gone stale
     TIMEOUT        the tests did not finish; look at it by hand, do not count it as caught
     KILLED         a signal stopped the test run; it says nothing either way — run it again
+    INCOMPLETE     fewer verdicts than the list has entries; the run did not finish, whatever it says
 
 A run that is KILLED exits 128 + the signal (143 for SIGTERM) and restores the file on its way out.
 Read the exit code, not the tail: a truncated sweep and a finished one print the same kind of lines.
@@ -165,6 +166,25 @@ def main():
             print(f"{module:12} {verdict:18} {m['label']}{note}", flush=True)
     print("TOTAL " + ", ".join(f"{k} {v}" for k, v in sorted(tally.items())), flush=True)
     bad = sum(v for k, v in tally.items() if k not in ("caught", "equivalent"))
+
+    # A RUN THAT REPORTED NOTHING IS NOT A CLEAN RUN. `bad` counts bad verdicts, and a sweep that
+    # produced no verdicts at all has none -- so without this line an empty run exits 0 and reads
+    # as success. That is not hypothetical: one module's log in this repository's full-record
+    # verification held a single line, `EXIT 0`, and the sweep it belonged to reported 71 of 71
+    # finished and none unclean. The 300 mutations of the crate's largest module had not run.
+    # The check that caught it is the one below, generalised: a log must hold one verdict per
+    # entry in the list it was given.
+    ran = sum(tally.values())
+    if ran == 0:
+        # Including a `--only` that matched nothing, which is how a filtered re-check of a repair
+        # quietly passes without applying the mutation it was meant to prove.
+        print("INCOMPLETE: no mutation was applied at all", flush=True)
+        bad += 1
+    elif args.only is None and args.skip == 0:
+        want = sum(len(json.load(open(os.path.join(args.lists, f"{m}.json")))) for m in modules)
+        if ran != want:
+            print(f"INCOMPLETE: {ran} verdicts for {want} recorded mutations", flush=True)
+            bad += 1
     sys.exit(1 if bad else 0)
 
 
