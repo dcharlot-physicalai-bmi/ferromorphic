@@ -3170,7 +3170,15 @@ fn ticks_of(name: &str, delay: &[f64], dt: f64) -> Result<Vec<u32>, BridgeError>
         let exact = seconds / dt;
         let rounded = exact.round();
         // A relative tolerance, because `ticks * dt` is not exactly `seconds` in binary floating
-        // point for any realistic dt — 2e-3 / 1e-4 is 19.999999999999996, not 20.
+        // point once the tick count is large — an absolute 1e-9 is a bound on the QUOTIENT's
+        // round-off, and that round-off grows with the quotient. Measured: 5.0000001 s at
+        // dt = 1e-7 is 50000001 ticks and the quotient misses the integer by 7.45e-9, seven times
+        // an absolute 1e-9 and a ten-millionth of the relative one.
+        //
+        // ⚠ This comment used to justify itself with "2e-3 / 1e-4 is 19.999999999999996, not 20".
+        // That is FALSE — the quotient is exactly 20.0 — and it went unnoticed because nothing
+        // tested the tolerance: `the_delay_tolerance_is_relative_because_the_round_off_grows_with_the_tick_count`
+        // is the fixture that does, and it is built from a quotient that really is inexact.
         if !(rounded >= 0.0) || (exact - rounded).abs() > 1e-9 * rounded.max(1.0) {
             return Err(BridgeError::DelayNotWholeTicks {
                 name: name.to_string(),
@@ -3198,8 +3206,8 @@ mod tests {
     use super::{
         Affine, Block, BridgeError, Conv1d, Conv2d, CubaLif, CubaState, Delay, Flatten,
         Graph, I, If, Input, Kind, Li, Lif, Linear, MAGIC, Named, Node, Output, Pool2d, Rules,
-        Scale, Signal, TextError, Threshold, ValidationError, checked_product, fmt_f64,
-        fmt_f64_long, product,
+        Scale, Signal, TextError, Threshold, ValidationError, checked_product, conv_dim, fmt_f64,
+        fmt_f64_long, name_is_writable, product, ticks_of,
     };
     use crate::neuron::Neuron;
 
@@ -3219,6 +3227,569 @@ mod tests {
     /// One graph holding **every** node type this module implements, wired where the shapes line
     /// up and left unconnected where they do not. It validates, so the round-trip test is over a
     /// legal graph rather than a bag of structs.
+    /// Every node kind declares the signal it EMITS and the signal it ACCEPTS, by name.
+    ///
+    /// `Node::emits` and `Node::accepts` were read by `validate`'s signal-kind rule and by nothing
+    /// else, and that rule only ever sees the three nodes the base chain wires. So `Threshold`
+    /// could stop being a spike source and `LI` could become one with the whole module green. The
+    /// table below is the doc's claim, written out.
+    #[test]
+    fn every_node_kind_declares_the_signal_it_emits_and_the_signal_it_accepts() {
+        let g = every_node_type();
+        let by_name = |n: &str| {
+            g.nodes
+                .iter()
+                .find(|x| x.name == n)
+                .unwrap_or_else(|| panic!("the fixture has no node called {n}"))
+        };
+        // Spike sources: the four nodes with a threshold in them.
+        for n in ["n1", "iff", "cu", "th"] {
+            assert_eq!(by_name(n).node.emits(), Signal::Spikes, "{n} is a spike source");
+        }
+        // Continuous sources: the weight nodes and the two integrators with no threshold.
+        for n in ["aff", "lin", "c1", "c2", "ii", "li"] {
+            assert_eq!(by_name(n).node.emits(), Signal::Continuous, "{n} emits a continuous value");
+        }
+        // Everything else passes whatever it is given through.
+        for n in ["in", "out", "sp", "ap", "fl", "dl", "sc"] {
+            assert_eq!(by_name(n).node.emits(), Signal::Either, "{n} passes its input kind through");
+        }
+        // Only the comparator constrains what it is fed, and its doc says why.
+        assert_eq!(
+            by_name("th").node.accepts(),
+            Signal::Continuous,
+            "a Threshold needs a level, not a train"
+        );
+        for n in ["in", "out", "aff", "lin", "c1", "c2", "sp", "ap", "fl", "ii", "iff", "li", "n1", "cu", "dl", "sc"] {
+            assert_eq!(by_name(n).node.accepts(), Signal::Either, "{n} accepts either kind");
+        }
+        // And the counts, so a kind added later cannot be left out of the three lists above.
+        assert_eq!(g.nodes.len(), 17, "one node per NIR kind in this module");
+    }
+
+    /// **Pooling has no dilation**, and its output shape is the only place that says so.
+    ///
+    /// `output_shape` for `SumPool2d` and `AvgPool2d` passes a literal `1` into `conv_dim` where
+    /// the convolutions pass their own field. Nothing read a pooling node's output shape, so that
+    /// literal could be anything. Asserted against the convolution with the same geometry, which
+    /// is where the number comes from.
+    #[test]
+    fn pooling_is_computed_with_no_dilation_and_a_convolution_agrees() {
+        let pool = Node::SumPool2d(Pool2d {
+            channels: 1,
+            size: [8, 8],
+            kernel: [3, 3],
+            stride: [1, 1],
+            padding: [0, 0],
+        });
+        assert_eq!(pool.output_shape(), Some(vec![1, 6, 6]), "8 - 2 taps, stride 1");
+        // The same window under a dilation of two spans five samples rather than three and would
+        // give 4, so the literal really is load-bearing on this geometry.
+        assert_eq!(conv_dim(8, 0, 1, 3, 1), 6);
+        assert_eq!(conv_dim(8, 0, 2, 3, 1), 4);
+        // AvgPool2d shares the arm.
+        let avg = Node::AvgPool2d(Pool2d {
+            channels: 2,
+            size: [4, 4],
+            kernel: [2, 2],
+            stride: [2, 2],
+            padding: [0, 0],
+        });
+        assert_eq!(avg.output_shape(), Some(vec![2, 2, 2]));
+        // And a convolution with the identical geometry, whose dilation is a field, matches it at
+        // one and differs at two -- which is the independent statement that the literal is a 1.
+        let conv = |d: usize| {
+            Node::Conv2d(Conv2d {
+                in_channels: 1,
+                out_channels: 1,
+                size: [8, 8],
+                kernel: [3, 3],
+                stride: [1, 1],
+                padding: [0, 0],
+                dilation: [d, d],
+                groups: 1,
+                weight: vec![0.0; 9],
+                bias: Vec::new(),
+            })
+            .output_shape()
+        };
+        assert_eq!(conv(1), Some(vec![1, 6, 6]), "the convolution at dilation one");
+        assert_eq!(conv(2), Some(vec![1, 4, 4]), "and at two, which pooling must not be");
+    }
+
+    /// An `Affine` reads its weight matrix **row-major**, and no square fixture can say so.
+    ///
+    /// `weight[i * cols ..]` and `weight[i ..]` pick the same slice for the first row whatever the
+    /// shape, and for every row when `cols == 1`. The fixture here is 2x3 with rows that share no
+    /// entry, and a one-hot input, so each output IS one named weight.
+    #[test]
+    fn an_affine_reads_its_weight_matrix_row_major() {
+        let a = Affine {
+            rows: 2,
+            cols: 3,
+            weight: vec![1.0, 2.0, 3.0, 10.0, 20.0, 30.0],
+            bias: vec![0.0, 0.0],
+        };
+        assert_eq!(a.apply(&[1.0, 0.0, 0.0]), Some(vec![1.0, 10.0]), "column 0 of each row");
+        assert_eq!(a.apply(&[0.0, 1.0, 0.0]), Some(vec![2.0, 20.0]), "column 1 of each row");
+        assert_eq!(a.apply(&[0.0, 0.0, 1.0]), Some(vec![3.0, 30.0]), "column 2 of each row");
+        // The bias is added once per row, not once per term.
+        let b = Affine { bias: vec![-1.0, 100.0], ..a.clone() };
+        assert_eq!(b.apply(&[1.0, 1.0, 1.0]), Some(vec![5.0, 160.0]));
+        // Shape refusals, which are what makes the row slicing safe rather than lucky.
+        assert_eq!(a.apply(&[1.0, 0.0]), None, "an input of the wrong width");
+        assert_eq!(Affine { weight: vec![1.0], ..a.clone() }.apply(&[1.0, 0.0, 0.0]), None);
+        assert_eq!(Affine { bias: vec![0.0], ..a }.apply(&[1.0, 0.0, 0.0]), None);
+    }
+
+    /// The `CubaLIF` closed form carries the **input gain** and refuses a membrane constant of zero.
+    ///
+    /// `step_response` is the oracle the propagator is checked against, so an error in it is an
+    /// error in the only independent check the integrator has. Its `w_in * u` was invisible because
+    /// every fixture that reached it had `w_in = 1`, and its `tau_mem > 0` guard was invisible
+    /// because nothing passed a zero.
+    #[test]
+    fn the_cuba_closed_form_carries_its_input_gain_and_refuses_a_zero_membrane_constant() {
+        let c = CubaLif {
+            shape: vec![2],
+            tau_syn: vec![0.0, 5e-3],
+            tau_mem: vec![20e-3, 20e-3],
+            r: vec![1.0, 1.0],
+            v_leak: vec![0.0, 0.0],
+            v_threshold: vec![1.0, 1.0],
+            v_reset: vec![0.0, 0.0],
+            w_in: vec![1.0, 2.5],
+        };
+        // Element 1 has a gain of 2.5 and element 0 a gain of 1, with every other parameter equal
+        // except `tau_syn`. At a time long enough for the synapse to have settled, the response is
+        // proportional to `w_in`, exactly.
+        let t = 1.0;
+        let a = c.step_response(0, t, 1.0).expect("element 0 responds");
+        let b = c.step_response(1, t, 1.0).expect("element 1 responds");
+        assert!((b / a - 2.5).abs() < 1e-9, "gain ratio {} is not 2.5", b / a);
+        // And doubling `u` doubles the response, so the gain is on the product and not a constant.
+        let d = c.step_response(1, t, 2.0).expect("element 1 responds");
+        assert!((d / b - 2.0).abs() < 1e-12, "{d} is not twice {b}");
+
+        let zero_mem = CubaLif { tau_mem: vec![0.0, 20e-3], ..c.clone() };
+        assert_eq!(zero_mem.step_response(0, 1e-3, 1.0), None, "tau_mem = 0 has no closed form");
+        let neg_mem = CubaLif { tau_mem: vec![-20e-3, 20e-3], ..c.clone() };
+        assert_eq!(neg_mem.step_response(0, 1e-3, 1.0), None, "and neither does a negative one");
+        assert_eq!(c.step_response(9, 1e-3, 1.0), None, "past the population");
+        assert_eq!(c.step_response(0, -1e-3, 1.0), None, "before the step");
+    }
+
+    /// The propagator refuses every parameter its doc says it refuses, **including the two written
+    /// as negated comparisons because of `NaN`**.
+    ///
+    /// `!(tau_mem > 0.0)` and `!(tau_syn >= 0.0)` are not `tau_mem < 0.0` and `tau_syn < 0.0`: the
+    /// first pair refuses a zero and a `NaN`, the second pair accepts both. A `NaN` time constant
+    /// puts a `NaN` in the membrane, which is the failure this module's own doc says does not fail
+    /// loudly -- it propagates into every downstream spike time and the run reports no spikes.
+    #[test]
+    fn the_cuba_propagator_refuses_a_zero_or_nan_time_constant_rather_than_integrating_it() {
+        let base = CubaState {
+            tau_syn: 5e-3,
+            tau_mem: 20e-3,
+            r: 1.0,
+            v_leak: 0.0,
+            v_threshold: 1e9,
+            v_reset: 0.0,
+            w_in: 1.0,
+            i_syn: 0.0,
+            v: 0.0,
+        };
+        for (what, s) in [
+            ("tau_mem = 0", CubaState { tau_mem: 0.0, ..base }),
+            ("tau_mem = NaN", CubaState { tau_mem: f64::NAN, ..base }),
+            ("tau_mem < 0", CubaState { tau_mem: -20e-3, ..base }),
+            ("tau_syn = NaN", CubaState { tau_syn: f64::NAN, ..base }),
+            ("tau_syn < 0", CubaState { tau_syn: -5e-3, ..base }),
+            ("tau_syn = inf", CubaState { tau_syn: f64::INFINITY, ..base }),
+        ] {
+            let mut x = s;
+            let before = (x.v.to_bits(), x.i_syn.to_bits());
+            assert!(!x.step_exact(1e-4, 1.0), "{what} must be a no-op");
+            assert_eq!((x.v.to_bits(), x.i_syn.to_bits()), before, "{what} moved the state");
+            assert!(x.v.is_finite() && x.i_syn.is_finite(), "{what} left a non-finite state");
+        }
+        // And a legal one does move, so the loop above is not refusing everything.
+        let mut ok = base;
+        assert!(!ok.step_exact(1e-4, 1.0), "below threshold, so no spike");
+        assert!(ok.v > 0.0 && ok.i_syn > 0.0, "a legal step must integrate");
+    }
+
+    /// An **instantaneous** synapse tracks its input rather than holding its old current.
+    ///
+    /// At `tau_syn = 0` the update substitutes `es = 0` for `exp(-dt/0)`, and `i_syn = a + b * es`
+    /// then collapses to `a = w_in * u` -- the current IS the input, which is what "the synaptic
+    /// filter has vanished" means. Substituting `1` instead makes `i_syn` a constant: it holds
+    /// whatever it started with for ever, and the membrane still moves, so a raster looks ordinary.
+    #[test]
+    fn an_instantaneous_synapse_tracks_its_input_rather_than_holding_its_old_current() {
+        let mut s = CubaState {
+            tau_syn: 0.0,
+            tau_mem: 20e-3,
+            r: 1.0,
+            v_leak: 0.0,
+            v_threshold: 1e9,
+            v_reset: 0.0,
+            w_in: 2.0,
+            i_syn: 0.0,
+            v: 0.0,
+        };
+        assert!(!s.step_exact(1e-4, 3.0));
+        assert_eq!(s.i_syn.to_bits(), 6.0_f64.to_bits(), "w_in * u, exactly, with no filter");
+        assert!(!s.step_exact(1e-4, 0.0));
+        assert_eq!(s.i_syn.to_bits(), 0.0_f64.to_bits(), "the input went away and so did the current");
+        assert!(!s.step_exact(1e-4, -1.5));
+        assert_eq!(s.i_syn.to_bits(), (-3.0f64).to_bits(), "and it follows a sign change too");
+
+        // A filtering synapse does NOT do this: it lags, which is the property the limit removes.
+        let mut f = CubaState { tau_syn: 5e-3, ..s };
+        f.i_syn = 0.0;
+        assert!(!f.step_exact(1e-4, 3.0));
+        assert!(f.i_syn > 0.0 && f.i_syn < 6.0, "a filtered current lags its input: {}", f.i_syn);
+    }
+
+    /// A node name that cannot be written is refused, on both sides of the format.
+    ///
+    /// The three characters `name_is_writable` excludes are exactly the three the line format uses:
+    /// whitespace separates tokens, `=` separates a key from its value, `#` opens a comment. An
+    /// empty name is excluded because it writes as nothing at all. The reader's guard was equally
+    /// unwatched: every fixture in the module writes names the writer produced.
+    #[test]
+    fn a_node_name_that_cannot_be_written_is_refused_on_both_sides() {
+        for good in ["a", "n1", "layer.0", "in-1", "\u{03c4}"] {
+            assert!(name_is_writable(good), "{good:?} is writable");
+        }
+        for bad in ["", "a b", "a\tb", "a=b", "a#b", "#", "=", "a\nb", "a\u{7f}b"] {
+            assert!(!name_is_writable(bad), "{bad:?} must not be writable");
+        }
+        // The reader refuses one by name and line, rather than building a graph it cannot write.
+        for bad in ["a=b", "a#b"] {
+            let text = format!("{MAGIC}\nnode {bad} Input shape=[2]\n");
+            match Graph::from_text(&text) {
+                Err(TextError::UnwritableName { line, name }) => {
+                    assert_eq!(line, 2);
+                    assert_eq!(name, bad);
+                }
+                other => panic!("{bad:?} was read back in: {other:?}"),
+            }
+        }
+        // And a writable one really does parse, so the guard is not refusing everything.
+        let ok = format!("{MAGIC}\nnode fine Input shape=[2]\n");
+        assert_eq!(Graph::from_text(&ok).expect("a writable name").nodes.len(), 1);
+    }
+
+    /// `Rules::recurrent` permits a cycle and `Rules::feedforward` refuses one; the two differ in
+    /// exactly that field, and every existing rule-set test runs an ACYCLIC chain, where they agree.
+    #[test]
+    fn the_recurrent_rule_set_is_the_one_that_permits_a_cycle() {
+        let mut g = Graph::new();
+        g.push("in", Node::Input(Input { shape: vec![1] }));
+        g.push("a", Node::Lif(lif_params(1, 20e-3)));
+        g.push("w", Node::Linear(Linear { rows: 1, cols: 1, weight: vec![0.5] }));
+        g.push("out", Node::Output(Output { shape: vec![1] }));
+        g.edge("in", "a");
+        g.edge("a", "w");
+        g.edge("w", "a");
+        g.edge("a", "out");
+        assert!(g.validate(&Rules::recurrent()).is_ok(), "a loop is the point of this rule set");
+        assert!(
+            matches!(g.validate(&Rules::feedforward()), Err(ValidationError::Cycle { .. })),
+            "the feedforward rule set refuses the same graph"
+        );
+        // The three rule sets, in the one field that separates them. `Rules::default` is permissive
+        // where NIR is permissive, so it allows a cycle too -- which is why `feedforward` is the
+        // only rule set that can tell this mutation apart from `recurrent`.
+        assert!(Rules::recurrent().allow_cycles, "recurrent permits recurrence");
+        assert!(!Rules::feedforward().allow_cycles, "feedforward does not");
+        assert!(Rules::default().allow_cycles, "and NIR's own default is permissive");
+        assert!(Rules::recurrent().require_input && Rules::recurrent().require_output);
+    }
+
+    /// An **infinite** parameter is refused exactly as a `NaN` is, and a shape with no axes at all
+    /// is refused too.
+    ///
+    /// `!x.is_finite()` and `x.is_nan()` differ only on the infinities, and every non-finite
+    /// fixture in this module is a `NaN`. A shape of `[]` names one element under `product` -- the
+    /// empty product is one -- so without the emptiness check a scalar node validates and then
+    /// carries a one-element array that no axis describes.
+    #[test]
+    fn an_infinite_parameter_and_an_axis_less_shape_are_both_refused() {
+        let mut g = Graph::new();
+        g.push("in", Node::Input(Input { shape: vec![1] }));
+        g.push("n", Node::Lif(Lif { tau: vec![f64::INFINITY], ..lif_params(1, 20e-3) }));
+        g.push("out", Node::Output(Output { shape: vec![1] }));
+        g.edge("in", "n");
+        g.edge("n", "out");
+        match g.validate(&Rules::default()) {
+            Err(ValidationError::NonFiniteParameter { node, field, index }) => {
+                assert_eq!((node.as_str(), field, index), ("n", "tau", 0));
+            }
+            other => panic!("an infinite tau validated: {other:?}"),
+        }
+        let mut h = Graph::new();
+        h.push("in", Node::Input(Input { shape: vec![1] }));
+        h.push(
+            "n",
+            Node::Lif(Lif {
+                shape: Vec::new(),
+                tau: vec![20e-3],
+                r: vec![1.0],
+                v_leak: vec![0.0],
+                v_threshold: vec![1.0],
+                v_reset: vec![0.0],
+            }),
+        );
+        h.push("out", Node::Output(Output { shape: vec![1] }));
+        h.edge("in", "n");
+        h.edge("n", "out");
+        assert!(
+            matches!(h.validate(&Rules::default()), Err(ValidationError::EmptyDimension { axis: 0, .. })),
+            "a shape with no axes must be refused"
+        );
+        assert_eq!(product(&[]), 1, "which is why: the empty product is one, not zero");
+    }
+
+    /// A grouped convolution's weight count divides the input channels by its groups, and a bias
+    /// that is PRESENT is checked.
+    ///
+    /// Every convolution fixture in this module has `groups = 1`, where `in_channels / groups` and
+    /// `in_channels` are the same number. And `if !x.bias.is_empty()` versus `if x.bias.is_empty()`
+    /// agree on the two cases the fixtures carry -- an empty bias and a correct one.
+    #[test]
+    fn a_grouped_convolution_counts_its_weights_per_group_and_checks_a_bias_it_has() {
+        let conv = |groups: usize, n_weight: usize, bias: Vec<f64>| {
+            let mut g = Graph::new();
+            g.push("in", Node::Input(Input { shape: vec![4, 8] }));
+            g.push(
+                "c",
+                Node::Conv1d(Conv1d {
+                    in_channels: 4,
+                    out_channels: 2,
+                    length: 8,
+                    kernel: 3,
+                    stride: 1,
+                    padding: 0,
+                    dilation: 1,
+                    groups,
+                    weight: vec![0.25; n_weight],
+                    bias,
+                }),
+            );
+            g.push("out", Node::Output(Output { shape: vec![2, 6] }));
+            g.edge("in", "c");
+            g.edge("c", "out");
+            g.validate(&Rules::default())
+        };
+        // out * (in / groups) * kernel = 2 * 2 * 3 = 12 at two groups, and 2 * 4 * 3 = 24 at one.
+        assert!(conv(2, 12, Vec::new()).is_ok(), "two groups halve the input channels");
+        assert!(matches!(conv(2, 24, Vec::new()), Err(ValidationError::RaggedParameter { .. })));
+        assert!(conv(1, 24, Vec::new()).is_ok(), "one group keeps them all");
+        assert!(matches!(conv(1, 12, Vec::new()), Err(ValidationError::RaggedParameter { .. })));
+        // A bias that is present must be `out_channels` long. An empty one is how NIR writes
+        // bias=False and is legal.
+        assert!(conv(2, 12, vec![0.0, 0.0]).is_ok(), "a correct bias");
+        assert!(
+            matches!(conv(2, 12, vec![0.0]), Err(ValidationError::RaggedParameter { field: "bias", .. })),
+            "a bias of the wrong length must be refused, not skipped"
+        );
+    }
+
+    /// A `CubaLIF`'s time constants are checked at the graph boundary: `tau_syn` non-negative,
+    /// `tau_mem` strictly positive.
+    ///
+    /// The propagator enforces both itself, which is why these two are easy to lose: a graph that
+    /// carries them merely produces a network that refuses to step, silently.
+    #[test]
+    fn a_cuba_node_has_its_time_constants_checked_at_the_graph_boundary() {
+        let cuba = |tau_syn: Vec<f64>, tau_mem: Vec<f64>| {
+            let mut g = Graph::new();
+            g.push("in", Node::Input(Input { shape: vec![1] }));
+            g.push(
+                "c",
+                Node::CubaLif(CubaLif {
+                    shape: vec![1],
+                    tau_syn,
+                    tau_mem,
+                    r: vec![1.0],
+                    v_leak: vec![0.0],
+                    v_threshold: vec![1.0],
+                    v_reset: vec![0.0],
+                    w_in: vec![1.0],
+                }),
+            );
+            g.push("out", Node::Output(Output { shape: vec![1] }));
+            g.edge("in", "c");
+            g.edge("c", "out");
+            g.validate(&Rules::default())
+        };
+        assert!(cuba(vec![0.0], vec![20e-3]).is_ok(), "zero tau_syn IS the LIF limit");
+        assert!(cuba(vec![5e-3], vec![20e-3]).is_ok());
+        assert!(
+            matches!(cuba(vec![-5e-3], vec![20e-3]), Err(ValidationError::BadHyperparameter { .. })),
+            "a negative tau_syn is a synapse that grows without bound"
+        );
+        assert!(
+            matches!(cuba(vec![5e-3], vec![0.0]), Err(ValidationError::BadHyperparameter { field: "tau_mem", .. })),
+            "a zero tau_mem has no propagator"
+        );
+        assert!(matches!(
+            cuba(vec![5e-3], vec![-20e-3]),
+            Err(ValidationError::BadHyperparameter { field: "tau_mem", .. })
+        ));
+    }
+
+    /// A two-axis hyperparameter keeps its **axis order** through the text format.
+    ///
+    /// The reader's `pair` helper returns `[v[0], v[1]]`, and `graph_to_text_to_graph_is_exactly_the_identity`
+    /// could not see a swap because every two-axis field in its fixture is symmetric: size [5,5],
+    /// kernel [3,3], stride [1,1], padding [1,1], dilation [1,1]. Five pairs, all palindromes.
+    #[test]
+    fn a_two_axis_hyperparameter_keeps_its_axis_order_through_the_text_format() {
+        let mut g = Graph::new();
+        g.push(
+            "c",
+            Node::Conv2d(Conv2d {
+                in_channels: 1,
+                out_channels: 1,
+                size: [5, 7],
+                kernel: [3, 1],
+                stride: [2, 1],
+                padding: [1, 0],
+                dilation: [1, 2],
+                groups: 1,
+                weight: vec![0.5; 3],
+                bias: Vec::new(),
+            }),
+        );
+        let back = Graph::from_text(&g.to_text()).expect("the writer's own output");
+        let Node::Conv2d(c) = &back.nodes[0].node else { panic!("expected a Conv2d") };
+        assert_eq!(c.size, [5, 7], "size");
+        assert_eq!(c.kernel, [3, 1], "kernel");
+        assert_eq!(c.stride, [2, 1], "stride");
+        assert_eq!(c.padding, [1, 0], "padding");
+        assert_eq!(c.dilation, [1, 2], "dilation");
+        // The shape the two axes produce is asymmetric too, so a swap moves an observable.
+        assert_eq!(back.nodes[0].node.output_shape(), Some(vec![1, 3, 7]));
+        assert_eq!(g.to_text(), back.to_text(), "and the round trip is still the identity");
+    }
+
+    /// A converted neuron starts at its **leak** potential, and a `Linear` keeps its rows and
+    /// columns.
+    ///
+    /// `Conversion::neurons` was compared only against itself, through `NIR -> Net -> NIR -> Net`,
+    /// where a consistent error cancels: starting every neuron on its threshold instead of at rest
+    /// round-tripped perfectly. And `weights_of`'s `Linear` arm was only ever reached through
+    /// `from_net`, which emits a SQUARE `n * n` matrix, so `(rows, cols)` and `(cols, rows)` are
+    /// the same pair on every path the module tested.
+    #[test]
+    fn a_converted_neuron_starts_at_rest_and_a_linear_keeps_its_shape() {
+        let mut g = Graph::new();
+        g.push("in", Node::Input(Input { shape: vec![2] }));
+        g.push("a", Node::Lif(lif_params(2, 20e-3)));
+        // 3 rows from 2 columns: a transpose is a different matrix AND a different shape.
+        g.push(
+            "w",
+            Node::Linear(Linear { rows: 3, cols: 2, weight: vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0] }),
+        );
+        g.push("b", Node::Lif(lif_params(3, 5e-3)));
+        g.push("out", Node::Output(Output { shape: vec![3] }));
+        g.edge("in", "a");
+        g.edge("a", "w");
+        g.edge("w", "b");
+        g.edge("b", "out");
+        let c = g.to_net(1e-4).expect("a non-square Linear is inside the subset");
+        assert_eq!(c.net.n, 5);
+        // weight[row][col] is the synapse (2 + row) <- (0 + col); a transpose would put 2.0 on
+        // (post 3, pre 0) instead of (post 2, pre 1).
+        for (row, col, w) in [
+            (0usize, 0usize, 1.0_f64),
+            (0, 1, 2.0),
+            (1, 0, 3.0),
+            (1, 1, 4.0),
+            (2, 0, 5.0),
+            (2, 1, 6.0),
+        ] {
+            let post = (2 + row) as u32;
+            let found = c
+                .net
+                .out_of(col)
+                .find(|&(p, _, _)| p == post)
+                .unwrap_or_else(|| panic!("synapse {col} -> {post} is missing"));
+            assert_eq!(found.1.to_bits(), w.to_bits(), "weight[{row}][{col}]");
+        }
+        // Every neuron starts at its leak potential, which for this fixture is 15 mV below its
+        // threshold -- so "at rest" and "on the threshold" are different numbers here.
+        assert!((lif_params(1, 1.0).v_leak[0] - lif_params(1, 1.0).v_threshold[0]).abs() > 1e-3);
+        for (k, n) in c.neurons.iter().enumerate() {
+            assert_eq!(n.v.to_bits(), n.v_rest.to_bits(), "neuron {k} did not start at rest");
+            assert!(n.v < n.v_th, "neuron {k} started at or above its threshold");
+        }
+    }
+
+    /// A duplicate synapse is **refused by name**, not silently overwritten.
+    ///
+    /// `NetBuilder::connect` pushes edges without deduplicating, so two synapses between the same
+    /// ordered pair is a network a caller can build; `NIR`'s dense matrix has one cell for them and
+    /// keeping the last would drop the first with no error.
+    #[test]
+    fn from_net_refuses_a_duplicate_synapse_rather_than_overwriting_the_cell() {
+        let mut b = crate::net::NetBuilder::new(2);
+        b.connect(0, 1, 0.25, 0).expect("in range");
+        b.connect(0, 1, -0.5, 0).expect("in range, and a duplicate");
+        let net = b.build();
+        // `t_ref: 0` because NIR has no refractory period and `from_net` refuses one.
+        let neurons = vec![crate::neuron::Lif { t_ref: 0.0, ..crate::neuron::Lif::default() }; 2];
+        match Graph::from_net(&net, &neurons, 1e-4) {
+            Err(BridgeError::DuplicateSynapse { pre, post }) => assert_eq!((pre, post), (0, 1)),
+            other => panic!("a duplicate synapse was absorbed: {other:?}"),
+        }
+        // One synapse converts, so the refusal is about the duplicate and not about the pair.
+        let mut b = crate::net::NetBuilder::new(2);
+        b.connect(0, 1, 0.25, 0).expect("in range");
+        assert!(Graph::from_net(&b.build(), &neurons, 1e-4).is_ok());
+    }
+
+    /// The whole-ticks tolerance is **relative**, because the quotient's round-off grows with the
+    /// tick count -- and the tick count is the ROUNDED quotient, not the truncated one.
+    ///
+    /// Neither claim had a fixture. An absolute `1e-9` is a bound on the round-off of `seconds/dt`,
+    /// and that round-off is about `quotient * 2^-52`, so it passes `1e-9` only while the quotient
+    /// is under about 4.5 million. And `exact as u32` truncates: a quotient that lands one part in
+    /// `1e16` BELOW an integer becomes that integer minus one, which is a delay one tick short with
+    /// no error at all.
+    #[test]
+    fn the_delay_tolerance_is_relative_because_the_round_off_grows_with_the_tick_count() {
+        // 5.0000001 s at dt = 1e-7 is 50000001 ticks. The quotient misses that integer by 7.45e-9,
+        // which an absolute 1e-9 refuses and a relative one accepts with seven decades to spare.
+        let (seconds, dt) = (5.0000001_f64, 1e-7_f64);
+        let exact = seconds / dt;
+        let miss = (exact - exact.round()).abs();
+        assert!(miss > 1e-9, "this fixture needs an inexact quotient, got {miss:e}");
+        assert!(miss <= 1e-9 * exact.round(), "and one the relative bound accepts");
+        assert_eq!(ticks_of("d", &[seconds], dt).expect("a whole number of ticks"), vec![50_000_001]);
+
+        // 2.001 s at dt = 1e-3 is 2001 ticks, and the quotient is 2000.9999999999998 -- so a cast
+        // of the UNROUNDED value gives 2000, a delay one tick short.
+        let (s2, dt2) = (2.001_f64, 1e-3_f64);
+        assert!((s2 / dt2) < 2001.0, "this fixture needs a quotient just below the integer");
+        assert_eq!(s2 / dt2, 2000.9999999999998);
+        assert_eq!(ticks_of("d", &[s2], dt2).expect("a whole number of ticks"), vec![2001]);
+
+        // A delay that really is not a whole number of ticks is still refused, so the relative
+        // bound has not turned the check off.
+        assert!(matches!(
+            ticks_of("d", &[1.5e-4], 1e-4),
+            Err(BridgeError::DelayNotWholeTicks { .. })
+        ));
+        assert!(matches!(ticks_of("d", &[-1e-4], 1e-4), Err(BridgeError::DelayNotWholeTicks { .. })));
+        assert!(matches!(ticks_of("d", &[1e30], 1e-4), Err(BridgeError::DelayTooManyTicks { .. })));
+        assert_eq!(ticks_of("d", &[0.0], 1e-4).expect("zero is whole"), vec![0]);
+    }
+
     fn every_node_type() -> Graph {
         let mut g = Graph::new();
         g.push("in", Node::Input(Input { shape: vec![2] }));

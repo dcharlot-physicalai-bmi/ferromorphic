@@ -173,7 +173,8 @@
  {
   "label": "an affine's cell count wraps rather than refusing",
   "old": "        let cells = self.rows.checked_mul(self.cols)?;\n        if x.len() != self.cols || self.weight.len() != cells || self.bias.len() != self.rows {",
-  "new": "        let cells = self.rows.wrapping_mul(self.cols);\n        if x.len() != self.cols || self.weight.len() != cells || self.bias.len() != self.rows {"
+  "new": "        let cells = self.rows.wrapping_mul(self.cols);\n        if x.len() != self.cols || self.weight.len() != cells || self.bias.len() != self.rows {",
+  "equivalent": "the three length checks on the next line make the product's exactness unobservable. `apply` proceeds only when x.len() == cols AND weight.len() == cells AND bias.len() == rows, and `bias.len() == rows` requires `rows` elements to have been ALLOCATED. A product that overflows a usize needs both factors above 2^32, so `rows` alone would be a Vec of at least 4.3 billion f64 -- 34 GB -- before the wrapped `cells` could be reached. For every pair of dimensions that can exist in memory, checked_mul and wrapping_mul return the same value, and when the product does overflow both forms return None: the checked one through `?`, the wrapping one because no weight vector can be as long as the wrapped count AND the bias as long as `rows`. `an_affine_reads_its_weight_matrix_row_major` pins the three refusals."
  },
  {
   "label": "an affine accepts an input of any width",
@@ -304,7 +305,8 @@
  {
   "label": "a NaN synaptic time constant slips past the propagator's guard",
   "old": "            || !(self.tau_syn >= 0.0)",
-  "new": "            || self.tau_syn < 0.0"
+  "new": "            || self.tau_syn < 0.0",
+  "equivalent": "`!(x >= 0.0)` and `x < 0.0` differ on exactly one value, NaN, and NaN is refused two lines below by `!self.tau_syn.is_finite()`, which the mutation leaves in place. For every other f64 the two forms are the same predicate. The guard is written as the negated comparison anyway, because it is the form that does not depend on a second guard existing -- and `the_cuba_propagator_refuses_a_zero_or_nan_time_constant_rather_than_integrating_it` asserts the NaN case so that removing the finiteness line is caught."
  },
  {
   "label": "an infinite synaptic time constant is integrated",
@@ -1107,8 +1109,8 @@
  },
  {
   "label": "a delay in seconds is multiplied by the tick length rather than divided by it",
-  "old": "        let exact = seconds / dt;",
-  "new": "        let exact = seconds * dt;"
+  "old": "    for &seconds in delay {\n        let exact = seconds / dt;",
+  "new": "    for &seconds in delay {\n        let exact = seconds * dt;"
  },
  {
   "label": "a tick count is truncated rather than rounded before it is checked",
