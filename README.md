@@ -320,10 +320,14 @@ for the whole exercise.
 
 **And then the part of the record that nothing measures.** A list entry may carry an
 `"equivalent"` key, and when it does the harness relabels that mutation's survival and the run
-passes. The key is prose in a JSON file. There were 139 of them; read adversarially, 46 were
-refused, every refusal was BUILT AND RUN against the actual mutation, and **48 came back
-`caught`**. Forty-five of those arguments are gone and thirteen more are rewritten onto an
-identity, a bound or an invariant rather than a survey of the fixtures. Ninety-four remain, each
+passes. The key is prose in a JSON file. There were 139 of them; read adversarially, **46 were
+refused and 15 more were judged to have a bad argument even where the conclusion held**. Every one
+of those was then BUILT AND RUN against the actual mutation, because a refutation that has not been
+executed is the same mistake one level up. **48 came back `caught`** — 45 of the 46 refusals, and 3
+of the 15 that had only been flagged as weakly argued. Five refusals did not hold, and those entries
+keep their arguments with a note recording what was tried. Forty-five keys are gone and thirteen
+arguments are rewritten onto an identity, a bound or an invariant rather than a survey of the
+fixtures. Ninety-four remain, each
 with an argument that reasons from the arithmetic. The failure was the same one every time: **an
 argument about the SUITE presented as an argument about the CODE** — "no test does tell" written
 as "no test could tell".
@@ -1019,7 +1023,8 @@ could** distinguish the edit — and when it does, `tools/mutate.py` relabels th
 run passes. Nothing checks the argument.
 
 There were 139. Reading them adversarially refused 46 and judged 15 more to have a bad argument
-even where the conclusion held. **Every refusal was then built as a fixture and run against the
+even where the conclusion held. Of the 61, **48 came back `caught` when built and run** — 45 of the
+46 refusals and 3 of the 15 weak ones — and 5 refusals did not hold. **Every refusal was then built as a fixture and run against the
 actual mutation**, because a refutation that has not been executed is the same mistake one level
 up — and the reviewers had been told to default to refusing, which biases the other way. 48 came
 back `caught`. Five did not, and those entries keep their arguments with a note recording exactly
