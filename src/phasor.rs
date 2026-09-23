@@ -637,4 +637,174 @@ mod tests {
         assert_eq!(super::wrap(-core::f64::consts::PI), core::f64::consts::PI);
         assert_eq!(super::wrap(0.25), 0.25);
     }
+
+    /// Unbinding refuses two symbols of different dimensions instead of working on the shorter.
+    ///
+    /// Why the suite could not see it: the dimension refusals it checks are `bind`'s and
+    /// `similarity`'s, and every `unbind` call it makes is on a pair built from the same
+    /// dimension, so the check could be deleted and `zip` would quietly truncate to the shorter of
+    /// the two — returning a symbol of the wrong width with no complaint.
+    #[test]
+    fn unbinding_refuses_two_symbols_of_different_dimensions() {
+        let two = Phasor::new(&[0.3, 0.4]).unwrap();
+        let three = Phasor::new(&[0.3, 0.4, 0.5]).unwrap();
+        assert!(matches!(two.unbind(&three), Err(PhasorError::Dimension { a: 2, b: 3 })));
+        assert!(matches!(three.unbind(&two), Err(PhasorError::Dimension { a: 3, b: 2 })));
+    }
+
+    /// The permutation is the cyclic shift to the RIGHT by the shift it is given: element `k` of
+    /// the result is element `k − shift` of the input, indices taken around the ring.
+    ///
+    /// Why the suite could not see it: its only permutation assertion is that `permute(7)` and
+    /// `permute(-7)` undo each other. That holds for a shift to the left, and it holds for a
+    /// permutation that moves nothing at all, so neither direction nor magnitude was pinned.
+    #[test]
+    fn the_permutation_shifts_right_by_the_shift_it_is_given() {
+        let p = Phasor::new(&[0.1, 0.2, 0.3, 0.4]).unwrap();
+        assert_eq!(p.permute(1).phase, vec![0.4, 0.1, 0.2, 0.3], "one place to the right");
+        assert_eq!(p.permute(-1).phase, vec![0.2, 0.3, 0.4, 0.1], "a negative shift goes left");
+        assert_eq!(p.permute(5).phase, vec![0.4, 0.1, 0.2, 0.3], "shifts are taken around the ring");
+        assert_eq!(p.permute(4).phase, p.phase, "a whole turn is the identity");
+        assert_eq!(p.permute(0).phase, p.phase);
+    }
+
+    /// Reading spike times back refuses a period that is not a rhythm — zero, negative, infinite
+    /// or not a number — exactly as writing them out does.
+    ///
+    /// Why the suite could not see it: the only period refusal it asserts is on `spike_times`, the
+    /// forward direction. `from_spike_times` is called three times, always with the same 40 Hz
+    /// period, and its other two refusals (an empty train, a time that is not finite) are reached
+    /// after the period check, so they still fired with the period guard removed.
+    #[test]
+    fn reading_spike_times_back_refuses_a_period_that_is_not_a_rhythm() {
+        for bad in [0.0, -25e-3, f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
+            let built = Phasor::from_spike_times(&[1e-3, 2e-3], bad);
+            assert!(
+                matches!(built, Err(PhasorError::OutOfRange { what: "period", .. })),
+                "a period of {bad} was accepted as a rhythm"
+            );
+        }
+        // The guard runs BEFORE the emptiness and finiteness checks, so a bad period is reported
+        // as a bad period even when the train is also wrong.
+        assert!(matches!(Phasor::from_spike_times(&[], 0.0), Err(PhasorError::OutOfRange { .. })));
+    }
+
+    /// A bundle refuses members of another dimension, and refuses to be compared with a symbol of
+    /// another dimension, rather than summing or scoring whatever overlaps.
+    ///
+    /// Why the suite could not see it: every bundle it builds is built from symbols drawn at one
+    /// dimension and compared against symbols of that same dimension. The only `Bundle` refusal it
+    /// asserts is the empty-set one. A dropped dimension check is then invisible on the shorter
+    /// side (the loop simply stops early) and would panic on the longer, which no test reaches.
+    #[test]
+    fn a_bundle_refuses_members_and_probes_of_another_dimension() {
+        let two = Phasor::new(&[0.3, 0.4]).unwrap();
+        let three = Phasor::new(&[0.3, 0.4, 0.5]).unwrap();
+        assert!(matches!(Bundle::sum(&[three.clone(), two.clone()]), Err(PhasorError::Dimension { a: 2, b: 3 })));
+        assert!(matches!(Bundle::sum(&[two.clone(), three.clone()]), Err(PhasorError::Dimension { a: 3, b: 2 })));
+        let wide = Bundle::sum(core::slice::from_ref(&three)).unwrap();
+        let narrow = Bundle::sum(core::slice::from_ref(&two)).unwrap();
+        assert!(matches!(wide.similarity(&two), Err(PhasorError::Dimension { a: 3, b: 2 })));
+        assert!(matches!(narrow.similarity(&three), Err(PhasorError::Dimension { a: 2, b: 3 })));
+    }
+
+    /// A memory refuses a dimension of zero and a threshold outside `[0, 1)`, and keeps the
+    /// threshold it was given — which is what makes it silence anything.
+    ///
+    /// Why the suite could not see it: it builds memories only through dimensions and thresholds
+    /// that are already admissible, its one threshold refusal is at the upper end (`1.0`), and the
+    /// one memory whose silencing it exercises is assembled by a struct literal
+    /// (`Tpam { threshold: 0.35, .. }`) rather than by the constructor — so a constructor that
+    /// threw the threshold away silenced nothing and no assertion moved.
+    #[test]
+    fn a_memory_refuses_a_zero_dimension_and_an_out_of_range_threshold_and_keeps_the_one_it_took() {
+        assert!(matches!(Tpam::new(0, 0.1), Err(PhasorError::Empty { what: "dimension" })));
+        assert!(matches!(Tpam::new(4, -0.5), Err(PhasorError::OutOfRange { what: "threshold", .. })));
+        assert!(matches!(Tpam::new(4, -1e-300), Err(PhasorError::OutOfRange { what: "threshold", .. })));
+        assert!(matches!(Tpam::new(4, 1.0), Err(PhasorError::OutOfRange { what: "threshold", .. })));
+        assert_eq!(Tpam::new(4, 0.35).unwrap().threshold, 0.35, "the memory kept a different threshold");
+        assert_eq!(Tpam::new(4, 0.0).unwrap().threshold, 0.0);
+        // And the threshold the constructor kept is the one that silences: one pattern in
+        // sixty-four dimensions gives a random cue a field of magnitude about √D = 8, far under a
+        // floor of 0.5 D = 32, so every element is silenced.
+        let mut rng = Rng::new(21);
+        let mut strict = Tpam::new(64, 0.5).unwrap();
+        strict.store(&Phasor::random(64, &mut rng).unwrap()).unwrap();
+        let r = strict.retrieve(&Phasor::random(64, &mut rng).unwrap(), 1).unwrap();
+        assert_eq!(r.silent, 64, "a constructed threshold of 0.5 D silenced nothing");
+    }
+
+    /// The overlap `⟨ξ, z⟩` is a COMPLEX number and the field carries both of its parts, so the
+    /// field turns with the cue's phase: a memory holding one pattern reproduces a cue that is
+    /// that pattern rotated bodily, rather than snapping back to the pattern itself.
+    ///
+    /// Why the suite could not see it: at a stored pattern the overlap is real by construction
+    /// (`Σ sin(0) = 0`), and the crosstalk terms of the ten-pattern memory carry imaginary parts
+    /// small enough that dropping them leaves every similarity inside the tolerances the fixed
+    /// point test allows. Nothing in the suite called `field` and read a number out of it.
+    #[test]
+    fn the_field_carries_the_imaginary_part_of_the_overlap() {
+        // A two-element memory holding the all-zero pattern. The overlap with a cue at phases
+        // (0, π/2) is 1 + e^{iπ/2}, whose imaginary part is exactly 1, and the field of a pattern
+        // whose own phases are zero is that overlap unrotated.
+        let mut mem = Tpam::new(2, 0.0).unwrap();
+        mem.store(&Phasor::new(&[0.0, 0.0]).unwrap()).unwrap();
+        let f = mem.field(&Phasor::new(&[0.0, PI / 2.0]).unwrap()).unwrap();
+        assert_eq!(f.im, vec![1.0, 1.0], "the imaginary part of the overlap was dropped");
+        // And the consequence: a bodily rotation of the one stored pattern is a fixed point,
+        // because the overlap is D·e^{iδ} and the field is the pattern turned by δ.
+        let mut rng = Rng::new(31);
+        let xi = Phasor::random(64, &mut rng).unwrap();
+        let mut one = Tpam::new(64, 0.1).unwrap();
+        one.store(&xi).unwrap();
+        let delta = 0.7;
+        let turned = Phasor::new(&xi.phase.iter().map(|p| p + delta).collect::<Vec<f64>>()).unwrap();
+        let r = one.retrieve(&turned, 20).unwrap();
+        assert!(r.state.similarity(&turned).unwrap() > 1.0 - 1e-12, "a turned pattern is a fixed point");
+        let back = r.state.similarity(&xi).unwrap();
+        assert!((back - delta.cos()).abs() < 1e-9, "similarity to the unturned pattern {back} vs cos(0.7)");
+    }
+
+    /// `max_iters` is a cap on the iterations RUN, and a state that has stopped moving is reported
+    /// as converged.
+    ///
+    /// Why the suite could not see it: every retrieval it runs is given fifty iterations and
+    /// stopped by the tolerance long before the cap, so one iteration more or fewer changed
+    /// nothing; and the ten-pattern memory it uses never reaches the 1e-9 movement that sets the
+    /// flag, so `converged` is false in every retrieval the suite performs and is never asserted.
+    #[test]
+    fn the_cap_counts_the_iterations_run_and_a_fixed_point_reports_convergence() {
+        let mut rng = Rng::new(41);
+        let xi = Phasor::random(64, &mut rng).unwrap();
+        let mut mem = Tpam::new(64, 0.1).unwrap();
+        mem.store(&xi).unwrap();
+        let idle = mem.retrieve(&xi, 0).unwrap();
+        assert_eq!(idle.iterations, 0, "a cap of zero iterations ran one anyway");
+        assert!(!idle.converged);
+        assert_eq!(idle.last_move, f64::INFINITY);
+        assert_eq!(idle.state, xi, "a cap of zero must return the cue untouched");
+        let one = mem.retrieve(&xi, 1).unwrap();
+        assert_eq!(one.iterations, 1, "a cap of one iteration ran a different number");
+        let r = mem.retrieve(&xi, 20).unwrap();
+        assert!(r.converged, "the one stored pattern of a one-pattern memory is an exact fixed point");
+        assert!(r.last_move < 1e-9, "last move {}", r.last_move);
+    }
+
+    /// The dimension refusal names the two dimensions in the order the call met them, and its
+    /// message prints them that way round.
+    ///
+    /// Why the suite could not see it: every assertion about this variant destructures it — and
+    /// the one that binds its fields at all, `Dimension { a: 2, b: 3 }`, is reached through a call
+    /// whose arguments are symmetric to the reader. The message itself is only ever checked for
+    /// being non-empty, so one that named the dimensions the wrong way round read as covered.
+    #[test]
+    fn the_dimension_refusal_names_the_two_dimensions_in_the_order_it_met_them() {
+        let two = Phasor::new(&[0.3, 0.4]).unwrap();
+        let three = Phasor::new(&[0.3, 0.4, 0.5]).unwrap();
+        let Err(forward) = two.bind(&three) else { panic!("a 2 against a 3 must be refused") };
+        assert_eq!(forward, PhasorError::Dimension { a: 2, b: 3 });
+        assert_eq!(forward.to_string(), "dimension 2 against dimension 3");
+        let Err(backward) = three.bind(&two) else { panic!("a 3 against a 2 must be refused") };
+        assert_eq!(backward.to_string(), "dimension 3 against dimension 2");
+    }
 }

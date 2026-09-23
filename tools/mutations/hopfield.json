@@ -89,5 +89,295 @@
   "label": "dense incremental overlaps wrong sign",
   "old": "*d -= 2.0 * p[i] * x[i];",
   "new": "*d += 2.0 * p[i] * x[i];"
+ },
+ {
+  "label": "a bipolar pattern of the wrong length is accepted",
+  "old": "fn bipolar(v: &[f64], n: usize, what: &'static str) -> Result<(), HopfieldError> {\n    if v.len() != n {",
+  "new": "fn bipolar(v: &[f64], n: usize, what: &'static str) -> Result<(), HopfieldError> {\n    if false {"
+ },
+ {
+  "label": "a real-valued pattern of the wrong length is accepted",
+  "old": "fn finite(v: &[f64], n: usize, what: &'static str) -> Result<(), HopfieldError> {\n    if v.len() != n {",
+  "new": "fn finite(v: &[f64], n: usize, what: &'static str) -> Result<(), HopfieldError> {\n    if false {"
+ },
+ {
+  "label": "only an infinity is refused, so a NaN is stored",
+  "old": "    if let Some(i) = v.iter().position(|x| !x.is_finite()) {",
+  "new": "    if let Some(i) = v.iter().position(|x| x.is_infinite()) {"
+ },
+ {
+  "label": "the non-finite refusal always names position zero",
+  "old": "        return Err(HopfieldError::NonFinite { what, index: i });",
+  "new": "        return Err(HopfieldError::NonFinite { what, index: i * 0 });"
+ },
+ {
+  "label": "the random pattern is drawn three-to-one in favour of minus one",
+  "old": "    (0..n).map(|_| if rng.next_u32() & 1 == 1 { 1.0 } else { -1.0 }).collect()",
+  "new": "    (0..n).map(|_| if rng.next_u32() & 3 == 3 { 1.0 } else { -1.0 }).collect()"
+ },
+ {
+  "label": "the number of corrupted entries is rounded up rather than to nearest",
+  "old": "let k = (p * n as f64).round() as usize;",
+  "new": "let k = (p * n as f64).ceil() as usize;"
+ },
+ {
+  "label": "the shuffle never swaps, so the corruption always falls on the lowest indices",
+  "old": "        idx.swap(i, j);",
+  "new": "        idx.swap(j, j);"
+ },
+ {
+  "label": "the corruption sets the chosen entries to minus one rather than flipping them",
+  "old": "        out[i] = -out[i];",
+  "new": "        out[i] = -1.0;"
+ },
+ {
+  "label": "the overlap counts the positions at which the patterns disagree",
+  "old": "    Some(a.iter().zip(b).filter(|(x, y)| x == y).count() as f64 / a.len() as f64)",
+  "new": "    Some(a.iter().zip(b).filter(|(x, y)| x != y).count() as f64 / a.len() as f64)"
+ },
+ {
+  "label": "the overlap is a raw count rather than a fraction of the length",
+  "old": "    Some(a.iter().zip(b).filter(|(x, y)| x == y).count() as f64 / a.len() as f64)",
+  "new": "    Some(a.iter().zip(b).filter(|(x, y)| x == y).count() as f64)"
+ },
+ {
+  "label": "a shorter first pattern is zipped against a longer second",
+  "old": "if a.len() != b.len() || a.is_empty() {",
+  "new": "if a.len() > b.len() || a.is_empty() {"
+ },
+ {
+  "label": "a classical network of zero neurons is built",
+  "old": "    pub fn new(n: usize) -> Result<Self, HopfieldError> {\n        if n == 0 {",
+  "new": "    pub fn new(n: usize) -> Result<Self, HopfieldError> {\n        if false {"
+ },
+ {
+  "label": "a new network is born with unit weights rather than an empty landscape",
+  "old": "        Ok(Self { n, w: vec![0.0; n * n], stored: 0 })",
+  "new": "        Ok(Self { n, w: vec![1.0; n * n], stored: 0 })"
+ },
+ {
+  "label": "the Hebbian outer product is not divided by the neuron count",
+  "old": "        let scale = 1.0 / n as f64;",
+  "new": "        let scale = 1.0;"
+ },
+ {
+  "label": "storing a pattern overwrites the weights rather than accumulating into them",
+  "old": "self.w[i * n + j] += pattern[i] * pattern[j] * scale;",
+  "new": "self.w[i * n + j] = pattern[i] * pattern[j] * scale;"
+ },
+ {
+  "label": "the stored outer product squares one entry instead of pairing two",
+  "old": "self.w[i * n + j] += pattern[i] * pattern[j] * scale;",
+  "new": "self.w[i * n + j] += pattern[i] * pattern[i] * scale;"
+ },
+ {
+  "label": "the local field reads the weight matrix transposed",
+  "old": "        Ok((0..n).map(|i| (0..n).map(|j| self.w[i * n + j] * x[j]).sum()).collect())",
+  "new": "        Ok((0..n).map(|i| (0..n).map(|j| self.w[j * n + i] * x[j]).sum()).collect())"
+ },
+ {
+  "label": "the recall's own copy of the field reads the weight matrix transposed",
+  "old": "                let h: f64 = (0..n).map(|j| self.w[i * n + j] * x[j]).sum();",
+  "new": "                let h: f64 = (0..n).map(|j| self.w[j * n + i] * x[j]).sum();"
+ },
+ {
+  "label": "the classical energy drops its factor of a half, counting every pair twice",
+  "old": "        Ok(-0.5 * h.iter().zip(x).map(|(a, b)| a * b).sum::<f64>())",
+  "new": "        Ok(-1.0 * h.iter().zip(x).map(|(a, b)| a * b).sum::<f64>())"
+ },
+ {
+  "label": "the classical energy has the wrong sign, so the dynamics climbs it",
+  "old": "        Ok(-0.5 * h.iter().zip(x).map(|(a, b)| a * b).sum::<f64>())",
+  "new": "        Ok(0.5 * h.iter().zip(x).map(|(a, b)| a * b).sum::<f64>())"
+ },
+ {
+  "label": "a zero field counts as disagreeing, so a neuron with no field is never at rest",
+  "old": "        Ok(h.iter().zip(x).all(|(hi, xi)| *hi == 0.0 || hi.signum() == *xi))",
+  "new": "        Ok(h.iter().zip(x).all(|(hi, xi)| hi.signum() == *xi))"
+ },
+ {
+  "label": "a state is a fixed point if ANY neuron agrees with its field",
+  "old": "        Ok(h.iter().zip(x).all(|(hi, xi)| *hi == 0.0 || hi.signum() == *xi))",
+  "new": "        Ok(h.iter().zip(x).any(|(hi, xi)| *hi == 0.0 || hi.signum() == *xi))"
+ },
+ {
+  "label": "the update reads the frozen cue rather than the state the sweep is changing",
+  "old": "                let h: f64 = (0..n).map(|j| self.w[i * n + j] * x[j]).sum();",
+  "new": "                let h: f64 = (0..n).map(|j| self.w[i * n + j] * cue[j]).sum();"
+ },
+ {
+  "label": "the recall reports its starting energy as the energy it ended on",
+  "old": "                    last = e;",
+  "new": "                    last = start;"
+ },
+ {
+  "label": "the classical sweep budget is exceeded by one sweep",
+  "old": "        let mut converged = false;\n        while sweeps < max_sweeps {",
+  "new": "        let mut converged = false;\n        while sweeps <= max_sweeps {"
+ },
+ {
+  "label": "the classical update is charged one multiply-accumulate per synapse PAIR",
+  "old": "{\n        self.n as u64\n    }",
+  "new": "{\n        self.n as u64 * self.n as u64\n    }"
+ },
+ {
+  "label": "the critical load is transcribed with its digits transposed",
+  "old": "    pub const CRITICAL_LOAD: f64 = 0.138;",
+  "new": "    pub const CRITICAL_LOAD: f64 = 0.183;"
+ },
+ {
+  "label": "a dense memory of zero neurons is built",
+  "old": "    pub fn new(n: usize, degree: u32) -> Result<Self, HopfieldError> {\n        if n == 0 {",
+  "new": "    pub fn new(n: usize, degree: u32) -> Result<Self, HopfieldError> {\n        if false {"
+ },
+ {
+  "label": "every dense memory is built quadratic whatever degree was asked for",
+  "old": "        Ok(Self { n, degree, patterns: Vec::new() })",
+  "new": "        Ok(Self { n, degree: 2, patterns: Vec::new() })"
+ },
+ {
+  "label": "the dense store keeps only the most recent pattern",
+  "old": "        bipolar(pattern, self.n, \"pattern\")?;\n        self.patterns.push(pattern.to_vec());",
+  "new": "        bipolar(pattern, self.n, \"pattern\")?;\n        self.patterns = vec![pattern.to_vec()];"
+ },
+ {
+  "label": "the rectification keeps the negative overlaps and discards the positive ones",
+  "old": "        if z > 0.0 { z.powi(self.degree as i32) } else { 0.0 }",
+  "new": "        if z < 0.0 { z.powi(self.degree as i32) } else { 0.0 }"
+ },
+ {
+  "label": "the energy exponent is one above the declared degree",
+  "old": "z.powi(self.degree as i32)",
+  "new": "z.powi(self.degree as i32 + 1)"
+ },
+ {
+  "label": "the dense energy is the sum of F rather than its negative",
+  "old": "        Ok(-self\n            .patterns",
+  "new": "        Ok(self\n            .patterns"
+ },
+ {
+  "label": "the trial energy is evaluated at the overlap a flip does not produce",
+  "old": "                    .map(|(p, &d)| self.f(d - 2.0 * p[i] * x[i]))",
+  "new": "                    .map(|(p, &d)| self.f(d + 2.0 * p[i] * x[i]))"
+ },
+ {
+  "label": "the incremental overlap update drops its factor of two",
+  "old": "                        *d -= 2.0 * p[i] * x[i];",
+  "new": "                        *d -= p[i] * x[i];"
+ },
+ {
+  "label": "the dense sweep budget is exceeded by one sweep",
+  "old": "            self.patterns.iter().map(|p| p.iter().zip(&x).map(|(a, b)| a * b).sum()).collect();\n        while sweeps < max_sweeps {",
+  "new": "            self.patterns.iter().map(|p| p.iter().zip(&x).map(|(a, b)| a * b).sum()).collect();\n        while sweeps <= max_sweeps {"
+ },
+ {
+  "label": "the dense fixed-point test gives the state a second sweep to settle",
+  "old": "        let r = self.recall(x, 1)?;",
+  "new": "        let r = self.recall(x, 2)?;"
+ },
+ {
+  "label": "the dense update is charged for one pass over the patterns rather than both signs",
+  "old": "    /// with this.\n    #[must_use]\n    pub fn update_cost(&self) -> u64 {\n        2 * self.patterns.len() as u64 * self.n as u64",
+  "new": "    /// with this.\n    #[must_use]\n    pub fn update_cost(&self) -> u64 {\n        self.patterns.len() as u64 * self.n as u64"
+ },
+ {
+  "label": "a modern memory of zero dimensions is built",
+  "old": "        if n == 0 {\n            return Err(HopfieldError::Empty { what: \"dimension\" });",
+  "new": "        if false {\n            return Err(HopfieldError::Empty { what: \"dimension\" });"
+ },
+ {
+  "label": "an infinite inverse temperature is accepted",
+  "old": "if !(beta > 0.0) || !beta.is_finite() {",
+  "new": "if !(beta > 0.0) {"
+ },
+ {
+  "label": "every modern network is built at beta = 1 whatever was asked for",
+  "old": "        Ok(Self { n, beta, patterns: Vec::new() })",
+  "new": "        Ok(Self { n, beta: 1.0, patterns: Vec::new() })"
+ },
+ {
+  "label": "a non-finite entry is stored by the modern memory anyway",
+  "old": "        finite(pattern, self.n, \"pattern\")?;",
+  "new": "        let _ = finite(pattern, self.n, \"pattern\");"
+ },
+ {
+  "label": "the largest stored norm is the LAST norm rather than the largest",
+  "old": "        self.patterns.iter().map(|p| p.iter().map(|x| x * x).sum::<f64>().sqrt()).fold(0.0, f64::max)",
+  "new": "        self.patterns.iter().map(|p| p.iter().map(|x| x * x).sum::<f64>().sqrt()).fold(0.0, |_, x| x)"
+ },
+ {
+  "label": "the largest stored norm is reported unrooted, as a sum of squares",
+  "old": "        self.patterns.iter().map(|p| p.iter().map(|x| x * x).sum::<f64>().sqrt()).fold(0.0, f64::max)",
+  "new": "        self.patterns.iter().map(|p| p.iter().map(|x| x * x).sum::<f64>()).fold(0.0, f64::max)"
+ },
+ {
+  "label": "an empty store reports a norm of minus infinity rather than zero",
+  "old": "        self.patterns.iter().map(|p| p.iter().map(|x| x * x).sum::<f64>().sqrt()).fold(0.0, f64::max)",
+  "new": "        self.patterns.iter().map(|p| p.iter().map(|x| x * x).sum::<f64>().sqrt()).fold(f64::NEG_INFINITY, f64::max)"
+ },
+ {
+  "label": "the softmax is shifted by the smallest logit, so the exponentials overflow",
+  "old": "        let top = logits.iter().cloned().fold(f64::NEG_INFINITY, f64::max);\n        let exps: Vec<f64> = logits.iter().map(|l| (l - top).exp()).collect();",
+  "new": "        let top = logits.iter().cloned().fold(f64::INFINITY, f64::min);\n        let exps: Vec<f64> = logits.iter().map(|l| (l - top).exp()).collect();"
+ },
+ {
+  "label": "the attention multiplies by the partition function instead of dividing by it",
+  "old": "        Ok(exps.iter().map(|e| e / z).collect())",
+  "new": "        Ok(exps.iter().map(|e| e * z).collect())"
+ },
+ {
+  "label": "the readout overwrites rather than accumulating over the patterns",
+  "old": "                *o += w * x;",
+  "new": "                *o = w * x;"
+ },
+ {
+  "label": "the readout is an unweighted sum of the stored patterns",
+  "old": "                *o += w * x;",
+  "new": "                *o += x;"
+ },
+ {
+  "label": "the update returns a vector as long as the store rather than the pattern",
+  "old": "        let mut out = vec![0.0; self.n];",
+  "new": "        let mut out = vec![0.0; self.patterns.len()];"
+ },
+ {
+  "label": "the log-sum-exp drops the shift it subtracted",
+  "old": "        let lse = top + logits.iter().map(|l| (l - top).exp()).sum::<f64>().ln();",
+  "new": "        let lse = logits.iter().map(|l| (l - top).exp()).sum::<f64>().ln();"
+ },
+ {
+  "label": "the quadratic term is the full inner product rather than half of it",
+  "old": "        let half_sq = 0.5 * xi.iter().map(|x| x * x).sum::<f64>();",
+  "new": "        let half_sq = xi.iter().map(|x| x * x).sum::<f64>();"
+ },
+ {
+  "label": "the log-sum-exp is multiplied by beta where the energy divides by it",
+  "old": "Ok(-lse / self.beta + half_sq + (self.patterns.len() as f64).ln() / self.beta + 0.5 * m * m)",
+  "new": "Ok(-lse * self.beta + half_sq + (self.patterns.len() as f64).ln() / self.beta + 0.5 * m * m)"
+ },
+ {
+  "label": "the energy drops the log of the pattern count",
+  "old": "Ok(-lse / self.beta + half_sq + (self.patterns.len() as f64).ln() / self.beta + 0.5 * m * m)",
+  "new": "Ok(-lse / self.beta + half_sq + 0.0 * (self.patterns.len() as f64).ln() + 0.5 * m * m)"
+ },
+ {
+  "label": "the separation's competitor is the pattern itself, so every separation is zero",
+  "old": "            .filter(|(k, _)| *k != mu)",
+  "new": "            .filter(|(k, _)| *k != usize::MAX)"
+ },
+ {
+  "label": "the separation takes the FURTHEST other pattern rather than the nearest",
+  "old": "            .fold(f64::NEG_INFINITY, f64::max);",
+  "new": "            .fold(f64::INFINITY, f64::min);"
+ },
+ {
+  "label": "the separation adds the nearest overlap rather than subtracting it",
+  "old": "        Some(own - other)",
+  "new": "        Some(own + other)"
+ },
+ {
+  "label": "the modern update is charged per pattern rather than per pattern element",
+  "old": "        2 * self.patterns.len() as u64 * self.n as u64\n    }\n}\n\n#[cfg(test)]",
+  "new": "        2 * self.patterns.len() as u64\n    }\n}\n\n#[cfg(test)]"
  }
 ]

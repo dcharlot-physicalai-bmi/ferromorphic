@@ -1443,6 +1443,12 @@ impl Evt3 {
                     let Some(base) = vect_base else {
                         return Err(DecodeError::VectorBeforeBase { offset: at });
                     };
+                    // Bits 11-8 of a VECT_8 word belong to no field. They are masked off here
+                    // rather than refused: this review did not locate a statement that a device
+                    // leaves them zero, and refusing them would be a guess that rejects real
+                    // recordings. The mask is read only by the loop below, which for a VECT_8
+                    // visits k = 0..=7, so masking them off is unobservable either way -- the
+                    // observable choice is the refusal, and it is deliberately not made.
                     let (width, mask) = if code == Self::VECT_12 {
                         (12u16, payload)
                     } else {
@@ -4893,5 +4899,611 @@ mod tests {
         assert!(matches!(gesture_labels("class,startTime_usec,endTime_usec\n12,2,3\n"), Err(DecodeError::FieldOutOfRange { field: "class", value: 12, .. })));
         assert!(matches!(gesture_labels("class,startTime_usec,endTime_usec\n3,9,8\n"), Err(DecodeError::FieldOutOfRange { field: "startTime_usec", .. })));
         assert_eq!(gesture_labels("class,startTime_usec,endTime_usec\n").unwrap(), vec![]);
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // Repairs for mutation survivors: transcribed geometry and polarity, header and record
+    // framing, and the axis a coordinate is checked against.
+    // -----------------------------------------------------------------------------------------
+
+    /// The `DAVIS346` preset's array size and its polarity convention, pinned on the wire.
+    ///
+    /// The suite could not see either. Every existing `DAVIS346` test is an encode-decode round
+    /// trip through the same preset, and both of these are **symmetric** under that: a width of
+    /// 345 refuses the same column on the way in as on the way out, and an inverted
+    /// `p_on_is_one` writes the bit one way and reads it back the same way, so the events come
+    /// home unchanged. Only the last column of the real array, and the address bit as a number,
+    /// can tell. The sense of the polarity bit is the flag this module says it is least sure of;
+    /// what is pinned here is that the preset's stated choice is the one the bytes carry, not
+    /// that the choice is right for a physical `DAVIS`.
+    #[test]
+    fn the_davis346_preset_writes_the_array_and_the_polarity_sense_it_states() {
+        assert_eq!(
+            (Aedat2Layout::DAVIS346.width, Aedat2Layout::DAVIS346.height),
+            (346, 260),
+            "Taverni et al. 2018 name a 346 x 260 array"
+        );
+        // The last pixel of that array encodes and comes back.
+        let corner = [AerEvent { t: 1, x: 345, y: 259, polarity: Polarity::On }];
+        let bytes = Aedat2::encode(&corner, Aedat2Layout::DAVIS346, &[])
+            .expect("column 345 and row 259 are inside a 346 x 260 array");
+        assert_eq!(Aedat2::decode(&bytes, Aedat2Layout::DAVIS346).unwrap().events, corner);
+        // One past each is refused, which is what fixes the edge rather than merely admitting it.
+        let past_column = [AerEvent { t: 1, x: 346, y: 0, polarity: Polarity::On }];
+        assert!(matches!(
+            Aedat2::encode(&past_column, Aedat2Layout::DAVIS346, &[]),
+            Err(EncodeError::FieldOutOfRange { field: "column", value: 346, max: 345, .. })
+        ));
+        let past_row = [AerEvent { t: 1, x: 0, y: 260, polarity: Polarity::On }];
+        assert!(matches!(
+            Aedat2::encode(&past_row, Aedat2Layout::DAVIS346, &[]),
+            Err(EncodeError::FieldOutOfRange { field: "row", value: 260, max: 259, .. })
+        ));
+        // Polarity in bit 11, big-endian record: On sets it, Off clears it. Column and row are
+        // zero so the address is the polarity bit alone, 0x00000800.
+        assert_eq!(
+            [Aedat2Layout::DAVIS346.p_on_is_one, Aedat2Layout::DVS128.p_on_is_one],
+            [true, false],
+            "the two presets state opposite senses, and each says so on its own constant"
+        );
+        let on = [AerEvent { t: 0, x: 0, y: 0, polarity: Polarity::On }];
+        let on_bytes = Aedat2::encode(&on, Aedat2Layout::DAVIS346, &[]).expect("encodable");
+        assert_eq!(&on_bytes[on_bytes.len() - 8..], &[0x00, 0x00, 0x08, 0x00, 0, 0, 0, 0]);
+        let off = [AerEvent { t: 0, x: 0, y: 0, polarity: Polarity::Off }];
+        let off_bytes = Aedat2::encode(&off, Aedat2Layout::DAVIS346, &[]).expect("encodable");
+        assert_eq!(&off_bytes[off_bytes.len() - 8..], &[0, 0, 0, 0, 0, 0, 0, 0]);
+        // And the decoder reads the same bit the same way.
+        assert_eq!(
+            Aedat2::decode(&on_bytes, Aedat2Layout::DAVIS346).unwrap().events[0].polarity,
+            Polarity::On
+        );
+        assert_eq!(
+            Aedat2::decode(&off_bytes, Aedat2Layout::DAVIS346).unwrap().events[0].polarity,
+            Polarity::Off
+        );
+    }
+
+    /// A [`Aedat2Layout::special_mask`] bit that lands inside the column, the row or the polarity
+    /// field is an overlapping layout.
+    ///
+    /// The suite could not see it: `an_overlapping_address_layout_is_refused` moves `p_shift`
+    /// into the column field, so it exercises only the three coordinate-against-coordinate terms
+    /// of [`Aedat2Layout::overlap`]. The three terms involving `special_mask` had no test at all,
+    /// and dropping them leaves a layout where every pixel of a whole column becomes a marker —
+    /// a short, sorted, entirely plausible event list.
+    #[test]
+    fn a_special_mask_inside_a_coordinate_field_is_an_overlapping_layout() {
+        // DVS128: column in bits 1-7, row in bits 8-14, polarity in bit 0.
+        for (mask, what) in [(1u32 << 5, "the column"), (1 << 9, "the row"), (1, "the polarity")] {
+            let clash = Aedat2Layout { special_mask: mask, ..Aedat2Layout::DVS128 };
+            assert_eq!(clash.overlap(), mask, "a special mask over {what} field is an overlap");
+            assert!(
+                matches!(
+                    Aedat2::decode(&aedat2_bytes(&[(0, 0)]), clash),
+                    Err(DecodeError::LayoutFieldsOverlap { mask: m }) if m == mask
+                ),
+                "a special mask over {what} field decoded"
+            );
+            assert!(matches!(
+                Aedat2::encode(&[], clash, &[]),
+                Err(EncodeError::FieldOutOfRange {
+                    field: "overlapping bit fields in the layout",
+                    ..
+                })
+            ));
+        }
+        // The shipped presets put their special bits outside every field, which is what makes
+        // the refusals above a check rather than a blanket.
+        assert_eq!(Aedat2Layout::DVS128.overlap(), 0);
+        assert_eq!(Aedat2Layout::DAVIS346.overlap(), 0);
+        let free = Aedat2Layout { special_mask: 0, ..Aedat2Layout::DVS128 };
+        assert_eq!(free.overlap(), 0, "a mask of zero disables the check, it does not fail it");
+    }
+
+    /// The encodable gap is between **consecutive** events, not between an event and the first.
+    ///
+    /// The suite could not see it: every wrapping-clock test uses two events, where the previous
+    /// event and the first event are the same record. A recording longer than 2^31 microseconds
+    /// made of small steps would be refused as one impossible gap, which reads as "this format
+    /// cannot hold my recording" when the format holds it exactly. Three events, each one
+    /// `MAX_GAP_US` after the last, is the shortest fixture that separates the two readings.
+    #[test]
+    fn the_encodable_gap_is_measured_between_consecutive_events() {
+        let step = Aedat2::MAX_GAP_US;
+        assert_eq!(step, Dat::MAX_GAP_US, "both formats carry the same 32-bit counter");
+        let events = vec![
+            AerEvent { t: 0, x: 1, y: 2, polarity: Polarity::Off },
+            AerEvent { t: step, x: 3, y: 4, polarity: Polarity::On },
+            AerEvent { t: 2 * step, x: 5, y: 6, polarity: Polarity::Off },
+        ];
+        // 2 * (2^31 - 1) = 4,294,967,294, still inside the 32-bit counter, and each step is
+        // exactly the largest gap the unwrapping rule can recover.
+        assert_eq!(2 * step, 4_294_967_294);
+        let a2 = Aedat2::encode(&events, Aedat2Layout::DVS128, &[])
+            .expect("two gaps of MAX_GAP_US each are two encodable gaps");
+        assert_eq!(Aedat2::decode(&a2, Aedat2Layout::DVS128).unwrap().events, events);
+        let dat = Dat::encode(&events, &[], Dat::CD_TYPE_CODES[0])
+            .expect("two gaps of MAX_GAP_US each are two encodable gaps");
+        assert_eq!(Dat::decode(&dat).unwrap().events, events);
+        // One microsecond more in a single step is still refused, at the event that made it.
+        let mut too_far = events.clone();
+        too_far[2].t = step + step + 1;
+        too_far[1].t = 0;
+        assert!(matches!(
+            Aedat2::encode(&too_far, Aedat2Layout::DVS128, &[]),
+            Err(EncodeError::GapTooLarge { index: 2, .. })
+        ));
+    }
+
+    /// A decoded column is range-checked against the width and a decoded row against the height.
+    ///
+    /// The suite could not see it: both presets state both dimensions, so a check that reads the
+    /// wrong field still reads a non-zero one and still compares the column with the width. The
+    /// two cases that separate the axes are a layout that states only a height — where the
+    /// column check must not fire — and one that states only a width, where it must.
+    #[test]
+    fn each_coordinate_is_range_checked_against_its_own_axis() {
+        let free = Aedat2Layout { width: 0, height: 0, ..Aedat2Layout::DAVIS346 };
+        let wide = [AerEvent { t: 5, x: 400, y: 10, polarity: Polarity::On }];
+        let bytes = Aedat2::encode(&wide, free, &[])
+            .expect("a layout stating no geometry checks none, and the 10-bit field holds 400");
+        // Height stated, width unstated: nothing bounds the column, so the event decodes.
+        let no_width = Aedat2Layout { width: 0, ..Aedat2Layout::DAVIS346 };
+        assert_eq!(
+            Aedat2::decode(&bytes, no_width).expect("no width, no column check").events,
+            wide
+        );
+        // Width stated, height unstated: the column is checked, and against the width.
+        let no_height = Aedat2Layout { height: 0, ..Aedat2Layout::DAVIS346 };
+        match Aedat2::decode(&bytes, no_height) {
+            Err(DecodeError::FieldOutOfRange { field, value, max, .. }) => {
+                assert_eq!((field, value, max), ("column", 400, 345));
+            }
+            other => panic!("column 400 was not checked against the stated width 346: {other:?}"),
+        }
+        // And the row is checked against the height, not the width: a row past 260 inside a
+        // layout whose width would admit it.
+        let tall = [AerEvent { t: 5, x: 3, y: 300, polarity: Polarity::On }];
+        let tall_bytes = Aedat2::encode(&tall, free, &[]).expect("the 9-bit row field holds 300");
+        match Aedat2::decode(&tall_bytes, Aedat2Layout::DAVIS346) {
+            Err(DecodeError::FieldOutOfRange { field, value, max, .. }) => {
+                assert_eq!((field, value, max), ("row", 300, 259));
+            }
+            other => panic!("row 300 was not checked against the stated height 260: {other:?}"),
+        }
+    }
+
+    /// `EVT` 2.0 writes one `EVT_TIME_HIGH` word per 64-microsecond window, not one per event.
+    ///
+    /// The suite could not see it: every other `EVT` 2.0 test decodes what it encodes, and a
+    /// stream with a redundant time word ahead of every event decodes to exactly the same
+    /// events. Only the byte count says the format's whole point — 4 bytes an event — is still
+    /// being met; a time word per event doubles a recording on disk and reads as normal.
+    #[test]
+    fn evt2_writes_one_time_high_word_per_window_not_one_per_event() {
+        let same_window = [
+            AerEvent { t: 0, x: 1, y: 2, polarity: Polarity::Off },
+            AerEvent { t: 5, x: 3, y: 4, polarity: Polarity::On },
+        ];
+        let bytes = Evt2::encode(&same_window).expect("encodable");
+        assert_eq!(bytes.len(), 3 * 4, "one time word and two events is three 32-bit words");
+        let words: Vec<u32> =
+            bytes.as_chunks::<4>().0.iter().copied().map(u32::from_le_bytes).collect();
+        assert_eq!(words[0] >> 28, u32::from(Evt2::TIME_HIGH));
+        assert_eq!(words[1] >> 28, u32::from(Evt2::CD_OFF));
+        assert_eq!(words[2] >> 28, u32::from(Evt2::CD_ON));
+        assert_eq!(Evt2::decode(&bytes).unwrap().events, same_window);
+        // 63 and 64 are on opposite sides of the 6-bit low field, so there the word IS written
+        // again — which is what stops this test being satisfied by never writing one.
+        let crossing = [
+            AerEvent { t: 63, x: 1, y: 2, polarity: Polarity::Off },
+            AerEvent { t: 64, x: 3, y: 4, polarity: Polarity::On },
+        ];
+        let across = Evt2::encode(&crossing).expect("encodable");
+        assert_eq!(across.len(), 4 * 4, "a new window costs a second time word");
+        assert_eq!(Evt2::decode(&across).unwrap().events, crossing);
+    }
+
+    /// An `EVT` 3.0 vector mask bit implying a column past the 11-bit column field is refused.
+    ///
+    /// The suite could not see it: `evt3_vector_masks_expand_to_exactly_the_bits_set` uses small
+    /// bases, and the encoder never writes a base within 12 columns of the end of the field, so
+    /// no stream this crate produces reaches the bound. A hand-built stream does, and the bound
+    /// itself — 2047, the last column the format can express — is what is pinned here: a bit
+    /// past it must be an error rather than an event at a column no `Prophesee` sensor has.
+    #[test]
+    fn evt3_refuses_a_vector_mask_bit_past_the_column_field() {
+        // Base 2040 with mask bit 11 implies column 2051.
+        let over = evt3_words(&[
+            Evt3::ADDR_Y << 12,
+            (Evt3::VECT_BASE_X << 12) | 2040,
+            (Evt3::VECT_12 << 12) | 0x800,
+        ]);
+        match Evt3::decode(&over) {
+            Err(DecodeError::FieldOutOfRange { field, value, max, .. }) => {
+                assert_eq!((field, value, max), ("column implied by a vector mask bit", 2051, 2047));
+            }
+            other => panic!("a mask bit implying column 2051 was decoded: {other:?}"),
+        }
+        // Base 2036 with the same bit implies column 2047, the last one that exists, and decodes.
+        let edge = evt3_words(&[
+            Evt3::ADDR_Y << 12,
+            (Evt3::VECT_BASE_X << 12) | 2036,
+            (Evt3::VECT_12 << 12) | 0x800,
+        ]);
+        let back = Evt3::decode(&edge).expect("column 2047 is inside an 11-bit field");
+        assert_eq!(back.events.len(), 1);
+        assert_eq!(back.events[0].x, 2047);
+    }
+
+    /// The vector path takes only **strictly** increasing columns, because a mask carries a
+    /// column once however many events named it.
+    ///
+    /// The suite could not see it: `synth` and the dense fixture both step the column forward by
+    /// at least one, so no existing stream repeats a column inside one microsecond and one row.
+    /// A real sensor does, and a run that admitted the repeat would fold two events into one
+    /// mask bit — a decode that is shorter than what was encoded, with every remaining event
+    /// correct.
+    #[test]
+    fn evt3_vectorises_only_strictly_increasing_columns_so_a_repeated_column_survives() {
+        let events: Vec<AerEvent> = [5u16, 5, 6]
+            .iter()
+            .map(|&x| AerEvent { t: 9, x, y: 3, polarity: Polarity::On })
+            .collect();
+        let vect = Evt3::encode(&events, true).expect("encodable");
+        assert_eq!(
+            Evt3::decode(&vect).unwrap().events,
+            events,
+            "the vectorised encoding lost a repeated column"
+        );
+        let plain = Evt3::encode(&events, false).expect("encodable");
+        assert_eq!(Evt3::decode(&plain).unwrap().events, events);
+        // A longer repeat, where the run is long enough that the vector path is tempting twice.
+        let many: Vec<AerEvent> = [1u16, 2, 2, 3, 4, 4, 4, 5]
+            .iter()
+            .map(|&x| AerEvent { t: 11, x, y: 7, polarity: Polarity::Off })
+            .collect();
+        assert_eq!(Evt3::decode(&Evt3::encode(&many, true).unwrap()).unwrap().events, many);
+    }
+
+    /// The encoder re-bases before writing a mask that could not reach the next column, so no
+    /// mask word it writes is empty.
+    ///
+    /// The suite could not see it: `evt3_rebases_a_vector_run_across_a_gap_wider_than_a_mask`
+    /// uses a gap of 29 columns, which forces a re-base under any threshold from 12 to 29, and
+    /// its byte count is unchanged by a threshold of 16. A gap that lands the next column 13
+    /// past the rolling base is the one that separates them, and it costs a `VECT_12` carrying
+    /// no bits at all — two bytes that encode nothing, with the events still correct, which is
+    /// why a round-trip test cannot see it either.
+    #[test]
+    fn evt3_never_writes_a_vector_mask_with_no_bits_set() {
+        let events: Vec<AerEvent> = [0u16, 1, 25]
+            .iter()
+            .map(|&x| AerEvent { t: 0, x, y: 42, polarity: Polarity::Off })
+            .collect();
+        let vect = Evt3::encode(&events, true).expect("encodable");
+        assert_eq!(Evt3::decode(&vect).unwrap().events, events);
+        // Word for word: time, row, base 0, a 12-mask carrying columns 0 and 1, then a new base
+        // at 25 — NOT a second 12-mask carrying nothing across the gap — and an 8-mask for it.
+        assert_eq!(
+            vect,
+            evt3_words(&[
+                Evt3::TIME_HIGH << 12,
+                Evt3::TIME_LOW << 12,
+                (Evt3::ADDR_Y << 12) | 42,
+                Evt3::VECT_BASE_X << 12,
+                (Evt3::VECT_12 << 12) | 0b11,
+                (Evt3::VECT_BASE_X << 12) | 25,
+                (Evt3::VECT_8 << 12) | 0b1,
+            ])
+        );
+        // The invariant behind that fixture, over a stream with gaps of every width up to 20.
+        let mut spread = Vec::new();
+        let mut x = 0u16;
+        for step in 1..=20u16 {
+            spread.push(AerEvent { t: 1, x, y: 9, polarity: Polarity::On });
+            x += step;
+        }
+        let wide = Evt3::encode(&spread, true).expect("encodable");
+        assert_eq!(Evt3::decode(&wide).unwrap().events, spread);
+        for w in wide.as_chunks::<2>().0.iter().copied().map(u16::from_le_bytes) {
+            let mask = match w >> 12 {
+                Evt3::VECT_12 => w & 0x0FFF,
+                Evt3::VECT_8 => w & 0x00FF,
+                _ => continue,
+            };
+            assert_ne!(mask, 0, "an empty mask word spends two bytes and carries no event");
+        }
+    }
+
+    /// A `% Width n` header line admits column `n - 1` and refuses column `n`.
+    ///
+    /// The suite could not see it: every `.dat` encode in the suite passes an empty header, so
+    /// the declared-geometry branch of the encoder is never taken, and the asymmetry it hides is
+    /// the dangerous kind — an encoder that admitted column `n` would write a file **its own
+    /// decoder refuses**, since the decoder compares the same column with the same declared
+    /// width and rejects at `n`.
+    #[test]
+    fn dat_refuses_the_column_its_own_declared_width_would_refuse_on_the_way_back() {
+        let header = vec!["Width 640".to_string(), "Height 480".to_string()];
+        let edge = [AerEvent { t: 0, x: 639, y: 479, polarity: Polarity::On }];
+        let bytes = Dat::encode(&edge, &header, Dat::CD_TYPE_CODES[0])
+            .expect("639 is the last column of a width of 640");
+        let back = Dat::decode(&bytes).expect("and the decoder reads it back");
+        assert_eq!((back.width, back.height), (Some(640), Some(480)));
+        assert_eq!(back.events, edge);
+        for (event, field, value, max) in [
+            (AerEvent { t: 0, x: 640, y: 0, polarity: Polarity::On }, "column", 640u64, 639u64),
+            (AerEvent { t: 0, x: 0, y: 480, polarity: Polarity::On }, "row", 480, 479),
+        ] {
+            match Dat::encode(&[event], &header, Dat::CD_TYPE_CODES[0]) {
+                Err(EncodeError::FieldOutOfRange { field: f, value: v, max: m, .. }) => {
+                    assert_eq!((f, v, m), (field, value, max));
+                }
+                other => panic!("{field} {value} was written into a file declaring {max}+1: {other:?}"),
+            }
+        }
+    }
+
+    /// `.dat` terminates a header line with a bare newline; `AEDAT` 2.0 terminates one with
+    /// `CRLF`. They are different conventions and this module writes each one where it belongs.
+    ///
+    /// The suite could not see it: `dat_round_trips_bit_exactly` and the field-table test both
+    /// encode `.dat` with an **empty** header, so no terminator is written at all, and
+    /// [`read_header_lines`] strips an optional `\r` on the way back in, so even a header that
+    /// was written would round-trip either way. Only the bytes tell, and a `.dat` reader that
+    /// splits on `\n` alone hands its caller a `Width` value with a carriage return stuck to it.
+    #[test]
+    fn dat_terminates_a_header_line_with_a_bare_newline() {
+        let mut want = b"%Width 640\n".to_vec();
+        want.extend_from_slice(&[Dat::CD_TYPE_CODES[0], Dat::RECORD_SIZE]);
+        let bytes = Dat::encode(&[], &["Width 640".to_string()], Dat::CD_TYPE_CODES[0])
+            .expect("encodable");
+        assert_eq!(bytes, want);
+        assert!(!bytes.contains(&b'\r'), "a .dat header carries no carriage return");
+        assert_eq!(Dat::decode(&bytes).unwrap().width, Some(640));
+        // jAER's AEDAT 2.0, by contrast, does write CRLF, so this is a convention per format and
+        // not a blanket preference for one terminator.
+        let a2 = Aedat2::encode(&[], Aedat2Layout::DVS128, &[]).expect("encodable");
+        assert_eq!(a2, b"#!AER-DAT2.0\r\n");
+    }
+
+    /// The flat header's declared count is compared with the records actually present.
+    ///
+    /// The suite could not see it: `flat_checks_its_own_header_and_reserved_bytes` truncates four
+    /// bytes and appends one, and **both** of those leave a body that is not a multiple of 16 —
+    /// so the multiple-of-record-size half of the same condition catches them and the count
+    /// comparison is never the reason. A count that disagrees while the body stays a whole number
+    /// of records is the case that separates the two halves, and it is exactly what a file
+    /// truncated at a record boundary looks like.
+    #[test]
+    fn the_flat_header_count_is_compared_with_the_records_present() {
+        let events = synth(4, 3, 64, 64, 10);
+        let good = Flat::encode(&events, 64, 64).expect("encodable");
+        assert_eq!(good.len(), Flat::HEADER_SIZE + 4 * Flat::RECORD_SIZE);
+        assert_eq!(Flat::decode(&good).expect("the fixture is valid").events, events);
+        for declared in [0u64, 3, 5, u64::MAX] {
+            let mut b = good.clone();
+            b[16..24].copy_from_slice(&declared.to_le_bytes());
+            match Flat::decode(&b) {
+                Err(DecodeError::CountMismatch { offset, declared: d, actual }) => {
+                    assert_eq!((offset, d, actual), (16, declared, 4));
+                }
+                other => panic!("a header declaring {declared} of 4 records was read: {other:?}"),
+            }
+        }
+        // Dropping whole records, which keeps the body a multiple of the record size.
+        let mut short = good.clone();
+        short.truncate(Flat::HEADER_SIZE + 2 * Flat::RECORD_SIZE);
+        match Flat::decode(&short) {
+            Err(DecodeError::CountMismatch { offset, declared, actual }) => {
+                assert_eq!((offset, declared, actual), (16, 4, 2));
+            }
+            other => panic!("a file two records short of its header was read: {other:?}"),
+        }
+    }
+
+    /// A signed coordinate of -1 in an `AEDAT` 4.0 payload is refused like any other negative.
+    ///
+    /// The suite could not see it: no test puts a negative coordinate in a `FlatBuffers` event at
+    /// all, and -1 is the one that hides best — `0xFFFF` is what an all-ones fill writes, and
+    /// `unsigned_abs` turns it into a perfectly ordinary event at column 1. A bound of "below
+    /// -1" therefore produces a full, sorted, plausible event list off by one pixel from a file
+    /// that should not have decoded.
+    #[test]
+    fn aedat4_refuses_a_coordinate_of_minus_one_like_any_other_negative() {
+        let events = [AerEvent { t: 7, x: 3, y: 4, polarity: Polarity::On }];
+        let file = Aedat4::raw_from_events(&events, 8, 0).expect("encodable");
+        let good = file.encode().expect("encodable");
+        assert_eq!(
+            Aedat4::decode(&good).expect("the fixture is valid").events().unwrap(),
+            events
+        );
+        // The single packet is last, its 16-byte element vector starts 24 bytes into the payload.
+        let first_event = good.len() - file.packets[0].payload.len() + 24;
+        for (at, field) in [(8usize, "column"), (10, "row")] {
+            for raw in [0xFFFFu16, 0xFFFE, 0x8000] {
+                let mut b = good.clone();
+                b[first_event + at..first_event + at + 2].copy_from_slice(&raw.to_le_bytes());
+                let decoded = Aedat4::decode(&b).expect("the framing survives a bad payload");
+                match decoded.events() {
+                    Err(DecodeError::FieldOutOfRange { field: f, value, max, .. }) => {
+                        assert_eq!((f, value, max), (field, u64::from((raw as i16).unsigned_abs()), 32_767));
+                    }
+                    other => panic!("a {field} of {} was accepted: {other:?}", raw as i16),
+                }
+            }
+        }
+    }
+
+    /// A request for zero events per packet is read as one, not passed to `chunks`.
+    ///
+    /// The suite could not see it: every call passes 8. `slice::chunks` **panics** on a chunk
+    /// size of zero, so the hole here is not a wrong answer but an abort inside a library call,
+    /// reachable from a caller who computed the packet size from something that came out empty.
+    #[test]
+    fn a_request_for_zero_events_per_packet_is_read_as_one_event_per_packet() {
+        let events = synth(5, 21, 32, 32, 3);
+        let file = Aedat4::raw_from_events(&events, 0, 9).expect("zero is read as one");
+        assert_eq!(file.packets.len(), events.len());
+        assert!(file.packets.iter().all(|p| p.stream_id == 9));
+        assert!(
+            file.packets.iter().all(|p| p.events.as_ref().is_some_and(|e| e.len() == 1)),
+            "one event per packet"
+        );
+        assert_eq!(file.events().expect("all raw"), events);
+        let bytes = file.encode().expect("encodable");
+        assert_eq!(Aedat4::decode(&bytes).unwrap().events().unwrap(), events);
+        // And an empty stream with a zero request is an empty file, not a panic either.
+        assert!(Aedat4::raw_from_events(&[], 0, 0).expect("encodable").packets.is_empty());
+    }
+
+    /// A refused event is numbered within the whole stream the caller passed, not within the
+    /// packet it landed in.
+    ///
+    /// The suite could not see it: the only `AEDAT` 4.0 encode refusals in the suite come from
+    /// single-packet fixtures, where the packet index and the stream index are the same number.
+    /// A stream index that silently restarts at every packet boundary points the caller at the
+    /// wrong event — event 1 of 8,000 rather than event 2,051 — while the error type, the field
+    /// and the value are all correct.
+    #[test]
+    fn aedat4_numbers_a_refused_event_within_the_whole_stream() {
+        for (bad, per_packet) in [(3usize, 2usize), (5, 2), (4, 4), (1, 2)] {
+            let mut events = synth(6, 5, 32, 32, 3);
+            events[bad].x = 40_000;
+            match Aedat4::raw_from_events(&events, per_packet, 0) {
+                Err(EncodeError::FieldOutOfRange { index, field, value, max }) => {
+                    assert_eq!((index, field, value, max), (bad, "column", 40_000, 32_767));
+                }
+                other => panic!("event {bad} of {per_packet} per packet: {other:?}"),
+            }
+        }
+    }
+
+    /// A [`TrainMap`] that states a height of zero is refused, including for an empty stream.
+    ///
+    /// The suite could not see it: with events in hand, a height of zero is caught a second time
+    /// by the per-event `e.y >= self.height` test, so dropping the header check changes nothing
+    /// a non-empty fixture can see. The empty stream is where the two differ, and it is not a
+    /// corner: it is what an input pipeline hands this map before the first event arrives, and a
+    /// `Some` there says a geometry with no rows in it is a usable map.
+    #[test]
+    fn a_train_map_stating_no_height_is_refused_even_with_no_events() {
+        let no_height = TrainMap { width: 34, height: 0, tick_us: 1, split_polarity: false };
+        assert!(no_height.map(&[]).is_none(), "a height of zero is not a geometry");
+        assert!(no_height.map(&[AerEvent { t: 0, x: 0, y: 0, polarity: Polarity::On }]).is_none());
+        let no_width = TrainMap { width: 0, height: 34, tick_us: 1, split_polarity: false };
+        assert!(no_width.map(&[]).is_none(), "a width of zero is not a geometry");
+        let no_tick = TrainMap { width: 34, height: 34, tick_us: 0, split_polarity: false };
+        assert!(no_tick.map(&[]).is_none(), "a tick of zero microseconds divides by zero");
+        // A complete map does return a train for an empty stream, which is what stops the three
+        // refusals above being satisfied by a map that refuses everything.
+        let whole = TrainMap { width: 34, height: 34, tick_us: 1, split_polarity: false };
+        assert!(whole.map(&[]).is_some(), "an empty stream through a stated geometry is a train");
+    }
+
+    /// Two N-MNIST events in the same microsecond are in order, not backwards.
+    ///
+    /// The suite could not see it: `nmnist_records_match_the_published_bit_table` steps the
+    /// timestamp by one between its two records and then checks a strict decrease, so equality
+    /// is never presented. A saccade puts many events in one microsecond, so a decoder that
+    /// refuses equality refuses the dataset it was written for — and refuses it with
+    /// "non-monotonic", which reads as a corrupt file rather than as a wrong comparison.
+    #[test]
+    fn nmnist_accepts_two_events_in_the_same_microsecond() {
+        // Two records, both t = 0x123456: x = 17 / y = 22 / ON, then x = 18 / y = 23 / OFF.
+        let bytes = [0x11u8, 0x16, 0x92, 0x34, 0x56, 0x12, 0x17, 0x12, 0x34, 0x56];
+        let decoded = super::NMnist::decode(&bytes).expect("equal timestamps are in order");
+        assert_eq!(decoded.events.len(), 2);
+        assert_eq!(decoded.events[0].t, decoded.events[1].t);
+        assert_eq!(decoded.events[0].t, 0x12_3456);
+        assert_eq!(decoded.events[0].polarity, Polarity::On);
+        assert_eq!(decoded.events[1].polarity, Polarity::Off);
+        assert_eq!(super::NMnist::encode(&decoded.events).expect("in range"), bytes.to_vec());
+        // One microsecond earlier is still refused, so this pins equality and not the check.
+        let mut back = bytes;
+        back[9] = 0x55;
+        assert!(matches!(
+            super::NMnist::decode(&back),
+            Err(DecodeError::NonMonotonicTimestamp { previous: 0x12_3456, found: 0x12_3455, .. })
+        ));
+    }
+
+    /// The DVS128 Gesture dataset's sensor is the 128 x 128 array of the chip that recorded it.
+    ///
+    /// The suite could not see it: `GESTURE_SENSOR` is a transcribed constant that nothing read.
+    /// It is the geometry a caller builds a [`TrainMap`] from, so a wrong array size gives an
+    /// input layer of the wrong neuron count — 179,920 rather than 32,768 with the polarity
+    /// split — and every event still maps to a plausible address.
+    #[test]
+    fn the_gesture_sensor_is_the_dvs128_array_that_recorded_it() {
+        assert_eq!(super::GESTURE_SENSOR, (128, 128));
+        assert_eq!(
+            super::GESTURE_SENSOR,
+            (Aedat2Layout::DVS128.width, Aedat2Layout::DVS128.height),
+            "the dataset was recorded with the chip whose layout this module also carries"
+        );
+        assert_eq!(super::GESTURE_CLASSES, 11);
+        let (width, height) = super::GESTURE_SENSOR;
+        let split = TrainMap { width, height, tick_us: 1_000, split_polarity: true };
+        assert_eq!(split.address_count(), Some(2 * 128 * 128));
+        assert_eq!(split.address_count(), Some(32_768));
+        assert!(split.map(&[AerEvent { t: 0, x: 127, y: 127, polarity: Polarity::On }]).is_some());
+        assert!(split.map(&[AerEvent { t: 0, x: 128, y: 0, polarity: Polarity::On }]).is_none());
+        assert!(split.map(&[AerEvent { t: 0, x: 0, y: 128, polarity: Polarity::On }]).is_none());
+    }
+
+    /// A gesture label line with a fourth column is refused, not read as its first three.
+    ///
+    /// The suite could not see it: it presents a line with **two** fields and lines that do not
+    /// parse, but never one with more fields than the header names. A reader that takes the
+    /// first three of four silently accepts a file with a different schema — which is what a
+    /// dataset revision looks like — and returns labels that cut the recording in the wrong
+    /// places with nothing to say so.
+    #[test]
+    fn a_gesture_label_line_with_a_fourth_column_is_refused() {
+        let csv = "class,startTime_usec,endTime_usec\n1,1000,1999,7\n";
+        let want = csv.find("1,1000").expect("in the fixture");
+        match gesture_labels(csv) {
+            Err(DecodeError::MalformedFlatBuffer { offset, what }) => {
+                assert_eq!(offset, want);
+                assert_eq!(what, "a label line is not three unsigned integers");
+            }
+            other => panic!("a four-column label line was accepted: {other:?}"),
+        }
+        // The same line with three fields is the one that parses, so this pins the arity and not
+        // the parser.
+        let three = "class,startTime_usec,endTime_usec\n1,1000,1999\n";
+        assert_eq!(
+            gesture_labels(three).expect("three fields parse"),
+            vec![GestureLabel { class: 1, start_us: 1000, end_us: 1999 }]
+        );
+    }
+
+    /// The byte offset a bad label line is reported at counts the newlines before it.
+    ///
+    /// The suite could not see it: every malformed-line fixture in it puts the bad line
+    /// **first**, where the offset comes from the header's own length and the per-line advance
+    /// has not run yet. From the second line on, an advance that forgets the terminator drifts
+    /// by one byte per line — so the offset of the failure in a 100-line file points 99 bytes
+    /// before it, which is a number a reader trusts and cannot check.
+    #[test]
+    fn a_label_lines_offset_counts_the_line_terminators_before_it() {
+        let csv = "class,startTime_usec,endTime_usec\n1,1000,1999\n8,2000,2999\nnot a label\n";
+        let want = csv.find("not a label").expect("in the fixture");
+        assert_eq!(want, 58);
+        match gesture_labels(csv) {
+            Err(DecodeError::MalformedFlatBuffer { offset, .. }) => assert_eq!(offset, want),
+            other => panic!("the fourth line should not parse: {other:?}"),
+        }
+        // The same drift, reported through a different error, on a line further down still.
+        let bad_class = "class,startTime_usec,endTime_usec\n1,0,1\n2,0,1\n3,0,1\n12,0,1\n";
+        let at = bad_class.find("12,0,1").expect("in the fixture");
+        match gesture_labels(bad_class) {
+            Err(DecodeError::FieldOutOfRange { offset, field, value, .. }) => {
+                assert_eq!((offset, field, value), (at, "class", 12));
+            }
+            other => panic!("class 12 should be out of range: {other:?}"),
+        }
     }
 }

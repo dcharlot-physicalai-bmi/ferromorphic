@@ -68,5 +68,215 @@
   "label": "prediction weights swapped",
   "old": "(self.g_l * self.e_l + self.g_d * v_d) / (self.g_l + self.g_d)",
   "new": "(self.g_d * self.e_l + self.g_l * v_d) / (self.g_l + self.g_d)"
+ },
+ {
+  "label": "a non-finite value passes the finiteness check",
+  "old": "    if v.is_finite() { Ok(v) } else { Err(DendriteError::NonFinite { what, index: 0 }) }",
+  "new": "    if true { Ok(v) } else { Err(DendriteError::NonFinite { what, index: 0 }) }"
+ },
+ {
+  "label": "a zero passes the strictly-positive check",
+  "old": "    if v > 0.0 {",
+  "new": "    if v >= 0.0 {"
+ },
+ {
+  "label": "a negative conductance passes the non-negativity check",
+  "old": "    if v >= 0.0 {",
+  "new": "    if true {"
+ },
+ {
+  "label": "the slice scan never finds a non-finite entry",
+  "old": "    if let Some(i) = v.iter().position(|x| !x.is_finite()) {\n        return Err(DendriteError::NonFinite { what, index: i });\n    }",
+  "new": "    if let Some(i) = v.iter().position(|_| false) {\n        return Err(DendriteError::NonFinite { what, index: i });\n    }"
+ },
+ {
+  "label": "the round defaults do not start at rest",
+  "old": "e_i: -75e-3, v: -70e-3 }",
+  "new": "e_i: -75e-3, v: -60e-3 }"
+ },
+ {
+  "label": "the default inhibitory reversal is ten millivolts too low",
+  "old": "e_e: 0.0, e_i: -75e-3",
+  "new": "e_e: 0.0, e_i: -85e-3"
+ },
+ {
+  "label": "the default capacitance is a factor of ten out",
+  "old": "Self { c: 1e-9, g_l: 50e-9",
+  "new": "Self { c: 1e-8, g_l: 50e-9"
+ },
+ {
+  "label": "equal reversals pass the ordering guard",
+  "old": "if self.e_i >= self.e_e {",
+  "new": "if self.e_i > self.e_e {"
+ },
+ {
+  "label": "a non-finite somatic potential passes validation",
+  "old": "        finite_scalar(\"v\", self.v)?;",
+  "new": "        let _ = self.v;"
+ },
+ {
+  "label": "a zero dendritic coupling is refused rather than admitted",
+  "old": "        non_negative(\"g_d\", self.g_d)?;",
+  "new": "        positive(\"g_d\", self.g_d)?;"
+ },
+ {
+  "label": "the steady state drops the inhibitory term",
+  "old": "Ok((self.g_l * self.e_l + self.g_d * v_d + g_e * self.e_e + g_i * self.e_i) / total)",
+  "new": "Ok((self.g_l * self.e_l + self.g_d * v_d + g_e * self.e_e) / total)"
+ },
+ {
+  "label": "the teacher conductances are paired with each other's reversal",
+  "old": "Ok((self.g_l * self.e_l + self.g_d * v_d + g_e * self.e_e + g_i * self.e_i) / total)",
+  "new": "Ok((self.g_l * self.e_l + self.g_d * v_d + g_i * self.e_e + g_e * self.e_i) / total)"
+ },
+ {
+  "label": "the coupling term carries the rest potential rather than the dendrite's",
+  "old": "self.g_d * v_d + g_e * self.e_e",
+  "new": "self.g_d * self.e_l + g_e * self.e_e"
+ },
+ {
+  "label": "the steady state is normalised by the resting conductances only",
+  "old": "let total = self.g_l + self.g_d + g_e + g_i;",
+  "new": "let total = self.g_l + self.g_d;"
+ },
+ {
+  "label": "the prediction drops the leak's pull on the soma",
+  "old": "(self.g_l * self.e_l + self.g_d * v_d) / (self.g_l + self.g_d)",
+  "new": "(self.g_d * v_d) / (self.g_l + self.g_d)"
+ },
+ {
+  "label": "a zero step is accepted by the soma",
+  "old": "let dt = positive(\"dt\", dt)?;",
+  "new": "let dt = non_negative(\"dt\", dt)?;"
+ },
+ {
+  "label": "the exponential euler exponent divides the time constant by the step",
+  "old": "(self.v - v_inf) * (-dt / tau).exp();",
+  "new": "(self.v - v_inf) * (-tau / dt).exp();"
+ },
+ {
+  "label": "the step reports where the soma is heading rather than where it is",
+  "old": "        Ok(self.v)",
+  "new": "        Ok(v_inf)"
+ },
+ {
+  "label": "a zero transition width passes the rate function's guard",
+  "old": "        positive(\"v_scale\", v_scale)?;",
+  "new": "        non_negative(\"v_scale\", v_scale)?;"
+ },
+ {
+  "label": "the rate falls with depolarisation",
+  "old": "self.rate_max / (1.0 + (-(v - self.v_half) / self.v_scale).exp())",
+  "new": "self.rate_max / (1.0 + ((v - self.v_half) / self.v_scale).exp())"
+ },
+ {
+  "label": "the transition width multiplies the exponent rather than dividing it",
+  "old": "self.rate_max / (1.0 + (-(v - self.v_half) / self.v_scale).exp())",
+  "new": "self.rate_max / (1.0 + (-(v - self.v_half) * self.v_scale).exp())"
+ },
+ {
+  "label": "the slope's saturating factor grows with the rate rather than shrinking",
+  "old": "r * (1.0 - r / self.rate_max) / self.v_scale",
+  "new": "r * (1.0 + r / self.rate_max) / self.v_scale"
+ },
+ {
+  "label": "a learner is built on a soma that was never validated",
+  "old": "        soma.validate()?;",
+  "new": "        let _ = soma.validate();"
+ },
+ {
+  "label": "a learner with no inputs is accepted",
+  "old": "        if w.is_empty() {",
+  "new": "        if false {"
+ },
+ {
+  "label": "the dendrite hangs off the somatic potential rather than the rest potential",
+  "old": "Ok(self.soma.e_l + self.w.iter().zip(psp).map(|(w, p)| w * p).sum::<f64>())",
+  "new": "Ok(self.soma.v + self.w.iter().zip(psp).map(|(w, p)| w * p).sum::<f64>())"
+ },
+ {
+  "label": "the presynaptic vector's length is checked against itself",
+  "old": "        finite_slice(\"psp\", psp, self.w.len())?;",
+  "new": "        finite_slice(\"psp\", psp, psp.len())?;"
+ },
+ {
+  "label": "a zero coupling divides rather than refusing",
+  "old": "        if self.soma.g_d == 0.0 {",
+  "new": "        if false {"
+ },
+ {
+  "label": "the dendritic target adds the rest potential rather than subtracting it",
+  "old": "Some(v_t + (self.soma.g_l / self.soma.g_d) * (v_t - self.soma.e_l))",
+  "new": "Some(v_t + (self.soma.g_l / self.soma.g_d) * (v_t + self.soma.e_l))"
+ },
+ {
+  "label": "the weight is overwritten by its increment rather than accumulating it",
+  "old": "            *w += gain * p;",
+  "new": "            *w = gain * p;"
+ },
+ {
+  "label": "the weight update is not proportional to the presynaptic drive",
+  "old": "            *w += gain * p;",
+  "new": "            *w += gain;"
+ },
+ {
+  "label": "the rule's gain takes the slope at the soma rather than at the prediction",
+  "old": "let gain = self.eta * dt * err * self.phi.slope(v_star);",
+  "new": "let gain = self.eta * dt * err * self.phi.slope(v);"
+ },
+ {
+  "label": "the error is the potential mismatch rather than the rate mismatch",
+  "old": "let err = self.phi.rate(v) - self.phi.rate(v_star);",
+  "new": "let err = v - v_star;"
+ },
+ {
+  "label": "the rule reads the soma before the step rather than after",
+  "old": "        let v_d = self.dendrite(psp)?;\n        let v = self.soma.step(dt, v_d, g_e, g_i)?;\n        let v_star = self.soma.prediction(v_d);",
+  "new": "        let v_d = self.dendrite(psp)?;\n        let v = self.soma.v;\n        self.soma.step(dt, v_d, g_e, g_i)?;\n        let v_star = self.soma.prediction(v_d);"
+ },
+ {
+  "label": "the prediction error reads the rest potential rather than the somatic potential",
+  "old": "Ok(self.phi.rate(self.soma.v) - self.phi.rate(self.soma.prediction(v_d)))",
+  "new": "Ok(self.phi.rate(self.soma.e_l) - self.phi.rate(self.soma.prediction(v_d)))"
+ },
+ {
+  "label": "a branch with no inputs is accepted",
+  "old": "        if n == 0 {\n            return Err(DendriteError::Empty { what: \"inputs\" });\n        }",
+  "new": "        if false {\n            return Err(DendriteError::Empty { what: \"inputs\" });\n        }"
+ },
+ {
+  "label": "the bias count is checked against itself rather than against the branch count",
+  "old": "        finite_slice(\"branch biases\", &branch_bias, branches.len())?;",
+  "new": "        finite_slice(\"branch biases\", &branch_bias, branch_bias.len())?;"
+ },
+ {
+  "label": "the input length is checked against itself rather than against the branch width",
+  "old": "        finite_slice(\"input\", x, self.branches[0].len())?;",
+  "new": "        finite_slice(\"input\", x, x.len())?;"
+ },
+ {
+  "label": "the branch sigmoid runs backwards",
+  "old": "                1.0 / (1.0 + (-z / self.scale).exp())",
+  "new": "                1.0 / (1.0 + (z / self.scale).exp())"
+ },
+ {
+  "label": "the branch offset never reaches the branch",
+  "old": "let z: f64 = w.iter().zip(x).map(|(wi, xi)| wi * xi).sum::<f64>() + b;",
+  "new": "let z: f64 = w.iter().zip(x).map(|(wi, xi)| wi * xi).sum::<f64>() + 0.0 * b;"
+ },
+ {
+  "label": "the soma fires on the strongest branch rather than on their sum",
+  "old": "Ok(self.branch_outputs(x)?.iter().sum::<f64>() >= self.threshold)",
+  "new": "Ok(self.branch_outputs(x)?.iter().fold(f64::NEG_INFINITY, |a, &b| a.max(b)) >= self.threshold)"
+ },
+ {
+  "label": "the somatic threshold is strict rather than inclusive",
+  "old": "Ok(self.branch_outputs(x)?.iter().sum::<f64>() >= self.threshold)",
+  "new": "Ok(self.branch_outputs(x)?.iter().sum::<f64>() > self.threshold)"
+ },
+ {
+  "label": "the xor proof drops the factor of two that adding the two middle constraints gives",
+  "old": "let sum_lower = 2.0 * minus_b_lower;",
+  "new": "let sum_lower = minus_b_lower;"
  }
 ]

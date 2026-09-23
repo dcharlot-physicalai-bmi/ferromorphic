@@ -88,5 +88,236 @@
   "label": "negative delay accepted",
   "old": "delays.iter().find(|d| **d < 0.0 || **d > max_delay)",
   "new": "delays.iter().find(|d| **d > max_delay)"
+ },
+ {
+  "label": "the dimension error reports the supplied length as the required one",
+  "old": "            Self::Dimension { what, got, want } => write!(f, \"{what} has length {got}, expected {want}\"),",
+  "new": "            Self::Dimension { what, got, want } => write!(f, \"{what} has length {want}, expected {got}\"),"
+ },
+ {
+  "label": "the out-of-range error prints its admissible interval backwards",
+  "old": "                write!(f, \"{what} = {value} is outside [{low}, {high}]\")",
+  "new": "                write!(f, \"{what} = {value} is outside [{high}, {low}]\")"
+ },
+ {
+  "label": "only a NaN is refused, so an infinite value passes the finiteness check",
+  "old": "    if let Some(i) = v.iter().position(|x| !x.is_finite()) {",
+  "new": "    if let Some(i) = v.iter().position(|x| x.is_nan()) {"
+ },
+ {
+  "label": "the reported position of the first non-finite value is one past it",
+  "old": "        return Err(DelayError::NonFinite { what, index: i });",
+  "new": "        return Err(DelayError::NonFinite { what, index: i + 1 });"
+ },
+ {
+  "label": "a neuron with no synapses is built rather than refused",
+  "old": "        if delays.is_empty() {",
+  "new": "        if false {"
+ },
+ {
+  "label": "an infinite max_delay is accepted as the hardware's longest delay",
+  "old": "        if !(max_delay > 0.0) || !max_delay.is_finite() {",
+  "new": "        if !(max_delay > 0.0) {"
+ },
+ {
+  "label": "a max_delay of zero is accepted",
+  "old": "        if !(max_delay > 0.0) || !max_delay.is_finite() {",
+  "new": "        if !(max_delay >= 0.0) || !max_delay.is_finite() {"
+ },
+ {
+  "label": "the max_delay error names zero as admissible and one second as the ceiling",
+  "old": "low: f64::MIN_POSITIVE, high: f64::INFINITY",
+  "new": "low: 0.0, high: 1.0"
+ },
+ {
+  "label": "delays are not checked for finiteness, and the range test cannot see a NaN",
+  "old": "        finite_all(\"delays\", &delays)?;\n",
+  "new": ""
+ },
+ {
+  "label": "the finiteness complaint about the delays names the spikes",
+  "old": "finite_all(\"delays\", &delays)?;",
+  "new": "finite_all(\"spikes\", &delays)?;"
+ },
+ {
+  "label": "a delay of exactly zero is refused",
+  "old": "delays.iter().find(|d| **d < 0.0 || **d > max_delay)",
+  "new": "delays.iter().find(|d| **d <= 0.0 || **d > max_delay)"
+ },
+ {
+  "label": "a delay of exactly max_delay is refused, though learn clips delays to it",
+  "old": "delays.iter().find(|d| **d < 0.0 || **d > max_delay)",
+  "new": "delays.iter().find(|d| **d < 0.0 || **d >= max_delay)"
+ },
+ {
+  "label": "a volley longer than the synapse count is accepted and silently truncated",
+  "old": "        if spikes.len() != self.delays.len() {",
+  "new": "        if spikes.len() < self.delays.len() {"
+ },
+ {
+  "label": "the dimension error swaps the length supplied for the length required",
+  "old": "got: spikes.len(), want: self.delays.len()",
+  "new": "got: self.delays.len(), want: spikes.len()"
+ },
+ {
+  "label": "spike times are not checked for finiteness",
+  "old": "        finite_all(\"spikes\", spikes)?;\n",
+  "new": ""
+ },
+ {
+  "label": "each spike is delayed by another synapse's delay",
+  "old": "Ok(spikes.iter().zip(&self.delays).map(|(t, d)| t + d).collect())",
+  "new": "Ok(spikes.iter().zip(self.delays.iter().rev()).map(|(t, d)| t + d).collect())"
+ },
+ {
+  "label": "the spread's running extremes start from the wrong infinities",
+  "old": "        let a = self.arrivals(spikes)?;\n        let (lo, hi) = a.iter().fold((f64::INFINITY, f64::NEG_INFINITY), |(lo, hi), &x| (lo.min(x), hi.max(x)));\n",
+  "new": "        let a = self.arrivals(spikes)?;\n        let (lo, hi) = a.iter().fold((f64::NEG_INFINITY, f64::INFINITY), |(lo, hi), &x| (lo.min(x), hi.max(x)));\n"
+ },
+ {
+  "label": "a NaN window slips through the window guard",
+  "old": "        if !(window >= 0.0) {",
+  "new": "        if window < 0.0 {"
+ },
+ {
+  "label": "a window of zero is refused, so simultaneous arrivals cannot be asked about",
+  "old": "        if !(window >= 0.0) {",
+  "new": "        if !(window > 0.0) {"
+ },
+ {
+  "label": "arrivals are sorted latest first, so the window never closes",
+  "old": "        a.sort_by(f64::total_cmp);",
+  "new": "        a.sort_by(|x, y| f64::total_cmp(y, x));"
+ },
+ {
+  "label": "the window is measured from the right end back to the left",
+  "old": "while a[hi] - a[lo] > window {",
+  "new": "while a[lo] - a[hi] > window {"
+ },
+ {
+  "label": "the earliest arrival never opens a window, so a single synapse coincides with nothing",
+  "old": "for hi in 0..a.len() {",
+  "new": "for hi in 1..a.len() {"
+ },
+ {
+  "label": "the largest count is overwritten by the last window rather than kept",
+  "old": "best = best.max(hi - lo + 1);",
+  "new": "best = hi - lo + 1;"
+ },
+ {
+  "label": "every arrival is reported as coincident whatever the window",
+  "old": "        Ok(best)\n",
+  "new": "        Ok(a.len())\n"
+ },
+ {
+  "label": "the matched pattern compensates only half of each delay",
+  "old": "self.delays.iter().map(|d| at - d).collect()",
+  "new": "self.delays.iter().map(|d| at - d / 2.0).collect()"
+ },
+ {
+  "label": "a NaN learning rate slips through the (0, 1] guard",
+  "old": "        if !(eta > 0.0) || !(eta <= 1.0) {",
+  "new": "        if eta <= 0.0 || eta > 1.0 {"
+ },
+ {
+  "label": "a learning rate of zero is accepted",
+  "old": "        if !(eta > 0.0) || !(eta <= 1.0) {",
+  "new": "        if !(eta <= 1.0) {"
+ },
+ {
+  "label": "the mean arrival is the sum of the arrivals",
+  "old": "let mean_arrival = a.iter().sum::<f64>() / a.len() as f64;",
+  "new": "let mean_arrival = a.iter().sum::<f64>();"
+ },
+ {
+  "label": "the mean arrival divides by one less than the number of synapses",
+  "old": "let mean_arrival = a.iter().sum::<f64>() / a.len() as f64;",
+  "new": "let mean_arrival = a.iter().sum::<f64>() / (a.len() - 1) as f64;"
+ },
+ {
+  "label": "the update shifts each delay by its spike time rather than its arrival",
+  "old": "for (d, ai) in self.delays.iter_mut().zip(&a) {",
+  "new": "for (d, ai) in self.delays.iter_mut().zip(spikes) {"
+ },
+ {
+  "label": "each delay is paired with the arrival of the synapse opposite it",
+  "old": "for (d, ai) in self.delays.iter_mut().zip(&a) {",
+  "new": "for (d, ai) in self.delays.iter_mut().zip(a.iter().rev()) {"
+ },
+ {
+  "label": "the learning rate multiplies the arrival but not the mean it is measured from",
+  "old": "let moved = *d - eta * (ai - mean_arrival);",
+  "new": "let moved = *d - eta * ai + mean_arrival;"
+ },
+ {
+  "label": "a delay may be clipped to a negative value",
+  "old": "let held = moved.clamp(0.0, self.max_delay);",
+  "new": "let held = moved.clamp(-self.max_delay, self.max_delay);"
+ },
+ {
+  "label": "a delay that lands exactly on a bound is counted as clipped",
+  "old": "clipped += usize::from(held != moved);",
+  "new": "clipped += usize::from(held == 0.0 || held == self.max_delay);"
+ },
+ {
+  "label": "only the last synapse's clipping is reported",
+  "old": "clipped += usize::from(held != moved);",
+  "new": "clipped = usize::from(held != moved);"
+ },
+ {
+  "label": "the clip is counted but the unclipped delay is stored",
+  "old": "            *d = held;",
+  "new": "            *d = moved;"
+ },
+ {
+  "label": "the reported mean arrival is the midrange of the arrivals",
+  "old": "Ok(Presentation { spread: hi - lo, mean_arrival, clipped })",
+  "new": "Ok(Presentation { spread: hi - lo, mean_arrival: 0.5 * (hi + lo), clipped })"
+ },
+ {
+  "label": "zero synapses stand for zero patterns rather than refusing",
+  "old": "        return None;\n",
+  "new": "        return Some(0);\n"
+ },
+ {
+  "label": "the delay alphabet is D rather than D+1, forgetting that zero is a delay",
+  "old": "let all = u128::from(d_max).checked_add(1)?.checked_pow(n)?;",
+  "new": "let all = u128::from(d_max).checked_pow(n)?;"
+ },
+ {
+  "label": "the total count is left to overflow instead of refusing",
+  "old": "let all = u128::from(d_max).checked_add(1)?.checked_pow(n)?;",
+  "new": "let all = u128::from(d_max).checked_add(1)?.pow(n);"
+ },
+ {
+  "label": "the shifted count is left to overflow instead of refusing",
+  "old": "let shifted = u128::from(d_max).checked_pow(n)?;",
+  "new": "let shifted = u128::from(d_max).pow(n);",
+  "equivalent": "UNREACHABLE, BY THE ORDER OF THE TWO CHECKS. `all` is computed first and its `?` returns None on overflow, so the line this mutation edits runs only when (d_max+1)^n already fit in a u128. For every n >= 1 and every d_max >= 0, d_max^n < (d_max+1)^n, so d_max^n fits too and checked_pow returns Some: the `?` this mutation removes can never fire. The same argument covers a debug build, where the bare `pow` would panic rather than wrap -- the panic is on a branch that is not taken, so the two versions agree there as well, and n = 0 returns None before either line. Fixture built and both versions run side by side over 173,978 pairs -- n in 0..=300 against 578 values of d_max (0..300, and every power of two from 1 to 2^63 plus u64::MAX, each with its two neighbours either side): 0 differed, and the shifted count's checked_pow was None while the total count's was Some in 0 of them. What is NOT claimed: that the `?` is pointless as documentation of the invariant, only that no test could distinguish its presence from its absence. The TOTAL count's own `?` is a different matter and is now pinned by `a_capacity_that_would_overflow_is_refused_rather_than_wrapped`."
+ },
+ {
+  "label": "the per-synapse cost wraps instead of saturating",
+  "old": "let sum = delays_ticks.iter().fold(0u64, |a, d| a.saturating_add(*d));",
+  "new": "let sum = delays_ticks.iter().fold(0u64, |a, d| a.wrapping_add(*d));"
+ },
+ {
+  "label": "the ring buffer is priced at two bits per tick of delay",
+  "old": "|a, d| a.saturating_add(*d)",
+  "new": "|a, d| a.saturating_add(d.saturating_mul(2))"
+ },
+ {
+  "label": "the shared axonal line is sized by the shortest delay",
+  "old": "delays_ticks.iter().copied().max()",
+  "new": "delays_ticks.iter().copied().min()"
+ },
+ {
+  "label": "an empty synapse list costs a bit of shared line",
+  "old": ".max().unwrap_or(0))",
+  "new": ".max().unwrap_or(1))"
+ },
+ {
+  "label": "the per-synapse and shared-line costs are returned the other way round",
+  "old": "    (sum, delays_ticks.iter().copied().max().unwrap_or(0))\n",
+  "new": "    (delays_ticks.iter().copied().max().unwrap_or(0), sum)\n"
  }
 ]

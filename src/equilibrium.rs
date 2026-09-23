@@ -54,7 +54,10 @@ use core::fmt;
 
 use crate::rng::Rng;
 
-/// The most relaxation steps one call will take; a request past it is refused.
+/// The most relaxation steps one call will take: **ten million**. A request for exactly this
+/// many is admissible; one past it is refused with [`EquilibriumError::OutOfRange`]. The
+/// number is written here as well as in the literal because a cap nobody states is a cap
+/// nobody can notice moving.
 pub const MAX_STEPS: u64 = 10_000_000;
 
 /// What went wrong, named rather than guessed around.
@@ -655,6 +658,330 @@ mod tests {
         let wrong = n.energy_gradient(&from_origin, &x).expect("a finite state");
         let other: Vec<f64> = wrong.b.iter().zip(&minus.b).map(|(p, q)| (p - q) / beta).collect();
         assert!(got.b[1] < 1.0 && other[1] > 5.0, "measured {} against {}", got.b[1], other[1]);
+    }
+
+    /// A non-finite entry is refused WHEREVER it sits and WHATEVER kind it is, and the error names
+    /// the slot it sits in. Three things are pinned: an infinity is non-finite (not only a `NaN`);
+    /// the reported `index` is the offending position, not a constant zero; and the TARGET is
+    /// checked, the private `Network::check` being the only place that happens for
+    /// [`Network::velocity`] and [`Network::total_energy`].
+    ///
+    /// Why the suite could not see it: `bad_arguments_are_refused` passes exactly one non-finite
+    /// argument, `[f64::NAN, 0.0, 0.0, 0.0]`, and reads it with a `matches!` pattern that names
+    /// the variant and the `what` field and discards the index. A `NaN` in slot zero cannot
+    /// distinguish `!x.is_finite()` from `x.is_nan()`, and cannot distinguish `index: i` from
+    /// `index: 0`; and no test anywhere in the module passed a non-finite `y`, so the target's
+    /// check was never executed.
+    #[test]
+    fn a_non_finite_entry_is_refused_by_kind_and_reported_at_the_slot_it_sits_in() {
+        let n = net();
+        let (s, x, y) = ([0.0_f64; 7], [0.0_f64; 3], [0.0_f64; 2]);
+        for bad in [f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
+            let mut state = s;
+            state[4] = bad;
+            assert_eq!(n.velocity(&state, &x, &y, 0.0).unwrap_err(), EquilibriumError::NonFinite { what: "s", index: 4 });
+            assert_eq!(n.total_energy(&state, &x, &y, 0.0).unwrap_err(), EquilibriumError::NonFinite { what: "s", index: 4 });
+            assert_eq!(n.cost(&state, &y).unwrap_err(), EquilibriumError::NonFinite { what: "s", index: 4 });
+            assert_eq!(n.energy_gradient(&state, &x).unwrap_err(), EquilibriumError::NonFinite { what: "s", index: 4 });
+            let mut input = x;
+            input[2] = bad;
+            assert_eq!(n.velocity(&s, &input, &y, 0.0).unwrap_err(), EquilibriumError::NonFinite { what: "x", index: 2 });
+            assert_eq!(n.energy_gradient(&s, &input).unwrap_err(), EquilibriumError::NonFinite { what: "x", index: 2 });
+            // The target, which reaches the energy through the spring and the dynamics through it.
+            let mut target = y;
+            target[1] = bad;
+            assert_eq!(n.velocity(&s, &x, &target, 0.0).unwrap_err(), EquilibriumError::NonFinite { what: "y", index: 1 });
+            assert_eq!(n.total_energy(&s, &x, &target, 0.0).unwrap_err(), EquilibriumError::NonFinite { what: "y", index: 1 });
+            assert_eq!(n.cost(&s, &target).unwrap_err(), EquilibriumError::NonFinite { what: "y", index: 1 });
+            assert_eq!(n.relax(&s, &x, &target, 0.0, DT, TOL, 10).unwrap_err(), EquilibriumError::NonFinite { what: "y", index: 1 });
+        }
+        // And the message says which quantity and where, in that order.
+        let mut state = s;
+        state[4] = f64::INFINITY;
+        assert_eq!(n.velocity(&state, &x, &y, 0.0).unwrap_err().to_string(), "s is not finite at 4");
+    }
+
+    /// A length that does not match is refused whether it is SHORT or LONG, and the error carries
+    /// the supplied length as `got` and the required one as `want`, in that order, in the struct
+    /// and again in the message. Covers the three arrays the private `Network::check` reads, both
+    /// arrays of [`Network::energy_gradient`] and all three gradients of [`Network::descend`].
+    ///
+    /// Why the suite could not see it: every dimension case in `bad_arguments_are_refused` is a
+    /// slice TOO SHORT (`&s[..3]`, `&x[..1]`, `&[]`, `vec![0.0; 3]`), so `got == want` and
+    /// `got >= want` agree on all of them; and every one is read with `matches!(.., Dimension {
+    /// what, .. })`, which discards the two numbers, so neither the struct's field order nor the
+    /// `Display` order was ever read. `descend`'s bias check compared `g.b.len()` against the
+    /// network's, and a mutant comparing it against itself passes every existing assertion because
+    /// the only gradient the suite hands `descend` with a wrong shape is wrong in `w`.
+    #[test]
+    fn a_dimension_mismatch_is_refused_in_both_directions_and_names_the_two_lengths_in_order() {
+        let n = net();
+        let (s, x, y) = ([0.0_f64; 7], [0.0_f64; 3], [0.0_f64; 2]);
+        assert_eq!(n.velocity(&[0.0; 8], &x, &y, 0.0).unwrap_err(), EquilibriumError::Dimension { what: "s", got: 8, want: 7 });
+        assert_eq!(n.velocity(&[0.0; 6], &x, &y, 0.0).unwrap_err(), EquilibriumError::Dimension { what: "s", got: 6, want: 7 });
+        assert_eq!(n.velocity(&s, &[0.0; 4], &y, 0.0).unwrap_err(), EquilibriumError::Dimension { what: "x", got: 4, want: 3 });
+        assert_eq!(n.velocity(&s, &x, &[0.0; 3], 0.0).unwrap_err(), EquilibriumError::Dimension { what: "y", got: 3, want: 2 });
+        assert_eq!(n.total_energy(&[0.0; 9], &x, &y, 0.0).unwrap_err(), EquilibriumError::Dimension { what: "s", got: 9, want: 7 });
+        assert_eq!(n.cost(&[0.0; 9], &y).unwrap_err(), EquilibriumError::Dimension { what: "s", got: 9, want: 7 });
+        assert_eq!(n.cost(&s, &[0.0; 7]).unwrap_err(), EquilibriumError::Dimension { what: "y", got: 7, want: 2 });
+        assert_eq!(n.energy_gradient(&s, &[0.0; 5]).unwrap_err(), EquilibriumError::Dimension { what: "x", got: 5, want: 3 });
+        assert_eq!(n.relax(&[0.0; 8], &x, &y, 0.0, DT, TOL, 10).unwrap_err(), EquilibriumError::Dimension { what: "s", got: 8, want: 7 });
+        // The message reads supplied-then-required, which is the only order that tells a caller
+        // what to change.
+        assert_eq!(n.velocity(&[0.0; 8], &x, &y, 0.0).unwrap_err().to_string(), "s has length 8, expected 7");
+        assert_eq!(n.velocity(&[0.0; 6], &x, &y, 0.0).unwrap_err().to_string(), "s has length 6, expected 7");
+        // And a gradient of the wrong shape, one array at a time, long as well as short.
+        let g = n.energy_gradient(&s, &x).unwrap();
+        let mut m = n.clone();
+        for (len, want) in [(50_usize, 49_usize), (48, 49)] {
+            let bad = Gradient { w: vec![0.0; len], u: g.u.clone(), b: g.b.clone() };
+            assert_eq!(m.descend(&bad, 0.1).unwrap_err(), EquilibriumError::Dimension { what: "gradient w", got: len, want });
+        }
+        for (len, want) in [(22_usize, 21_usize), (20, 21)] {
+            let bad = Gradient { w: g.w.clone(), u: vec![0.0; len], b: g.b.clone() };
+            assert_eq!(m.descend(&bad, 0.1).unwrap_err(), EquilibriumError::Dimension { what: "gradient u", got: len, want });
+        }
+        for (len, want) in [(8_usize, 7_usize), (6, 7)] {
+            let bad = Gradient { w: g.w.clone(), u: g.u.clone(), b: vec![0.0; len] };
+            assert_eq!(m.descend(&bad, 0.1).unwrap_err(), EquilibriumError::Dimension { what: "gradient b", got: len, want });
+        }
+        assert_eq!(m, n, "a refused descend wrote a parameter anyway");
+    }
+
+    /// The relative mismatch over a fixture small enough to do by hand: each INDEPENDENT
+    /// parameter enters exactly once — a symmetric coupling is one parameter, not two — the biases
+    /// enter at all, and a bias array of the wrong length is a shape difference rather than a
+    /// prefix to truncate and compare.
+    ///
+    /// The arithmetic, in the order the function accumulates it. The reference holds one
+    /// independent coupling at `1`, one input weight at `2` and one bias at `3`, so its squared
+    /// norm is `1 + 4 + 9 + 0 = 14`. Moving any ONE of those three by three gives a squared
+    /// difference of `9` and an answer of `√(9/14)` — the SAME number whichever of the three
+    /// moved, which is what "each independent parameter once" means, and which a doubled coupling
+    /// term or a dropped bias term breaks. Every quantity is a small integer exactly represented
+    /// in binary, so these are `assert_eq!` on the f64 and not tolerances.
+    ///
+    /// Why the suite could not see it: the only other call that reads the NUMBER is `miss()`
+    /// inside the order-of-error test, which divides one mismatch by another and asks for a RATIO
+    /// of about 10 or 100 — counting every coupling twice multiplies the coupling term of both
+    /// `diff` and `norm` by two and leaves that ratio very nearly unchanged, and dropping the
+    /// biases removes one term from both, likewise. The three calls in `bad_arguments_are_refused`
+    /// read only the degenerate answers: `None` for a `w` of the wrong length, `None` for a zero
+    /// reference, and `Some(1.0)` for a zero estimate, which is `1.0` however the terms are
+    /// weighted.
+    #[test]
+    fn the_mismatch_counts_each_symmetric_coupling_once_and_the_biases_at_all() {
+        // Reference: one independent coupling at 1, one input weight at 2, one bias at 3, the
+        // other bias at 0. Its squared norm is 1 + 4 + 9 + 0 = 14, whichever way it is counted.
+        let base = Gradient { w: vec![0.0, 1.0, 1.0, 0.0], u: vec![2.0], b: vec![3.0, 0.0] };
+        assert_eq!(base.relative_mismatch(&base), Some(0.0));
+        // ONE parameter off by three, three times over: the coupling, the input weight, the bias.
+        // The three answers must be the SAME number, which is what "each independent parameter
+        // once" means; counting the symmetric coupling twice weighs the first of them differently
+        // from the other two, and dropping the biases removes the third from both sums.
+        let moved_w = Gradient { w: vec![0.0, 4.0, 4.0, 0.0], u: vec![2.0], b: vec![3.0, 0.0] };
+        let moved_u = Gradient { w: vec![0.0, 1.0, 1.0, 0.0], u: vec![5.0], b: vec![3.0, 0.0] };
+        let moved_b = Gradient { w: vec![0.0, 1.0, 1.0, 0.0], u: vec![2.0], b: vec![6.0, 0.0] };
+        let off_by_three = Some((9.0_f64 / 14.0).sqrt());
+        assert_eq!(moved_w.relative_mismatch(&base), off_by_three);
+        assert_eq!(moved_u.relative_mismatch(&base), off_by_three);
+        assert_eq!(moved_b.relative_mismatch(&base), off_by_three);
+        // All three at once: diff = 9 + 4 + 9 = 22 against the same norm of 14.
+        let all_three = Gradient { w: vec![0.0, 4.0, 4.0, 0.0], u: vec![0.0], b: vec![0.0, 0.0] };
+        assert_eq!(all_three.relative_mismatch(&base), Some((22.0_f64 / 14.0).sqrt()));
+        // An estimate of zero misses the reference by exactly the whole of it.
+        let zero = Gradient { w: vec![0.0; 4], u: vec![0.0], b: vec![0.0, 0.0] };
+        assert_eq!(zero.relative_mismatch(&base), Some(1.0));
+        // A bias array of the wrong length is a shape difference, not a prefix to compare.
+        let short_b = Gradient { w: vec![0.0; 4], u: vec![2.0], b: vec![3.0] };
+        let long_b = Gradient { w: vec![0.0; 4], u: vec![2.0], b: vec![3.0, 0.0, 0.0] };
+        assert_eq!(base.relative_mismatch(&short_b), None);
+        assert_eq!(base.relative_mismatch(&long_b), None);
+        assert_eq!(short_b.relative_mismatch(&base), None);
+    }
+
+    /// [`Network::random`] admits a network whose every unit is an output, starts its biases at
+    /// exactly zero, and refuses a `NaN` scale.
+    ///
+    /// `n_out == n` is the degenerate but legal case the doc describes as "more outputs than
+    /// units" being the refusal; the zero biases are what make a fresh network's free fixed point
+    /// the origin when the input is zero, which the velocity assertion below states as physics
+    /// rather than as a field comparison.
+    ///
+    /// Why the suite could not see it: `bad_arguments_are_refused` tests `random(3, 4, 1, ..)`,
+    /// which is `n_out > n` and stays refused under `n_out >= n`, and never builds the boundary
+    /// case; it tests `scale` at `0.0` and `1.5`, both of which the arithmetic comparison
+    /// `scale <= 0.0 || scale > 1.0` also rejects, while `NaN` passes it and poisons every
+    /// coupling; and the only other fixture, `net()`, OVERWRITES all seven biases on the line
+    /// after the constructor returns, so what the constructor put there was never read.
+    #[test]
+    fn a_fresh_network_may_be_all_outputs_starts_at_zero_bias_and_refuses_a_nan_scale() {
+        let mut rng = Rng::new(3);
+        let all_out = Network::random(4, 4, 2, 0.5, &mut rng).expect("every unit may be an output");
+        assert_eq!(all_out.n_out, 4);
+        assert_eq!(all_out.b, vec![0.0; 4]);
+        // n − n_out = 0, so the whole state is the output and the loss reads all four units.
+        assert_eq!(all_out.cost(&[1.0, 2.0, 3.0, 4.0], &[1.0, 2.0, 3.0, 4.0]).unwrap(), 0.0);
+        // Zero biases and zero input mean zero drive: the origin is a fixed point exactly.
+        assert_eq!(all_out.velocity(&[0.0; 4], &[0.0; 2], &[0.0; 4], 0.0).unwrap(), vec![0.0; 4]);
+        assert_eq!(all_out.relax(&[0.0; 4], &[0.0; 2], &[0.0; 4], 0.0, DT, TOL, 10).unwrap(), vec![0.0; 4]);
+        assert!(all_out.w.iter().any(|v| v.abs() > 0.0), "a fixture whose couplings are all zero would say nothing");
+        for scale in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(
+                matches!(Network::random(3, 1, 1, scale, &mut rng), Err(EquilibriumError::OutOfRange { what: "scale", .. })),
+                "scale = {scale} was accepted"
+            );
+        }
+    }
+
+    /// The field a unit feels is the unit's ROW of the coupling matrix, `Σ_j W_ij ρ(s_j)`, as
+    /// [`Network::velocity`]'s own doc writes it — not its column.
+    ///
+    /// Why the suite could not see it, and why the question is real: every coupling matrix the
+    /// other tests use is SYMMETRIC, for which a row and a column are the same numbers, so the
+    /// transposed read is invisible to all of them. It is nonetheless reachable: [`Network`]'s
+    /// every field is `pub`, the struct is constructed by literal elsewhere in this very module,
+    /// and nothing in the type enforces symmetry — so "the matrix is symmetric" is a statement
+    /// about the fixtures, not about the code. The fixture here is deliberately asymmetric:
+    /// `W_01 = 2` and `W_10 = −3`. With one unit at zero its activity is zero, so only the OTHER
+    /// unit's entry survives, and each state below reads exactly one off-diagonal entry. Both
+    /// values are integers times `tanh(1)` computed by the same two operations, so the comparison
+    /// is `assert_eq!` on the f64.
+    #[test]
+    fn the_field_a_unit_feels_is_its_row_of_the_coupling_matrix_not_its_column() {
+        let n = Network { n: 2, n_out: 1, m: 1, w: vec![0.0, 2.0, -3.0, 0.0], u: vec![0.0, 0.0], b: vec![0.0, 0.0] };
+        let (x, y) = ([0.0], [0.0]);
+        let t = 1.0_f64.tanh();
+        // s = (0, 1): unit 0 sees only W_01 = 2, and unit 1 sees nothing but its own leak.
+        let v = n.velocity(&[0.0, 1.0], &x, &y, 0.0).unwrap();
+        assert_eq!(v[0], 2.0 * t, "unit 0 read W_10 = -3 instead of W_01 = 2");
+        assert_eq!(v[1], -1.0);
+        // s = (1, 0): unit 1 sees only W_10 = -3, and unit 0 sees nothing but its own leak.
+        let v = n.velocity(&[1.0, 0.0], &x, &y, 0.0).unwrap();
+        assert_eq!(v[0], -1.0);
+        assert_eq!(v[1], -3.0 * t, "unit 1 read W_01 = 2 instead of W_10 = -3");
+    }
+
+    /// [`Network::relax`]'s three guards at their boundaries: a `NaN` tolerance is out of range
+    /// rather than a tolerance nothing can meet, a budget of exactly [`MAX_STEPS`] is a request
+    /// and not an overrun, and a budget of zero reports an INFINITE last movement because no step
+    /// was taken and nothing is therefore known about it.
+    ///
+    /// The `const` assertion pins the cap's value. It is a published constant and callers size
+    /// their budgets against it, so moving it by a factor of ten is an API change, not an
+    /// implementation detail.
+    ///
+    /// Why the suite could not see it: `bad_arguments_are_refused` writes the cap case as
+    /// `MAX_STEPS + 1`, which is stated RELATIVE to the constant and so cannot see the constant
+    /// move, and never asks for `MAX_STEPS` itself; its `tol` case is `-1.0`, which the arithmetic
+    /// comparison `tol < 0.0` rejects too, while a `NaN` passes it and then makes `moved <= tol`
+    /// false forever, turning a bad argument into a budget overrun. The unsettled-relaxation test
+    /// reads its error with `steps: 3` and a movement above `1e-6`, which a budget of zero never
+    /// reaches.
+    #[test]
+    fn the_relaxation_guards_hold_at_their_boundaries_and_a_zero_budget_knows_nothing() {
+        const { assert!(MAX_STEPS == 10_000_000, "the documented cap is ten million steps") };
+        let n = net();
+        let (s, x, y) = ([0.0_f64; 7], [0.7, -0.5, 0.2], [0.4, -0.6]);
+        for tol in [f64::NAN, -1.0, -1e-300, f64::NEG_INFINITY] {
+            assert!(matches!(n.relax(&s, &x, &y, 0.0, DT, tol, 10), Err(EquilibriumError::OutOfRange { what: "tol", .. })), "tol = {tol}");
+        }
+        for dt in [f64::NAN, 0.0, 1.5, f64::INFINITY] {
+            assert!(matches!(n.relax(&s, &x, &y, 0.0, dt, TOL, 10), Err(EquilibriumError::OutOfRange { what: "dt", .. })), "dt = {dt}");
+        }
+        // Exactly the cap is admissible, and asking for it changes nothing about the answer.
+        let at_cap = n.relax(&s, &x, &y, 0.0, DT, TOL, MAX_STEPS).expect("exactly MAX_STEPS is a request, not an overrun");
+        assert_eq!(at_cap, n.relax(&s, &x, &y, 0.0, DT, TOL, STEPS).unwrap());
+        assert!(matches!(n.relax(&s, &x, &y, 0.0, DT, TOL, MAX_STEPS + 1), Err(EquilibriumError::OutOfRange { what: "max_steps", .. })));
+        // A budget of zero took no step, so the movement it reports is unknown, not zero: a
+        // caller reading `moved <= tol` off this must not be told the state had settled.
+        let err = n.relax(&s, &x, &y, 0.0, DT, TOL, 0).unwrap_err();
+        assert_eq!(err, EquilibriumError::NotSettled { moved: f64::INFINITY, steps: 0 });
+        let EquilibriumError::NotSettled { moved, .. } = err else { panic!("a zero budget must not settle") };
+        assert!(moved > TOL, "a zero-budget relaxation reported a movement of {moved}, which reads as settled");
+    }
+
+    /// An infinite nudge is out of range for [`Network::estimate`] and an infinite rate is
+    /// non-finite for [`Network::descend`], and a refused `descend` leaves every parameter alone.
+    ///
+    /// Why the suite could not see it: both guards are tested only with a value that the WEAKER
+    /// form also rejects — `beta = 0.0`, which fails `beta > 0.0`, and `rate = NAN`, which fails
+    /// `rate.is_nan()`. An infinite `beta` passes `beta > 0.0`; dropping the finiteness half of
+    /// that guard does not make the call succeed, it makes it fail LATER and as a different
+    /// error, from inside the relaxation, so `is_err()` alone would not have seen it either. An
+    /// infinite rate passes `is_nan()` and writes an infinity into every parameter.
+    #[test]
+    fn an_infinite_nudge_and_an_infinite_rate_are_refused_by_the_guard_that_names_them() {
+        let n = net();
+        let (x, y) = ([0.7, -0.5, 0.2], [0.4, -0.6]);
+        for beta in [f64::INFINITY, f64::NEG_INFINITY, f64::NAN, 0.0, -0.5] {
+            assert!(
+                matches!(n.estimate(&x, &y, beta, true, DT, TOL, 100), Err(EquilibriumError::OutOfRange { what: "beta", .. })),
+                "beta = {beta} reached the relaxation"
+            );
+        }
+        let g = n.energy_gradient(&[0.1, -0.2, 0.3, -0.4, 0.5, -0.6, 0.7], &x).unwrap();
+        let mut m = n.clone();
+        for rate in [f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
+            assert!(matches!(m.descend(&g, rate), Err(EquilibriumError::NonFinite { what: "rate", index: 0 })), "rate = {rate}");
+            assert_eq!(m, n, "a refused descend at rate {rate} wrote the parameters anyway");
+        }
+    }
+
+    /// The SYMMETRIC estimator's negative phase starts from the free fixed point, exactly as its
+    /// positive phase does. Same bistable fixture as
+    /// `the_nudged_phase_starts_from_the_free_fixed_point_and_a_bistable_network_says_so`, with
+    /// the target moved to `y = +1` so that it is the NEGATIVE phase whose starting point decides
+    /// which well it lands in: at the origin the `−β` spring pushes the output unit DOWN by
+    /// `−β(y − 0) = −0.3`, into the negative well, while from the free fixed point the same
+    /// spring reads `−0.3(1 − 1.2276) = +0.068` and the pair stays where it is.
+    ///
+    /// MEASURED with `w_01 = w_10 = 5`, `b = (0.05, 0)`, `x = (0)`, `y = (1)`, `beta = 0.3`,
+    /// `dt = 0.1`, `tol = 1e-12`: the free phase settles at `(1.2317852546420964,
+    /// 1.2276313692648493)`, the `+β` phase at `(1.2289237306335485, 1.2071511755427389)` and the
+    /// `−β` phase started there at `(1.235186191547005, 1.2531287993369165)`, giving
+    /// `g.b = (0.00302, 0.02223)`. Started from the origin the `−β` phase lands at
+    /// `(−1.2522763650759823, −1.5081888541152881)` and `g.b = (−2.819, −2.904)`: the opposite
+    /// sign and some nine hundred times the size, not a last-bit difference.
+    ///
+    /// Why the suite could not see it: the existing start-from-the-free-fixed-point test calls
+    /// `estimate` with `symmetric: false`, and on that branch the second phase is not a relaxation
+    /// at all but `energy_gradient(&free)`, so the line this pins is never executed by it. The
+    /// order-of-error test does exercise the symmetric branch, but only on `net()`, whose energy
+    /// has one minimum — from any start the `−β` phase reaches the same fixed point to within the
+    /// tolerance, so the estimate moves by far less than the `±1.0` slack that test allows on its
+    /// ratios.
+    #[test]
+    fn the_symmetric_estimator_starts_its_negative_phase_from_the_free_fixed_point_too() {
+        const DT: f64 = 0.1;
+        const TOL: f64 = 1e-12;
+        const STEPS: u64 = 200_000;
+        let beta = 0.3;
+        let n = Network { n: 2, n_out: 1, m: 1, w: vec![0.0, 5.0, 5.0, 0.0], u: vec![0.0, 0.0], b: vec![0.05, 0.0] };
+        let (x, y) = ([0.0], [1.0]);
+        let origin = vec![0.0; n.n];
+        let free = n.relax(&origin, &x, &y, 0.0, DT, TOL, STEPS).expect("the free phase settles");
+        let plus = n.relax(&free, &x, &y, beta, DT, TOL, STEPS).expect("the positive phase settles");
+        let minus = n.relax(&free, &x, &y, -beta, DT, TOL, STEPS).expect("the negative phase settles");
+        let from_origin = n.relax(&origin, &x, &y, -beta, DT, TOL, STEPS).expect("the negative phase settles");
+        // The fixture is bistable and the two starts are in different wells: this is about which
+        // fixed point the estimator reads, not about the last bit of a relaxation.
+        assert!(free[0] > 1.0 && free[1] > 1.0, "the free phase left the positive well: {free:?}");
+        assert!(minus[0] > 1.0 && minus[1] > 1.0, "the negative phase left the positive well: {minus:?}");
+        assert!(from_origin[0] < -1.0 && from_origin[1] < -1.0, "the fixture is no longer bistable: {from_origin:?}");
+        // The identity, out of the same public calls in the same order, so equality and not a
+        // tolerance.
+        let span = 2.0 * beta;
+        let (gp, gm) = (n.energy_gradient(&plus, &x).unwrap(), n.energy_gradient(&minus, &x).unwrap());
+        let want: Vec<f64> = gp.b.iter().zip(&gm.b).map(|(at_plus, at_minus)| (at_plus - at_minus) / span).collect();
+        let got = n.estimate(&x, &y, beta, true, DT, TOL, STEPS).expect("both phases settle");
+        assert_eq!(got.b, want, "the negative phase did not start at the free fixed point");
+        assert_eq!(got.w, gp.w.iter().zip(&gm.w).map(|(at_plus, at_minus)| (at_plus - at_minus) / span).collect::<Vec<f64>>());
+        assert_eq!(got.u, gp.u.iter().zip(&gm.u).map(|(at_plus, at_minus)| (at_plus - at_minus) / span).collect::<Vec<f64>>());
+        // And the size of it: the origin-started negative phase gives the other sign entirely.
+        let wrong = n.energy_gradient(&from_origin, &x).unwrap();
+        let other: Vec<f64> = gp.b.iter().zip(&wrong.b).map(|(at_plus, at_origin)| (at_plus - at_origin) / span).collect();
+        assert!(got.b[1] > 0.0 && other[1] < -2.0, "measured {} against {}", got.b[1], other[1]);
     }
 
 }

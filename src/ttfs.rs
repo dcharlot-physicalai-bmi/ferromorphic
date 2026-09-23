@@ -775,4 +775,366 @@ mod tests {
         assert_eq!(k.first_spike(&w, &t, theta).unwrap(), None, "a falling membrane is not a spike");
     }
 
+
+    /// Each error's text names the quantity that was wrong and says which way round it was wrong:
+    /// the dimension message reports the length SUPPLIED first and the length REQUIRED second, and
+    /// the empty message says the count was empty.
+    ///
+    /// The hole this fills: every check in the suite matches on the VARIANT and its `what` field —
+    /// `Err(TtfsError::Dimension { what: "times", .. })` — and this review did not locate a test
+    /// that renders one. The message is the only part of an error a caller at a terminal reads, so
+    /// a `Display` that swapped the two lengths, or called an empty count full, was invisible: the
+    /// swap is not even detectable from the fields, since both are `usize` and both are printed.
+    #[test]
+    fn each_error_says_what_was_wrong_and_which_way_round_it_was_wrong() {
+        let k = Kernel::Lif { tau_s: 5e-3 };
+        // Two weights, one time: the array named in the message is the one that was short.
+        let dimension = k.first_spike(&[1.0, 2.0], &[Some(0.0)], 1.0).unwrap_err();
+        assert_eq!(dimension.to_string(), "times has length 1, expected 2");
+        let mut rng = Rng::new(3);
+        let empty = Network::random(k, 1.0, &[4], 1.0, &mut rng).unwrap_err();
+        assert_eq!(empty.to_string(), "layer sizes (needs two, none zero) is empty");
+        let low = f64::MIN_POSITIVE;
+        let range = k.first_spike(&[1.0], &[Some(0.0)], -2.0).unwrap_err();
+        assert_eq!(range.to_string(), format!("theta = -2 is outside [{low}, inf]"));
+        let non_finite = k.first_spike(&[1.0, f64::NAN], &[Some(0.0), Some(1.0)], 1.0).unwrap_err();
+        assert_eq!(non_finite.to_string(), "weights is not finite at 1");
+    }
+
+    /// No infinity passes a guard as a positive number: not a time constant, not a threshold, not a
+    /// weight, not a learning rate, a clip or a boost. A refused call leaves the network untouched.
+    ///
+    /// The hole this fills: every rejection the suite asks for is a `NaN` or a zero, and both of
+    /// those are refused by the comparisons alone — `0.0 > 0.0` is false and every comparison with
+    /// `NaN` is false. Infinity is the one value that passes `v > 0.0` and is not `NaN`, so the
+    /// finiteness half of each guard was never read. What it prevents: an infinite `tau` makes
+    /// every `Kernel::psp` exactly zero, so the neuron is silent for ever and `first_spike` reports
+    /// a perfectly ordinary `Ok(None)`; an infinite weight makes the non-leaky ratio `inf/inf`,
+    /// whose `NaN` the candidate filter drops, so that too reports `Ok(None)`; and an infinite
+    /// boost writes infinities into every weight of every silent neuron and returns `Ok`.
+    #[test]
+    fn no_infinity_passes_a_guard_as_a_positive_number() {
+        let k = Kernel::Lif { tau_s: 5e-3 };
+        let inf = f64::INFINITY;
+        let slow = Kernel::NonLeaky { tau: inf };
+        assert!(matches!(slow.first_spike(&[1.0], &[Some(0.0)], 1.0), Err(TtfsError::OutOfRange { what: "tau", .. })));
+        assert_eq!(slow.psp(1.0), 0.0, "which is why nothing downstream would have noticed");
+        let slow_leaky = Kernel::Lif { tau_s: inf };
+        assert!(matches!(slow_leaky.first_spike(&[1.0], &[Some(0.0)], 1.0), Err(TtfsError::OutOfRange { what: "tau", .. })));
+        assert!(matches!(k.first_spike(&[1.0], &[Some(0.0)], inf), Err(TtfsError::OutOfRange { what: "theta", .. })));
+        assert!(matches!(k.first_spike(&[inf], &[Some(0.0)], 1.0), Err(TtfsError::NonFinite { what: "weights", index: 0 })));
+        assert!(matches!(k.first_spike(&[1.0, -inf], &[Some(0.0), Some(1e-3)], 1.0), Err(TtfsError::NonFinite { what: "weights", index: 1 })));
+        let mut rng = Rng::new(11);
+        assert!(matches!(Network::random(k, inf, &[3, 2], 1.0, &mut rng), Err(TtfsError::OutOfRange { what: "theta", .. })));
+        assert!(matches!(Network::random(k, 1.0, &[3, 2], inf, &mut rng), Err(TtfsError::OutOfRange { what: "scale", .. })));
+        let mut net = Network::random(k, 1.0, &[3, 2], 1.0, &mut rng).unwrap();
+        let before = net.clone();
+        let x = [Some(0.0), Some(1e-3), Some(2e-3)];
+        assert!(matches!(net.train(&x, 0, inf, 1.0, 0.1), Err(TtfsError::OutOfRange { what: "rate", .. })));
+        assert!(matches!(net.train(&x, 0, 0.1, inf, 0.1), Err(TtfsError::OutOfRange { what: "clip", .. })));
+        assert!(matches!(net.train(&x, 0, 0.1, 1.0, inf), Err(TtfsError::OutOfRange { what: "boost", .. })));
+        assert_eq!(net, before, "a refused step moved nothing");
+    }
+
+    /// `Kernel::tau` is the model's own longest time constant: the synaptic one for the non-leaky
+    /// model, where there is only one, and the MEMBRANE's — twice the synaptic one — for the leaky
+    /// model, where there are two.
+    ///
+    /// The hole this fills: the suite reads `tau()` for the leaky model only, where the factor of
+    /// two is the model's definition. For the non-leaky model the value re-enters `first_spike`
+    /// only through a positivity check, and `backward` only as the softmax temperature — where a
+    /// factor of two rescales the loss and its gradient TOGETHER, so the finite-difference test,
+    /// which compares those two to each other, cannot see it either. Reporting `2 tau` there would
+    /// halve every published spike time expressed in time constants.
+    #[test]
+    fn the_non_leaky_models_time_constant_is_the_one_its_own_kernel_decays_with() {
+        let k = Kernel::NonLeaky { tau: 5e-3 };
+        assert_eq!(k.tau(), 5e-3);
+        // κ(τ) = 1 − e^{−1}, one time constant being where the kernel has risen by that much. The
+        // right-hand side is the module's own expression at s = τ, which is how this stays exact.
+        assert_eq!(k.psp(k.tau()), -(-1.0f64).exp_m1());
+        let leaky = Kernel::Lif { tau_s: 5e-3 };
+        assert_eq!(leaky.tau(), 2.0 * 5e-3);
+        // For the leaky model the same quantity is the MEMBRANE constant, and the kernel peaks at
+        // τ ln 2 — which is inside one τ for that model and outside it for the non-leaky one.
+        // For the leaky model that same quantity is the MEMBRANE constant, the one its kernel
+        // peaks at τ ln 2 of.
+        assert!((leaky.psp(leaky.tau() * core::f64::consts::LN_2) - leaky.peak()).abs() < 1e-16);
+    }
+
+    /// A root is admissible only inside the window of the inputs that produced it: at or after that
+    /// prefix's last arrival, and at or before the next one. Outside it the equation describes a
+    /// membrane that does not exist — one missing an input that had already arrived, or carrying one
+    /// that had not — and its root is a spike time no simulation would reproduce.
+    ///
+    /// The hole this fills: the suite's crossings are all interior. Its random inputs are spread
+    /// over a few time constants with weights of order one, so no two arrive at the same instant
+    /// (which is what empties a window) and the threshold is never so far below the weights that a
+    /// prefix's root lands before its own last input. Both ends of the window were therefore
+    /// unread, and both fail with the same symptom: a spike reported at a time when the membrane is
+    /// nowhere near θ. The fixtures below are extreme on purpose — the guard is a NUMERICAL
+    /// admissibility guard, and the regimes that reach it are the ones where the threshold or an
+    /// early input falls below the last place of a later one.
+    #[test]
+    fn a_root_outside_the_window_of_the_inputs_that_produced_it_is_not_a_spike() {
+        let k = Kernel::NonLeaky { tau: 1.0 };
+        // (a) TWO INPUTS AT THE SAME INSTANT. The prefix that ends at the first of them has an
+        // EMPTY window — its last arrival and the next one are the same instant — so it is not
+        // solved at all. Solved anyway, it answers exactly that instant, because both θ and the
+        // early input fall below half an ulp of 1e17:
+        let w = [1.0, 1e17, -2e17];
+        let t = [Some(0.0), Some(1.0), Some(1.0)];
+        let sum = 1.0 + 1e17;
+        let weighted = (-1.0f64).exp() + 1e17; // the first input's weight is one
+        assert_eq!((sum, weighted), (1e17, 1e17));
+        assert_eq!(1.0 + (weighted / (sum - 1.0)).ln(), 1.0, "the root of that prefix is its own last arrival");
+        // At that instant the pair has not yet contributed anything, so the membrane is the first
+        // input's alone: 63% of the threshold, not the threshold.
+        assert_eq!(k.potential(&w, &t, 1.0), -(-1.0f64).exp_m1());
+        assert!(k.potential(&w, &t, 1.0) < 1.0);
+        // And it never reaches θ: below 1 − e^{−1} before the pair, driven down by their net −1e17
+        // after it. The scan this module checks its closed form against agrees.
+        assert_eq!(k.first_spike(&w, &t, 1.0).unwrap(), None);
+        assert_eq!(brute_force(&k, &w, &t, 1.0), None);
+
+        // (b) A ROOT BEFORE THE PREFIX'S LAST INPUT. A modest early input, a dominating late one,
+        // and a threshold far below the late one's last place: the equation of BOTH inputs puts its
+        // crossing 6.5e-10 s before the second input arrived.
+        let w = [1.5e8, 2e17];
+        let t = [Some(0.0), Some(2.0)];
+        let theta = 1e-17;
+        let sum = 1.5e8 + 2e17;
+        let weighted = 1.5e8 * (-2.0f64).exp() + 2e17;
+        let root = 2.0 + (weighted / (sum - theta)).ln();
+        assert_eq!(root, 1.999_999_999_351_501_4);
+        assert!(root < 2.0);
+        // There the second input has not arrived, so the membrane is the first one's alone — 1.3e8
+        // threshold units, twenty-five orders of magnitude from θ. Accepting the root would report
+        // that as a threshold crossing.
+        assert_eq!(k.potential(&w, &t, root), 1.5e8 * -(-root).exp_m1());
+        assert!(k.potential(&w, &t, root) > 1e8);
+        assert_eq!(k.first_spike(&w, &t, theta).unwrap(), None);
+        // What is NOT claimed: that `None` is the whole truth here. The membrane does pass a
+        // threshold this small, at about 6.7e-26 s, and the closed form cannot represent it — the
+        // ratio rounds to exactly one, the root to exactly the arrival, and κ′ is zero there by its
+        // own convention. What this fixture pins is the window: the answer is "no spike I can
+        // place", not a spike two seconds later.
+        assert_eq!(1.5e8 / (1.5e8 - theta), 1.0);
+    }
+
+    /// The larger root of the leaky model's quadratic is a threshold crossing only when the membrane
+    /// is RISING there. At a tangency it is the peak touching θ from below, and the quadratic alone
+    /// cannot tell the two apart — both are `a₁x² − a₂x + θ = 0` — so the rising test is the only
+    /// thing between a neuron that fires and one that grazes the threshold and does not.
+    ///
+    /// The hole this fills: the recomputed slope is `(x/τ_m)·√disc` exactly, so it agrees with the
+    /// rising test everywhere except where the discriminant is zero, and there both are zero: the
+    /// final `slope > 0.0` gate catches a tangency only when the rounding goes its way, and the
+    /// suite has no tangency in it at all — its nearest fixture is a peak of 0.975 that misses the
+    /// threshold outright. Here the rounding goes the other way. Measured: the recomputed slope is
+    /// `+1.16e-9`, so the slope gate passes it and the rising test is what rejects it.
+    #[test]
+    fn the_larger_root_at_a_tangency_is_the_peak_touching_the_threshold_and_not_a_crossing() {
+        let k = Kernel::Lif { tau_s: 0.5 };
+        // A pair of inputs at t = 1 whose weights sum to exactly 1, and an early input of −1e-8
+        // which is below half an ulp of 1e8 and so vanishes from both coefficients.
+        let w = [1e8, 1.0 - 1e8, -1e-8];
+        let t = [Some(1.0), Some(1.0), Some(0.0)];
+        let theta = 0.25;
+        let x2 = -1e-8 * (-1.0f64).exp() + 1e8 + (1.0 - 1e8);
+        let x1 = -1e-8 * (-2.0f64).exp() + 1e8 + (1.0 - 1e8);
+        assert_eq!((x2, x1), (1.0, 1.0));
+        assert_eq!(x2 * x2 - 4.0 * x1 * theta, 0.0, "a double root: the quadratic is tangent to θ");
+        // x = ½ is e^{−(t−last)/τ_m} at the kernel's peak, τ_m ln 2 after the arrival.
+        let root_t = 1.0 - 2.0 * 0.5 * 0.5f64.ln();
+        assert_eq!(root_t, 1.693_147_180_559_945_4);
+        // The membrane there is below θ, by the early input's own contribution, and that is its
+        // largest value anywhere.
+        assert!(k.potential(&w, &t, root_t) < theta);
+        assert_eq!(k.first_spike(&w, &t, theta).unwrap(), None);
+        // Measured by the scan this module checks its closed form against: over the whole run the
+        // membrane's largest value is 0.249_999_998_5, so there is no crossing to find anywhere.
+        assert_eq!(brute_force(&k, &w, &t, theta), None);
+        // Measured on this fixture: the slope the module recomputes at that instant is positive, so
+        // the slope gate would accept it. The sum is written in the module's order — earliest
+        // arrival first — because that order is what makes it this number.
+        let at_peak = k.psp_slope(root_t - 1.0);
+        let slope = (-1e-8 * k.psp_slope(root_t)) + 1e8 * at_peak + (1.0 - 1e8) * at_peak;
+        assert_eq!(slope, 1.162_720_734_162_996_6e-9);
+        assert!(slope > 0.0);
+    }
+
+    /// A tie between two outputs is won by the LOWEST index, and the tie is reachable: two output
+    /// neurons with identical weight rows see the same inputs in the same order, so their spike
+    /// times are the same f64 bit for bit.
+    ///
+    /// The hole this fills: the suite reads `Forward::winner` only through XOR, where the two
+    /// outputs are trained apart and a tie never arises. The convention is written on the method
+    /// and was unread, so the comparison could be relaxed to make the HIGHEST index win with every
+    /// test still green — and a convention that is documented and unread is one that will change.
+    #[test]
+    fn two_outputs_that_fire_at_the_same_instant_are_won_by_the_lower_index() {
+        let kernel = Kernel::NonLeaky { tau: 5e-3 };
+        let net = Network { kernel, theta: 1.0, layers: vec![Layer { n_in: 2, n_out: 3, w: vec![2.0, 0.5, 2.0, 0.5, 0.1, 0.1] }] };
+        let f = net.forward(&[Some(0.0), Some(1e-3)]).unwrap();
+        let (first, second) = (f.spikes[0][0].expect("row 0 fires"), f.spikes[0][1].expect("row 1 fires"));
+        assert_eq!(first.time, second.time, "identical rows, identical arithmetic, identical time");
+        assert_eq!(f.spikes[0][2], None, "0.1 + 0.1 never reaches a threshold of 1");
+        assert_eq!(f.winner(), Some(0));
+        // And the tie is broken by the index alone, not by anything else the spike carries: here
+        // the later-indexed neuron is given the larger slope and still loses.
+        let hand = Forward {
+            spikes: vec![vec![Some(Spike { time: 3e-3, slope: 1.0 }), Some(Spike { time: 3e-3, slope: 9.0 }), None]],
+            spike_count: 2,
+        };
+        assert_eq!(hand.winner(), Some(0));
+    }
+
+    /// A network fires its neurons at the threshold it was BUILT with. `Network::theta` is public,
+    /// nothing constrains it, and a neuron whose weights reach 1.5 must stay silent in a network of
+    /// threshold 2.
+    ///
+    /// The hole this fills: every network in the suite is built with θ = 1 — four of them, all
+    /// `Network::random(kernel, 1.0, ..)` — so `forward` passing the literal 1.0 to the neuron model
+    /// instead of `self.theta` is the same arithmetic in every test. The defect is invisible until
+    /// somebody scales their weights and threshold together, which is the ordinary way to move a
+    /// trained network onto hardware.
+    #[test]
+    fn the_network_fires_its_neurons_at_the_threshold_it_was_built_with() {
+        let kernel = Kernel::NonLeaky { tau: 5e-3 };
+        let net = Network { kernel, theta: 2.0, layers: vec![Layer { n_in: 1, n_out: 2, w: vec![3.0, 1.5] }] };
+        let f = net.forward(&[Some(0.0)]).unwrap();
+        let own = kernel.first_spike(&[3.0], &[Some(0.0)], 2.0).unwrap().expect("3 passes 2");
+        assert_eq!(f.spikes[0][0].expect("the first neuron fires").time, own.time);
+        assert_eq!(own.time, 5e-3 * 3.0f64.ln(), "τ ln(w/(w − θ)) = τ ln 3");
+        assert_eq!(f.spikes[0][1], None, "1.5 never reaches a threshold of 2");
+        assert_eq!(f.spike_count, 1);
+        // At the literal threshold of one both neurons fire, and the first fires sooner: every
+        // reading in this fixture differs between the network's threshold and that literal.
+        assert!(kernel.first_spike(&[1.5], &[Some(0.0)], 1.0).unwrap().is_some());
+        assert!(kernel.first_spike(&[3.0], &[Some(0.0)], 1.0).unwrap().expect("3 passes 1").time < own.time);
+    }
+
+    /// `Forward::spike_count` counts the spikes of EVERY layer, which is what makes it the cost of
+    /// one inference; on anything deeper than a perceptron the hidden layers are most of it.
+    ///
+    /// The hole this fills: the only place the count is read against a network that fires is XOR's
+    /// `spike_count <= 8 && spike_count >= 2`, a window wide enough to hold both the whole network's
+    /// spikes and the output layer's alone — a [3, 6, 2] network whose two outputs both fire sits
+    /// inside it either way. Accumulating over layers and overwriting per layer are then the same
+    /// test, and the energy claim this crate exists to make is the count.
+    #[test]
+    fn the_spike_count_is_every_layers_spikes_and_not_the_last_layers() {
+        let mut rng = Rng::new(29);
+        let net = Network::random(Kernel::NonLeaky { tau: 5e-3 }, 1.0, &[3, 5, 2], 1.5, &mut rng).unwrap();
+        let f = net.forward(&[Some(0.0), Some(0.3e-3), Some(0.6e-3)]).unwrap();
+        let hidden = f.spikes[0].iter().flatten().count();
+        let out = f.spikes[1].iter().flatten().count();
+        assert_eq!((hidden, out), (5, 2), "measured: every hidden neuron and every output fires");
+        assert_eq!(f.spike_count, hidden + out);
+        assert!(f.spike_count > out, "the hidden layer's spikes are what a last-layer count drops");
+    }
+
+    /// A silent output is not in the softmax at all. When the target is the only neuron that fired,
+    /// the loss is exactly zero — the cross-entropy of a certainty — and so is every gradient.
+    ///
+    /// The hole this fills: every network the suite differentiates has ALL of its outputs firing,
+    /// which `backpropagation_through_spike_times_is_the_gradient_of_the_loss` asserts outright, so
+    /// the value a silent output contributes is never read. Giving it `1.0` puts a neuron that never
+    /// fired into the sum with the weight of one that fired FIRST, since the shift makes `exp(0)`
+    /// the largest term any neuron can have: this loss becomes ln 2, and the target acquires a
+    /// gradient computed against a spike that does not exist.
+    #[test]
+    fn a_silent_output_is_not_in_the_softmax_at_all() {
+        let kernel = Kernel::NonLeaky { tau: 5e-3 };
+        let net = Network { kernel, theta: 1.0, layers: vec![Layer { n_in: 1, n_out: 2, w: vec![3.0, 0.0] }] };
+        let back = net.backward(&[Some(0.0)], 0).unwrap();
+        assert_eq!(back.silent, vec![(0, 1)], "the second output has no weight at all");
+        assert_eq!(back.loss, Some(0.0), "the only output that fired is the target: nothing to learn");
+        let gradient = back.gradient[0].clone();
+        assert_eq!(gradient.len(), 2, "one weight per output, so the check below reads two numbers");
+        assert!(gradient.iter().all(|g| *g == 0.0), "measured gradient {gradient:?}");
+    }
+
+    /// The clip bounds the step by the largest gradient entry in MAGNITUDE. A gradient whose
+    /// largest entry is negative is reachable and not rare — the target neuron's whole row is
+    /// negative by construction, since `∂t/∂w` is negative for every causal input and the target's
+    /// own `∂loss/∂t` is positive — and measuring it signed lets that row move by the ratio of the
+    /// two maxima, or by the whole unclipped gradient when every entry is negative and the fold
+    /// returns its own starting zero.
+    ///
+    /// The hole this fills: the suite has one clip fixture, a random network at seed 1, and
+    /// measured on it the largest entry of the first layer's gradient is POSITIVE
+    /// (`+0.014_957_297_621_445_704`, which is also its largest magnitude). A fold over signed
+    /// values and a fold over magnitudes return the same number there, so the two cannot be told
+    /// apart. Here the target is the LATER of the two outputs, whose row carries both the larger
+    /// `−∂t/∂w` and the shallower membrane, and the largest magnitude is negative.
+    #[test]
+    fn the_clip_bounds_the_largest_gradient_by_magnitude_and_not_by_sign() {
+        let kernel = Kernel::NonLeaky { tau: 5e-3 };
+        let mut net = Network { kernel, theta: 1.0, layers: vec![Layer { n_in: 2, n_out: 2, w: vec![2.0, 2.0, 1.2, 1.2] }] };
+        let start = net.clone();
+        let (rate, clip) = (0.5, 1e-3);
+        let back = net.train(&[Some(0.0), Some(0.0)], 1, rate, clip, 0.0).unwrap();
+        let by_magnitude = back.gradient[0].iter().fold(0.0f64, |m, g| m.max(g.abs()));
+        let by_sign = back.gradient[0].iter().fold(0.0f64, |m, g| m.max(*g));
+        assert_eq!(by_magnitude, 0.167_410_714_285_714_36, "measured: the target's row, negative");
+        assert_eq!(by_sign, 0.046_874_999_999_999_98, "measured: the other row, positive and smaller");
+        assert!(by_magnitude > clip, "the fixture is above the clip, so the clip is what decides");
+        let moved = net.layers[0].w.iter().zip(&start.layers[0].w).map(|(a, b)| (a - b).abs()).fold(0.0f64, f64::max);
+        // The largest step is rate · clip. The tolerance is the ulp of the weights it is stored
+        // into — all below 4 in magnitude, so 4·2^−52 — not a number chosen to fit.
+        assert!((moved - rate * clip).abs() <= 4.0 * f64::EPSILON, "largest step {moved}, rate · clip {}", rate * clip);
+        // Measuring the maximum signed instead would scale every step by the ratio of the two,
+        // which is 3.57 here and unbounded in general.
+        assert!(rate * (clip / by_sign) * by_magnitude > 3.0 * rate * clip);
+    }
+
+    /// The push a silent neuron's weights get is a fraction of the THRESHOLD: `boost · θ / n_in`, so
+    /// that `boost = 1` is one threshold's worth of drive spread over the inputs whatever θ is.
+    ///
+    /// The hole this fills: every network in the suite has θ = 1, where multiplying by θ and not
+    /// multiplying by it are the same arithmetic. At θ = 2 they differ by a factor of two, and an
+    /// unscaled push is half the drive Mostafa's remedy asks for — a silent neuron stays silent for
+    /// twice as many epochs, which a test that only asks whether XOR is eventually solved cannot
+    /// see, and which vanishes altogether as θ shrinks.
+    #[test]
+    fn the_silent_neurons_boost_is_a_fraction_of_the_threshold_and_not_of_one() {
+        let mut net = Network {
+            kernel: Kernel::Lif { tau_s: 5e-3 },
+            theta: 2.0,
+            layers: vec![Layer { n_in: 3, n_out: 2, w: vec![0.0; 6] }],
+        };
+        let back = net.train(&[Some(0.0), Some(1e-3), Some(2e-3)], 1, 0.1, 1.0, 0.3).unwrap();
+        assert_eq!((back.loss, back.silent.clone()), (None, vec![(0, 0), (0, 1)]));
+        let push = 0.3 * 2.0 / 3.0;
+        let raised = &net.layers[0].w;
+        assert_eq!(raised.len(), 6, "two silent neurons of three inputs, so the check below reads six");
+        assert!(raised.iter().all(|w| *w == push), "0.3 · θ / 3 inputs, measured {raised:?}");
+        assert!(push > 0.3 / 3.0, "and it is θ times the unscaled push, not the unscaled push");
+    }
+
+    /// `Network::train` reports the step it took: the loss and gradient of the network that produced
+    /// the step, not of the network the step left behind.
+    ///
+    /// The hole this fills: nothing in the suite reads what `train` returns except
+    /// `bad_arguments_are_refused`, and there the network's weights are all zero — every neuron
+    /// silent, no loss, no gradient, and a boost that raises both neurons equally — so the value
+    /// before the step and the value after it are the same `Backward`. A training loop that logged
+    /// the returned loss would be logging a curve one step ahead of the weights that produced it,
+    /// and recomputing it also doubles the cost of every step.
+    #[test]
+    fn train_reports_the_step_it_took_and_not_the_one_it_would_take_next() {
+        let mut rng = Rng::new(37);
+        let mut net = Network::random(Kernel::Lif { tau_s: 5e-3 }, 1.0, &[3, 4, 2], 1.5, &mut rng).unwrap();
+        let x = [Some(0.0), Some(0.4e-3), Some(0.9e-3)];
+        let before = net.clone();
+        let expected = before.backward(&x, 0).unwrap();
+        let returned = net.train(&x, 0, 0.5, 10.0, 0.0).unwrap();
+        assert_eq!(returned, expected, "the loss, the gradient and the silent list, as they were");
+        let after = net.backward(&x, 0).unwrap();
+        assert_ne!(after.loss, expected.loss, "the step moved the loss, so the two readings differ");
+        let (a, b) = (after.loss.expect("still fires"), expected.loss.expect("fired"));
+        assert!(a < b, "measured: {b} before the step, {a} after it");
+    }
 }

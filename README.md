@@ -177,12 +177,8 @@ meter.
 **How badly the unchecked models disagree is measurable.** SpikingJelly ships its own
 cross-validation of five literature-sourced energy models. On identical workloads they disagree by a
 **median factor of 556, spanning 218× to 753×** — one network priced at 553.4 µJ by one model and
-1.13 µJ by another. **How badly the unchecked models disagree is measurable.** SpikingJelly ships its own
-cross-validation of five literature-sourced energy models. On identical workloads they disagree by a
-**median factor of 556, spanning 218× to 753×** — one network priced at 553.4 µJ by one model and
 1.13 µJ by another. Five published methods, one workload, a factor of 753 between the extremes. This
-ledger declines to be the sixth. This ledger
-declines to be the sixth.
+ledger declines to be the sixth.
 
 ### ⛔ A correction to this crate, in this crate
 
@@ -196,16 +192,13 @@ It is now `Evidence::Simulated`, with a regression test pinning it and the capti
 source line. The error is left visible because an `Evidence` enum does not help if the value handed
 to it was copied from the citing literature instead of the cited table.
 
-And the direction matters: And the direction is not uniform. The two per-synaptic-operation energies this crate records from
+And the direction is not uniform. The two per-synaptic-operation energies this crate records from
 fabricated silicon straddle this simulated figure: `TrueNorth` at 26 pJ in 28 nm sits above it, and
 ODIN at 12.7 pJ in 28 nm (Frenkel et al., IEEE TBioCAS 13(1), 2019, in `hardware::ODIN`) sits 46%
 below it. So the defect in benchmarking against 23.6 pJ is not that it is known to flatter — it is
 that a pre-silicon simulation is standing in for a measurement, and every efficiency ratio computed
 from it inherits that. **Exactly one price in this crate came from fabricated silicon**, and a test
-asserts the count. A field benchmarking against a
-pre-silicon simulation is benchmarking against a number that flatters it, and every efficiency ratio
-computed from it inherits that. **Exactly one price in this crate came from fabricated silicon**, and
-a test asserts the count.
+asserts the count.
 
 ### The field already published the threshold, and no library checks it
 
@@ -247,8 +240,6 @@ with joules. A verdict says *which side of somebody else's published line you fa
 checkable.
 
 **An event-driven claim is a measurement, not an adjective.** `Mode::Clocked` and
-`Mode::EventDriven` run the same network and are *required to produce the same spike train*; the
-difference between them is `Ledger::idle_fraction`, a number. **An event-driven claim is a measurement, not an adjective.** `Mode::Clocked` and
 `Mode::EventDriven` run the same network and are *required to produce the same spike train*; the
 difference between them is `Ledger::idle_fraction`, a number. On the chain above the clocked run
 spends 79.52% of its membrane updates on neurons that received nothing — measured: 7,952 idle out of
@@ -315,8 +306,6 @@ energy figure is then divided by.
 
 `RateEncoder` uses `1 − exp(−rate·dt)` rather than `rate·dt`. The naive form is 0.5% high at an
 ordinary operating point and exceeds 1.0 outright at `rate·dt > 1`, where the encoder saturates at
-one spike per tick while still reporting that it produces `max_hz`. `RateEncoder` uses `1 − exp(−rate·dt)` rather than `rate·dt`. The naive form is 0.5% high at an
-ordinary operating point and exceeds 1.0 outright at `rate·dt > 1`, where the encoder saturates at
 one spike per tick while still reporting that it produces `max_hz`. Both facts are asserted in the
 tests, the 0.5% against the series expansion `x²/2 − x³/6` so the size of the error is on the page.
 
@@ -339,65 +328,81 @@ be reproduced cannot be checked against anything, including itself.
 
 ## Status
 
-**0.19.0.** Seventy-one modules, 2,252 tests, and **5,826 recorded mutations — at least one list
-per module**, every one of them applicable to today's source by `python3 tools/mutate.py`.
+**0.20.0.** Seventy-one modules, 2,588 tests, and **7,638 recorded mutations — one list per
+module**, every one applicable to today's source by `python3 tools/mutate.py`, and every one of
+them run against this tree. `python3 tools/readme_numbers.py` recomputes those four figures from
+the repository and refuses if this paragraph disagrees with it, because the last time they were
+typed by hand the test count was 423 low and nothing noticed.
 
-**What of that is RE-RUNNABLE is the question that matters, and the answer is now: all of it.**
-For six releases that sentence carried an exception. Thirty-six modules were audited in 0.5.0 and
-0.6.0 by an adversarial auditor that never wrote its edits down, so their verdict was a historical
-claim about the code as it stood then rather than a property of the code as it stands now.
-Twenty-two of them still had no list at 0.18.1. Closing that gap is what the backfill below was
-for, and **the survivor rate in those twenty-two was 464 in 4,228 — 10.97%.** That number is the
-honest size of what an audit which does not record its edits leaves behind, and it is the argument
-for the whole exercise.
+**The list being complete is not the same as the list being adequate, and 0.20.0 is what measuring
+that cost.** Every module had a recorded list at 0.19.0 and every list ran clean. Thirty of them
+were then DEEPENED — 1,809 new mutations aimed at what the existing entries did not reach — and
+**562 of those survived: 31%.** In modules that were already green. `neuron` had 22 recorded
+mutations, all caught; deepened to 112 it gave 35 survivors. `hardware` had 140; its 78 new ones
+gave 40. **A list that passes tells you about the list.**
 
-**And then the part of the record that nothing measures.** A list entry may carry an
+All 562 are now closed — 336 new tests, and the rule throughout was that a repair is not kept until
+the mutation it exists to catch has been re-run and comes back `caught`. A passing test proves
+nothing about a hole.
+
+**Three of the 562 were defects in the code. The rest were holes in the suite.** That ratio is the
+finding: the crate was mostly right, and could not show it.
+
+- `vsa::Hrr::unbind` is `involution` then `bind`. The bind's `D²` multiply-accumulates were
+  metered; the involution's `D` element moves were not, though every other element move in the
+  module is billed. An under-count of `D` out of `D² + D` — 0.4% at `D = 256` — systematic, and in
+  the direction that flatters the operation, **in the module of a crate whose whole argument is
+  that it prices what it does**. All 22 of that module's tests still passed with the correction in,
+  which is the proof that nothing read an unbind's meter.
+- `optimise::Qubo::max_cut` accepted an endpoint past the graph whenever the edge was a self-loop:
+  the fold skipped `(u, u)` before `add` ever checked the index, so `max_cut(2, &[(5, 5)])` returned
+  a problem in silence while `(0, 5)` was refused — contradicting its own `# Errors` section.
+- `dendrite::point_neuron_can_xor` carried a comment claiming its reasoning was observable — "so a
+  change to the reasoning changes the answer". It was not. The verdict is whether `[sum_lower,
+  sum_upper)` is non-empty, and `[2B, B)` and `[B, B)` are both empty, so the factor of two the
+  proof turns on could not reach the answer. The derivation now lives in `xor_sum_bounds()`, where
+  the step is readable and not only the conclusion.
+
+**What the 562 were, by class**, because the classes are more useful than the list:
+
+**Error messages nobody renders** was the largest. Measured across the crate, **246 of 287 messages
+that interpolate two or more values have no assertion reading their text** — 85.7%. Every refusal
+test destructures the variant (`Err(ShapeMismatch { .. })`), so a sentence that names its two
+values the wrong way round, or states a range its own guard rejects, is fluent and invisible.
+`nir` alone had ten.
+
+Then: **finiteness guards** — `v.is_finite() && v > 0.0` weakened to `v > 0.0` survives wherever
+every fixture passes `0.0` or `NaN`, which the weaker form also rejects; infinity is the separating
+value and almost nothing passed one. **Exact boundaries** — the `<=` against `<` at equality, which
+needs a fixture built to land exactly on it. **Transcribed constants** — Loihi's publication year,
+`TrueNorth`'s process node, `NorthPole`'s core count doubled, Akida's processing-unit count off by
+a factor of ten, and the on-chip learning engine that Loihi's paper is TITLED for set to `false`,
+all surviving, because the helper every fixture in that module used flattens a record to
+`(name, is_known, source, evidence)` and **drops the value**. And **defaults whose fields
+coincide**: `Lif::default()` sets `v_rest` and `v_reset` to the same −65 mV, so the closed form's
+reset term read identically as the rest term and the crate's own headline invariant — the simulated
+rate matching `Lif::isi` — was checked only where the two cannot be told apart. For a cell that
+resets 5 mV below rest the published interval was 22% short.
+
+**And the part of the record that nothing measures, now measured.** A list entry may carry an
 `"equivalent"` key, and when it does the harness relabels that mutation's survival and the run
-passes. The key is prose in a JSON file. There were 139 of them; read adversarially, **46 were
-refused and 15 more were judged to have a bad argument even where the conclusion held**. Every one
-of those was then BUILT AND RUN against the actual mutation, because a refutation that has not been
-executed is the same mistake one level up. There were 142 of them; read adversarially, **46 were refused and 15 more were judged to have a bad
-argument even where the conclusion held**. Every one of those 61 was then BUILT AND RUN against the
-actual mutation, because a refutation that has not been executed is the same mistake one level up.
-**48 came back `caught`** — 41 of the 46 refusals, and 7 of the 15 that had only been flagged as
-weakly argued. Five refusals did not hold, and those entries keep their arguments with a note
-recording what was tried. Forty-eight keys are gone and thirteen arguments are rewritten onto an
-identity, a bound or an invariant rather than a survey of the fixtures. Ninety-four remain, each Five refusals did not hold, and those entries
-keep their arguments with a note recording what was tried. Forty-five keys are gone and thirteen
-arguments are rewritten onto an identity, a bound or an invariant rather than a survey of the
-fixtures. Ninety-four remain, each
-with an argument that reasons from the arithmetic. The failure was the same one every time: **an
-argument about the SUITE presented as an argument about the CODE** — "no test does tell" written
-as "no test could tell".
+passes. The key is prose in a JSON file. Of the 142 that existed at 0.19.0, 61 were read
+adversarially and BUILT AND RUN — a refutation that has not been executed is the same mistake one
+level up — and **48 came back `caught`**. Forty-eight keys went; ninety-four remained.
 
-**⚠ "Every module has a list" is not "every list is adequate", and the density varies
-forty-two-fold.** Across the crate there are 2.06 recorded mutations per public item, but `rng` has
-18.6 mutations per hundred lines of production code and `aer` has 0.44, a spread of 42.5. Sixteen modules hold fewer recorded
-mutations than they have public items — `aer`, `vsa`, `sparse`, `phasor`, `hopfield`, `touch`,
-`dendrite`, `reinforce`, `nef`, `resonate`, `oscillator`, `optimise`, `predictive`, `graph`, `sim`
-and `metrics` — and almost all of them date from the early waves. `aer` is the clearest: 2,971 lines
-and 91 public items against 13 mutations, all of which aim at one reader and one slicer, so whole
-formats in that module have no recorded edit at all. Those lists run clean, and running clean is a
-weaker statement for them than it is for `continual` at 226.
+0.20.0 adds the other half of that measurement. Twenty-six of the 1,809 new mutations arrived
+**carrying an `equivalent` argument written by an agent that had never run the mutation**.
+`tools/extend_list.py` strips such a key on the way in and files the text as a prediction, because
+an exemption written by whoever wrote the case has never been observed to be needed. All 26 then
+survived the sweep, so none was wrong on its face — but of the 23 since judged by someone building
+the fixture, **four were false** and were closed by a real test. The recurring error in all four
+was the same one: **the argument reasoned from the constructor while the struct's fields were
+`pub`**, so the asymmetric matrix it ruled out was one assignment away. The 120 arguments on the
+record today were each built as a fixture and run both ways — one compared 800,042 value pairs by
+hash, another 44 million calls — never argued from what the tests happen to contain.
 
-**⚠ And that metric is not the sharp one.** Counting mutations per public item misses a small module
-whose few items are badly probed. Anchoring every recorded mutation to its line and asking what
-fraction of the **mutable** lines any mutation touches — excluding declarations, `use`, braces,
-struct fields and enum variants — gives a median of **42.8%**, a maximum of 94.7% and gives a median of **42.8%**, a maximum of 94.7% and a floor of **1.7%** in `aer`, whose thirteen
-recorded mutations anchor to sixteen of its 921 mutable lines.. By that measure twenty-six further modules sit below the median, and they are
-not the same twenty-six: `neuron` is at **16.6%**, and the whole of `AdaptiveLif`'s `Neuron`
-implementation — the adaptation decay `theta_0 + (theta - theta_0) exp(-dt/tau_a)`, the
-`theta += beta` on a spike, both `v_th` assignments and `reset` — carries **no recorded mutation at
-all**. That is the crate's adaptive neuron and the model's defining equations. `equilibrium` is at
-15.6% and `cerebellum` at 19.5%.
-
-Line coverage is itself a crude proxy: one mutation can pin a claim that spans twenty lines, and
-the tests cover far more than the mutations probe. It is a place to look, not a verdict. But it
-looks in a place the first metric did not, and this paragraph is here so that nobody reads either
-sentence above it as more than it says.
-
-The crate family is not built yet. Planned
-siblings, each following the same rule that a dependency lives outside the core:
+The crate family is not built yet. Planned siblings, each following the same rule that a dependency
+lives outside the core:
 
 | crate | what it would add | why separate |
 |---|---|---|
@@ -420,12 +425,12 @@ The three that mattered most, all shipped in 0.4.0 and all now fixed:
   false, so a wrong `true` silently permits spike times that depend on which ticks happened to be
   quiet. Both are now `false`, each with a test that demonstrates the divergence rather than asserting
   the constant.
-- **`Eif::isi` panicked** on parameters `Eif::new` accepts. - **`Eif::isi` panicked** on parameters `Eif::new` accepts. `f64::clamp` panics when its bounds
+- **`Eif::isi` panicked** on parameters `Eif::new` accepts. `f64::clamp` panics when its bounds
 cross, and a reset above the truncation point `V_T + 50·Δ_T` crosses them — a 0.1 mV onset with a
 reset 6 mV above `V_T` is enough, and the constructor takes it. The firing-pattern taxonomy ships
 resets above `V_T` but not above the truncation: its highest is −46 mV against a truncation at +50
 mV.
-- - **AEDAT 2.0 ate valid records.** The header has no terminator, so the decoder took `#`-prefixed
+- **AEDAT 2.0 ate valid records.** The header has no terminator, so the decoder took `#`-prefixed
 lines from the front of the file until one did not begin with `#` — and a `DAVIS346` event on rows
 140 to 143 puts `0x23`, `#`, in the big-endian address MSB. A file whose FIRST record sat on one of
 those rows lost it, and every byte up to the next `0x0A` with it: measured before the fix, 4 of that

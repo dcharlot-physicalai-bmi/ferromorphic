@@ -58,7 +58,7 @@
   "label": "accuracy divides by the prediction count from the other list",
   "old": "    let hits = predicted.iter().zip(truth).filter(|(p, t)| p == t).count();\n    Ok(hits as f64 / truth.len() as f64)\n}",
   "new": "    let hits = predicted.iter().zip(truth).filter(|(p, t)| p == t).count();\n    Ok(hits as f64 / predicted.len().max(1) as f64)\n}",
-  "equivalent": "the two lengths are checked equal three lines above and the empty case is refused, so `predicted.len().max(1)` and `truth.len()` are the same number on every path that reaches the division. Naming the divisor after the list the hits were counted against is the point, and no input can tell the two apart."
+  "equivalent": "the two lengths are checked equal three lines above and the empty case is refused, so `predicted.len().max(1)` and `truth.len()` are the same number on every path that reaches the division. Naming the divisor after the list the hits were counted against is the point, and no input can tell the two apart. CHECKED by building the fixture, not by reading the tests: every `(predicted, truth)` length pair in 0..=6 x 0..=6 was run through `accuracy`, and of the 6 that reach the division (the 6 equal, non-empty pairs) there is not one where `truth.len()` and `predicted.len().max(1)` differ."
  },
  {
   "label": "accuracy accepts mismatched lengths",
@@ -169,5 +169,312 @@
   "label": "top-k accepts a score matrix of the wrong size",
   "old": "    if scores.len() != want {\n        return Err(MetricError::LengthMismatch { a: scores.len(), b: want });\n    }",
   "new": ""
+ },
+ {
+  "label": "the census counts the activations that fired as the zeros",
+  "old": "        let zeros = activations.iter().filter(|x| **x == 0.0).count() as u64;",
+  "new": "        let zeros = activations.iter().filter(|x| **x != 0.0).count() as u64;"
+ },
+ {
+  "label": "the running total counts only the zero activations",
+  "old": "            .checked_add(activations.len() as u64)",
+  "new": "            .checked_add(zeros)"
+ },
+ {
+  "label": "a non-finite activation is admitted by the census",
+  "old": "        all_finite(activations, \"activation\")?;\n        let zeros = activations.iter().filter(|x| **x == 0.0).count() as u64;",
+  "new": "        let zeros = activations.iter().filter(|x| **x == 0.0).count() as u64;"
+ },
+ {
+  "label": "the counted path credits every activation as silent, fired or not",
+  "old": "            .checked_add(n - fired)",
+  "new": "            .checked_add(n)"
+ },
+ {
+  "label": "a timestep on which every activation fired is refused as impossible",
+  "old": "        if fired > n {",
+  "new": "        if fired >= n {"
+ },
+ {
+  "label": "merge folds the other census's activation total into this one's zero count",
+  "old": "            .checked_add(other.zeros)",
+  "new": "            .checked_add(other.total)"
+ },
+ {
+  "label": "the source bound is off by one, so a spike from one neuron past the last is counted",
+  "old": "        if u64::from(s.source) >= neurons {",
+  "new": "        if u64::from(s.source) > neurons {"
+ },
+ {
+  "label": "the tick bound is off by one, so a spike one tick past the run is counted",
+  "old": "        if s.t >= ticks {",
+  "new": "        if s.t > ticks {"
+ },
+ {
+  "label": "the train is trusted to be sorted, so a repeat that is not adjacent is missed",
+  "old": "    let repeat = if spikes.windows(2).all(|w| w[0] <= w[1]) {",
+  "new": "    let repeat = if true {"
+ },
+ {
+  "label": "the already-sorted fast path is never taken",
+  "old": "    let repeat = if spikes.windows(2).all(|w| w[0] <= w[1]) {",
+  "new": "    let repeat = if false {",
+  "equivalent": "`Spike` derives a total `Ord`, and both arms of this `if` search the SAME total order for the first adjacent equal pair. The fast arm scans `spikes` itself and is entered only when `spikes.windows(2).all(|w| w[0] <= w[1])` holds, i.e. only when `spikes` is already non-decreasing; the slow arm scans `spikes.to_vec()` sorted. Two non-decreasing sequences that are permutations of the same multiset are equal element by element, so whenever the guard holds the sorted copy IS `spikes`, and `windows(2).find(|w| w[0] == w[1]).map(|w| w[0])` returns the same `Option<Spike>` — the same spike, from the same position — out of either. When the guard does NOT hold, the mutation changes nothing at all, because both the original and the mutant take the `else`. `if false` therefore returns the same value on every input; what it deletes is the allocation, not a check, and the `ImpossibleSpike` this feeds names the same `(t, source)` either way. MEASURED, by building the fixture rather than by reading the tests: both arms evaluated on all 5,461 spike sequences of length 0 to 6 over the alphabet {(0,0), (0,1), (1,0), (1,1)} — 210 of which are already sorted and so are the ones the mutation moves — gave an identical `Option<Spike>` on every one, zero differences. No test can tell them apart because there is nothing to tell apart."
+ },
+ {
+  "label": "the train is counted without being checked against the run it is measured against",
+  "old": "    check_one_run(train, neurons, ticks)?;",
+  "new": ""
+ },
+ {
+  "label": "the run's sparsity is the fraction of neuron-timesteps that fired",
+  "old": "    Ok((capacity - spikes) as f64 / capacity as f64)",
+  "new": "    Ok(spikes as f64 / capacity as f64)"
+ },
+ {
+  "label": "a run in which every neuron-timestep fired is refused as impossible",
+  "old": "    if spikes > capacity {",
+  "new": "    if spikes >= capacity {"
+ },
+ {
+  "label": "an oversized train is diagnosed as a bad spike before it is diagnosed as too many",
+  "old": "    if spikes > capacity {\n        return Err(MetricError::TooManySpikes { spikes, capacity });\n    }\n    check_one_run(train, neurons, ticks)?;",
+  "new": "    check_one_run(train, neurons, ticks)?;\n    if spikes > capacity {\n        return Err(MetricError::TooManySpikes { spikes, capacity });\n    }"
+ },
+ {
+  "label": "the dense count is replaced by the incoming layer's rather than accumulated",
+  "old": "        self.dense =\n            self.dense.checked_add(other.dense).ok_or(MetricError::Overflow { what: \"dense ops\" })?;",
+  "new": "        self.dense =\n            other.dense.checked_add(0).ok_or(MetricError::Overflow { what: \"dense ops\" })?;"
+ },
+ {
+  "label": "the incoming accumulates are added to the multiply-accumulate count as well",
+  "old": "        self.effective_macs = self\n            .effective_macs\n            .checked_add(other.effective_macs)",
+  "new": "        self.effective_macs = self\n            .effective_macs\n            .checked_add(other.effective_acs)"
+ },
+ {
+  "label": "a layer the meter refused is counted as a layer it saw",
+  "old": "        let ops = layer_synops(activations, weights, neurons, kind)?;\n        self.ops.add(ops)?;\n        self.layers_seen += 1;",
+  "new": "        self.layers_seen += 1;\n        let ops = layer_synops(activations, weights, neurons, kind)?;\n        self.ops.add(ops)?;"
+ },
+ {
+  "label": "the weight matrix is read transposed",
+  "old": "            if weights[j * fan_in + i] != 0.0 {",
+  "new": "            if weights[i * neurons + j] != 0.0 {"
+ },
+ {
+  "label": "a synapse pruned to zero is still counted as an effective operation",
+  "old": "            if weights[j * fan_in + i] != 0.0 {",
+  "new": "            if true {"
+ },
+ {
+  "label": "an activation that did not fire still spends its synapses",
+  "old": "        if activations[i] == 0.0 {\n            continue;\n        }",
+  "new": ""
+ },
+ {
+  "label": "the spiking and real-valued splits are exchanged",
+  "old": "        ActivationKind::Spiking => SynOps { dense, effective_macs: 0, effective_acs: effective },\n        ActivationKind::RealValued => SynOps { dense, effective_macs: effective, effective_acs: 0 },",
+  "new": "        ActivationKind::Spiking => SynOps { dense, effective_macs: effective, effective_acs: 0 },\n        ActivationKind::RealValued => SynOps { dense, effective_macs: 0, effective_acs: effective },"
+ },
+ {
+  "label": "a layer declared spiking refuses only a negative activation",
+  "old": "            if *a != 0.0 && *a != 1.0 {",
+  "new": "            if *a < 0.0 {"
+ },
+ {
+  "label": "a layer of no activations is measured as a layer of no operations",
+  "old": "    if activations.is_empty() {\n        return Err(MetricError::Empty { what: \"activations\" });\n    }",
+  "new": ""
+ },
+ {
+  "label": "the source bound is off by one, so a spike from one neuron past the last posts nothing",
+  "old": "        if s.source as usize >= net.n {",
+  "new": "        if s.source as usize > net.n {"
+ },
+ {
+  "label": "the dense denominator counts neurons rather than synapses",
+  "old": "    let dense = mul(net.n_syn as u64, ticks, \"dense synaptic operations\")?;",
+  "new": "    let dense = mul(net.n as u64, ticks, \"dense synaptic operations\")?;"
+ },
+ {
+  "label": "a delivery across a live synapse is booked as a zero-weight fetch",
+  "old": "                    if w == 0.0 {",
+  "new": "                    if w != 0.0 {"
+ },
+ {
+  "label": "the arrival tick drops the one-tick posting offset",
+  "old": "            let arrival = s.t.checked_add(1).and_then(|x| x.checked_add(u64::from(d)));",
+  "new": "            let arrival = s.t.checked_add(0).and_then(|x| x.checked_add(u64::from(d)));"
+ },
+ {
+  "label": "the arrival tick ignores the synapse's delay",
+  "old": "            let arrival = s.t.checked_add(1).and_then(|x| x.checked_add(u64::from(d)));",
+  "new": "            let arrival = s.t.checked_add(1).and_then(|x| x.checked_add(0));"
+ },
+ {
+  "label": "a delivery arriving one tick past the end of the run counts as delivered",
+  "old": "                Some(at) if at < ticks => {",
+  "new": "                Some(at) if at <= ticks => {"
+ },
+ {
+  "label": "a 64-bit value is refused as too wide",
+  "old": "            if bits == 0 || bits > 64 {",
+  "new": "            if bits == 0 || bits >= 64 {"
+ },
+ {
+  "label": "the per-neuron state is sized at the parameter width",
+  "old": "            state_bits: mul(state_values, u64::from(state_bits), \"state bits\")?,",
+  "new": "            state_bits: mul(state_values, u64::from(parameter_bits), \"state bits\")?,"
+ },
+ {
+  "label": "the parameter bytes are counted at ten bits to the byte",
+  "old": "        self.parameter_bits.div_ceil(8)",
+  "new": "        self.parameter_bits.div_ceil(10)"
+ },
+ {
+  "label": "the state bytes round down to the whole byte",
+  "old": "        self.state_bits.div_ceil(8)",
+  "new": "        self.state_bits / 8"
+ },
+ {
+  "label": "the stored connections pruned to zero are left out of the absent count",
+  "old": "    connection_sparsity(dense_connections - stored + stored_zero, dense_connections)",
+  "new": "    connection_sparsity(dense_connections - stored, dense_connections)"
+ },
+ {
+  "label": "only the connections the net stores at zero count as absent",
+  "old": "    connection_sparsity(dense_connections - stored + stored_zero, dense_connections)",
+  "new": "    connection_sparsity(stored_zero, dense_connections)"
+ },
+ {
+  "label": "a network connecting exactly the declared number of pairs is refused",
+  "old": "    if stored > dense_connections {",
+  "new": "    if stored >= dense_connections {"
+ },
+ {
+  "label": "the all-zero fold is an or, so every connected pair reads as absent",
+  "old": "                all_zero &= row[i].1;",
+  "new": "                all_zero |= row[i].1;"
+ },
+ {
+  "label": "a hand-assembled row is trusted to be in ascending post order",
+  "old": "        row.sort_unstable_by_key(|&(post, _)| post);",
+  "new": ""
+ },
+ {
+  "label": "the numerator counts stored synapses rather than distinct connections",
+  "old": "    let (stored, stored_zero) = connection_pairs(net);",
+  "new": "    let (_pairs, stored_zero) = connection_pairs(net);\n    let stored = net.n_syn as u64;"
+ },
+ {
+  "label": "a non-finite score is admitted by top-k",
+  "old": "    if scores.len() != want {\n        return Err(MetricError::LengthMismatch { a: scores.len(), b: want });\n    }\n    all_finite(scores, \"score\")?;",
+  "new": "    if scores.len() != want {\n        return Err(MetricError::LengthMismatch { a: scores.len(), b: want });\n    }"
+ },
+ {
+  "label": "the true class's score is read from the first column of the row",
+  "old": "        let mine = row[label];",
+  "new": "        let mine = row[0];"
+ },
+ {
+  "label": "top-k is a fraction of the classes rather than of the samples",
+  "old": "        if above < k {\n            hits += 1;\n        }\n    }\n    Ok(hits as f64 / truth.len() as f64)",
+  "new": "        if above < k {\n            hits += 1;\n        }\n    }\n    Ok(hits as f64 / classes as f64)"
+ },
+ {
+  "label": "the mean squared error of an empty test set is computed rather than refused",
+  "old": "    if truth.is_empty() {\n        return Err(MetricError::Empty { what: \"test set\" });\n    }\n    all_finite(predicted, \"prediction\")?;\n    all_finite(truth, \"target\")?;\n    let sum: f64 = predicted.iter().zip(truth).map(|(p, t)| (p - t) * (p - t)).sum();",
+  "new": "    all_finite(predicted, \"prediction\")?;\n    all_finite(truth, \"target\")?;\n    let sum: f64 = predicted.iter().zip(truth).map(|(p, t)| (p - t) * (p - t)).sum();"
+ },
+ {
+  "label": "the zero-variance guard watches the residual sum instead of the total",
+  "old": "    if ss_tot == 0.0 {",
+  "new": "    if ss_res == 0.0 {"
+ },
+ {
+  "label": "the total sum of squares is taken over the predictions",
+  "old": "    let ss_tot: f64 = truth.iter().map(|t| (t - mean) * (t - mean)).sum();",
+  "new": "    let ss_tot: f64 = predicted.iter().map(|t| (t - mean) * (t - mean)).sum();"
+ },
+ {
+  "label": "the target mean is a sum rather than a mean",
+  "old": "    let mean = truth.iter().sum::<f64>() / truth.len() as f64;",
+  "new": "    let mean = truth.iter().sum::<f64>();"
+ },
+ {
+  "label": "a non-finite score is admitted by average precision",
+  "old": "    all_finite(scores, \"score\")?;\n    let positives = labels.iter().filter(|b| **b).count();",
+  "new": "    let positives = labels.iter().filter(|b| **b).count();"
+ },
+ {
+  "label": "the label is read in stored order rather than in ranked order",
+  "old": "        if labels[idx] {",
+  "new": "        if labels[rank] {"
+ },
+ {
+  "label": "the ranking sort is unstable, so tied scores are not ordered by ascending index",
+  "old": "    order.sort_by(|&a, &b| scores[b].total_cmp(&scores[a]));",
+  "new": "    order.sort_unstable_by(|&a, &b| scores[b].total_cmp(&scores[a]));"
+ },
+ {
+  "label": "every retrieved positive is credited as the first one found",
+  "old": "        if labels[idx] {\n            hits += 1;",
+  "new": "        if labels[idx] {\n            hits = 1;"
+ },
+ {
+  "label": "the score matrix is read column-major",
+  "old": "            col_scores[s] = scores[s * classes + c];",
+  "new": "            col_scores[s] = scores[c * samples + s];"
+ },
+ {
+  "label": "classes with no positives are averaged in as zeros",
+  "old": "    Ok(sum / scored as f64)",
+  "new": "    Ok(sum / classes as f64)"
+ },
+ {
+  "label": "a score matrix that is not a whole number of samples is silently truncated",
+  "old": "    if !scores.len().is_multiple_of(classes) {\n        return Err(MetricError::LengthMismatch { a: scores.len(), b: classes });\n    }",
+  "new": ""
+ },
+ {
+  "label": "the spikes-per-synapse denominator counts ticks rather than inferences",
+  "old": "    let spikes_per_synapse = ledger.spikes_per_synapse(net.n_syn as u64, inferences);",
+  "new": "    let spikes_per_synapse = ledger.spikes_per_synapse(net.n_syn as u64, ticks);"
+ },
+ {
+  "label": "the synapse count and the inference count are supplied the wrong way round",
+  "old": "    let spikes_per_synapse = ledger.spikes_per_synapse(net.n_syn as u64, inferences);",
+  "new": "    let spikes_per_synapse = ledger.spikes_per_synapse(inferences, net.n_syn as u64);",
+  "equivalent": "`Ledger::spikes_per_synapse(n_syn, inferences)` is `if n_syn == 0 || inferences == 0 { None } else { Some(self.syn_ops as f64 / (n_syn as f64 * inferences as f64)) }`, and BOTH parts are symmetric in the two arguments: `||` is commutative over the two `== 0` tests, the `u64 -> f64` conversion is applied to each argument separately, and IEEE-754 multiplication is commutative — `a * b` and `b * a` are the same bit pattern for every pair of finite operands, which these always are, being conversions of `u64`. So `spikes_per_synapse(a, b)` and `spikes_per_synapse(b, a)` are the same `Option<f64>` for every `(a, b)`, and no `Net`, `Ledger`, tick count or inference count can distinguish the call site's argument order. The swap is a readability defect in `summarise`, not a behavioural one. MEASURED, by building the fixture rather than by reading the tests: 845 `(a, b)` pairs drawn from {0, 1, 2, 3, 5, 7, 97, 1000, 1000003, 2^32, 2^53+1, u64::MAX/3, u64::MAX} against five `syn_ops` values, 720 of them returning a number, compared as raw f64 bit patterns in both orders — zero mismatches. It would stop being equivalent the moment the two divisors are combined by anything other than a bare product, which is why the argument is written from the expression and not from the tests."
+ },
+ {
+  "label": "the ledger cross-check compares the deliveries that were posted",
+  "old": "        agrees_with_ledger: accounting.delivered == ledger.syn_ops,",
+  "new": "        agrees_with_ledger: accounting.posted == ledger.syn_ops,"
+ },
+ {
+  "label": "the summary's idle fraction is not read from the ledger",
+  "old": "        idle_fraction: ledger.idle_fraction(),",
+  "new": "        idle_fraction: None,"
+ },
+ {
+  "label": "the sparsity is computed with the neuron and tick counts exchanged",
+  "old": "    let activation_sparsity = activation_sparsity_of_run(train, neurons, ticks)?;",
+  "new": "    let activation_sparsity = activation_sparsity_of_run(train, ticks, neurons)?;"
+ },
+ {
+  "label": "the effective density is dense operations over effective ones",
+  "old": "        Some(self.ops.effective_total()? as f64 / self.ops.dense as f64)",
+  "new": "        Some(self.ops.dense as f64 / self.ops.effective_total()? as f64)"
+ },
+ {
+  "label": "the printed activation sparsity is the firing density",
+  "old": "        writeln!(f, \"  activation sparsity   {:.6}\", self.activation_sparsity)?;",
+  "new": "        writeln!(f, \"  activation sparsity   {:.6}\", 1.0 - self.activation_sparsity)?;"
+ },
+ {
+  "label": "the reported footprint is the parameters alone",
+  "old": "        footprint_bytes: footprint.bytes(),",
+  "new": "        footprint_bytes: Some(footprint.parameter_bytes()),"
  }
 ]

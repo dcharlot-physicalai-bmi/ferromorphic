@@ -775,4 +775,182 @@ mod tests {
         let mut sim = Sim::new(NetBuilder::new(1).build(), vec![Lif::default()], 1e-3, Mode::Clocked).unwrap().with_exact_timing().unwrap();
         sim.step(&[f64::NAN]);
     }
+
+    /// Pins the catch-up against the ticks that actually passed, twice in a row. Every other
+    /// event-driven test keeps its neurons busy, so a neuron's `as_of` is always the tick it was
+    /// last updated on and a gap is never more than a delivery apart; here one neuron is never
+    /// touched at all, so the whole elapsed run is one jump. That exposes three things the suite
+    /// could not see: the tick every neuron is DATED from when the simulation is built, whether a
+    /// gap in ticks becomes seconds by multiplying or by dividing, and which tick a catch-up
+    /// leaves the neuron dated as of. The neuron starts below threshold and only decays, so the
+    /// jump cannot spike, and both readings are the same operations in the same order as the
+    /// membrane's own, so they are equalities.
+    #[test]
+    fn an_untouched_neuron_is_caught_up_over_exactly_the_ticks_that_have_passed() {
+        let dt = 1e-3;
+        let proto = Lif { v: -55e-3, ..Lif::default() };
+        let mut sim = Sim::new(NetBuilder::new(1).build(), vec![proto], dt, Mode::EventDriven).unwrap();
+        let decay = (-(5.0 * dt) / proto.tau_m).exp();
+        sim.run(5, &[]);
+        let after_five = proto.v_rest + (proto.v - proto.v_rest) * decay;
+        assert_eq!(sim.read_potentials()[0], after_five);
+        // A second read five ticks later jumps five more, not four: the catch-up dates the neuron
+        // as of the tick it reached, which is the tick the simulation is ON.
+        sim.run(5, &[]);
+        let after_ten = proto.v_rest + (after_five - proto.v_rest) * decay;
+        assert_eq!(sim.read_potentials()[0], after_ten);
+        assert!(after_ten < after_five && after_ten > proto.v_rest, "{after_ten} against {after_five}");
+    }
+
+    /// Pins where a refractory catch-up stops at both ends. The refractory period is five and a
+    /// HALF ticks here, so rounding it up and rounding it down land on different ticks — at the
+    /// two-millisecond default and a 0.1 ms tick it is exactly twenty ticks and they do not, which
+    /// is why `the_two_modes_produce_the_same_spike_train` says so in a comment and cannot see
+    /// this. Four things are pinned: that the refractory part is jumped separately from the quiet
+    /// part, that its length is rounded UP, that the quiet part is the REMAINDER rather than the
+    /// whole gap, and that a gap shorter than the period stops at the current tick instead of
+    /// running the countdown out. The last of those is invisible in the potential — it is the
+    /// countdown itself — so the countdown is read.
+    #[test]
+    fn a_refractory_catch_up_rounds_up_to_a_tick_and_stops_at_the_current_tick() {
+        let dt = 1e-4;
+        let proto = Lif { t_ref: 5.5e-4, v_reset: -55e-3, ..Lif::default() };
+        assert!((proto.t_ref / dt).fract() > 0.4, "the fixture needs a fractional refractory period");
+        let settle = |quiet_ticks: u64| -> (f64, f64) {
+            let mut sim =
+                Sim::new(NetBuilder::new(1).build(), vec![proto], dt, Mode::EventDriven).unwrap();
+            let mut spent = 0u64;
+            while !sim.step(&[3e-9]).contains(&0) {
+                spent += 1;
+                assert!(spent < 10_000, "the cell never fired");
+            }
+            // The drive is withdrawn, so nothing touches the cell again and the gap is exactly
+            // `quiet_ticks` long when the readout catches it up.
+            for _ in 0..quiet_ticks {
+                sim.step(&[0.0]);
+            }
+            let v = sim.read_potentials()[0];
+            let left = sim.neurons[0].refractory;
+            (v, left)
+        };
+        // A gap LONGER than the period: six of its fifty ticks are refractory — 5.5 rounded up —
+        // and the other forty-four are integrated, once.
+        let remainder = 50.0 * dt - 6.0 * dt;
+        let (v, left) = settle(50);
+        assert_eq!(v, proto.v_rest + (proto.v_reset - proto.v_rest) * (-remainder / proto.tau_m).exp());
+        assert_eq!(left, proto.t_ref - 6.0 * dt);
+        assert!(v < proto.v_th && v > proto.v_rest, "the jump must decay without firing: {v}");
+        // A gap SHORTER than the period: the jump stops at the current tick, and what is left of
+        // the countdown is still to run.
+        let (v, left) = settle(3);
+        assert_eq!(v, proto.v_reset);
+        assert_eq!(left, proto.t_ref - 3.0 * dt);
+    }
+
+    /// Pins the two counters nothing else reads: a weight FETCH for every delivery, and a neuron
+    /// held up only by an external current counted as DRIVEN work rather than idle. The suite's
+    /// only statement about the split is `idle_fraction() > 0.8` on a clocked run, which a mutant
+    /// that bills external drive as idle satisfies even more comfortably; and `syn_fetches` was
+    /// read by no test in this module at all, while it is the counter the crate's whole position
+    /// on energy rests on. All three numbers are exact integer counts.
+    #[test]
+    fn every_delivery_is_billed_as_a_fetch_and_an_external_drive_is_billed_as_driven_work() {
+        let dt = 1e-4;
+        let ticks = 5_000u64;
+        let proto = Lif::default();
+        let mut bld = NetBuilder::new(2);
+        bld.connect(0, 1, 5e-3, 0).unwrap();
+        let mut sim = Sim::new(bld.build(), vec![proto; 2], dt, Mode::Clocked).unwrap();
+        let train = sim.run(ticks, &[3e-9, 0.0]);
+        // A spike of neuron 0 at tick `t` is delivered at `t + 1`, so the ones at the very last
+        // tick of the run are still in the ring when it ends.
+        let landed = train.of(0).iter().filter(|s| s.t + 1 < ticks).count() as u64;
+        assert!(landed > 20, "only {landed} deliveries; the count would prove little");
+        assert_eq!(sim.ledger.syn_ops, landed);
+        assert_eq!(sim.ledger.syn_fetches, landed, "a delivery was billed as an operation but not as a fetch");
+        // Neuron 0 is held up by a current and nothing else, on every tick; neuron 1 is driven
+        // only on the ticks a spike reaches it.
+        assert_eq!(sim.ledger.neuron_updates_driven, ticks + landed);
+        assert_eq!(sim.ledger.neuron_updates_idle, ticks - landed);
+    }
+
+    /// Pins that the external-current scan does not queue a neuron the delivery loop has already
+    /// queued. The guard is only reachable when the volts arriving at a neuron SUM to zero — the
+    /// running total is what the loop tests — and every fixture in this module has one delivery
+    /// per target per tick, so the guard was never exercised. In event-driven mode the queue IS
+    /// the update list, so a duplicate entry steps that neuron twice inside one tick: the two
+    /// modes then disagree, and the ledger over-counts. Every neuron here carries a current, so
+    /// every neuron is queued on every tick — once.
+    #[test]
+    fn the_external_current_scan_never_queues_a_neuron_that_is_already_queued() {
+        let dt = 1e-4;
+        let ticks = 6_000u64;
+        let proto = Lif::default();
+        let mut bld = NetBuilder::new(3);
+        bld.connect(0, 2, 12e-3, 0).unwrap();
+        bld.connect(1, 2, -12e-3, 0).unwrap();
+        let mut clocked = Sim::new(bld.clone().build(), vec![proto; 3], dt, Mode::Clocked).unwrap();
+        let mut driven = Sim::new(bld.build(), vec![proto; 3], dt, Mode::EventDriven).unwrap();
+        let ext = [3e-9, 3e-9, 2.5e-9];
+        let ta = clocked.run(ticks, &ext);
+        let tb = driven.run(ticks, &ext);
+        // Neurons 0 and 1 are identical cells under an identical current, so they fire together
+        // and their two weights cancel exactly at neuron 2.
+        assert_eq!(driven.ledger.syn_ops % 2, 0, "the two presynaptic cells did not fire in step");
+        assert!(driven.ledger.syn_ops > 60, "only {} deliveries", driven.ledger.syn_ops);
+        assert_eq!(ta.spikes(), tb.spikes(), "the two modes disagreed");
+        assert_eq!(driven.ledger.neuron_updates_driven, 3 * ticks);
+    }
+
+    /// Pins the tick a spike is STAMPED with, against a bare neuron stepped by hand. Every timing
+    /// test in this module compares one spike time with another — a delivery against its source, a
+    /// clocked train against an event-driven one — and all of those hold when every stamp in the
+    /// run is shifted by the same tick. This one fixes the origin.
+    #[test]
+    fn a_spike_is_stamped_with_the_tick_it_fired_on() {
+        let dt = 1e-3;
+        let proto = Lif::default();
+        let drive = 3e-9;
+        let mut probe = proto;
+        let mut first = 0u64;
+        while !probe.step(dt, drive) {
+            first += 1;
+            assert!(first < 10_000, "the probe never fired");
+        }
+        let mut sim = Sim::new(NetBuilder::new(1).build(), vec![proto], dt, Mode::Clocked).unwrap();
+        let train = sim.run(200, &[drive]);
+        assert!(train.len() > 5, "only {} spikes", train.len());
+        assert_eq!(train.spikes()[0].t, first);
+        assert!(train.spikes().last().unwrap().t < 200, "a spike was stamped past the end of the run");
+    }
+
+    /// Pins what a reset does and what it does NOT do. `reset_state` was called by no test in this
+    /// module, so both halves of its contract were unread: that every neuron goes back to rest,
+    /// and that the ledger — a record of what the hardware already did — survives.
+    #[test]
+    fn a_reset_returns_every_neuron_to_rest_and_keeps_the_ledger() {
+        let dt = 1e-4;
+        let proto = Lif { v_reset: -60e-3, ..Lif::default() };
+        let mut bld = NetBuilder::new(3);
+        bld.connect(0, 1, 20e-3, 2).unwrap();
+        bld.connect(1, 2, 20e-3, 2).unwrap();
+        let mut sim = Sim::new(bld.build(), vec![proto; 3], dt, Mode::Clocked).unwrap();
+        sim.run(1_000, &[3e-9, 0.0, 0.0]);
+        let paid = sim.ledger;
+        assert!(paid.syn_ops > 0 && paid.spikes_out > 0 && paid.neuron_updates() > 0, "{paid:?}");
+        assert!(
+            sim.neurons.iter().any(|c| c.v != c.v_rest || c.refractory != 0.0),
+            "every neuron was already at rest, so a reset that did nothing would look the same"
+        );
+        sim.reset_state();
+        assert_eq!(sim.ledger, paid, "the run had already paid for the first half");
+        for (i, cell) in sim.neurons.iter().enumerate() {
+            assert_eq!(cell.v, cell.v_rest, "neuron {i} kept its potential");
+            assert_eq!(cell.refractory, 0.0, "neuron {i} kept its refractory countdown");
+        }
+        // And the deliveries still in flight went with it: a quiet run after the reset is silent.
+        let after = sim.run(500, &[]);
+        assert!(after.is_empty(), "{} spikes after a reset into silence", after.len());
+        assert_eq!(sim.ledger.syn_ops, paid.syn_ops, "a delivery outlived the reset");
+    }
 }

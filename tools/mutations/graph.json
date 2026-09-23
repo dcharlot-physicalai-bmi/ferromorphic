@@ -78,5 +78,192 @@
   "label": "walker always takes the first way",
   "old": "ways[rng.below(count) as usize]",
   "new": "ways[0 * rng.below(count) as usize]"
+ },
+ {
+  "label": "the zero-delay error names the synapse backwards",
+  "old": "Self::ZeroDelay { from, to } => write!(f, \"the synapse {from} → {to} has zero delay\"),",
+  "new": "Self::ZeroDelay { from, to } => write!(f, \"the synapse {to} → {from} has zero delay\"),"
+ },
+ {
+  "label": "the index error reports the bound as the offending index and the index as the bound",
+  "old": "Self::Index { what, index, count } => write!(f, \"{what} {index} is past the {count} available\"),",
+  "new": "Self::Index { what, index, count } => write!(f, \"{what} {count} is past the {index} available\"),"
+ },
+ {
+  "label": "the vertex count is one past the end",
+  "old": "    pub fn vertices(&self) -> usize {\n        self.out.len()\n    }",
+  "new": "    pub fn vertices(&self) -> usize {\n        self.out.len() + 1\n    }"
+ },
+ {
+  "label": "the synapse is stored on its target rather than on its source",
+  "old": "        self.out[from].push((to as u32, delay));",
+  "new": "        self.out[to].push((from as u32, delay));"
+ },
+ {
+  "label": "the reverse synapse is one tick slower than the forward one",
+  "old": "        self.connect(b, a, delay)\n",
+  "new": "        self.connect(b, a, delay + 1)\n"
+ },
+ {
+  "label": "a refused forward synapse is swallowed and the reverse is added anyway",
+  "old": "        self.connect(a, b, delay)?;",
+  "new": "        let _ = self.connect(a, b, delay);"
+ },
+ {
+  "label": "the path is a one-way chain rather than an undirected line",
+  "old": "            g.connect_both(i, i + 1, 1)?;",
+  "new": "            g.connect(i, i + 1, 1)?;"
+ },
+ {
+  "label": "the injected spike latches vertex zero as the source's parent",
+  "old": "        pending.push(Reverse((0u64, u32::MAX, source as u32)));",
+  "new": "        pending.push(Reverse((0u64, 0u32, source as u32)));"
+ },
+ {
+  "label": "a neuron fires again on every later arrival rather than only on its first",
+  "old": "            if first_spike[v].is_some() {\n                continue;\n            }",
+  "new": "            if false {\n                continue;\n            }"
+ },
+ {
+  "label": "a synaptic event into a vertex that has already fired is not billed",
+  "old": "                syn_events += 1;\n                let arrive = t.checked_add(delay).ok_or(GraphError::Overflow)?;\n                if first_spike[w as usize].is_none() {\n                    pending.push(Reverse((arrive, v as u32, w)));\n                }",
+  "new": "                let arrive = t.checked_add(delay).ok_or(GraphError::Overflow)?;\n                if first_spike[w as usize].is_none() {\n                    syn_events += 1;\n                    pending.push(Reverse((arrive, v as u32, w)));\n                }"
+ },
+ {
+  "label": "an arrival past u64 wraps around rather than being refused",
+  "old": "let arrive = t.checked_add(delay).ok_or(GraphError::Overflow)?;",
+  "new": "let arrive = t.wrapping_add(delay);"
+ },
+ {
+  "label": "an arrival is queued even for a vertex that has already fired",
+  "old": "                if first_spike[w as usize].is_none() {",
+  "new": "                if true {",
+  "equivalent": "The guard is a PUSH-time filter for a condition that is also checked at POP time: the loop's first act on a popped arrival is 'if first_spike[v].is_some() { continue }'. Dropping it therefore adds only entries that are discarded when they come out, and it adds none for a vertex that has not fired -- at push time an unfired w passes both spellings. Nothing else moves: syn_events is incremented and the arrival time is checked for overflow BEFORE the guard, and BinaryHeap pops the minimum of a total order on (tick, presynaptic index, vertex), so consuming extra minima that are immediately skipped cannot reorder the entries that remain. Every field of Wavefront -- first_spike, parent, spikes, syn_events, ticks -- and every path_to are therefore unchanged; what changes is the heap's size, which no caller can observe. Measured, not asserted: a fixture running wavefront from EVERY source of 40 seeded random graphs of 3 to 14 vertices at 45% density, with duplicate edges and self-loops, plus path_to for every vertex -- 5160 printed lines -- is byte-identical under both spellings."
+ },
+ {
+  "label": "bellman-ford stops at the first round that changed something rather than the first that did not",
+  "old": "            if !changed {",
+  "new": "            if changed {"
+ },
+ {
+  "label": "a vertex the source cannot reach relaxes its edges as if it were at distance zero",
+  "old": "                let Some(du) = dist[u] else { continue };",
+  "new": "                let du = dist[u].unwrap_or(0);"
+ },
+ {
+  "label": "the referee's path length wraps around rather than being refused",
+  "old": "let through = du.checked_add(delay).ok_or(GraphError::Overflow)?;",
+  "new": "let through = du.wrapping_add(delay);"
+ },
+ {
+  "label": "a vertex that never fired is still given a path",
+  "old": "        self.first_spike.get(v).copied().flatten()?;",
+  "new": "        let _ = self.first_spike.get(v).copied().flatten();"
+ },
+ {
+  "label": "the walked path leaves out the vertex it was asked about",
+  "old": "        let mut path = vec![v];",
+  "new": "        let mut path = Vec::new();"
+ },
+ {
+  "label": "the hop budget is one short, so a path through every vertex is refused as a cycle",
+  "old": "path.len() > self.parent.len()",
+  "new": "path.len() >= self.parent.len()"
+ },
+ {
+  "label": "the exit fraction is normalised by vertices rather than by walkers",
+  "old": "self.exits.get(v).map(|&e| e as f64 / self.walkers as f64)",
+  "new": "self.exits.get(v).map(|&e| e as f64 / self.exits.len() as f64)"
+ },
+ {
+  "label": "a vertex past the graph is clamped to the last one rather than refused",
+  "old": "self.exits.get(v)",
+  "new": "self.exits.get(v.min(self.exits.len() - 1))"
+ },
+ {
+  "label": "a run with no walkers reports 0/0 rather than refusing",
+  "old": "        if self.walkers == 0 {\n            return None;\n        }",
+  "new": "        if false {\n            return None;\n        }"
+ },
+ {
+  "label": "the readout is the total step count rather than the mean per walker",
+  "old": "Some(self.spikes as f64 / self.walkers as f64)",
+  "new": "Some(self.spikes as f64)"
+ },
+ {
+  "label": "a boundary shorter than the graph is used as far as it goes rather than refused",
+  "old": "        if boundary.len() != self.exits.len() || self.walkers == 0 {",
+  "new": "        if boundary.len() > self.exits.len() || self.walkers == 0 {"
+ },
+ {
+  "label": "the boundary value is added to the exit count rather than weighting it",
+  "old": ".map(|(&e, b)| e as f64 * b)",
+  "new": ".map(|(&e, b)| e as f64 + b)"
+ },
+ {
+  "label": "an absorbing mask shorter than the graph is accepted",
+  "old": "    if absorbing.len() != n {",
+  "new": "    if absorbing.len() > n {"
+ },
+ {
+  "label": "the walk continues only while the walker is standing ON a door",
+  "old": "        while !absorbing[at] {",
+  "new": "        while absorbing[at] {"
+ },
+ {
+  "label": "a walker is given one step past the limit before it is refused",
+  "old": "            if steps == max_steps {",
+  "new": "            if steps > max_steps {"
+ },
+ {
+  "label": "a walker at a dead end draws from no ways at all rather than being refused",
+  "old": "            if ways.is_empty() {\n                return Err(GraphError::DeadEnd { vertex: at });\n            }",
+  "new": "            if false {\n                return Err(GraphError::DeadEnd { vertex: at });\n            }"
+ },
+ {
+  "label": "every hop is drawn from the release vertex's neighbours rather than from where the walker stands",
+  "old": "            let ways = &graph.out[at];",
+  "new": "            let ways = &graph.out[start];"
+ },
+ {
+  "label": "the walker hops to the edge's delay rather than to its target",
+  "old": "            at = ways[rng.below(count) as usize].0 as usize;",
+  "new": "            at = ways[rng.below(count) as usize].1 as usize;"
+ },
+ {
+  "label": "the hop is drawn from one way too many and folded back, biasing the walk toward the first neighbour",
+  "old": "rng.below(count)",
+  "new": "(rng.below(count + 1) % count)"
+ },
+ {
+  "label": "the exit tally is assigned rather than accumulated",
+  "old": "        exits[at] += 1;",
+  "new": "        exits[at] = 1;"
+ },
+ {
+  "label": "the spike total is the last walker's step count rather than the sum over walkers",
+  "old": "        spikes += steps;",
+  "new": "        spikes = steps;"
+ },
+ {
+  "label": "the mean exit time is not refused for a k past the far end",
+  "old": "    if n == 0 || k > n { None } else { Some((k * (n - k)) as f64) }",
+  "new": "    if n == 0 { None } else { Some((k * (n - k)) as f64) }"
+ },
+ {
+  "label": "the exit-time variance drops the k(n − k) factor",
+  "old": "Some(a * b * (a * a + b * b - 2.0) / 3.0)",
+  "new": "Some((a * a + b * b - 2.0) / 3.0)"
+ },
+ {
+  "label": "the exit-time variance is divided by two rather than by three",
+  "old": "(a * a + b * b - 2.0) / 3.0",
+  "new": "(a * a + b * b - 2.0) / 2.0"
+ },
+ {
+  "label": "the exit-time variance's two arms are swapped",
+  "old": "    let (a, b) = (k as f64, (n - k) as f64);",
+  "new": "    let (a, b) = ((n - k) as f64, k as f64);",
+  "equivalent": "The expression a*b*(a*a + b*b - 2.0)/3.0 is SYMMETRIC in a and b, and the guard above it (n == 0 || k > n -> None) is what makes n - k well defined, so both spellings compute the same two numbers and combine them the same way. In f64 this is bit-exact and not merely mathematically equal: IEEE-754 multiplication and addition are commutative on non-NaN operands -- a*b and b*a round the same exact product, a*a + b*b and b*b + a*a round the same exact sum -- so no rounding can distinguish them. Measured, not asserted: ruin_steps_variance printed as raw bit patterns for every (k, n) with n < 40 and k <= 42, including the None cases, is byte-identical under both spellings."
  }
 ]

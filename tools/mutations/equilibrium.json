@@ -93,5 +93,340 @@
   "label": "nudged phase restarts from zero",
   "old": "let plus = self.energy_gradient(&self.relax(&free, x, y, beta,",
   "new": "let plus = self.energy_gradient(&self.relax(&vec![0.0; self.n], x, y, beta,"
+ },
+ {
+  "label": "an infinity is not counted as non-finite",
+  "old": "    if let Some(i) = v.iter().position(|x| !x.is_finite()) {",
+  "new": "    if let Some(i) = v.iter().position(|x| x.is_nan()) {"
+ },
+ {
+  "label": "the reported position of a non-finite entry is always the first slot",
+  "old": "        return Err(EquilibriumError::NonFinite { what, index: i });",
+  "new": "        return Err(EquilibriumError::NonFinite { what, index: 0 });"
+ },
+ {
+  "label": "an over-long array passes the dimension check",
+  "old": "    if got == want { Ok(()) } else { Err(EquilibriumError::Dimension { what, got, want }) }",
+  "new": "    if got >= want { Ok(()) } else { Err(EquilibriumError::Dimension { what, got, want }) }"
+ },
+ {
+  "label": "the dimension error reports the supplied and required lengths the wrong way round",
+  "old": "Err(EquilibriumError::Dimension { what, got, want })",
+  "new": "Err(EquilibriumError::Dimension { what, got: want, want: got })"
+ },
+ {
+  "label": "the dimension message names the two lengths the wrong way round",
+  "old": "            Self::Dimension { what, got, want } => write!(f, \"{what} has length {got}, expected {want}\"),",
+  "new": "            Self::Dimension { what, got, want } => write!(f, \"{what} has length {want}, expected {got}\"),"
+ },
+ {
+  "label": "the enforced step cap is a tenth of the documented one",
+  "old": "pub const MAX_STEPS: u64 = 10_000_000;",
+  "new": "pub const MAX_STEPS: u64 = 1_000_000;"
+ },
+ {
+  "label": "a bias vector of the wrong length is compared anyway",
+  "old": "        if self.w.len() != other.w.len() || self.u.len() != other.u.len() || self.b.len() != other.b.len() {",
+  "new": "        if self.w.len() != other.w.len() || self.u.len() != other.u.len() {"
+ },
+ {
+  "label": "each symmetric coupling is counted twice in the mismatch",
+  "old": "        for i in 0..n {\n            for j in (i + 1)..n {\n                let (a, c) = (self.w[i * n + j], other.w[i * n + j]);",
+  "new": "        for i in 0..n {\n            for j in 0..n {\n                let (a, c) = (self.w[i * n + j], other.w[i * n + j]);"
+ },
+ {
+  "label": "the coupling block of the mismatch is normalised by the estimate rather than the reference",
+  "old": "                let (a, c) = (self.w[i * n + j], other.w[i * n + j]);\n                diff += (a - c) * (a - c);\n                norm += c * c;",
+  "new": "                let (a, c) = (self.w[i * n + j], other.w[i * n + j]);\n                diff += (a - c) * (a - c);\n                norm += a * a;"
+ },
+ {
+  "label": "the biases are left out of the mismatch",
+  "old": "        for (a, c) in self.u.iter().zip(&other.u).chain(self.b.iter().zip(&other.b)) {",
+  "new": "        for (a, c) in self.u.iter().zip(&other.u) {"
+ },
+ {
+  "label": "a zero reference yields a NaN ratio rather than nothing",
+  "old": "        if norm == 0.0 { None } else { Some((diff / norm).sqrt()) }",
+  "new": "        if false { None } else { Some((diff / norm).sqrt()) }"
+ },
+ {
+  "label": "the relative mismatch is a ratio of squares, never square-rooted",
+  "old": "Some((diff / norm).sqrt())",
+  "new": "Some(diff / norm)"
+ },
+ {
+  "label": "a network with no units is built",
+  "old": "        if n == 0 {\n            return Err(EquilibriumError::Empty { what: \"units\" });\n        }",
+  "new": "        if false {\n            return Err(EquilibriumError::Empty { what: \"units\" });\n        }"
+ },
+ {
+  "label": "a network with no outputs is built",
+  "old": "        if n_out == 0 {\n            return Err(EquilibriumError::Empty { what: \"outputs\" });\n        }",
+  "new": "        if false {\n            return Err(EquilibriumError::Empty { what: \"outputs\" });\n        }"
+ },
+ {
+  "label": "a network with no inputs is built",
+  "old": "        if m == 0 {\n            return Err(EquilibriumError::Empty { what: \"inputs\" });\n        }",
+  "new": "        if false {\n            return Err(EquilibriumError::Empty { what: \"inputs\" });\n        }"
+ },
+ {
+  "label": "a network whose every unit is an output is refused",
+  "old": "        if n_out > n {",
+  "new": "        if n_out >= n {"
+ },
+ {
+  "label": "a NaN scale slips through the range guard",
+  "old": "        if !(scale > 0.0) || !(scale <= 1.0) {",
+  "new": "        if scale <= 0.0 || scale > 1.0 {"
+ },
+ {
+  "label": "a scale of zero is accepted, so every coupling is zero",
+  "old": "        if !(scale > 0.0) || !(scale <= 1.0) {",
+  "new": "        if !(scale >= 0.0) || !(scale <= 1.0) {"
+ },
+ {
+  "label": "the coupling bound grows with the unit count instead of shrinking",
+  "old": "        let bound = scale / (n as f64).sqrt();",
+  "new": "        let bound = scale * (n as f64).sqrt();"
+ },
+ {
+  "label": "the coupling bound divides by the unit count rather than its square root",
+  "old": "        let bound = scale / (n as f64).sqrt();",
+  "new": "        let bound = scale / (n as f64);"
+ },
+ {
+  "label": "the input-weight bound is normalised by the unit count rather than the input count",
+  "old": "        let bound_u = scale / (m as f64).sqrt();",
+  "new": "        let bound_u = scale / (n as f64).sqrt();"
+ },
+ {
+  "label": "the random couplings are all of one sign rather than centred on zero",
+  "old": "                let v = bound * (2.0 * rng.next_f64() - 1.0);",
+  "new": "                let v = bound * rng.next_f64();"
+ },
+ {
+  "label": "the coupling matrix is given a non-zero diagonal",
+  "old": "        for i in 0..n {\n            for j in (i + 1)..n {\n                let v = bound * (2.0 * rng.next_f64() - 1.0);",
+  "new": "        for i in 0..n {\n            for j in i..n {\n                let v = bound * (2.0 * rng.next_f64() - 1.0);"
+ },
+ {
+  "label": "a fresh network's biases do not start at zero",
+  "old": "        Ok(Self { n, n_out, m, w, u, b: vec![0.0; n] })",
+  "new": "        Ok(Self { n, n_out, m, w, u, b: vec![1.0; n] })"
+ },
+ {
+  "label": "the target is never checked for finiteness",
+  "old": "        finite_all(\"x\", x)?;\n        finite_all(\"y\", y)\n    }",
+  "new": "        finite_all(\"x\", x)?;\n        finite_all(\"x\", x)\n    }"
+ },
+ {
+  "label": "the input weights are read column-major",
+  "old": "self.u[i * self.m + k] * x[k]",
+  "new": "self.u[k * self.m + i] * x[k]"
+ },
+ {
+  "label": "every unit is driven by the first unit's bias",
+  "old": "(0..self.n).map(|i| self.b[i] + (0..self.m)",
+  "new": "(0..self.n).map(|i| self.b[0] + (0..self.m)"
+ },
+ {
+  "label": "the outputs are the first units rather than the last",
+  "old": "        let first = self.n - self.n_out;\n        Ok(0.5 * y.iter()",
+  "new": "        let first = 0;\n        Ok(0.5 * y.iter()"
+ },
+ {
+  "label": "the loss is the residual rather than its square",
+  "old": ".map(|(k, t)| (t - s[first + k]) * (t - s[first + k]))",
+  "new": ".map(|(k, t)| (t - s[first + k]))"
+ },
+ {
+  "label": "the nudge is subtracted from the total energy",
+  "old": "        Ok(e + beta * self.cost(s, y)?)",
+  "new": "        Ok(e - beta * self.cost(s, y)?)"
+ },
+ {
+  "label": "the nudge strength is dropped, so the loss is clamped in at full weight",
+  "old": "        Ok(e + beta * self.cost(s, y)?)",
+  "new": "        Ok(e + self.cost(s, y)?)"
+ },
+ {
+  "label": "the drive couples to the raw state rather than the activity",
+  "old": "            e += 0.5 * s[i] * s[i] - rho[i] * drive[i];",
+  "new": "            e += 0.5 * s[i] * s[i] - s[i] * drive[i];"
+ },
+ {
+  "label": "the coupling energy sums each pair twice",
+  "old": "            for j in (i + 1)..self.n {\n                e -= self.w[i * self.n + j] * rho[i] * rho[j];",
+  "new": "            for j in 0..self.n {\n                e -= self.w[i * self.n + j] * rho[i] * rho[j];"
+ },
+ {
+  "label": "the leak pulls the activity rather than the state toward zero",
+  "old": "                let mut v = -s[i] + (1.0 - rho[i] * rho[i]) * field;",
+  "new": "                let mut v = -rho[i] + (1.0 - rho[i] * rho[i]) * field;"
+ },
+ {
+  "label": "tanh's derivative is transcribed as 1 - rho rather than 1 - rho^2",
+  "old": "                let mut v = -s[i] + (1.0 - rho[i] * rho[i]) * field;",
+  "new": "                let mut v = -s[i] + (1.0 - rho[i]) * field;"
+ },
+ {
+  "label": "the field reads the coupling matrix transposed",
+  "old": "                let field: f64 = (0..self.n).map(|j| self.w[i * self.n + j] * rho[j]).sum::<f64>() + drive[i];",
+  "new": "                let field: f64 = (0..self.n).map(|j| self.w[j * self.n + i] * rho[j]).sum::<f64>() + drive[i];"
+ },
+ {
+  "label": "the dynamics run a clipped activation while the energy runs tanh",
+  "old": "        let rho: Vec<f64> = s.iter().map(|v| v.tanh()).collect();\n        let drive = self.drive(x);\n        let first = self.n - self.n_out;",
+  "new": "        let rho: Vec<f64> = s.iter().map(|v| v.clamp(-1.0, 1.0)).collect();\n        let drive = self.drive(x);\n        let first = self.n - self.n_out;"
+ },
+ {
+  "label": "the first output unit is left out of the spring",
+  "old": "                if i >= first {",
+  "new": "                if i > first {"
+ },
+ {
+  "label": "every output is pulled toward the first target",
+  "old": "                    v += beta * (y[i - first] - s[i]);",
+  "new": "                    v += beta * (y[0] - s[i]);"
+ },
+ {
+  "label": "the spring pulls the activity toward the target rather than the state",
+  "old": "                    v += beta * (y[i - first] - s[i]);",
+  "new": "                    v += beta * (y[i - first] - rho[i]);"
+ },
+ {
+  "label": "a NaN tolerance slips through the guard",
+  "old": "        if !(tol >= 0.0) {",
+  "new": "        if tol < 0.0 {"
+ },
+ {
+  "label": "the step budget is not capped at all",
+  "old": "        if max_steps > MAX_STEPS {",
+  "new": "        if false {"
+ },
+ {
+  "label": "a request for exactly the documented cap is refused",
+  "old": "        if max_steps > MAX_STEPS {",
+  "new": "        if max_steps >= MAX_STEPS {"
+ },
+ {
+  "label": "the relaxation ignores its start and always begins at the origin",
+  "old": "        let mut s = start.to_vec();",
+  "new": "        let mut s = vec![0.0; start.len()];"
+ },
+ {
+  "label": "a relaxation given no budget reports that nothing moved",
+  "old": "        let mut moved = f64::INFINITY;",
+  "new": "        let mut moved = 0.0_f64;"
+ },
+ {
+  "label": "the step's movement is never reset, so it is the maximum over the whole run",
+  "old": "            moved = 0.0;\n            for (si, vi) in s.iter_mut().zip(&v) {",
+  "new": "            for (si, vi) in s.iter_mut().zip(&v) {"
+ },
+ {
+  "label": "the state is replaced by its increment rather than stepped by it",
+  "old": "                *si += dt * vi;",
+  "new": "                *si = dt * vi;"
+ },
+ {
+  "label": "the Euler step drops its step size",
+  "old": "                *si += dt * vi;",
+  "new": "                *si += vi;"
+ },
+ {
+  "label": "the settle test watches the last unit rather than the largest mover",
+  "old": "                moved = moved.max((dt * vi).abs());",
+  "new": "                moved = (dt * vi).abs();"
+ },
+ {
+  "label": "the nudge never reaches the dynamics the relaxation steps",
+  "old": "            let v = self.velocity(&s, x, y, beta)?;",
+  "new": "            let v = self.velocity(&s, x, y, 0.0)?;"
+ },
+ {
+  "label": "the coupling gradient has a non-zero diagonal",
+  "old": "                if i != j {",
+  "new": "                if true {"
+ },
+ {
+  "label": "the coupling gradient fills only the upper triangle",
+  "old": "        for i in 0..self.n {\n            for j in 0..self.n {\n                if i != j {",
+  "new": "        for i in 0..self.n {\n            for j in (i + 1)..self.n {\n                if i != j {"
+ },
+ {
+  "label": "the coupling gradient double-counts the one parameter the symmetric pair shares",
+  "old": "w[i * self.n + j] = -rho[i] * rho[j];",
+  "new": "w[i * self.n + j] = -2.0 * rho[i] * rho[j];"
+ },
+ {
+  "label": "the input-weight gradient is laid out column-major",
+  "old": "        let u = (0..self.n * self.m).map(|q| -rho[q / self.m] * x[q % self.m]).collect();",
+  "new": "        let u = (0..self.n * self.m).map(|q| -rho[q % self.n] * x[q / self.n]).collect();"
+ },
+ {
+  "label": "the bias gradient is the raw state rather than the activity",
+  "old": "b: rho.iter().map(|r| -r).collect()",
+  "new": "b: s.iter().map(|r| -r).collect()"
+ },
+ {
+  "label": "an infinite nudge is accepted",
+  "old": "        if !(beta > 0.0) || !beta.is_finite() {",
+  "new": "        if !(beta > 0.0) {"
+ },
+ {
+  "label": "a zero nudge is accepted and the estimate divides by it",
+  "old": "        if !(beta > 0.0) || !beta.is_finite() {",
+  "new": "        if beta < 0.0 || !beta.is_finite() {"
+ },
+ {
+  "label": "the free phase is nudged too",
+  "old": "        let free = self.relax(&vec![0.0; self.n], x, y, 0.0, dt, tol, max_steps)?;\n        let plus = self.energy_gradient",
+  "new": "        let free = self.relax(&vec![0.0; self.n], x, y, beta, dt, tol, max_steps)?;\n        let plus = self.energy_gradient"
+ },
+ {
+  "label": "the negative phase restarts from the origin rather than the free fixed point",
+  "old": "(self.energy_gradient(&self.relax(&free, x, y, -beta,",
+  "new": "(self.energy_gradient(&self.relax(&vec![0.0; self.n], x, y, -beta,"
+ },
+ {
+  "label": "the symmetric flag selects the one-sided estimator and the other way round",
+  "old": "        let (minus, span) = if symmetric {",
+  "new": "        let (minus, span) = if !symmetric {"
+ },
+ {
+  "label": "the difference is taken free minus nudged",
+  "old": ".map(|(p, q)| (p - q) / span)",
+  "new": ".map(|(p, q)| (q - p) / span)"
+ },
+ {
+  "label": "the difference is never divided by the nudge",
+  "old": ".map(|(p, q)| (p - q) / span)",
+  "new": ".map(|(p, q)| (p - q))"
+ },
+ {
+  "label": "the free loss is measured at a nudged fixed point",
+  "old": "        let free = self.relax(&vec![0.0; self.n], x, y, 0.0, dt, tol, max_steps)?;\n        self.cost(&free, y)",
+  "new": "        let free = self.relax(&vec![0.0; self.n], x, y, 1.0, dt, tol, max_steps)?;\n        self.cost(&free, y)"
+ },
+ {
+  "label": "the free loss is read at the start rather than at the fixed point",
+  "old": "        self.cost(&free, y)\n    }",
+  "new": "        self.cost(&vec![0.0; self.n], y)\n    }"
+ },
+ {
+  "label": "a bias gradient of the wrong length is silently truncated",
+  "old": "        dims(\"gradient b\", g.b.len(), self.b.len())?;",
+  "new": "        dims(\"gradient b\", g.b.len(), g.b.len())?;"
+ },
+ {
+  "label": "an infinite learning rate is accepted",
+  "old": "        if !rate.is_finite() {",
+  "new": "        if rate.is_nan() {"
+ },
+ {
+  "label": "the step replaces the parameter rather than adjusting it",
+  "old": "            *p -= rate * d;",
+  "new": "            *p = -rate * d;"
  }
 ]

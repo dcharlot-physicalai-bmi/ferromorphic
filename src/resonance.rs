@@ -427,4 +427,95 @@ mod tests {
         assert_eq!(binomial(3, 1.0), vec![0.0, 0.0, 0.0, 1.0]);
         assert_eq!(binomial(2, 0.5), vec![0.25, 0.5, 0.25]);
     }
+
+    /// The published population ceiling is the twentieth power of two. Pinned as a compile-time
+    /// assertion because every bound test in this module writes `MAX_UNITS + 1`, which follows the
+    /// constant wherever it is moved to: a ceiling raised a thousandfold reads as covered.
+    #[test]
+    fn the_published_population_ceiling_is_two_to_the_twentieth() {
+        const { assert!(MAX_UNITS == 1 << 20) };
+    }
+
+    /// A refusal's RENDERED text: which parameter, the value supplied, and the range with the low
+    /// bound first. Pinned because every other test in this module destructures the variant and
+    /// matches on `what` alone, so neither the `Display` body nor the bounds the guards write into
+    /// it was ever read — a range printed backwards, or one that excludes the value it admits, is
+    /// fluent and invisible.
+    #[test]
+    fn a_refusal_renders_its_value_and_its_range_low_bound_first() {
+        assert_eq!(fire_probability(0.5, 1.0, -0.1).unwrap_err().to_string(), "sigma = -0.1 is outside [0, inf]");
+        assert_eq!(fire_probability(f64::NAN, 1.0, 0.5).unwrap_err().to_string(), "signal is not finite");
+        assert_eq!(levels_information(&[0.25], 0.0, 0.5, 4).unwrap_err().to_string(), "levels = 1 is outside [2, 1048576]");
+        assert_eq!(population_information(0.2, 0.6, 1.0, 0.5, 0).unwrap_err().to_string(), "n = 0 is outside [1, 1048576]");
+    }
+
+    /// The dither's width guard, both ends of it: zero is refused and the refusal names the
+    /// smallest positive double as the floor, and an INFINITE width is refused as well. Pinned
+    /// because the existing refusal reads `OutOfRange { what: "width", .. }` and looks at neither
+    /// the bounds it carries nor any width but zero — and `margin / ∞ + ½` is a well-formed `0.5`
+    /// that no assertion in this module would have questioned.
+    #[test]
+    fn the_dither_refuses_a_zero_and_an_infinite_width_and_names_its_floor() {
+        let Err(ResonanceError::OutOfRange { what, value, low, high }) = dithered_probability(0.5, 1.0, 0.0) else {
+            panic!("a dither of zero width was accepted");
+        };
+        assert_eq!((what, value), ("width", 0.0));
+        assert_eq!((low, high), (f64::MIN_POSITIVE, f64::INFINITY));
+        assert!(matches!(dithered_probability(0.5, 1.0, f64::INFINITY), Err(ResonanceError::OutOfRange { what: "width", .. })));
+        assert!(matches!(dithered_probability(0.5, 1.0, f64::NAN), Err(ResonanceError::OutOfRange { what: "width", .. })));
+    }
+
+    /// Two EQUAL values have no best noise. Pinned because the strict `low < high` in the guard was
+    /// the only thing rejecting them — with `low == high` the closed form is `√(0 / 2 ln 1)`, a
+    /// `NaN` handed back inside `Some` — and every `None` case the existing test lists is rejected
+    /// by the weakened guard too.
+    #[test]
+    fn two_equal_values_have_no_best_noise() {
+        assert_eq!(optimal_noise(0.4, 0.4, 1.0), None);
+        // Why there is none: the two hit rates are the same rate, at every noise level.
+        for sigma in [0.0, 0.25, 1.0, 64.0] {
+            assert_eq!(discriminability(0.4, 0.4, 1.0, sigma).unwrap(), 0.0, "σ = {sigma}");
+        }
+    }
+
+    /// The three clamps that hold an information inside its range are load-bearing at f64
+    /// precision rather than decoration: each argument below computes to something OUTSIDE the
+    /// range its clamp names — by −6.1e-16, by +1.2e-11 and by +2.0e-13, all measured. Pinned
+    /// because every existing assertion on these three functions is an inequality carrying at
+    /// least 1e-12 of slack, or reads a value nowhere near a bound, so the summation's overshoot
+    /// could not be seen.
+    #[test]
+    fn the_information_clamps_are_reached_by_real_arguments() {
+        // H₂ is concave, so a channel information is never negative — but at ONE ulp of separation
+        // the difference of two nearly equal entropies rounds below zero.
+        let probability = 0.9995_f64;
+        let one_ulp_below = f64::from_bits(probability.to_bits() - 1);
+        assert_eq!(binary_channel_information(probability, one_ulp_below), Some(0.0));
+        // A thousand and twenty-five count terms, summed in order: 1.0 + 1.2e-11 before clamping.
+        assert_eq!(population_information(0.6, 1.4, 1.0, 0.05, 1024).unwrap(), 1.0);
+        // The ceiling is log₂ min(M, n + 1) = log₂ 3, and the sum reaches it and passes it. Under
+        // log₂ max(M, n + 1) = log₂ 128 nothing would clamp and the overshoot would be returned.
+        let three_levels = [-1.0 / 3.0, 0.0, 1.0 / 3.0];
+        assert_eq!(levels_information(&three_levels, 0.0, 0.1, 127).unwrap(), 3.0_f64.log2());
+    }
+
+    /// Both ceilings on the LEVELS summation: more than [`MAX_UNITS`] levels is refused, and so is
+    /// a levels-times-units product past `64 · MAX_UNITS` even when each factor is admissible on
+    /// its own. Pinned because the existing bound tests supply one level or no units, which the
+    /// first clause of each guard rejects on its own — the ceilings themselves were never reached.
+    #[test]
+    fn the_levels_summation_refuses_too_many_levels_and_too_large_a_product() {
+        let past_the_ceiling = vec![0.5_f64; MAX_UNITS + 1];
+        assert!(matches!(
+            levels_information(&past_the_ceiling, 1.0, 0.0, 1),
+            Err(ResonanceError::OutOfRange { what: "levels", .. })
+        ));
+        // 65 · 2^20 is 68_157_440 count entries, past the 67_108_864 the module will allocate,
+        // with both factors inside their own bounds.
+        let sixty_five = [0.5_f64; 65];
+        assert!(matches!(
+            levels_information(&sixty_five, 1.0, 0.0, MAX_UNITS),
+            Err(ResonanceError::OutOfRange { what: "n", .. })
+        ));
+    }
 }

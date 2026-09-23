@@ -68,5 +68,226 @@
   "label": "threshold strict",
   "old": "if self.y >= self.threshold {",
   "new": "if self.y > self.threshold {"
+ },
+ {
+  "label": "the finiteness check lets an infinity through and refuses only NaN",
+  "old": "    if value.is_finite() { Ok(value) } else { Err(ResonateError::NonFinite { what, value }) }",
+  "new": "    if !value.is_nan() { Ok(value) } else { Err(ResonateError::NonFinite { what, value }) }"
+ },
+ {
+  "label": "zero passes the strictly-positive check",
+  "old": "    if value > 0.0 {",
+  "new": "    if value >= 0.0 {"
+ },
+ {
+  "label": "the out-of-range refusal reports its admissible interval inverted",
+  "old": "        Err(ResonateError::OutOfRange { what, value, low: f64::MIN_POSITIVE, high: f64::INFINITY })",
+  "new": "        Err(ResonateError::OutOfRange { what, value, low: f64::INFINITY, high: f64::MIN_POSITIVE })"
+ },
+ {
+  "label": "the out-of-range message prints the bounds the wrong way round",
+  "old": "                write!(f, \"{what} = {value} is outside [{low}, {high}]\")",
+  "new": "                write!(f, \"{what} = {value} is outside [{high}, {low}]\")"
+ },
+ {
+  "label": "a non-finite imaginary part of the reset state is accepted",
+  "old": "        finite(\"z_reset.1\", z_reset.1)?;",
+  "new": "        let _ = finite(\"z_reset.1\", z_reset.1);"
+ },
+ {
+  "label": "a new cell is built at the origin rather than at its reset state",
+  "old": "        Ok(Self { b, omega, threshold, z_reset, t_ref, x: z_reset.0, y: z_reset.1, refractory: 0.0 })",
+  "new": "        Ok(Self { b, omega, threshold, z_reset, t_ref, x: 0.0, y: 0.0, refractory: 0.0 })"
+ },
+ {
+  "label": "a new cell starts one refractory period deep, so it ignores its first t_ref of input",
+  "old": "t_ref, x: z_reset.0, y: z_reset.1, refractory: 0.0 })",
+  "new": "t_ref, x: z_reset.0, y: z_reset.1, refractory: t_ref })"
+ },
+ {
+  "label": "the textbook resonator's natural frequency is ten times the paper's",
+  "old": "Self::new(-1.0, core::f64::consts::TAU * 10.0, 1.0, (0.0, 0.0), 0.0)",
+  "new": "Self::new(-1.0, core::f64::consts::TAU * 100.0, 1.0, (0.0, 0.0), 0.0)"
+ },
+ {
+  "label": "the textbook resonator's damping is ten times the paper's",
+  "old": "Self::new(-1.0, core",
+  "new": "Self::new(-10.0, core"
+ },
+ {
+  "label": "the natural period is half of 2pi/omega",
+  "old": "        core::f64::consts::TAU / self.omega",
+  "new": "        core::f64::consts::PI / self.omega"
+ },
+ {
+  "label": "a kick replaces the state rather than adding to it",
+  "old": "        self.x += dx;\n        self.y += dy;",
+  "new": "        self.x = dx;\n        self.y = dy;"
+ },
+ {
+  "label": "a kick's real and imaginary components are swapped",
+  "old": "        self.x += dx;\n        self.y += dy;",
+  "new": "        self.x += dy;\n        self.y += dx;"
+ },
+ {
+  "label": "the refractory residue is never snapped to zero, so the period outlives its last tick",
+  "old": "            self.refractory = if left < 1e-9 * dt { 0.0 } else { left };",
+  "new": "            self.refractory = left;"
+ },
+ {
+  "label": "the exact step rotates the imaginary part the wrong way",
+  "old": "        let mut y = er * y0 + ei * x0;",
+  "new": "        let mut y = er * y0 - ei * x0;"
+ },
+ {
+  "label": "the input integral divides by the magnitude of lambda rather than its square",
+  "old": "            let denom = self.b * self.b + self.omega * self.omega;",
+  "new": "            let denom = (self.b * self.b + self.omega * self.omega).sqrt();"
+ },
+ {
+  "label": "the threshold reads the real part of the state rather than the imaginary part",
+  "old": "if self.y >= self.threshold {",
+  "new": "if self.x >= self.threshold {"
+ },
+ {
+  "label": "a spike leaves the state where it was instead of resetting it",
+  "old": "            self.x = self.z_reset.0;\n            self.y = self.z_reset.1;\n            self.refractory = self.t_ref;",
+  "new": "            self.refractory = self.t_ref;"
+ },
+ {
+  "label": "reset leaves a refractory period pending",
+  "old": "    pub fn reset(&mut self) {\n        self.x = self.z_reset.0;\n        self.y = self.z_reset.1;\n        self.refractory = 0.0;\n    }",
+  "new": "    pub fn reset(&mut self) {\n        self.x = self.z_reset.0;\n        self.y = self.z_reset.1;\n    }"
+ },
+ {
+  "label": "the free response rotates the conjugate way",
+  "old": "        (g * (x0 * c - y0 * s), g * (x0 * s + y0 * c))",
+  "new": "        (g * (x0 * c + y0 * s), g * (x0 * s - y0 * c))"
+ },
+ {
+  "label": "the pair response subtracts the second pulse instead of adding it",
+  "old": "((1.0 + g * c).powi(2) + (g * s).powi(2)).sqrt()",
+  "new": "((1.0 - g * c).powi(2) + (g * s).powi(2)).sqrt()"
+ },
+ {
+  "label": "the sinusoidal gain's real part is built from b rather than from -b",
+  "old": "        let p = -self.b;",
+  "new": "        let p = self.b;",
+  "equivalent": "EVEN IN p, BIT FOR BIT. p reaches the result only as p*p (both denominators) and as re_plus = p/d_plus and re_minus = p/d_minus, which are used only inside (re_plus - re_minus).powi(2). Under p -> -p: IEEE multiplication is exactly sign-symmetric so p*p is bit-identical, hence d_plus, d_minus, im_plus and im_minus are untouched; division negates the quotient exactly, so re_plus and re_minus each negate exactly and their difference negates exactly; powi(2) of a negated value is bit-identical. The returned f64 is therefore identical in every bit, not merely to rounding, so no assertion on the returned value could separate the two. Fixture built and both versions run side by side over 424,800 triples (b in [-21.83, 0] step 0.37, omega in [0.91, 53.7] step 0.91, omega_in in [0, 63.1] step 0.53): 0 of 424,800 differed in any bit. Edges checked too: b = +0.0 vs -0.0 (p = -0.0 vs +0.0) agree; the pole b = 0 driven exactly at omega gives NaN on both sides; b = -1e300 with omega = 1e300 gives 0.0 on both sides. What is NOT claimed: that p = b is as READABLE as p = -b, only that the function cannot distinguish them."
+ },
+ {
+  "label": "the sinusoidal gain's resonant pole is placed at the sum of the frequencies",
+  "old": "        let q_plus = omega_in - self.omega;",
+  "new": "        let q_plus = omega_in + self.omega;"
+ },
+ {
+  "label": "the sinusoidal gain drops the factor of two that the two complex exponentials carry",
+  "old": "        0.5 * ((im_plus + im_minus).powi(2) + (re_plus - re_minus).powi(2)).sqrt()",
+  "new": "        1.0 * ((im_plus + im_minus).powi(2) + (re_plus - re_minus).powi(2)).sqrt()"
+ },
+ {
+  "label": "the sinusoidal gain adds the two real parts where the derivation subtracts them",
+  "old": "        0.5 * ((im_plus + im_minus).powi(2) + (re_plus - re_minus).powi(2)).sqrt()",
+  "new": "        0.5 * ((im_plus + im_minus).powi(2) + (re_plus + re_minus).powi(2)).sqrt()"
+ },
+ {
+  "label": "the window length multiplies the Legendre scale rather than dividing it",
+  "old": "            let scale = (2 * i + 1) as f64 / theta;",
+  "new": "            let scale = (2 * i + 1) as f64 * theta;"
+ },
+ {
+  "label": "each row of A and B carries the next row's odd number",
+  "old": "let scale = (2 * i + 1) as f64",
+  "new": "let scale = (2 * i + 3) as f64"
+ },
+ {
+  "label": "the A matrix is written transposed",
+  "old": "                a[i * d + j] = if i < j {",
+  "new": "                a[j * d + i] = if i < j {"
+ },
+ {
+  "label": "the upper triangle of A has the sign of the lower one",
+  "old": "                a[i * d + j] = if i < j {\n                    -scale\n                } else if",
+  "new": "                a[i * d + j] = if i < j {\n                    scale\n                } else if"
+ },
+ {
+  "label": "a new unit starts with a window full of ones rather than at rest",
+  "old": "        Ok(Self { order, theta, a, b, m: vec![0.0; d] })",
+  "new": "        Ok(Self { order, theta, a, b, m: vec![1.0; d] })"
+ },
+ {
+  "label": "the input enters the derivative raw rather than through B",
+  "old": "            let mut acc = self.b[i] * u;",
+  "new": "            let mut acc = u;"
+ },
+ {
+  "label": "the derivative accumulator is overwritten, so only the last column and no input survive",
+  "old": "                acc += self.a[i * d + j] * m[j];",
+  "new": "                acc = self.a[i * d + j] * m[j];"
+ },
+ {
+  "label": "the derivative reads A transposed",
+  "old": "                acc += self.a[i * d + j] * m[j];",
+  "new": "                acc += self.a[j * d + i] * m[j];"
+ },
+ {
+  "label": "the fourth Runge-Kutta stage is evaluated at the midpoint rather than at the end of the step",
+  "old": "            tmp[i] = self.m[i] + dt * k3[i];",
+  "new": "            tmp[i] = self.m[i] + 0.5 * dt * k3[i];"
+ },
+ {
+  "label": "reset keeps the constant coefficient of the window",
+  "old": "        self.m.iter_mut().for_each(|x| *x = 0.0);",
+  "new": "        self.m.iter_mut().skip(1).for_each(|x| *x = 0.0);"
+ },
+ {
+  "label": "reconstruct reads the window from the wrong end",
+  "old": "shifted_legendre(i, r) * mi",
+  "new": "shifted_legendre(i, 1.0 - r) * mi"
+ },
+ {
+  "label": "the far end of the window is refused",
+  "old": "if !(0.0..=1.0).contains(&r) {",
+  "new": "if !(0.0..1.0).contains(&r) {"
+ },
+ {
+  "label": "the current-input readout has its alternating sign inverted",
+  "old": "if i.is_multiple_of(2) { mi } else { -mi }",
+  "new": "if i.is_multiple_of(2) { -mi } else { mi }"
+ },
+ {
+  "label": "the delay-line tap count inverts its ratio",
+  "old": "        Some((self.theta / dt).ceil() as u64)",
+  "new": "        Some((dt / self.theta).ceil() as u64)"
+ },
+ {
+  "label": "the delay-line tap count truncates where it must round up",
+  "old": "        Some((self.theta / dt).ceil() as u64)",
+  "new": "        Some((self.theta / dt).floor() as u64)"
+ },
+ {
+  "label": "an infinite sampling interval reports zero taps rather than refusing",
+  "old": "if !(dt > 0.0) || !dt.is_finite() {",
+  "new": "if !(dt > 0.0) {"
+ },
+ {
+  "label": "the shifted polynomial is not shifted onto [-1, 1]",
+  "old": "    let x = 2.0 * r - 1.0;",
+  "new": "    let x = 2.0 * r;"
+ },
+ {
+  "label": "the recurrence's two seeds are swapped",
+  "old": "    let (mut p0, mut p1) = (1.0, x);",
+  "new": "    let (mut p0, mut p1) = (x, 1.0);"
+ },
+ {
+  "label": "the recurrence keeps the new value as both of its previous terms",
+  "old": "        p0 = p1;\n        p1 = p2;",
+  "new": "        p1 = p2;\n        p0 = p1;"
+ },
+ {
+  "label": "Bonnet's recurrence divides by k rather than by k+1",
+  "old": "- kf * p0) / (kf + 1.0);",
+  "new": "- kf * p0) / kf;"
  }
 ]

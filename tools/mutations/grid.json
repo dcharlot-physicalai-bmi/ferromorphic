@@ -138,5 +138,366 @@
   "label": "legal range past the code's range accepted",
   "old": "if legal_range == 0 || legal_range > range {",
   "new": "if legal_range == 0 {"
+ },
+ {
+  "label": "the dimension error swaps the length it got for the one it wanted",
+  "old": "write!(f, \"{what} has length {got}, expected {want}\")",
+  "new": "write!(f, \"{what} has length {want}, expected {got}\")"
+ },
+ {
+  "label": "the non-finite error says the quantity is finite",
+  "old": "Self::NonFinite { what } => write!(f, \"{what} is not finite\"),",
+  "new": "Self::NonFinite { what } => write!(f, \"{what} is finite\"),"
+ },
+ {
+  "label": "the second component of a position is never checked for finiteness",
+  "old": "if v[0].is_finite() && v[1].is_finite() { Ok(v) }",
+  "new": "if v[0].is_finite() { Ok(v) }"
+ },
+ {
+  "label": "an infinite spacing or peak rate is accepted",
+  "old": "if !(v > 0.0) || !v.is_finite() {",
+  "new": "if !(v > 0.0) {"
+ },
+ {
+  "label": "a spacing or peak rate of zero is accepted",
+  "old": "if !(v > 0.0) || !v.is_finite() {",
+  "new": "if !(v >= 0.0) || !v.is_finite() {"
+ },
+ {
+  "label": "the range error names the other parameter",
+  "old": "for (what, v) in [(\"spacing\", spacing), (\"rate_max\", rate_max)] {",
+  "new": "for (what, v) in [(\"spacing\", rate_max), (\"rate_max\", spacing)] {"
+ },
+ {
+  "label": "the peak rate is never range-checked",
+  "old": "[(\"spacing\", spacing), (\"rate_max\", rate_max)]",
+  "new": "[(\"spacing\", spacing)]"
+ },
+ {
+  "label": "an infinite orientation is accepted",
+  "old": "if !orientation.is_finite() {",
+  "new": "if orientation.is_nan() {"
+ },
+ {
+  "label": "the orientation is not checked at all",
+  "old": "if !orientation.is_finite() {\n            return Err(GridError::NonFinite { what: \"orientation\" });",
+  "new": "if false {\n            return Err(GridError::NonFinite { what: \"orientation\" });"
+ },
+ {
+  "label": "the lattice vector components are transposed",
+  "old": "let at = |angle: f64| [self.spacing * angle.cos(), self.spacing * angle.sin()];",
+  "new": "let at = |angle: f64| [self.spacing * angle.sin(), self.spacing * angle.cos()];"
+ },
+ {
+  "label": "the lattice vectors are half the spacing long",
+  "old": "[self.spacing * angle.cos(), self.spacing * angle.sin()]",
+  "new": "[0.5 * self.spacing * angle.cos(), 0.5 * self.spacing * angle.sin()]"
+ },
+ {
+  "label": "the whole lattice basis is rotated 30 degrees off the wave vectors",
+  "old": "[at(self.orientation), at(self.orientation + PI / 3.0)]",
+  "new": "[at(self.orientation + PI / 6.0), at(self.orientation + PI / 2.0)]"
+ },
+ {
+  "label": "the wave number transcribes root three as three",
+  "old": "let k = 4.0 * PI / (3.0f64.sqrt() * self.spacing);",
+  "new": "let k = 4.0 * PI / (3.0 * self.spacing);"
+ },
+ {
+  "label": "the wave vectors are rotated the wrong way off the lattice",
+  "old": "let base = self.orientation + PI / 6.0;",
+  "new": "let base = self.orientation - PI / 6.0;"
+ },
+ {
+  "label": "the third wave is the first one over again",
+  "old": "[at(base), at(base + PI / 3.0), at(base + 2.0 * PI / 3.0)]",
+  "new": "[at(base), at(base + PI / 3.0), at(base + PI)]"
+ },
+ {
+  "label": "the wave vector components are transposed",
+  "old": "let at = |angle: f64| [k * angle.cos(), k * angle.sin()];",
+  "new": "let at = |angle: f64| [k * angle.sin(), k * angle.cos()];"
+ },
+ {
+  "label": "the map is a sum of sines, so a lattice vertex is a zero crossing",
+  "old": "(k[0] * d[0] + k[1] * d[1]).cos()",
+  "new": "(k[0] * d[0] + k[1] * d[1]).sin()"
+ },
+ {
+  "label": "the map's contrast is halved, so its mean over a cell is half the peak",
+  "old": "self.rate_max * (2.0 / 3.0) * (sum / 3.0 + 0.5)",
+  "new": "self.rate_max * (sum / 6.0 + 0.5)"
+ },
+ {
+  "label": "the offset components are transposed before the map is evaluated",
+  "old": "let d = [x[0] - self.offset[0], x[1] - self.offset[1]];",
+  "new": "let d = [x[0] - self.offset[1], x[1] - self.offset[0]];"
+ },
+ {
+  "label": "the map sums two of the three waves",
+  "old": "self.wave_vectors().iter().map(",
+  "new": "self.wave_vectors().iter().take(2).map("
+ },
+ {
+  "label": "the wrap is the truncating remainder, so a negative phase stays negative",
+  "old": "let r = p.rem_euclid(TAU);",
+  "new": "let r = p % TAU;"
+ },
+ {
+  "label": "the full-turn guard is strict, so a phase of exactly one turn is returned",
+  "old": "if r >= TAU { 0.0 } else { r }",
+  "new": "if r > TAU { 0.0 } else { r }"
+ },
+ {
+  "label": "the starting phases are not wrapped into a turn",
+  "old": "let phase = |i: usize| wrap_tau(k[i][0] * d[0] + k[i][1] * d[1]);",
+  "new": "let phase = |i: usize| k[i][0] * d[0] + k[i][1] * d[1];"
+ },
+ {
+  "label": "the starting phases ignore the module's offset",
+  "old": "let d = [x[0] - module.offset[0], x[1] - module.offset[1]];",
+  "new": "let d = [x[0], x[1]];"
+ },
+ {
+  "label": "the second phase is read off the third wave vector",
+  "old": "Ok(Self { module, phases: [phase(0), phase(1)] })",
+  "new": "Ok(Self { module, phases: [phase(0), phase(2)] })"
+ },
+ {
+  "label": "an infinite time step is accepted",
+  "old": "if !(dt > 0.0) || !dt.is_finite() {",
+  "new": "if !(dt > 0.0) {"
+ },
+ {
+  "label": "a time step of zero is accepted",
+  "old": "if !(dt > 0.0) || !dt.is_finite() {",
+  "new": "if !(dt >= 0.0) || !dt.is_finite() {"
+ },
+ {
+  "label": "the phase runs backwards along the velocity",
+  "old": "wrap_tau(self.phases[i] + (k[i][0] * v[0] + k[i][1] * v[1]) * dt)",
+  "new": "wrap_tau(self.phases[i] - (k[i][0] * v[0] + k[i][1] * v[1]) * dt)"
+ },
+ {
+  "label": "only the first phase is advanced",
+  "old": "let k = self.module.wave_vectors();\n        for i in 0..2 {",
+  "new": "let k = self.module.wave_vectors();\n        for i in 0..1 {"
+ },
+ {
+  "label": "the velocity components are transposed in the phase step",
+  "old": "(k[i][0] * v[0] + k[i][1] * v[1]) * dt",
+  "new": "(k[i][0] * v[1] + k[i][1] * v[0]) * dt"
+ },
+ {
+  "label": "the phase is replaced by the step rather than advanced by it",
+  "old": "self.phases[i] = wrap_tau(self.phases[i] + (k[i][0] * v[0] + k[i][1] * v[1]) * dt);",
+  "new": "self.phases[i] = wrap_tau((k[i][0] * v[0] + k[i][1] * v[1]) * dt);"
+ },
+ {
+  "label": "the wave-vector determinant sums the cross terms",
+  "old": "let det = k[0][0] * k[1][1] - k[0][1] * k[1][0];",
+  "new": "let det = k[0][0] * k[1][1] + k[0][1] * k[1][0];"
+ },
+ {
+  "label": "the two phases are swapped when the position is solved for",
+  "old": "let (p, q) = (self.phases[0], self.phases[1]);",
+  "new": "let (p, q) = (self.phases[1], self.phases[0]);"
+ },
+ {
+  "label": "both components of the decoded position are offset by the first coordinate",
+  "old": "self.module.offset[1] + (q * k[0][0] - p * k[1][0]) / det,",
+  "new": "self.module.offset[0] + (q * k[0][0] - p * k[1][0]) / det,"
+ },
+ {
+  "label": "the lattice determinant sums the cross terms",
+  "old": "let det = a[0][0] * a[1][1] - a[0][1] * a[1][0];",
+  "new": "let det = a[0][0] * a[1][1] + a[0][1] * a[1][0];"
+ },
+ {
+  "label": "the second lattice coefficient is not divided by the determinant",
+  "old": "(d[1] * a[0][0] - d[0] * a[0][1]) / det]",
+  "new": "(d[1] * a[0][0] - d[0] * a[0][1])]"
+ },
+ {
+  "label": "the adjugate is read transposed for the first lattice coefficient",
+  "old": "(d[0] * a[1][1] - d[1] * a[1][0]) / det",
+  "new": "(d[0] * a[1][1] - d[1] * a[0][1]) / det"
+ },
+ {
+  "label": "the recursion bottoms out at one rather than at the last non-zero remainder",
+  "old": "if b == 0 { a } else { gcd(b, a % b) }",
+  "new": "if b == 0 { 1 } else { gcd(b, a % b) }"
+ },
+ {
+  "label": "the bezout coefficients start swapped",
+  "old": "let (mut t0, mut t1) = (0i128, 1i128);",
+  "new": "let (mut t0, mut t1) = (1i128, 0i128);"
+ },
+ {
+  "label": "the coefficient recurrence adds where it subtracts",
+  "old": "(t0, t1) = (t1, t0 - q * t1);",
+  "new": "(t0, t1) = (t1, t0 + q * t1);"
+ },
+ {
+  "label": "the inverse is read from the wrong row of the euclidean table",
+  "old": "t0.rem_euclid(n as i128) as u128",
+  "new": "t1.rem_euclid(n as i128) as u128"
+ },
+ {
+  "label": "a code with no modules is built",
+  "old": "if periods.is_empty() {",
+  "new": "if false {"
+ },
+ {
+  "label": "the refused period's floor is reported as one",
+  "old": "low: 2.0, high: u64::MAX as f64 });",
+  "new": "low: 1.0, high: u64::MAX as f64 });"
+ },
+ {
+  "label": "the overflow guard refuses a range of exactly the largest u64",
+  "old": "if l > u128::from(u64::MAX) {",
+  "new": "if l >= u128::from(u64::MAX) {"
+ },
+ {
+  "label": "the overflow guard is hoisted out of the loop, so the running lcm may wrap first",
+  "old": "            l = l / gcd(l, p) * p;\n            if l > u128::from(u64::MAX) {\n                return Err(GridError::RangeOverflow);\n            }\n        }\n        Ok(l as u64)",
+  "new": "            l = l / gcd(l, p) * p;\n        }\n        if l > u128::from(u64::MAX) {\n            return Err(GridError::RangeOverflow);\n        }\n        Ok(l as u64)"
+ },
+ {
+  "label": "a module contributes one cell fewer than its period",
+  "old": "self.periods.iter().fold(0u64, |a, p| a.saturating_add(*p))",
+  "new": "self.periods.iter().fold(0u64, |a, p| a.saturating_add(*p - 1))"
+ },
+ {
+  "label": "the position is divided by the period rather than reduced modulo it",
+  "old": "*phase = x % p;",
+  "new": "*phase = x / p;"
+ },
+ {
+  "label": "the displacement is subtracted from every phase",
+  "old": "let moved = i128::from(*phase) + i128::from(dx);",
+  "new": "let moved = i128::from(*phase) - i128::from(dx);"
+ },
+ {
+  "label": "the step is taken in the native width, so an extreme displacement wraps at two to the sixty-four",
+  "old": "let moved = i128::from(*phase) + i128::from(dx);",
+  "new": "let moved = i128::from(phase.wrapping_add(dx as u64));"
+ },
+ {
+  "label": "a short phase vector is decoded from the modules it reaches",
+  "old": "if self.phases.len() != self.periods.len() {",
+  "new": "if false {"
+ },
+ {
+  "label": "decode never checks that the range fits in a u64",
+  "old": "        self.range()?;\n        let (mut x, mut m): (u128, u128) = (0, 1);",
+  "new": "        let (mut x, mut m): (u128, u128) = (0, 1);"
+ },
+ {
+  "label": "the phase bound is not checked at all",
+  "old": "if phase >= p {\n                return Err(GridError::OutOfRange",
+  "new": "if false {\n                return Err(GridError::OutOfRange"
+ },
+ {
+  "label": "the generalised crt assumes the periods are coprime",
+  "old": "let g = gcd(m, n);",
+  "new": "let g = 1u128;"
+ },
+ {
+  "label": "the reduced modulus keeps the shared factor",
+  "old": "let reduced = n / g;",
+  "new": "let reduced = n;"
+ },
+ {
+  "label": "the residue gap is not divided by the shared factor",
+  "old": "let need = ((a + n - x % n) % n) / g;",
+  "new": "let need = (a + n - x % n) % n;"
+ },
+ {
+  "label": "the running modulus is the product of the periods rather than their lcm",
+  "old": "m = m / g * n;",
+  "new": "m = m * n;"
+ },
+ {
+  "label": "the crt accumulator is overwritten rather than added to",
+  "old": "x += m * t;",
+  "new": "x = m * t;"
+ },
+ {
+  "label": "the contradicting module is always reported as the first one",
+  "old": "return Err(GridError::Inconsistent { module: i });",
+  "new": "return Err(GridError::Inconsistent { module: 0 });"
+ },
+ {
+  "label": "two modules are enough for the single-error guarantee",
+  "old": "if k < 3 {",
+  "new": "if k < 2 {"
+ },
+ {
+  "label": "the pairwise coprimality check skips adjacent pairs",
+  "old": "for j in (i + 1)..k {",
+  "new": "for j in (i + 2)..k {"
+ },
+ {
+  "label": "the spare modules are the two smallest",
+  "old": "sorted.sort_unstable();",
+  "new": "sorted.sort_unstable_by(|a, b| b.cmp(a));"
+ },
+ {
+  "label": "the single-error range is the sum of the remaining periods",
+  "old": "|acc, p| acc.checked_mul(*p)",
+  "new": "|acc, p| acc.checked_add(*p)"
+ },
+ {
+  "label": "the phase of the dropped module is kept while its period goes",
+  "old": "Self { periods: keep(&self.periods), phases: keep(&self.phases) }",
+  "new": "Self { periods: keep(&self.periods), phases: self.phases.clone() }"
+ },
+ {
+  "label": "a legal range one past the code's range is accepted",
+  "old": "if legal_range == 0 || legal_range > range {",
+  "new": "if legal_range == 0 || legal_range > range + 1 {"
+ },
+ {
+  "label": "a malformed code word is reported as a corrupted one",
+  "old": "Err(e) => return Err(e),",
+  "new": "Err(_) => {}"
+ },
+ {
+  "label": "an impossible code word is refused instead of repaired",
+  "old": "Ok(_) | Err(GridError::Inconsistent { .. }) => {}",
+  "new": "Ok(_) => {}"
+ },
+ {
+  "label": "module zero is never set aside",
+  "old": "for skip in 0..self.periods.len() {",
+  "new": "for skip in 1..self.periods.len() {"
+ },
+ {
+  "label": "a lone module corrects itself away",
+  "old": "if self.periods.len() < 2 {",
+  "new": "if self.periods.len() < 1 {"
+ },
+ {
+  "label": "a candidate outside the legal range is taken as a correction",
+  "old": "if let Ok(x) = self.without(skip).decode()\n                && x < legal_range\n            {",
+  "new": "if let Ok(x) = self.without(skip).decode()\n            {"
+ },
+ {
+  "label": "two modules agreeing on one position is read as a contradiction",
+  "old": "Some(_) => {}",
+  "new": "Some(_) => return Err(GridError::Inconsistent { module: 0 }),",
+  "equivalent": "THE ARM IS UNREACHABLE, so what it does there cannot be observed. To reach `Some(_)` the loop must already hold `found = Some(Correction { position: v, repaired: Some(s1) })` from an earlier skip and then meet a later skip `s2` (necessarily `s2 != s1`) whose `without(s2).decode()` also returns exactly `v`, with `v < legal_range`. `decode` of a subset returns the unique `x` in `[0, lcm of that subset)` with `x = phases[i] (mod periods[i])` for every kept `i`. So `v` satisfies every congruence with `i != s1` AND every congruence with `i != s2`; those two index sets cover ALL the modules, so `v` satisfies the whole system. The full system is therefore consistent, and its unique solution in `[0, lcm of all)` is `v` itself, because `v < lcm(all but s1) <= lcm(all)`. That means `self.decode()` at the top of `correct` returned `Ok(v)` with `v < legal_range` and the function returned `Ok(Correction { position: v, repaired: None })` before the loop ran at all. The other exits from that match are closed too: a phase vector of the wrong length or a phase at or past its period makes the full `decode` an `Err` the `Err(e)` arm returns, and a range past `u64` is refused by the `self.range()?` above it. MEASURED, by building the fixture rather than by reading the tests: the arm was replaced by the mutant's refusal AND instrumented with a counter, then run over every ordered period tuple of length 1 to 4 drawn from {2, 3, 4, 5, 9}, every phase vector with each phase in 0..=its period (so malformed words are included), and every legal range in 0..=range+1 — 637,420 code words and 44,177,540 `correct` calls. The arm was reached 0 times and the two versions returned 0 differing verdicts."
+ },
+ {
+  "label": "a repaired word does not say which module was disregarded",
+  "old": "None => found = Some(Correction { position: x, repaired: Some(skip) }),",
+  "new": "None => found = Some(Correction { position: x, repaired: None }),"
+ },
+ {
+  "label": "the refusal names a module rather than the documented zero",
+  "old": "found.ok_or(GridError::Inconsistent { module: 0 })",
+  "new": "found.ok_or(GridError::Inconsistent { module: 1 })"
  }
 ]

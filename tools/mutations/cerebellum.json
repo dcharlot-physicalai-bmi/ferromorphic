@@ -113,6 +113,332 @@
   "label": "shared counts any common index",
   "old": "a.iter().zip(&b).filter(|(p, q)| p == q).count()",
   "new": "a.iter().filter(|p| b.contains(p)).count() + 0 * b.len()",
-  "equivalent": "each tiling owns a disjoint range of indices, so two lookups have an index in common exactly when they agree at the same tiling"
+  "equivalent": "each tiling k owns the disjoint index block [k*per, (k+1)*per): the tile coordinate (u_j + k)/c is at most ceil((cells_j - 1)/c) = tiles_along(j) - 1, so the mixed-radix index is strictly below per, and two lookups can therefore share an index only at the SAME tiling -- which makes a membership test and a positional comparison the same count. CHECKED by running both forms over every pair of cells of six tables (1, 2 and 3 dimensions, ragged and square boxes, c from 2 to 16, including a c larger than a whole axis): the shared-count digests are identical for all six."
+ },
+ {
+  "label": "a non-finite entry is never found",
+  "old": "v.iter().position(|x| !x.is_finite())",
+  "new": "v.iter().position(|_x| false)"
+ },
+ {
+  "label": "an infinity passes the finiteness check",
+  "old": "v.iter().position(|x| !x.is_finite())",
+  "new": "v.iter().position(|x| x.is_nan())"
+ },
+ {
+  "label": "a non-finite entry's position in the array is reported as zero",
+  "old": "return Err(CerebellumError::NonFinite { what, index: i });",
+  "new": "return Err(CerebellumError::NonFinite { what, index: 0 });"
+ },
+ {
+  "label": "an array shorter than required passes the length check",
+  "old": "if got == want { Ok(()) }",
+  "new": "if got <= want { Ok(()) }"
+ },
+ {
+  "label": "an infinite parameter counts as positive",
+  "old": "if v.is_finite() && v > 0.0 {",
+  "new": "if v > 0.0 {"
+ },
+ {
+  "label": "zero counts as positive",
+  "old": "if v.is_finite() && v > 0.0 {",
+  "new": "if v.is_finite() && v >= 0.0 {"
+ },
+ {
+  "label": "the target count is checked against the input width rather than the sample count",
+  "old": "dims(\"targets\", targets.len(), samples.len())?;",
+  "new": "dims(\"targets\", targets.len(), n)?;"
+ },
+ {
+  "label": "a sample set with no samples is accepted",
+  "old": "\n    if samples.is_empty() {",
+  "new": "\n    if false {"
+ },
+ {
+  "label": "a non-finite target is not refused",
+  "old": "finite_all(\"targets\", targets)",
+  "new": "Ok(())"
+ },
+ {
+  "label": "a bank of no time constants is accepted",
+  "old": "if taus.is_empty() {",
+  "new": "if false {"
+ },
+ {
+  "label": "the bank holds one state however many time constants it has",
+  "old": "state: vec![0.0; n]",
+  "new": "state: vec![0.0; 1]"
+ },
+ {
+  "label": "a bank starts at one rather than at rest",
+  "old": "state: vec![0.0; n]",
+  "new": "state: vec![1.0; n]"
+ },
+ {
+  "label": "a non-finite input is integrated rather than refused",
+  "old": "if !u.is_finite() {",
+  "new": "if false {"
+ },
+ {
+  "label": "the decay multiplies dt by tau rather than dividing",
+  "old": "*s = u + (*s - u) * (-dt / tau).exp();",
+  "new": "*s = u + (*s - u) * (-dt * tau).exp();"
+ },
+ {
+  "label": "the exponential weights the input rather than the gap left to close",
+  "old": "*s = u + (*s - u) * (-dt / tau).exp();",
+  "new": "*s = *s + (u - *s) * (-dt / tau).exp();"
+ },
+ {
+  "label": "each integrator is paired with another integrator's time constant",
+  "old": "for (s, tau) in self.state.iter_mut().zip(&self.taus) {",
+  "new": "for (s, tau) in self.state.iter_mut().zip(self.taus.iter().rev()) {"
+ },
+ {
+  "label": "the step hands back no state at all",
+  "old": "Ok(&self.state)",
+  "new": "Ok(&self.state[..0])"
+ },
+ {
+  "label": "a filter of no inputs is accepted",
+  "old": "\n        if n == 0 {",
+  "new": "\n        if false {"
+ },
+ {
+  "label": "a fresh filter starts with unit weights rather than zero",
+  "old": "Ok(Self { w: vec![0.0; n], beta: positive(\"beta\", beta)? })",
+  "new": "Ok(Self { w: vec![1.0; n], beta: positive(\"beta\", beta)? })"
+ },
+ {
+  "label": "the output adds each weight to its input rather than multiplying",
+  "old": "Ok(self.w.iter().zip(p).map(|(w, x)| w * x).sum())",
+  "new": "Ok(self.w.iter().zip(p).map(|(w, x)| w + x).sum())"
+ },
+ {
+  "label": "the output is the largest term rather than the sum",
+  "old": "Ok(self.w.iter().zip(p).map(|(w, x)| w * x).sum())",
+  "new": "Ok(self.w.iter().zip(p).map(|(w, x)| w * x).fold(0.0, f64::max))"
+ },
+ {
+  "label": "a fibre that was silent when the error came is depressed with the active ones",
+  "old": "*w -= self.beta * error * x;",
+  "new": "*w -= self.beta * error;"
+ },
+ {
+  "label": "the online update replaces the weight rather than adjusting it",
+  "old": "*w -= self.beta * error * x;",
+  "new": "*w = self.beta * error * x;"
+ },
+ {
+  "label": "an infinite climbing-fibre error is accepted",
+  "old": "if !error.is_finite() {",
+  "new": "if error.is_nan() {"
+ },
+ {
+  "label": "a refused update has already written the weights",
+  "old": "        if !error.is_finite() {\n            return Err(CerebellumError::NonFinite { what: \"error\", index: 0 });\n        }\n        for (w, x) in self.w.iter_mut().zip(p) {\n            *w -= self.beta * error * x;\n        }\n        Ok(())\n",
+  "new": "        for (w, x) in self.w.iter_mut().zip(p) {\n            *w -= self.beta * error * x;\n        }\n        if !error.is_finite() {\n            return Err(CerebellumError::NonFinite { what: \"error\", index: 0 });\n        }\n        Ok(())\n"
+ },
+ {
+  "label": "the error correlation drops the parallel-fibre factor",
+  "old": "*ci += e * x;",
+  "new": "*ci += e;"
+ },
+ {
+  "label": "the error correlation keeps only the last sample",
+  "old": "*ci += e * x;",
+  "new": "*ci = e * x;"
+ },
+ {
+  "label": "the error correlation is averaged over the inputs rather than the samples",
+  "old": "let n = samples.len() as f64;",
+  "new": "let n = self.w.len() as f64;"
+ },
+ {
+  "label": "the epoch reports the error measured after its own update",
+  "old": "        let mut mse = 0.0;\n        for (p, d) in samples.iter().zip(targets) {\n            let e = self.output(p)? - d;\n            mse += e * e;\n        }\n        for (w, ci) in self.w.iter_mut().zip(&c) {\n            *w -= self.beta * ci;\n        }\n",
+  "new": "        for (w, ci) in self.w.iter_mut().zip(&c) {\n            *w -= self.beta * ci;\n        }\n        let mut mse = 0.0;\n        for (p, d) in samples.iter().zip(targets) {\n            let e = self.output(p)? - d;\n            mse += e * e;\n        }\n"
+ },
+ {
+  "label": "the epoch's squared error keeps only the last sample",
+  "old": "mse += e * e;",
+  "new": "mse = e * e;"
+ },
+ {
+  "label": "the batch epoch ascends the gradient",
+  "old": "*w -= self.beta * ci;",
+  "new": "*w += self.beta * ci;"
+ },
+ {
+  "label": "the epoch's error is target minus output",
+  "old": "            let e = self.output(p)? - d;\n            mse += e * e;\n",
+  "new": "            let e = d - self.output(p)?;\n            mse += e * e;\n",
+  "equivalent": "e is consumed only by `mse += e * e`. IEEE-754 subtraction is exactly rounded, so d - out is the exact negation of out - d, and the two can differ only in the sign of a zero, which squaring erases. CHECKED rather than argued: (a-b)*(a-b) and (b-a)*(b-a) agree bit for bit on 399,773 f64 pairs -- signed zeros, infinities, subnormals and 400,000 random bit patterns -- and the epoch's returned error and both weights are bit-identical over 400 epochs on three sample sets (an exact fit, a target outside the span, and inputs at 1e8 where the squares round)."
+ },
+ {
+  "label": "a sample set of empty samples has a correlation matrix",
+  "old": "\n    if n == 0 {",
+  "new": "\n    if false {"
+ },
+ {
+  "label": "the correlation matrix keeps only the last sample",
+  "old": "r[a * n + b] += p[a] * p[b];",
+  "new": "r[a * n + b] = p[a] * p[b];"
+ },
+ {
+  "label": "every entry of a row of the correlation matrix repeats that row's input",
+  "old": "r[a * n + b] += p[a] * p[b];",
+  "new": "r[a * n + b] += p[a] * p[a];"
+ },
+ {
+  "label": "a non-finite sample enters the correlation matrix",
+  "old": "        dims(\"sample\", p.len(), n)?;\n        finite_all(\"sample\", p)?;\n",
+  "new": "        dims(\"sample\", p.len(), n)?;\n"
+ },
+ {
+  "label": "the cross-correlation drops the target",
+  "old": "*acc += x * d;",
+  "new": "*acc += x;"
+ },
+ {
+  "label": "the cross-correlation keeps only the last sample",
+  "old": "*acc += x * d;",
+  "new": "*acc = x * d;"
+ },
+ {
+  "label": "the wiener system is sized by the sample count rather than the input width",
+  "old": "    let n = samples[0].len();\n    check_samples(samples, targets, n)?;\n",
+  "new": "    let n = samples.len();\n    check_samples(samples, targets, n)?;\n"
+ },
+ {
+  "label": "the ill-conditioning guard on the wiener solve is disarmed",
+  "old": "cholesky(&r, n, 1e-12)?",
+  "new": "cholesky(&r, n, 0.0)?"
+ },
+ {
+  "label": "the safe rate is taken from the smallest row sum rather than the largest",
+  "old": ".fold(0.0, f64::max)",
+  "new": ".fold(f64::INFINITY, f64::min)"
+ },
+ {
+  "label": "a sample set of no power is given a learning rate",
+  "old": "if worst > 0.0 {",
+  "new": "if worst >= 0.0 {"
+ },
+ {
+  "label": "a cmac of no dimensions is built",
+  "old": "if low.is_empty() {",
+  "new": "if false {"
+ },
+ {
+  "label": "a cmac of no tilings is built",
+  "old": "if c == 0 {",
+  "new": "if false {"
+ },
+ {
+  "label": "the two corners' lengths are compared with each other only nominally",
+  "old": "dims(\"high\", high.len(), low.len())?;",
+  "new": "dims(\"high\", high.len(), high.len())?;"
+ },
+ {
+  "label": "the lower corner is never checked for finiteness",
+  "old": "finite_all(\"low\", &low)?;",
+  "new": "finite_all(\"low\", &low[..0])?;"
+ },
+ {
+  "label": "a NaN learning rate slips through the range check",
+  "old": "if !(beta > 0.0) || !(beta <= 1.0) {",
+  "new": "if beta <= 0.0 || beta > 1.0 {"
+ },
+ {
+  "label": "a box of no width is accepted",
+  "old": "if !(hi > lo) {",
+  "new": "if !(hi >= lo) {"
+ },
+ {
+  "label": "the cell count rounds down, so the top of the box has no cell",
+  "old": "let n = ((hi - lo) / res).ceil();",
+  "new": "let n = ((hi - lo) / res).floor();"
+ },
+ {
+  "label": "one quantisation cell too many along each axis",
+  "old": "cells.push(n as usize);",
+  "new": "cells.push(n as usize + 1);"
+ },
+ {
+  "label": "the per-axis cell-count ceiling is not enforced",
+  "old": "if n > MAX_WEIGHTS as f64 {",
+  "new": "if false {"
+ },
+ {
+  "label": "a fresh table starts at one rather than zero",
+  "old": "me.w = vec![0.0; total];",
+  "new": "me.w = vec![1.0; total];"
+ },
+ {
+  "label": "the tile count rounds down, so the last cell's displaced tile is off the end",
+  "old": "(self.cells[j] - 1).div_ceil(self.c) + 1",
+  "new": "(self.cells[j] - 1) / self.c + 1"
+ },
+ {
+  "label": "the table size wraps rather than saturating",
+  "old": "self.c.saturating_mul(self.tiles_per_tiling())",
+  "new": "self.c.wrapping_mul(self.tiles_per_tiling())"
+ },
+ {
+  "label": "the quantisation cell is the nearest rather than the containing one",
+  "old": "((x[j] - self.low[j]) / self.res).floor()",
+  "new": "((x[j] - self.low[j]) / self.res).round()"
+ },
+ {
+  "label": "the lower corner is added to the coordinate rather than subtracted",
+  "old": "((x[j] - self.low[j]) / self.res).floor()",
+  "new": "((x[j] + self.low[j]) / self.res).floor()"
+ },
+ {
+  "label": "the coordinate is multiplied by the quantisation step rather than divided",
+  "old": "((x[j] - self.low[j]) / self.res).floor()",
+  "new": "((x[j] - self.low[j]) * self.res).floor()"
+ },
+ {
+  "label": "the tile within a tiling is the remainder rather than the quotient",
+  "old": "index = index * self.tiles_along(j) + (u[j] + k) / self.c;",
+  "new": "index = index * self.tiles_along(j) + (u[j] + k) % self.c;"
+ },
+ {
+  "label": "the tiles are laid out column-major within a tiling",
+  "old": "for j in 0..u.len() {",
+  "new": "for j in (0..u.len()).rev() {"
+ },
+ {
+  "label": "the second input is never looked up",
+  "old": "let (a, b) = (self.active(x)?, self.active(y)?);",
+  "new": "let (a, b) = (self.active(x)?, self.active(x)?);"
+ },
+ {
+  "label": "the cmac output is the mean of the addressed weights rather than their sum",
+  "old": "Ok(self.active(x)?.iter().map(|&i| self.w[i]).sum())",
+  "new": "Ok(self.active(x)?.iter().map(|&i| self.w[i]).sum::<f64>() / self.c as f64)"
+ },
+ {
+  "label": "the correction replaces each addressed weight rather than adjusting it",
+  "old": "self.w[i] -= step;",
+  "new": "self.w[i] = step;"
+ },
+ {
+  "label": "a refused correction has already written the table",
+  "old": "        if !target.is_finite() {\n            return Err(CerebellumError::NonFinite { what: \"target\", index: 0 });\n        }\n        let cells = self.active(x)?;\n        let error = cells.iter().map(|&i| self.w[i]).sum::<f64>() - target;\n        let step = self.beta * error / self.c as f64;\n        for &i in &cells {\n            self.w[i] -= step;\n        }\n        Ok(error)\n",
+  "new": "        let cells = self.active(x)?;\n        let error = cells.iter().map(|&i| self.w[i]).sum::<f64>() - target;\n        let step = self.beta * error / self.c as f64;\n        for &i in &cells {\n            self.w[i] -= step;\n        }\n        if !target.is_finite() {\n            return Err(CerebellumError::NonFinite { what: \"target\", index: 0 });\n        }\n        Ok(error)\n"
+ },
+ {
+  "label": "the table ceiling is a thousand times the published limit",
+  "old": "pub const MAX_WEIGHTS: usize = 1 << 26;",
+  "new": "pub const MAX_WEIGHTS: usize = 1 << 36;"
+ },
+ {
+  "label": "a dimension error names the supplied and the required length the wrong way round",
+  "old": "write!(f, \"{what} has length {got}, expected {want}\")",
+  "new": "write!(f, \"{what} has length {want}, expected {got}\")"
  }
 ]

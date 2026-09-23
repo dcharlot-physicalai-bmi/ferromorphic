@@ -810,4 +810,135 @@ mod tests {
         // Spikes outside the interval are not counted: one spike in the first of two windows.
         assert_eq!(fano_factor(&[-1.0, 0.1, 7.0], 0.0, 1.0, 0.5).unwrap(), 0.25 / 0.5);
     }
+
+    /// The published pair ceiling is four hundred million. Pinned as a compile-time assertion
+    /// because the one fixture that reaches it asks for nine hundred million pairs, which is past
+    /// a ceiling a decade lower just as surely — the constant could be cut tenfold and every
+    /// refusal in this module would still be raised.
+    #[test]
+    fn the_published_pair_ceiling_is_four_hundred_million() {
+        const { assert!(MAX_PAIRS == 400_000_000) };
+    }
+
+    /// The RENDERED text of every refusal this module raises, and the pair COUNT the too-large one
+    /// carries. Pinned because every other refusal test here destructures the variant and matches
+    /// on `what` alone: a message that says "fewer" where the guard means "more", one that prints
+    /// its range backwards, and a count reported as zero are all fluent, and none of them could
+    /// fail a `matches!`.
+    #[test]
+    fn a_refusal_renders_what_was_wrong_and_carries_the_count_it_refused() {
+        assert_eq!(victor_purpura(&[], &[], -1.0).unwrap_err().to_string(), "q = -1 is outside [0, inf]");
+        assert_eq!(victor_purpura(&[0.2, 0.1], &[], 1.0).unwrap_err().to_string(), "a is out of time order at 1");
+        assert_eq!(victor_purpura(&[], &[0.1, f64::NAN], 1.0).unwrap_err().to_string(), "b is not finite at 1");
+        assert_eq!(vector_strength(&[], 1.0).unwrap_err().to_string(), "spikes is empty");
+        // 15 000 spikes against 15 000 is 30 000², and the refusal names that number.
+        let long = vec![0.0; 15_000];
+        assert_eq!(victor_purpura(&long, &long, 1.0), Err(DistanceError::TooLarge { pairs: 900_000_000 }));
+        assert_eq!(
+            van_rossum_squared(&long, &long, 1.0).unwrap_err().to_string(),
+            "900000000 spike pairs is more than MAX_PAIRS"
+        );
+        // …and the window ceiling prints MAX_PAIRS itself.
+        assert_eq!(
+            fano_factor(&[0.1], 0.0, 1.0, 0.6).unwrap_err().to_string(),
+            "windows = 1 is outside [2, 400000000]"
+        );
+    }
+
+    /// A time constant, a quadrature step, a tail, a period and a window must all be FINITE as
+    /// well as positive, and the refusal names the smallest positive double as its floor. Pinned
+    /// because every existing fixture for these guards passes `0.0`, which `v > 0.0` rejects on
+    /// its own — and infinity is not absurd here but plausible: with `τ = ∞` every kernel term is
+    /// `e⁰ = 1` and the van Rossum distance becomes `½ (n − m)²`, a perfectly ordinary number.
+    #[test]
+    fn a_positive_parameter_must_be_finite_and_the_refusal_names_its_floor() {
+        let Err(DistanceError::OutOfRange { what, value, low, high }) = van_rossum_squared(&[0.0], &[1.0], f64::INFINITY) else {
+            panic!("an infinite time constant was accepted");
+        };
+        assert_eq!((what, value), ("tau", f64::INFINITY));
+        assert_eq!((low, high), (f64::MIN_POSITIVE, f64::INFINITY));
+        assert!(matches!(
+            van_rossum_by_quadrature(&[0.0], &[1.0], 1.0, f64::INFINITY, 5.0),
+            Err(DistanceError::OutOfRange { what: "dt", .. })
+        ));
+        assert!(matches!(
+            van_rossum_by_quadrature(&[0.0], &[1.0], 1.0, 1e-3, f64::INFINITY),
+            Err(DistanceError::OutOfRange { what: "tail", .. })
+        ));
+        assert!(matches!(vector_strength(&[0.1], f64::INFINITY), Err(DistanceError::OutOfRange { what: "period", .. })));
+        assert!(matches!(fano_factor(&[0.1], 0.0, 1.0, f64::INFINITY), Err(DistanceError::OutOfRange { what: "window", .. })));
+        // The parameter-free formulas refuse an infinite period or window too, rather than
+        // answering `e^{-0} = 1` and `∞ − ∞`.
+        assert_eq!(jittered_vector_strength(1e-3, f64::INFINITY), None);
+        assert_eq!(periodic_fano(1.0, f64::INFINITY), None);
+        assert_eq!(periodic_fano(f64::INFINITY, 1.0), None);
+    }
+
+    /// The squared van Rossum distance of two trains a tenth of a femtosecond apart is zero, not a
+    /// negative number. Pinned because it is the rounding floor of the closed form that is being
+    /// held down, and that floor has to be REACHED: 38 spikes give three sums of 1444 terms each
+    /// of order one, so the difference carries about `38² · ε ≈ 3e-13` of rounding, while the true
+    /// value, `n (δ/τ)²` with `δ = 1e-16 s` and `τ = 0.1 s`, is about `4e-30`. Measured, the
+    /// unclamped closed form returns −6.8e-13 here. The existing near-identity assertion is
+    /// `< 1e-12`, which a negative number satisfies.
+    #[test]
+    fn a_squared_norm_of_two_all_but_identical_trains_is_zero_and_not_negative() {
+        let a: Vec<f64> = (0..38).map(|k| 0.001 * f64::from(k)).collect();
+        let b: Vec<f64> = a.iter().map(|t| t + 1e-16).collect();
+        assert_eq!(van_rossum_squared(&a, &b, 0.1).unwrap(), 0.0);
+        assert_eq!(van_rossum(&a, &b, 0.1).unwrap(), 0.0, "and its square root is a number");
+    }
+
+    /// The interval index is always one a train can be READ at: `i + 1` indexes the train, so the
+    /// LAST spike is never an interval start. Pinned because the clamp is unreachable through the
+    /// public functions — they refuse a window the train does not bracket, so the instant is
+    /// always strictly inside — and the two callers index `t[i + 1]` immediately, which is a panic
+    /// rather than a wrong answer when the clamp is loosened by one.
+    #[test]
+    fn an_interval_index_never_names_the_last_spike_as_a_start() {
+        let three = [0.0, 1.0, 2.0];
+        for x in [-1.0, 0.0, 0.5, 1.0, 1.9, 2.0, 5.0] {
+            let i = interval_of(&three, x);
+            assert!(i + 1 < three.len(), "x = {x} was answered with interval {i} of a train of three");
+        }
+        assert_eq!(interval_of(&three, 0.5), 0);
+        assert_eq!(interval_of(&three, 1.0), 1, "an instant AT a spike starts that spike's interval");
+        assert_eq!(interval_of(&three, 2.0), 1, "and the last spike is clamped back to the last interval");
+    }
+
+    /// A spike with no later neighbour in the other train is INFINITELY far from one, not on top of
+    /// one. Pinned because both trains in every existing fixture end on the same spike — the
+    /// referee quadrature pads both with `-0.7` and `6.4`, the clocks run to the same time — so
+    /// the "no spike after this one" arm of `nearest_gap` was never taken with a finite answer
+    /// riding on it.
+    ///
+    /// By hand, on `a = {0, 10}` against `b = {0, 2, 4}` over `[0, 4]`: `a`'s closing spike at 10
+    /// is past `b`'s last, so its gap is the 6 back to `b = 4`. Both segments then have the same
+    /// profile `S(t) = (0.6t · 2 + t · 10)/(2 · 6²) = 11.2 t/72`, whose average over `[0, 4]` is
+    /// `2 · 11.2/72 = 14/45`. With that spike read as coincident the first arm is zero throughout
+    /// and the answer would be `20/72`.
+    #[test]
+    fn a_spike_with_no_later_neighbour_is_not_coincident_with_one() {
+        let got = spike_distance(&[0.0, 10.0], &[0.0, 2.0, 4.0], 0.0, 4.0).unwrap();
+        assert!((got - 14.0 / 45.0).abs() < 1e-15, "{got}");
+        assert_eq!(spike_distance(&[0.0, 2.0, 4.0], &[0.0, 10.0], 0.0, 4.0).unwrap(), got, "and it is symmetric");
+    }
+
+    /// The Fano factor's windows are laid out from `start`, and a non-finite `end` is reported as a
+    /// non-finite INTERVAL rather than as an impossible window count. Pinned because every window
+    /// fixture in this module starts at zero, where `t − start` and `t` are the same number, and
+    /// because `(∞ − 0)/w` floors to infinity, which the count guard refuses on its own with a
+    /// different name.
+    #[test]
+    fn the_windows_are_laid_out_from_the_start_of_the_interval() {
+        // Four spikes in [10, 11) at 0.5 s windows: one in the first, three in the second, so the
+        // mean is 2, the population variance 1, and the factor a half.
+        assert_eq!(fano_factor(&[10.1, 10.6, 10.7, 10.8], 10.0, 11.0, 0.5).unwrap(), 0.5);
+        // Counted from zero instead, all four would fall past the second window and none would be
+        // counted at all, which is the one state this function cannot answer in.
+        //
+        // An interval with a non-finite end is a non-finite INTERVAL, not an impossible count.
+        assert!(matches!(fano_factor(&[0.1], 0.0, f64::INFINITY, 0.1), Err(DistanceError::NonFinite { what: "interval", .. })));
+        assert!(matches!(fano_factor(&[0.1], 0.0, f64::NAN, 0.1), Err(DistanceError::NonFinite { what: "interval", .. })));
+    }
 }

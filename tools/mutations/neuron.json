@@ -108,5 +108,455 @@
   "label": "the default counted step never reports a spike",
   "old": "        Some(u32::from(self.step(dt, i)))\n    }\n\n    /// Apply an instantaneous",
   "new": "        Some(0 * u32::from(self.step(dt, i)))\n    }\n\n    /// Apply an instantaneous"
+ },
+ {
+  "label": "the default membrane time constant is 2 ms rather than the textbook 20",
+  "old": "            tau_m: 20e-3,\n",
+  "new": "            tau_m: 2e-3,\n"
+ },
+ {
+  "label": "the default resting potential is −70 mV",
+  "old": "            v_rest: -65e-3,\n",
+  "new": "            v_rest: -70e-3,\n"
+ },
+ {
+  "label": "the default firing threshold is −55 mV",
+  "old": "            v_th: -50e-3,\n",
+  "new": "            v_th: -55e-3,\n"
+ },
+ {
+  "label": "the default reset potential is not the resting potential",
+  "old": "            v_reset: -65e-3,\n",
+  "new": "            v_reset: -60e-3,\n"
+ },
+ {
+  "label": "the default membrane resistance is 100 MΩ",
+  "old": "            r_m: 10e6,\n",
+  "new": "            r_m: 100e6,\n"
+ },
+ {
+  "label": "the default refractory period is 20 ms rather than 2",
+  "old": "            t_ref: 2e-3,\n",
+  "new": "            t_ref: 20e-3,\n"
+ },
+ {
+  "label": "the default cell is built sitting on its threshold rather than at rest",
+  "old": "            v: -65e-3,\n",
+  "new": "            v: -50e-3,\n"
+ },
+ {
+  "label": "the steady state does not scale the current by the membrane resistance",
+  "old": "        self.v_rest + self.r_m * i\n",
+  "new": "        self.v_rest + i\n"
+ },
+ {
+  "label": "the steady state is measured from zero rather than from rest",
+  "old": "        self.v_rest + self.r_m * i\n",
+  "new": "        self.r_m * i\n"
+ },
+ {
+  "label": "the closed-form interval charges from rest rather than from the reset potential",
+  "old": "((v_inf - self.v_reset) / (v_inf - self.v_th)).ln()",
+  "new": "((v_inf - self.v_rest) / (v_inf - self.v_th)).ln()"
+ },
+ {
+  "label": "a steady state sitting exactly on the threshold is given an interval rather than none",
+  "old": "        if v_inf <= self.v_th {\n",
+  "new": "        if v_inf < self.v_th {\n"
+ },
+ {
+  "label": "the closed-form interval leaves out the refractory period",
+  "old": "        Some(t + self.t_ref)\n",
+  "new": "        Some(t)\n"
+ },
+ {
+  "label": "the firing rate is the interval rather than its reciprocal",
+  "old": "self.isi(i).map(|t| 1.0 / t)",
+  "new": "self.isi(i).map(|t| t)"
+ },
+ {
+  "label": "an infinite time step is integrated rather than refused",
+  "old": "!dt.is_finite() || !i.is_finite() || (self.v_reset >= self.v_th",
+  "new": "!i.is_finite() || (self.v_reset >= self.v_th"
+ },
+ {
+  "label": "a reset-at-threshold cell is refused even when its refractory period bounds it",
+  "old": "(self.v_reset >= self.v_th && !(self.t_ref > 0.0))",
+  "new": "(self.v_reset >= self.v_th)"
+ },
+ {
+  "label": "a membrane sitting exactly on the threshold is not treated as already over it",
+  "old": "let crossing = if self.v >= self.v_th {",
+  "new": "let crossing = if self.v > self.v_th {"
+ },
+ {
+  "label": "the exact step's free decay runs backwards",
+  "old": "self.v = v_inf + (self.v - v_inf) * (-left / self.tau_m).exp();",
+  "new": "self.v = v_inf + (v_inf - self.v) * (-left / self.tau_m).exp();"
+ },
+ {
+  "label": "a crossing landing exactly on the tick's end is pushed into the next tick",
+  "old": "            if crossing <= left {\n",
+  "new": "            if crossing < left {\n"
+ },
+ {
+  "label": "the tick-based refractory countdown never runs down",
+  "old": "            self.refractory -= dt;\n",
+  "new": "            self.refractory -= 0.0;\n"
+ },
+ {
+  "label": "a refractory neuron is left to drift rather than clamped at its reset potential",
+  "old": "            self.refractory -= dt;\n            self.v = self.v_reset;\n            return false;\n",
+  "new": "            self.refractory -= dt;\n            return false;\n"
+ },
+ {
+  "label": "the membrane is integrated by forward Euler rather than exponential Euler",
+  "old": "        let decay = (-dt / self.tau_m).exp();\n",
+  "new": "        let decay = 1.0 - dt / self.tau_m;\n"
+ },
+ {
+  "label": "the membrane relaxes toward rest rather than toward the steady state",
+  "old": "        self.v = v_inf + (self.v - v_inf) * decay;\n",
+  "new": "        self.v = self.v_rest + (self.v - v_inf) * decay;\n"
+ },
+ {
+  "label": "the tick-based step forgets the refractory period",
+  "old": "            self.v = self.v_reset;\n            self.refractory = self.t_ref;\n            return true;\n",
+  "new": "            self.v = self.v_reset;\n            self.refractory = 0.0;\n            return true;\n"
+ },
+ {
+  "label": "a refractory neuron accumulates the displacement it is supposed to ignore",
+  "old": "    fn bump(&mut self, dv: f64) {\n        if self.refractory > 0.0 {\n            return;\n        }\n        self.v += dv;\n    }\n",
+  "new": "    fn bump(&mut self, dv: f64) {\n        self.v += dv;\n    }\n"
+ },
+ {
+  "label": "the membrane is replaced by the displacement rather than displaced by it",
+  "old": "        self.v += dv;\n    }\n\n    fn refractory_left(&self) -> f64 {",
+  "new": "        self.v = dv;\n    }\n\n    fn refractory_left(&self) -> f64 {"
+ },
+ {
+  "label": "the refractory time left is reported as zero however much is left",
+  "old": "        self.refractory.max(0.0)\n",
+  "new": "        0.0\n"
+ },
+ {
+  "label": "the membrane potential accessor reports the resting potential",
+  "old": "    fn potential(&self) -> f64 {\n        self.v\n    }\n\n    fn reset(&mut self) {\n        self.v = self.v_rest;",
+  "new": "    fn potential(&self) -> f64 {\n        self.v_rest\n    }\n\n    fn reset(&mut self) {\n        self.v = self.v_rest;"
+ },
+ {
+  "label": "reset leaves the refractory countdown running",
+  "old": "        self.v = self.v_rest;\n        self.refractory = 0.0;\n",
+  "new": "        self.v = self.v_rest;\n"
+ },
+ {
+  "label": "the perfect integrator's default threshold is 1.5 mV",
+  "old": "        Self { c: 1e-9, v_th: 15e-3, v_reset: 0.0, v: 0.0 }\n",
+  "new": "        Self { c: 1e-9, v_th: 1.5e-3, v_reset: 0.0, v: 0.0 }\n"
+ },
+ {
+  "label": "the perfect integrator's default capacitance is a picofarad",
+  "old": "        Self { c: 1e-9, v_th: 15e-3, v_reset: 0.0, v: 0.0 }\n",
+  "new": "        Self { c: 1e-12, v_th: 15e-3, v_reset: 0.0, v: 0.0 }\n"
+ },
+ {
+  "label": "the perfect integrator's interval ignores its reset potential",
+  "old": "        Some(self.c * (self.v_th - self.v_reset) / i)\n",
+  "new": "        Some(self.c * self.v_th / i)\n"
+ },
+ {
+  "label": "the perfect integrator's interval multiplies by the current rather than dividing by it",
+  "old": "        Some(self.c * (self.v_th - self.v_reset) / i)\n",
+  "new": "        Some(self.c * (self.v_th - self.v_reset) * i)\n"
+ },
+ {
+  "label": "a zero current is given an interval rather than refused",
+  "old": "        if i <= 0.0 {\n",
+  "new": "        if i < 0.0 {\n"
+ },
+ {
+  "label": "the perfect integrator does not accumulate charge",
+  "old": "        self.v += i * dt / self.c;\n",
+  "new": "        self.v = i * dt / self.c;\n"
+ },
+ {
+  "label": "the perfect integrator's ramp scales with its capacitance rather than inversely",
+  "old": "        self.v += i * dt / self.c;\n",
+  "new": "        self.v += i * dt * self.c;\n"
+ },
+ {
+  "label": "the perfect integrator's bump replaces the membrane rather than displacing it",
+  "old": "    fn bump(&mut self, dv: f64) {\n        self.v += dv;\n    }\n",
+  "new": "    fn bump(&mut self, dv: f64) {\n        self.v = dv;\n    }\n"
+ },
+ {
+  "label": "the quadratic model declares that it can be jumped across a gap",
+  "old": "    const EXACT_OVER_GAPS: bool = false;\n",
+  "new": "    const EXACT_OVER_GAPS: bool = true;\n"
+ },
+ {
+  "label": "the trait's default says every model resolves spike times inside the step",
+  "old": "    const EXACT_TIMING: bool = false;\n",
+  "new": "    const EXACT_TIMING: bool = true;\n"
+ },
+ {
+  "label": "the adaptation time constant and the increment per spike are transposed",
+  "old": "        Self { theta_0: lif.v_th, tau_a, beta, theta: lif.v_th, lif }\n",
+  "new": "        Self { theta_0: lif.v_th, tau_a: beta, beta: tau_a, theta: lif.v_th, lif }\n"
+ },
+ {
+  "label": "the cell starts with its threshold already down at the resting potential",
+  "old": "        Self { theta_0: lif.v_th, tau_a, beta, theta: lif.v_th, lif }\n",
+  "new": "        Self { theta_0: lif.v_th, tau_a, beta, theta: lif.v_rest, lif }\n"
+ },
+ {
+  "label": "the resting threshold is taken from the reset potential rather than the membrane's threshold",
+  "old": "        Self { theta_0: lif.v_th, tau_a, beta, theta: lif.v_th, lif }\n",
+  "new": "        Self { theta_0: lif.v_reset, tau_a, beta, theta: lif.v_th, lif }\n"
+ },
+ {
+  "label": "the burst threshold counts one spike however many there were",
+  "old": "        self.theta_0 + f64::from(n) * self.beta\n",
+  "new": "        self.theta_0 + self.beta\n"
+ },
+ {
+  "label": "an adapted interval is offered when the steady state only touches the resting threshold",
+  "old": "if !(v_inf > self.theta_0) || !v_inf.is_finite()",
+  "new": "if !(v_inf >= self.theta_0) || !v_inf.is_finite()"
+ },
+ {
+  "label": "an adaptation time constant of zero is accepted by the adapted interval",
+  "old": "!(self.tau_a > 0.0) || !(self.beta >= 0.0) {",
+  "new": "!(self.beta >= 0.0) {"
+ },
+ {
+  "label": "a NaN adaptation increment slips past the adapted interval's guard",
+  "old": "|| !(self.beta >= 0.0) {",
+  "new": "|| self.beta < 0.0 {"
+ },
+ {
+  "label": "the adapted interval's membrane charges from rest rather than from reset",
+  "old": "(self.lif.v_reset - v_inf) * (-(t - self.lif.t_ref) / self.lif.tau_m).exp();",
+  "new": "(self.lif.v_rest - v_inf) * (-(t - self.lif.t_ref) / self.lif.tau_m).exp();"
+ },
+ {
+  "label": "the adapted interval charges the membrane at the adaptation time constant",
+  "old": "(self.lif.v_reset - v_inf) * (-(t - self.lif.t_ref) / self.lif.tau_m).exp();",
+  "new": "(self.lif.v_reset - v_inf) * (-(t - self.lif.t_ref) / self.tau_a).exp();"
+ },
+ {
+  "label": "the adapted interval ignores the threshold left standing from the last spike",
+  "old": "            charged - self.theta_0 - self.beta / (t / self.tau_a).exp_m1()\n",
+  "new": "            charged - self.theta_0\n"
+ },
+ {
+  "label": "the bisection moves the wrong end of its bracket",
+  "old": "            if gap(mid) < 0.0 {\n                lo = mid;\n            } else {\n                hi = mid;\n            }\n",
+  "new": "            if gap(mid) < 0.0 {\n                hi = mid;\n            } else {\n                lo = mid;\n            }\n"
+ },
+ {
+  "label": "the adapted interval adds a refractory period the root already contains",
+  "old": "        Some(0.5 * (lo + hi))\n",
+  "new": "        Some(0.5 * (lo + hi) + self.lif.t_ref)\n"
+ },
+ {
+  "label": "the endless check compares the reset against the higher of the two thresholds",
+  "old": "self.lif.v_reset >= self.theta.min(self.theta_0);",
+  "new": "self.lif.v_reset >= self.theta.max(self.theta_0);"
+ },
+ {
+  "label": "a cell resetting exactly onto its threshold is not counted as endless",
+  "old": "&& self.lif.v_reset >= self.theta.min(self.theta_0);",
+  "new": "&& self.lif.v_reset > self.theta.min(self.theta_0);"
+ },
+ {
+  "label": "the exact adaptive solver transposes the membrane and adaptation time constants",
+  "old": "        let (tau_m, tau_a, theta_0) = (self.lif.tau_m, self.tau_a, self.theta_0);\n",
+  "new": "        let (tau_m, tau_a, theta_0) = (self.tau_a, self.lif.tau_m, self.theta_0);\n"
+ },
+ {
+  "label": "the exact adaptive step charges from the reset potential rather than from where the membrane is",
+  "old": "            let (v0, th0) = (self.lif.v, self.theta);\n",
+  "new": "            let (v0, th0) = (self.lif.v_reset, self.theta);\n"
+ },
+ {
+  "label": "the exact adaptive step starts every tick from the resting threshold",
+  "old": "            let (v0, th0) = (self.lif.v, self.theta);\n",
+  "new": "            let (v0, th0) = (self.lif.v, self.theta_0);\n"
+ },
+ {
+  "label": "the threshold is held fixed across the tick in the exact solver",
+  "old": "- theta_0 - (th0 - theta_0) * (-t / tau_a).exp();",
+  "new": "- th0;"
+ },
+ {
+  "label": "the turning point inverts the ratio of the two slopes",
+  "old": "{ (a / b).ln() / (1.0 / tau_m - 1.0 / tau_a) }",
+  "new": "{ (b / a).ln() / (1.0 / tau_m - 1.0 / tau_a) }"
+ },
+ {
+  "label": "the exact adaptive step spikes at the tick's end without a crossing",
+  "old": "                } else if over(left) >= 0.0 {\n",
+  "new": "                } else if true {\n"
+ },
+ {
+  "label": "the threshold does not decay over a tick in which nothing fires",
+  "old": "            let advance = crossing.unwrap_or(left);\n",
+  "new": "            let advance = crossing.unwrap_or(0.0);\n"
+ },
+ {
+  "label": "the threshold decays for the whole tick rather than up to the spike",
+  "old": "            self.theta = theta_0 + (th0 - theta_0) * (-advance / tau_a).exp();\n",
+  "new": "            self.theta = theta_0 + (th0 - theta_0) * (-dt / tau_a).exp();\n"
+ },
+ {
+  "label": "the exact adaptive step forgets the refractory period",
+  "old": "                self.lif.v = self.lif.v_reset;\n                self.lif.refractory = self.lif.t_ref;\n",
+  "new": "                self.lif.v = self.lif.v_reset;\n                self.lif.refractory = 0.0;\n"
+ },
+ {
+  "label": "the runaway spike cap never fires",
+  "old": "            if spikes > 10_000_000 {\n",
+  "new": "            if false {\n"
+ },
+ {
+  "label": "the tick-based threshold relaxes at the membrane's time constant",
+  "old": "        self.theta = self.theta_0 + (self.theta - self.theta_0) * (-dt / self.tau_a).exp();\n",
+  "new": "        self.theta = self.theta_0 + (self.theta - self.theta_0) * (-dt / self.lif.tau_m).exp();\n"
+ },
+ {
+  "label": "the tick-based threshold's decay has the resting threshold's sign flipped",
+  "old": "        self.theta = self.theta_0 + (self.theta - self.theta_0) * (-dt / self.tau_a).exp();\n",
+  "new": "        self.theta = self.theta_0 + (self.theta + self.theta_0) * (-dt / self.tau_a).exp();\n"
+ },
+ {
+  "label": "the membrane is stepped before it is told this tick's threshold",
+  "old": "        self.lif.v_th = self.theta;\n        let fired = self.lif.step(dt, i);\n",
+  "new": "        let fired = self.lif.step(dt, i);\n        self.lif.v_th = self.theta;\n"
+ },
+ {
+  "label": "the threshold is assigned the increment rather than raised by it",
+  "old": "            self.theta += self.beta;\n            self.lif.v_th = self.theta;\n",
+  "new": "            self.theta = self.beta;\n            self.lif.v_th = self.theta;\n"
+ },
+ {
+  "label": "the membrane is not told the raised threshold until the next tick",
+  "old": "            self.theta += self.beta;\n            self.lif.v_th = self.theta;\n        }\n        fired\n",
+  "new": "            self.theta += self.beta;\n        }\n        fired\n"
+ },
+ {
+  "label": "reset leaves the membrane holding the stale adapted threshold",
+  "old": "        self.theta = self.theta_0;\n        self.lif.v_th = self.theta_0;\n",
+  "new": "        self.theta = self.theta_0;\n"
+ },
+ {
+  "label": "regular spiking takes the interneuron's recovery increment",
+  "old": "        Self::new(0.02, 0.2, -65.0, 8.0)\n",
+  "new": "        Self::new(0.02, 0.2, -65.0, 2.0)\n"
+ },
+ {
+  "label": "fast spiking takes the regular-spiking cell's recovery time scale",
+  "old": "        Self::new(0.1, 0.2, -65.0, 2.0)\n",
+  "new": "        Self::new(0.02, 0.2, -65.0, 2.0)\n"
+ },
+ {
+  "label": "the chattering cell resets to the regular-spiking −65 mV rather than its own −50",
+  "old": "        Self::new(0.02, 0.2, -50.0, 2.0)\n",
+  "new": "        Self::new(0.02, 0.2, -65.0, 2.0)\n"
+ },
+ {
+  "label": "the paper's initial recovery state drops its sensitivity factor",
+  "old": "        Self { a, b, c, d, v: c, u: b * c, substeps: 2 }\n",
+  "new": "        Self { a, b, c, d, v: c, u: c, substeps: 2 }\n"
+ },
+ {
+  "label": "the model takes one forward-Euler step of the whole tick rather than the paper's two half-steps",
+  "old": "        Self { a, b, c, d, v: c, u: b * c, substeps: 2 }\n",
+  "new": "        Self { a, b, c, d, v: c, u: b * c, substeps: 1 }\n"
+ },
+ {
+  "label": "the tick is not converted from seconds to milliseconds",
+  "old": "        let dt_ms = dt * 1e3;\n",
+  "new": "        let dt_ms = dt;\n"
+ },
+ {
+  "label": "the current is converted at a millionth rather than a billionth",
+  "old": "        let i_paper = i * 1e9;\n",
+  "new": "        let i_paper = i * 1e6;\n"
+ },
+ {
+  "label": "a zero substep count is not guarded and divides the tick by zero",
+  "old": "        let n = self.substeps.max(1);\n",
+  "new": "        let n = self.substeps;\n"
+ },
+ {
+  "label": "each substep advances by the whole tick rather than by its share",
+  "old": "        let h = dt_ms / f64::from(n);\n",
+  "new": "        let h = dt_ms;\n"
+ },
+ {
+  "label": "the paper's quadratic coefficient is a tenth of what it prints",
+  "old": "0.04 * self.v * self.v",
+  "new": "0.004 * self.v * self.v"
+ },
+ {
+  "label": "the paper's linear coefficient is ten times what it prints",
+  "old": "+ 5.0 * self.v + 140.0",
+  "new": "+ 50.0 * self.v + 140.0"
+ },
+ {
+  "label": "the paper's constant term has two digits transposed",
+  "old": "+ 140.0 - self.u + i_paper",
+  "new": "+ 104.0 - self.u + i_paper"
+ },
+ {
+  "label": "the recovery variable adds to the membrane rather than subtracting from it",
+  "old": "+ 140.0 - self.u + i_paper",
+  "new": "+ 140.0 + self.u + i_paper"
+ },
+ {
+  "label": "the membrane is assigned its increment rather than accumulating it",
+  "old": "            self.v += h * (0.04",
+  "new": "            self.v = h * (0.04"
+ },
+ {
+  "label": "the spike cutoff is 3 mV rather than the paper's 30",
+  "old": "            if self.v >= 30.0 {\n",
+  "new": "            if self.v >= 3.0 {\n"
+ },
+ {
+  "label": "a spike found in a substep is not reported to the caller",
+  "old": "                self.u += self.d;\n                return true;\n",
+  "new": "                self.u += self.d;\n                break;\n"
+ },
+ {
+  "label": "the post-spike recovery increment is assigned rather than accumulated",
+  "old": "                self.u += self.d;\n                return true;\n",
+  "new": "                self.u = self.d;\n                return true;\n"
+ },
+ {
+  "label": "the membrane is not reset at the cutoff",
+  "old": "                self.v = self.c;\n                self.u += self.d;\n",
+  "new": "                self.u += self.d;\n"
+ },
+ {
+  "label": "the recovery variable is integrated in seconds rather than in the paper's milliseconds",
+  "old": "        self.u += dt_ms * self.a * (self.b * self.v - self.u);\n",
+  "new": "        self.u += dt * self.a * (self.b * self.v - self.u);\n"
+ },
+ {
+  "label": "the recovery variable's drive has the wrong sign, so it runs away instead of relaxing",
+  "old": "        self.u += dt_ms * self.a * (self.b * self.v - self.u);\n",
+  "new": "        self.u += dt_ms * self.a * (self.u - self.b * self.v);\n"
+ },
+ {
+  "label": "the bump is not converted from volts to the model's millivolts",
+  "old": "        self.v += dv * 1e3;\n",
+  "new": "        self.v += dv;\n"
+ },
+ {
+  "label": "the potential accessor reports millivolts as if they were volts",
+  "old": "        self.v * 1e-3\n",
+  "new": "        self.v\n"
  }
 ]

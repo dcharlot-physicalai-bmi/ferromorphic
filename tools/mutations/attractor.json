@@ -128,5 +128,290 @@
   "label": "tuned solution offered past J1 = 2",
   "old": "|| !(j0 < 1.0) || !(j1 < 2.0) ||",
   "new": "|| !(j0 < 1.0) ||"
+ },
+ {
+  "label": "f1 is normalised by a half turn rather than a full one",
+  "old": "(theta_c - 0.5 * (2.0 * theta_c).sin()) / TAU",
+  "new": "(theta_c - 0.5 * (2.0 * theta_c).sin()) / PI"
+ },
+ {
+  "label": "f1's sine is of the angle rather than of twice the angle",
+  "old": "(2.0 * theta_c).sin()",
+  "new": "theta_c.sin()"
+ },
+ {
+  "label": "f0 is normalised by a full turn rather than a half one",
+  "old": "(theta_c.sin() - theta_c * theta_c.cos()) / PI",
+  "new": "(theta_c.sin() - theta_c * theta_c.cos()) / TAU"
+ },
+ {
+  "label": "f0 drops the angle multiplying the cosine",
+  "old": "theta_c.sin() - theta_c * theta_c.cos()",
+  "new": "theta_c.sin() - theta_c.cos()"
+ },
+ {
+  "label": "the bisection bracket stops at a quarter turn, short of the widest bump",
+  "old": "let (mut lo, mut hi) = (0.0f64, PI);",
+  "new": "let (mut lo, mut hi) = (0.0f64, 0.5 * PI);"
+ },
+ {
+  "label": "the bisection stops six halvings in, far short of the last bit",
+  "old": "for _ in 0..60 {",
+  "new": "for _ in 0..6 {"
+ },
+ {
+  "label": "an infinite tuned coupling is bisected instead of refused",
+  "old": "if !(j1 > 2.0) || !j1.is_finite() {",
+  "new": "if !(j1 > 2.0) {"
+ },
+ {
+  "label": "the bump amplitude carries the sign of the input rather than its negative",
+  "old": "let a = -i0 / (theta_c.cos() + j0 * f0(theta_c));",
+  "new": "let a = i0 / (theta_c.cos() + j0 * f0(theta_c));"
+ },
+ {
+  "label": "the uniform coupling multiplies the cosine rather than the bump's mean",
+  "old": "(theta_c.cos() + j0 * f0(theta_c))",
+  "new": "(f0(theta_c) + j0 * theta_c.cos())"
+ },
+ {
+  "label": "a non-positive input is not refused, so a negative input answers with a positive bump where the inhibition is too weak",
+  "old": "if !(i0 > 0.0) || !i0.is_finite() || !j0.is_finite() {",
+  "new": "if !i0.is_finite() || !j0.is_finite() {"
+ },
+ {
+  "label": "the uniform state is offered at J0 = 1, where it is infinite",
+  "old": "!(j0 < 1.0) || !j0.is_finite() {",
+  "new": "!(j0 <= 1.0) || !j0.is_finite() {"
+ },
+ {
+  "label": "an infinite input is given a uniform rate",
+  "old": "if !(i0 > 0.0) || !i0.is_finite() || !(j0 < 1.0) || !j0.is_finite() {",
+  "new": "if !(i0 > 0.0) || !(j0 < 1.0) || !j0.is_finite() {"
+ },
+ {
+  "label": "a NaN uniform input slips past the finiteness check",
+  "old": "let finite = i0.is_finite() && i1.is_finite() && j0.is_finite() && j1.is_finite();",
+  "new": "let finite = i1.is_finite() && j0.is_finite() && j1.is_finite();"
+ },
+ {
+  "label": "an untuned input is answered with a tuned state",
+  "old": "!finite || !(i1 > 0.0) ||",
+  "new": "!finite || i1 < 0.0 ||"
+ },
+ {
+  "label": "a runaway uniform coupling J0 >= 1 is given a tuned solution",
+  "old": "!(i1 > 0.0) || !(j0 < 1.0) ||",
+  "new": "!(i1 > 0.0) ||"
+ },
+ {
+  "label": "the linear and rectified cases are chosen by the reversed comparison",
+  "old": "if mean >= linear_amplitude {",
+  "new": "if mean <= linear_amplitude {"
+ },
+ {
+  "label": "the linear mean divides by one plus the uniform coupling",
+  "old": "let (mean, linear_amplitude) = (i0 / (1.0 - j0), i1 / (1.0 - 0.5 * j1));",
+  "new": "let (mean, linear_amplitude) = (i0 / (1.0 + j0), i1 / (1.0 - 0.5 * j1));"
+ },
+ {
+  "label": "the linear state reports its mean as its amplitude and its amplitude as its mean",
+  "old": "Some(Tuned::Linear { mean, amplitude: linear_amplitude });",
+  "new": "Some(Tuned::Linear { mean: linear_amplitude, amplitude: mean });"
+ },
+ {
+  "label": "the coarse scan for the first crossing is two points wide",
+  "old": "let steps = 4000;",
+  "new": "let steps = 2;"
+ },
+ {
+  "label": "the tuned half-width is refined eight halvings rather than eighty",
+  "old": "for _ in 0..80 {",
+  "new": "for _ in 0..8 {"
+ },
+ {
+  "label": "the tuned half-width's bisection keeps the half the root is not in",
+  "old": "if g(mid) < 0.0 {\n            lo = mid;\n        } else {\n            hi = mid;\n        }",
+  "new": "if g(mid) < 0.0 {\n            hi = mid;\n        } else {\n            lo = mid;\n        }"
+ },
+ {
+  "label": "the tuned amplitude is attenuated by the recurrent gain rather than divided by it",
+  "old": "amplitude: i1 / (1.0 - j1 * f1(half_width)) })",
+  "new": "amplitude: i1 * (1.0 - j1 * f1(half_width)) })"
+ },
+ {
+  "label": "a two-neuron ring, which cannot carry a first Fourier component, is built",
+  "old": "if n < 3 {",
+  "new": "if n < 2 {"
+ },
+ {
+  "label": "a non-finite J0 is reported as a non-finite J1",
+  "old": "return Err(AttractorError::NonFinite { what: \"j0\", index: 0 });",
+  "new": "return Err(AttractorError::NonFinite { what: \"j1\", index: 0 });"
+ },
+ {
+  "label": "a new ring starts at rate one rather than silent",
+  "old": "m: vec![0.0; n] })",
+  "new": "m: vec![1.0; n] })"
+ },
+ {
+  "label": "an infinite time constant is accepted as positive",
+  "old": "if v.is_finite() && v > 0.0 {",
+  "new": "if v > 0.0 {"
+ },
+ {
+  "label": "a zero time constant is accepted as positive",
+  "old": "if v.is_finite() && v > 0.0 {",
+  "new": "if v.is_finite() && v >= 0.0 {"
+ },
+ {
+  "label": "the reported admissible range runs from infinity down to the smallest positive number",
+  "old": "low: f64::MIN_POSITIVE, high: f64::INFINITY",
+  "new": "low: f64::INFINITY, high: f64::MIN_POSITIVE"
+ },
+ {
+  "label": "the LAST non-finite entry is reported rather than the first",
+  "old": "v.iter().position(|x| !x.is_finite())",
+  "new": "v.iter().rposition(|x| !x.is_finite())"
+ },
+ {
+  "label": "the non-finite entry is reported one position past where it is",
+  "old": "AttractorError::NonFinite { what, index: i }",
+  "new": "AttractorError::NonFinite { what, index: i + 1 }"
+ },
+ {
+  "label": "the dimension error swaps the length supplied with the length required",
+  "old": "write!(f, \"{what} has length {got}, expected {want}\")",
+  "new": "write!(f, \"{what} has length {want}, expected {got}\")"
+ },
+ {
+  "label": "the too-few message names a requirement of two, which the guard does not enforce",
+  "old": "\"a ring of {n} neurons cannot carry a bump (needs three)\"",
+  "new": "\"a ring of {n} neurons cannot carry a bump (needs two)\""
+ },
+ {
+  "label": "neuron zero prefers one grid step rather than zero",
+  "old": "TAU * i as f64 / self.m.len() as f64",
+  "new": "TAU * (i + 1) as f64 / self.m.len() as f64"
+ },
+ {
+  "label": "the ring's angles are spaced as N-1 intervals, so the last neuron repeats the first",
+  "old": "TAU * i as f64 / self.m.len() as f64",
+  "new": "TAU * i as f64 / (self.m.len() - 1) as f64"
+ },
+ {
+  "label": "the mean rate is the last neuron's rate rather than an accumulated sum",
+  "old": "r0 += mi;",
+  "new": "r0 = mi;"
+ },
+ {
+  "label": "the mean rate is a sum, not divided by the neuron count",
+  "old": "(r0 / n, c1 / n, s1 / n)",
+  "new": "(r0, c1 / n, s1 / n)"
+ },
+ {
+  "label": "the first Fourier components carry the real series' factor of two",
+  "old": "(r0 / n, c1 / n, s1 / n)",
+  "new": "(r0 / n, 2.0 * c1 / n, 2.0 * s1 / n)"
+ },
+ {
+  "label": "the tuned term forms cos(theta + psi) rather than cos(theta - psi)",
+  "old": "self.j0 * r0 + self.j1 * (c1 * c + s1 * s)",
+  "new": "self.j0 * r0 + self.j1 * (c1 * c - s1 * s)"
+ },
+ {
+  "label": "the recurrent input drops the uniform term",
+  "old": "self.j0 * r0 + self.j1 * (c1 * c + s1 * s)",
+  "new": "self.j1 * (c1 * c + s1 * s)"
+ },
+ {
+  "label": "the low-rank path binds the sine moment where the cosine moment belongs",
+  "old": "let (r0, c1, s1) = self.moments();",
+  "new": "let (r0, s1, c1) = self.moments();"
+ },
+ {
+  "label": "the pairwise sum is not divided by the neuron count",
+  "old": "sum / n as f64",
+  "new": "sum"
+ },
+ {
+  "label": "the pairwise kernel takes the sum of the two preferred angles rather than their difference",
+  "old": "(self.angle(i) - self.angle(j)).cos()",
+  "new": "(self.angle(i) + self.angle(j)).cos()"
+ },
+ {
+  "label": "the pairwise sum weights by the postsynaptic rate rather than the presynaptic one",
+  "old": "* self.m[j]).sum();",
+  "new": "* self.m[i]).sum();"
+ },
+ {
+  "label": "the first component's magnitude is its square",
+  "old": "let r1 = c1.hypot(s1);",
+  "new": "let r1 = c1 * c1 + s1 * s1;"
+ },
+ {
+  "label": "the rounding tolerance scales with the smallest rate rather than the largest",
+  "old": "|a, m| a.max(m.abs())",
+  "new": "|a, m| a.min(m.abs())"
+ },
+ {
+  "label": "the uniform-state tolerance drops its factor of N",
+  "old": "if r1 <= self.m.len() as f64 * f64::EPSILON * scale {",
+  "new": "if r1 <= f64::EPSILON * scale {"
+ },
+ {
+  "label": "a silent neuron counts as active",
+  "old": ".filter(|m| **m > 0.0).count();",
+  "new": ".filter(|m| **m >= 0.0).count();"
+ },
+ {
+  "label": "the last neuron on the ring is never stepped",
+  "old": "for i in 0..self.m.len() {",
+  "new": "for i in 0..self.m.len() - 1 {"
+ },
+ {
+  "label": "the Euler step has no leak term",
+  "old": "let next = self.m[i] + a * (drive - self.m[i]);",
+  "new": "let next = self.m[i] + a * drive;"
+ },
+ {
+  "label": "the rectifier is on the external input alone rather than on the total drive",
+  "old": "let drive = (input[i] + rec[i]).max(0.0);",
+  "new": "let drive = input[i].max(0.0) + rec[i];"
+ },
+ {
+  "label": "an input longer than the ring is accepted and its tail ignored",
+  "old": "if input.len() != self.m.len() {",
+  "new": "if input.len() < self.m.len() {"
+ },
+ {
+  "label": "the dimension error swaps the input's length with the ring's",
+  "old": "{ what: \"input\", got: input.len(), want: self.m.len() }",
+  "new": "{ what: \"input\", got: self.m.len(), want: input.len() }"
+ },
+ {
+  "label": "the denormal flush erases every rate below machine epsilon, not just below the smallest normal",
+  "old": "if next < f64::MIN_POSITIVE { 0.0 } else { next }",
+  "new": "if next < f64::EPSILON { 0.0 } else { next }"
+ },
+ {
+  "label": "a run of exactly the documented maximum is refused",
+  "old": "if steps > MAX_STEPS {",
+  "new": "if steps >= MAX_STEPS {"
+ },
+ {
+  "label": "the published step cap is a decade smaller than the constant documents",
+  "old": "pub const MAX_STEPS: u64 = 100_000_000;",
+  "new": "pub const MAX_STEPS: u64 = 10_000_000;"
+ },
+ {
+  "label": "the cue's depth is absolute rather than relative to the uniform input",
+  "old": "i0 * (1.0 + depth * (self.angle(i) - at).cos())",
+  "new": "i0 + depth * (self.angle(i) - at).cos()"
+ },
+ {
+  "label": "the cue is centred on minus the angle asked for",
+  "old": "i0 * (1.0 + depth * (self.angle(i) - at).cos())",
+  "new": "i0 * (1.0 + depth * (self.angle(i) + at).cos())"
  }
 ]

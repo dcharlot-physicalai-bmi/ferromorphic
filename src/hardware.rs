@@ -4775,4 +4775,159 @@ mod tests {
         assert_eq!(whole.codes, vec![2]);
         assert_eq!(whole.max_abs_error, 0.0);
     }
+    /// Every transcribed figure in the parts table, pinned to the value its source states.
+    ///
+    /// `graded` — the helper every other sweep in this module uses — flattens a record into
+    /// `(name, is_known, source, evidence)` and **drops the value**. So the table was audited for
+    /// provenance and never for content: each figure was checked to be present, cited and graded,
+    /// and none was checked to be right. Mutating Loihi's publication year by one, `TrueNorth`'s
+    /// process node to its neighbour's, or the on-chip learning engine that Loihi's paper is
+    /// TITLED for to `false`, changed no test in this crate.
+    ///
+    /// That is the failure this module exists to prevent, one level up: a table whose grades are
+    /// impeccable and whose numbers nobody reads is exactly as useful as an ungraded one. `None`
+    /// here is a claim too — it says this review did not locate the figure, and a value appearing
+    /// where `None` is expected is a figure that arrived without a source.
+    #[test]
+    fn every_transcribed_figure_is_the_one_its_source_states() {
+        type Row = (
+            &'static Part,
+            u32,
+            Option<u32>,
+            Option<u32>,
+            Option<u64>,
+            Option<u32>,
+            Option<u32>,
+            Option<bool>,
+            Option<&'static str>,
+        );
+        // part, year, neurons/core, cores/chip, synapses/core, max fan-in, weight bits,
+        // on-chip learning, process
+        let table: [Row; 16] = [
+            (&LOIHI, 2018, Some(1024), Some(128), Some(1_048_576), None, Some(9), Some(true),
+             Some("Intel 14 nm")),
+            (&LOIHI_2, 2021, Some(8192), Some(128), Some(937_500), None, None, Some(true),
+             Some("Intel 4 (pre-production)")),
+            (&TRUENORTH, 2014, Some(256), Some(4096), Some(65536), Some(256), Some(1), Some(false),
+             Some("Samsung 28 nm LPP")),
+            (&NORTHPOLE, 2023, None, Some(256), None, None, Some(8), Some(false), Some("12 nm")),
+            (&AKD1000, 2021, None, Some(80), None, None, Some(4), Some(true), Some("28 nm")),
+            (&AKD1500, 2023, None, None, None, None, Some(4), None,
+             Some("GlobalFoundries 22 nm FD-SOI")),
+            (&SPINNAKER, 2014, None, Some(18), None, None, Some(16), Some(true),
+             Some("UMC 130 nm")),
+            (&SPINNAKER2, 2021, None, Some(152), None, None, None, Some(true),
+             Some("GlobalFoundries 22 nm FDX")),
+            (&XYLO_AUDIO_2, 2023, Some(1000), Some(1), Some(64000), None, Some(8), Some(false),
+             None),
+            (&SPECK, 2022, None, Some(9), None, None, None, Some(false), None),
+            (&ODIN, 2019, Some(256), Some(1), Some(65536), Some(256), Some(4), Some(true),
+             Some("28 nm FDSOI")),
+            (&DYNAP_SE, 2018, Some(256), Some(4), Some(16384), Some(64), Some(2), Some(false),
+             Some("180 nm CMOS")),
+            (&DARWIN, 2016, Some(2048), Some(1), Some(4_194_304), None, None, None,
+             Some("180 nm")),
+            (&DARWIN3, 2024, None, None, None, None, None, Some(true), None),
+            (&INNATERA_T1, 2024, None, None, None, None, None, None, None),
+            (&BRAINSCALES_2, 2022, Some(512), Some(1), Some(131_072), Some(256), Some(6),
+             Some(true), Some("65 nm CMOS")),
+        ];
+        assert_eq!(table.len(), PARTS.len(), "a part was added to the table and not to this test");
+        for (p, year, npc, cpc, spc, fan, bits, learn, process) in table {
+            assert_eq!(p.year.value, Some(year), "{}: year", p.name);
+            assert_eq!(p.neurons_per_core.value, npc, "{}: neurons_per_core", p.name);
+            assert_eq!(p.cores_per_chip.value, cpc, "{}: cores_per_chip", p.name);
+            assert_eq!(p.synapses_per_core.value, spc, "{}: synapses_per_core", p.name);
+            assert_eq!(p.max_fan_in.value, fan, "{}: max_fan_in", p.name);
+            assert_eq!(p.weight_bits.value, bits, "{}: weight_bits", p.name);
+            assert_eq!(p.on_chip_learning.value, learn, "{}: on_chip_learning", p.name);
+            assert_eq!(p.process.value, process, "{}: process", p.name);
+        }
+        // The one delay range this review located, and the only part that has one.
+        assert_eq!(
+            SPINNAKER.delay_ticks.value,
+            Some(DelayRange { min_ticks: 1, max_ticks: 16 })
+        );
+        assert_eq!(PARTS.iter().filter(|p| p.delay_ticks.is_known()).count(), 1);
+    }
+
+    /// The two facts about Loihi that this crate's own argument rests on.
+    ///
+    /// Stated separately from the table sweep because they are the ones a reader is most likely to
+    /// quote: the paper is IEEE Micro 38(1), 2018, and the part learns on chip — that engine is
+    /// the subject of the paper's title. The crate's Loihi ENERGY figure is `Evidence::Simulated`
+    /// and pre-silicon, and these two are not; keeping them apart is the point.
+    #[test]
+    fn loihis_paper_and_its_learning_engine_are_stated_as_published() {
+        assert!(LOIHI.citation.contains("IEEE Micro 38(1):82-99, 2018"));
+        assert!(LOIHI.citation.contains("On-Chip Learning"));
+        assert_eq!(LOIHI.year.value, Some(2018));
+        assert_eq!(LOIHI.on_chip_learning.value, Some(true));
+        // TrueNorth is the contrast the module is built on: an inference part, no on-chip learning.
+        assert_eq!(TRUENORTH.on_chip_learning.value, Some(false));
+        assert_eq!(TRUENORTH.year.value, Some(2014));
+    }
+
+    /// `PARTS` is ordered oldest first, and every name in it is unique.
+    ///
+    /// Both are documented — `Part::name` says "Unique across `PARTS`" — and neither was read.
+    /// The order is what a reader of the table follows to see the field's trajectory, which is the
+    /// argument the module is here to support; a shuffled table tells a different story with the
+    /// same numbers. Ties are allowed: five of these years are shared.
+    #[test]
+    fn the_table_runs_oldest_first_and_names_no_part_twice() {
+        let years: Vec<u32> = PARTS.iter().map(|p| p.year.value.unwrap()).collect();
+        assert!(
+            years.windows(2).all(|w| w[0] <= w[1]),
+            "PARTS is not oldest first: {years:?}"
+        );
+        let mut names: Vec<&str> = PARTS.iter().map(|p| p.name).collect();
+        names.sort_unstable();
+        let before = names.len();
+        names.dedup();
+        assert_eq!(names.len(), before, "two parts share a name");
+        // The span the table covers, stated so that adding a part outside it is a deliberate act.
+        assert_eq!((years[0], years[years.len() - 1]), (2014, 2024));
+    }
+
+    /// The verdict line and the two delay refusals say what happened, in the right order.
+    ///
+    /// Three survivors of one kind: **nothing in this module reads a message it prints.** Swapping
+    /// `Some(true) => "FITS"` with `Some(false) => "DOES NOT FIT"` — the headline output, the one
+    /// line a caller reads — changed no test, because every fixture asserts `fit.verdict` and none
+    /// renders the report. Likewise a `DelayTooLong` printing `(post -> pre)`, and a
+    /// `DelayTooShort` saying its offenders "exceed" the floor they fall below.
+    ///
+    /// Measured across this crate: **246 of 287 messages that interpolate two or more values have
+    /// no assertion reading their text.** A swapped pair renders perfectly and reads as working,
+    /// which is why the mutation is invisible and why the report is the thing to assert.
+    #[test]
+    fn the_report_says_what_happened_rather_than_its_opposite() {
+        // A network that cannot fit DYNAP-SE, and one that comfortably fits it.
+        let big = uniform_net(2000, 100, 1);
+        let big_fit = fits(&big, &DYNAP_SE);
+        assert_eq!(big_fit.verdict, Some(false));
+        let report = big_fit.to_string();
+        assert!(report.contains("DOES NOT FIT"), "{report}");
+        assert!(!report.contains("FITS (on"), "the verdict line is the opposite one: {report}");
+
+        let small = uniform_net(8, 4, 1);
+        let small_fit = fits(&small, &DYNAP_SE);
+        assert_eq!(small_fit.verdict, Some(true));
+        let ok = small_fit.to_string();
+        assert!(ok.contains("FITS (on the constraints this part states)"), "{ok}");
+        assert!(!ok.contains("DOES NOT FIT"), "{ok}");
+
+        // The two delay refusals, rendered directly: the enum is `pub` with `pub` fields, so the
+        // message can be read without building a network that provokes it.
+        let long = Bind::DelayTooLong { synapse: 3, pre: 7, post: 11, delay: 40, cap: 16, offenders: 2 };
+        let text = long.to_string();
+        assert!(text.contains("(7 -> 11)"), "presynaptic first: {text}");
+        assert!(!text.contains("(11 -> 7)"), "{text}");
+        let short = Bind::DelayTooShort { synapse: 1, pre: 2, post: 5, delay: 0, floor: 1, offenders: 4 };
+        let text = short.to_string();
+        assert!(text.contains("fall below it"), "{text}");
+        assert!(!text.contains("exceed it"), "a delay under the floor does not exceed it: {text}");
+    }
+
 }

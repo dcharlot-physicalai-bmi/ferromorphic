@@ -78,5 +78,252 @@
   "label": "accumulator residue dropped",
   "old": "self.acc[i] -= k;",
   "new": "self.acc[i] = 0.0;"
+ },
+ {
+  "label": "the atom matrix's shape is checked against its own length, so any length fits",
+  "old": "len(\"atoms\", atoms.len(), m * n)?;",
+  "new": "len(\"atoms\", atoms.len(), atoms.len())?;"
+ },
+ {
+  "label": "atom j is read as row j, transposing the dictionary",
+  "old": "        (0..self.m).map(|r| self.atoms[r * self.n + j]).collect()",
+  "new": "        (0..self.m).map(|r| self.atoms[j * self.n + r]).collect()"
+ },
+ {
+  "label": "a non-finite signal is projected rather than refused",
+  "old": "        len(\"signal\", y.len(), self.m)?;\n        finite(\"signal\", y)?;",
+  "new": "        len(\"signal\", y.len(), self.m)?;"
+ },
+ {
+  "label": "the projection reads the dictionary transposed",
+  "old": "        Ok((0..self.n).map(|j| (0..self.m).map(|r| self.atoms[r * self.n + j] * y[r]).sum()).collect())",
+  "new": "        Ok((0..self.n).map(|j| (0..self.m).map(|r| self.atoms[j * self.n + r] * y[r]).sum()).collect())"
+ },
+ {
+  "label": "the synthesis reads the dictionary transposed",
+  "old": "        Ok((0..self.m).map(|r| (0..self.n).map(|j| self.atoms[r * self.n + j] * a[j]).sum()).collect())",
+  "new": "        Ok((0..self.m).map(|r| (0..self.n).map(|j| self.atoms[j * self.n + r] * a[j]).sum()).collect())"
+ },
+ {
+  "label": "the Gram matrix's diagonal is never computed",
+  "old": "            for j in i..n {",
+  "new": "            for j in (i + 1)..n {"
+ },
+ {
+  "label": "the mutual coherence is the largest signed inner product rather than the largest magnitude",
+  "old": "                    worst = worst.max(g[i * n + j].abs());",
+  "new": "                    worst = worst.max(g[i * n + j]);"
+ },
+ {
+  "label": "the Box-Muller radius drops its factor of two, so the draws have half the variance",
+  "old": "    (-2.0 * u1.ln()).sqrt() * (core::f64::consts::TAU * u2).cos()",
+  "new": "    (-1.0 * u1.ln()).sqrt() * (core::f64::consts::TAU * u2).cos()"
+ },
+ {
+  "label": "the guard that keeps a zero uniform draw out of the logarithm is removed",
+  "old": "    let u1 = rng.next_f64().max(1e-300);",
+  "new": "    let u1 = rng.next_f64();"
+ },
+ {
+  "label": "the soft threshold pushes a negative coefficient further from zero instead of shrinking it",
+  "old": "                } else if u < -lambda {\n                    u + lambda",
+  "new": "                } else if u < -lambda {\n                    u - lambda"
+ },
+ {
+  "label": "the soft threshold's comparison admits the boundary",
+  "old": "                if u > lambda {",
+  "new": "                if u >= lambda {"
+ },
+ {
+  "label": "the hard threshold keeps a coefficient sitting exactly on the threshold",
+  "old": "if u.abs() > lambda { u } else { 0.0 }",
+  "new": "if u.abs() >= lambda { u } else { 0.0 }"
+ },
+ {
+  "label": "the l1 penalty pays a bonus for a negative coefficient instead of charging for it",
+  "old": "            Self::Soft => lambda * a.abs(),",
+  "new": "            Self::Soft => lambda * a,"
+ },
+ {
+  "label": "the rate form's lateral cost is halved, as if each synapse were stored twice",
+  "old": "    n.saturating_mul(n.saturating_sub(1))",
+  "new": "    n.saturating_mul(n.saturating_sub(1)) / 2"
+ },
+ {
+  "label": "the rate LCA accepts a non-positive time constant",
+  "old": "        positive(\"tau\", tau)?;\n        let n = dict.n;",
+  "new": "        let n = dict.n;"
+ },
+ {
+  "label": "the rate LCA's reset leaves every state where it was",
+  "old": "        self.u.iter_mut().for_each(|x| *x = 0.0);",
+  "new": "        self.u.iter_mut().for_each(|x| { let _ = x; });"
+ },
+ {
+  "label": "the coefficients are read off the states with no threshold applied",
+  "old": "        self.u.iter().map(|&u| self.threshold.apply(u, self.lambda)).collect()",
+  "new": "        self.u.iter().map(|&u| self.threshold.apply(u, 0.0)).collect()"
+ },
+ {
+  "label": "the membrane decay multiplies by the time constant rather than dividing by it",
+  "old": "        let decay = (-dt / self.tau).exp();\n        for i in 0..n {",
+  "new": "        let decay = (-dt * self.tau).exp();\n        for i in 0..n {"
+ },
+ {
+  "label": "the step re-reads the coefficients as it sweeps, so a neuron sees this step's own updates",
+  "old": "        let a = self.coefficients();\n        let decay = (-dt / self.tau).exp();\n        for i in 0..n {\n            let mut inhibition = 0.0;",
+  "new": "        let decay = (-dt / self.tau).exp();\n        for i in 0..n {\n            let a = self.coefficients();\n            let mut inhibition = 0.0;"
+ },
+ {
+  "label": "the lateral matrix is read transposed",
+  "old": "                let w = self.lateral[i * n + j];\n                if w != 0.0 && a[j] != 0.0 {",
+  "new": "                let w = self.lateral[j * n + i];\n                if w != 0.0 && a[j] != 0.0 {",
+  "equivalent": "EQUIVALENT, and verified by fixture rather than by what the tests contain. `lateral` is a PRIVATE field. It is written in exactly two places, `Lca::new` and `SpikingLca::new`, both of them from `Dictionary::gram()`, and nothing in the crate hands out a `&mut` to it: no setter, no public constructor from parts, no deserialisation, and the only `pub` fields near it (`dict`, `lambda`, `tau`, `u`) are read after construction rather than fed back into it. `gram()` computes each inner product ONCE and writes that one `f64` into both `g[i*n + j]` and `g[j*n + i]`, so the Gram matrix is symmetric BIT FOR BIT and not merely to rounding; zeroing the diagonal preserves that. Therefore `lateral[i*n + j]` and `lateral[j*n + i]` are the same f64 in every state the public API can reach, the transposed read returns the identical value, and the mutant computes an identical trajectory - no test can separate them because there is nothing to separate. Measured: over four dictionaries of random unit atoms (2x2, 5x7, 16x32, 3x11) every entry of `gram()` and of both `lateral` matrices equals its transpose to the last bit, with the off-diagonal coupling asserted non-zero so the check is not vacuous. That measurement is kept as the test `the_gram_matrix_and_the_lateral_matrix_are_symmetric_to_the_last_bit`, which is the standing tripwire for this argument: if a future constructor ever admits an asymmetric lateral matrix, that test fails and this equivalence must be retracted with it."
+ },
+ {
+  "label": "the lateral sum takes contributions only from silent neurons, so nothing ever inhibits",
+  "old": "                if w != 0.0 && a[j] != 0.0 {",
+  "new": "                if w != 0.0 && a[j] == 0.0 {"
+ },
+ {
+  "label": "the worst single-step increase of the objective is measured as a decrease",
+  "old": "            worst_increase = worst_increase.max(now - last);",
+  "new": "            worst_increase = worst_increase.max(last - now);"
+ },
+ {
+  "label": "the worst increase has no floor at zero, so a run that only ever falls reports a fall",
+  "old": "        let mut worst_increase = 0.0f64;",
+  "new": "        let mut worst_increase = f64::NEG_INFINITY;"
+ },
+ {
+  "label": "each step's objective is compared against the start rather than against the step before",
+  "old": "            last = now;",
+  "new": "            last = start;"
+ },
+ {
+  "label": "the reconstruction error is the signed residual rather than its square",
+  "old": "        let fit: f64 = y.iter().zip(&recon).map(|(p, q)| (p - q) * (p - q)).sum::<f64>() / 2.0;",
+  "new": "        let fit: f64 = y.iter().zip(&recon).map(|(p, q)| p - q).sum::<f64>() / 2.0;"
+ },
+ {
+  "label": "the objective accepts a signal of any length and scores the part that overlaps",
+  "old": "        len(\"signal\", y.len(), self.dict.m)?;\n        let recon = self.dict.synthesise(a)?;\n        let fit: f64",
+  "new": "        let recon = self.dict.synthesise(a)?;\n        let fit: f64"
+ },
+ {
+  "label": "the optimality residual is built on the reconstruction minus the signal",
+  "old": "        let resid: Vec<f64> = y.iter().zip(&recon).map(|(p, q)| p - q).collect();",
+  "new": "        let resid: Vec<f64> = y.iter().zip(&recon).map(|(p, q)| q - p).collect();"
+ },
+ {
+  "label": "the off-support slack is not clamped at zero",
+  "old": "                (c[i].abs() - self.lambda).max(0.0)",
+  "new": "                c[i].abs() - self.lambda",
+  "equivalent": "EQUIVALENT by the arithmetic of the fold, not by what the tests happen to assert. `optimality_residual` seeds `worst` at 0.0 and combines every entry with `worst = worst.max(v)` and nothing else, so it returns `max(0, v_1, ..., v_n)` whatever the individual entries are. Clamping each off-support slack first computes `max(0, max(0,v_1), ..., max(0,v_n))`, and since `max` is associative, idempotent and already has 0 in the fold, the two expressions are the same number: the inner clamp is subsumed by the seed. The on-support branches return `.abs()` values, which are never negative, so they cannot be lowered by removing a clamp either. NaN does not separate the two forms: Rust's `f64::max` returns the non-NaN operand, so a NaN slack contributes `max(NaN, 0.0) = 0.0` in the clamped form and is discarded by `worst.max(NaN) = worst` in the unclamped one, leaving `worst` unchanged both ways. Measured, running both folds side by side: 200,000 random slack vectors of one to eight entries drawn from {NaN, +inf, -inf, 0.0, negative, signed} give bit-identical results, 0 differences. What the clamp DOES buy is the reader: it says at the site that an off-support coefficient whose correlation is inside the threshold violates nothing, and it is the form that stays correct if the seed ever changes. It is not, today, observable."
+ },
+ {
+  "label": "the hard threshold's fixed-point condition is tested with the soft threshold's condition",
+  "old": "                    Threshold::Hard => c[i].abs(),",
+  "new": "                    Threshold::Hard => (c[i] - self.lambda * ai.signum()).abs(),"
+ },
+ {
+  "label": "the spiking LCA leaves every neuron inhibiting itself",
+  "old": "        for i in 0..n {\n            lateral[i * n + i] = 0.0;\n        }\n        Ok(Self {\n            dict,",
+  "new": "        Ok(Self {\n            dict,"
+ },
+ {
+  "label": "the spiking step accepts a projection of the wrong length",
+  "old": "        len(\"projection\", b.len(), self.dict.n)?;\n        positive(\"dt\", dt)?;\n        let n = self.dict.n;\n        let syn_decay",
+  "new": "        positive(\"dt\", dt)?;\n        let n = self.dict.n;\n        let syn_decay"
+ },
+ {
+  "label": "the spiking step accepts a non-positive or non-finite dt",
+  "old": "        positive(\"dt\", dt)?;\n        let n = self.dict.n;\n        let syn_decay",
+  "new": "        let n = self.dict.n;\n        let syn_decay"
+ },
+ {
+  "label": "the synaptic trace decays with the membrane time constant rather than its own",
+  "old": "        let syn_decay = (-dt / self.tau_syn).exp();",
+  "new": "        let syn_decay = (-dt / self.tau).exp();"
+ },
+ {
+  "label": "the spike is generated from the membrane before the step rather than after it",
+  "old": "            self.u[i] = target + (self.u[i] - target) * decay;\n            let a = self.threshold.apply(self.u[i], self.lambda);",
+  "new": "            let a = self.threshold.apply(self.u[i], self.lambda);\n            self.u[i] = target + (self.u[i] - target) * decay;"
+ },
+ {
+  "label": "the accumulator is charged a rate rather than a rate times the tick length",
+  "old": "            self.acc[i] += a.abs() * self.rate_scale * dt;",
+  "new": "            self.acc[i] += a.abs() * self.rate_scale;"
+ },
+ {
+  "label": "a negative coefficient drives the accumulator backwards and never spikes",
+  "old": "            // does not. The accumulator counts magnitude; the trace deposit carries the sign.\n            self.acc[i] += a.abs() * self.rate_scale * dt;",
+  "new": "            // does not. The accumulator counts magnitude; the trace deposit carries the sign.\n            self.acc[i] += a * self.rate_scale * dt;"
+ },
+ {
+  "label": "the accumulator rounds up, emitting a spike it has not earned",
+  "old": "                let k = self.acc[i].floor();",
+  "new": "                let k = self.acc[i].ceil();"
+ },
+ {
+  "label": "a spike is delivered to every neuron including the one that fired it",
+  "old": "                let delivered = k_u.saturating_mul(n as u64 - 1);",
+  "new": "                let delivered = k_u.saturating_mul(n as u64);"
+ },
+ {
+  "label": "the trace is replaced by the newest deposit rather than accumulating it",
+  "old": "                self.traces[i] += a.signum() * k / (self.tau_syn * self.rate_scale);",
+  "new": "                self.traces[i] = a.signum() * k / (self.tau_syn * self.rate_scale);"
+ },
+ {
+  "label": "the trace deposit is not divided by the trace time constant, so its gain is not unity",
+  "old": "k / (self.tau_syn * self.rate_scale);",
+  "new": "k / self.rate_scale;"
+ },
+ {
+  "label": "the tick count is set to one rather than accumulated",
+  "old": "        self.ticks += 1;",
+  "new": "        self.ticks = 1;"
+ },
+ {
+  "label": "clearing the counts also empties the sigma-delta accumulators",
+  "old": "    pub fn clear_counts(&mut self) {\n        self.spikes.iter_mut().for_each(|s| *s = 0);",
+  "new": "    pub fn clear_counts(&mut self) {\n        self.acc.iter_mut().for_each(|a| *a = 0.0);\n        self.spikes.iter_mut().for_each(|s| *s = 0);"
+ },
+ {
+  "label": "the reset leaves the synaptic traces charged",
+  "old": "        for v in [&mut self.u, &mut self.acc, &mut self.traces] {",
+  "new": "        for v in [&mut self.u, &mut self.acc] {"
+ },
+ {
+  "label": "the rates are read off the membrane states rather than off the traces",
+  "old": "        &self.traces\n    }",
+  "new": "        &self.u\n    }"
+ },
+ {
+  "label": "the counting window is a tick count rather than a length of time",
+  "old": "        let window = self.ticks as f64 * dt;",
+  "new": "        let window = self.ticks as f64;"
+ },
+ {
+  "label": "a NaN dt slips past the counting window's guard",
+  "old": "        if self.ticks == 0 || !(dt > 0.0) {",
+  "new": "        if self.ticks == 0 || dt <= 0.0 {"
+ },
+ {
+  "label": "the lateral saving reports the fraction paid rather than the fraction saved",
+  "old": "        Some(1.0 - self.ledger.syn_ops as f64 / rate_cost)",
+  "new": "        Some(self.ledger.syn_ops as f64 / rate_cost)"
+ },
+ {
+  "label": "the rate-form baseline is sized by the signal dimension rather than by the atom count",
+  "old": "        let rate_cost = lateral_ops_per_step(self.dict.n as u64) as f64 * self.ticks as f64;",
+  "new": "        let rate_cost = lateral_ops_per_step(self.dict.m as u64) as f64 * self.ticks as f64;"
+ },
+ {
+  "label": "the lateral saving is reported before any step has run",
+  "old": "        if self.ticks == 0 {\n            return None;\n        }\n        let rate_cost",
+  "new": "        if false {\n            return None;\n        }\n        let rate_cost"
  }
 ]

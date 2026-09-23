@@ -625,4 +625,92 @@ mod tests {
         assert_eq!(some.harmonic_value(&[1.0]), None);
         assert_eq!(some.mean_steps(), Some(2.5));
     }
+
+    /// The RENDERED text of all seven refusals: which way round a synapse runs, and which of the
+    /// two numbers in an index refusal is the offending one. Pinned because every existing refusal
+    /// test compares the STRUCT — `Err(GraphError::Index { what, index, count })` — so the `Display`
+    /// body was never run at all, and a message that reads "from 3 is past the 5 available" for an
+    /// index of 5 in a graph of 3 is fluent in both directions.
+    #[test]
+    fn a_refusal_renders_its_endpoints_and_its_two_numbers_the_right_way_round() {
+        let mut g = Graph::new(3).unwrap();
+        assert_eq!(g.connect(0, 1, 0).unwrap_err().to_string(), "the synapse 0 → 1 has zero delay");
+        assert_eq!(g.connect(2, 0, 0).unwrap_err().to_string(), "the synapse 2 → 0 has zero delay");
+        // Five is the index and three is the count, and an index refusal that named them the other
+        // way round would read the same for the (3, 3) case the existing test uses.
+        assert_eq!(g.connect(5, 0, 1).unwrap_err().to_string(), "from 5 is past the 3 available");
+        assert_eq!(g.connect(0, 5, 1).unwrap_err().to_string(), "to 5 is past the 3 available");
+        assert_eq!(g.wavefront(9).unwrap_err().to_string(), "source 9 is past the 3 available");
+        assert_eq!(Graph::new(0).unwrap_err().to_string(), "vertices is empty");
+        assert_eq!(Graph::new(1usize << 33).unwrap_err().to_string(), "8589934592 vertices is more than a u32 can name");
+        g.connect(0, 1, u64::MAX).unwrap();
+        g.connect(1, 2, 1).unwrap();
+        assert_eq!(g.wavefront(0).unwrap_err().to_string(), "a path length overflowed u64");
+        let mut trap = Graph::new(2).unwrap();
+        trap.connect(0, 1, 1).unwrap();
+        let mut rng = Rng::new(2);
+        assert_eq!(
+            release_walkers(&trap, 0, &[false, false], 1, 50, &mut rng).unwrap_err().to_string(),
+            "vertex 1 is not absorbing and has no way out"
+        );
+        let line = Graph::path(4).unwrap();
+        assert_eq!(
+            release_walkers(&line, 2, &[false; 5], 1, 50, &mut rng).unwrap_err().to_string(),
+            "a walker was still walking after 50 steps"
+        );
+    }
+
+    /// A two-way synapse whose FORWARD half is refused is refused as a whole, and the refusal is
+    /// the forward half's. Pinned because the two halves fail under exactly the same conditions —
+    /// a bad endpoint or a zero delay is bad in both directions — so swallowing the first refusal
+    /// and returning the second one leaves a graph that is still empty and an error that is still
+    /// an error, differing only in which endpoint it names.
+    #[test]
+    fn a_two_way_synapse_is_refused_by_its_forward_half() {
+        let mut g = Graph::new(3).unwrap();
+        assert_eq!(g.connect_both(0, 1, 0), Err(GraphError::ZeroDelay { from: 0, to: 1 }));
+        assert_eq!(g.connect_both(5, 0, 1), Err(GraphError::Index { what: "from", index: 5, count: 3 }));
+        assert!(g.out.iter().all(Vec::is_empty), "a refused two-way synapse stored an edge anyway");
+        // And when both halves are legal, both are stored.
+        g.connect_both(0, 1, 4).unwrap();
+        assert_eq!(g.out[0], [(1, 4)]);
+        assert_eq!(g.out[1], [(0, 4)]);
+    }
+
+    /// A shortest path through EVERY vertex is a path, not a cycle. Pinned because the hop budget
+    /// that stops a doctored parent array from being walked for ever is exactly the vertex count,
+    /// and the longest path this module's other fixtures ask for is six vertices of seven — a
+    /// budget one hop short refuses nothing they build.
+    #[test]
+    fn a_path_through_every_vertex_is_returned_and_not_refused_as_a_cycle() {
+        let line = Graph::path(9).unwrap();
+        let wave = line.wavefront(0).unwrap();
+        assert_eq!(wave.parent.len(), 10);
+        assert_eq!(wave.path_to(9), Some((0..=9).collect::<Vec<usize>>()), "ten vertices is a legal path of ten");
+        // One vertex fewer is still returned, so the budget is not simply generous.
+        assert_eq!(wave.path_to(8), Some((0..=8).collect::<Vec<usize>>()));
+    }
+
+    /// The step limit is the number of steps a walker MAY take: a walk of exactly that many steps
+    /// is answered, and a walk of one more is refused. Pinned because the existing limit fixture
+    /// releases a walker into a graph with no absorbing vertex at all, which is refused whether
+    /// the limit is counted before or after the step — the walk never ends either way.
+    #[test]
+    fn a_walker_is_refused_on_the_step_that_would_pass_the_limit_and_not_after_it() {
+        let mut chain = Graph::new(4).unwrap();
+        for v in 0..3 {
+            chain.connect(v, v + 1, 1).unwrap();
+        }
+        // Every vertex before the door has exactly one way out, so the walk is forced and takes
+        // three steps whatever the draws are.
+        let doors = [false, false, false, true];
+        let mut rng = Rng::new(5);
+        let done = release_walkers(&chain, 0, &doors, 1, 3, &mut rng).unwrap();
+        assert_eq!((done.exits[3], done.spikes), (1, 3));
+        assert_eq!(
+            release_walkers(&chain, 0, &doors, 1, 2, &mut rng).unwrap_err(),
+            GraphError::StepLimit { limit: 2 },
+            "a limit of two must refuse the third step, not take it"
+        );
+    }
 }

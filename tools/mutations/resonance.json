@@ -108,5 +108,301 @@
   "label": "levels ceiling is log2 of the larger",
   "old": "let ceiling = (levels.len().min(n + 1) as f64).log2();",
   "new": "let ceiling = (levels.len().min(n + 1) as f64).log2() * 0.5;"
+ },
+ {
+  "label": "the population ceiling is a thousand units rather than a million",
+  "old": "pub const MAX_UNITS: usize = 1 << 20;",
+  "new": "pub const MAX_UNITS: usize = 1 << 10;"
+ },
+ {
+  "label": "the population ceiling is raised a thousandfold",
+  "old": "pub const MAX_UNITS: usize = 1 << 20;",
+  "new": "pub const MAX_UNITS: usize = 1 << 30;"
+ },
+ {
+  "label": "the refused range is printed with its bounds the wrong way round",
+  "old": "write!(f, \"{what} = {value} is outside [{low}, {high}]\")",
+  "new": "write!(f, \"{what} = {value} is outside [{high}, {low}]\")"
+ },
+ {
+  "label": "a non-finite quantity is reported as finite",
+  "old": "Self::NonFinite { what } => write!(f, \"{what} is not finite\"),",
+  "new": "Self::NonFinite { what } => write!(f, \"{what} is finite\"),"
+ },
+ {
+  "label": "an infinite signal passes the finiteness check",
+  "old": "    if v.is_finite() { Ok(v) } else { Err(ResonanceError::NonFinite { what }) }",
+  "new": "    if !v.is_nan() { Ok(v) } else { Err(ResonanceError::NonFinite { what }) }"
+ },
+ {
+  "label": "a noiseless unit is refused as out of range",
+  "old": "    if v.is_finite() && v >= 0.0 {",
+  "new": "    if v.is_finite() && v > 0.0 {"
+ },
+ {
+  "label": "a NaN noise level slips through the non-negative guard",
+  "old": "    if v.is_finite() && v >= 0.0 {",
+  "new": "    if !(v < 0.0) {"
+ },
+ {
+  "label": "the refused noise level is said to belong in the negatives",
+  "old": "low: 0.0, high: f64::INFINITY })",
+  "new": "low: f64::NEG_INFINITY, high: 0.0 })"
+ },
+ {
+  "label": "the firing margin is the threshold minus the signal",
+  "old": "    let margin = finite(\"signal\", signal)? - finite(\"threshold\", threshold)?;\n    let sigma = non_negative(\"sigma\", sigma)?;",
+  "new": "    let margin = finite(\"threshold\", threshold)? - finite(\"signal\", signal)?;\n    let sigma = non_negative(\"sigma\", sigma)?;"
+ },
+ {
+  "label": "the noiseless branch is never taken, so a silent unit divides by zero",
+  "old": "    if sigma == 0.0 {",
+  "new": "    if sigma < 0.0 {"
+ },
+ {
+  "label": "the noiseless branch is entered for any non-positive noise",
+  "old": "    if sigma == 0.0 {",
+  "new": "    if sigma <= 0.0 {",
+  "equivalent": "`fire_probability` reaches this branch only through `non_negative(\"sigma\", sigma)?`, which returns Ok(v) for a FINITE v >= 0.0 and an error for everything else. On that domain `v <= 0.0` and `v == 0.0` select exactly the same values: zero is the only double that is both <= 0.0 and >= 0.0, and -0.0 compares equal to 0.0 under either spelling, so the noiseless step branch is entered for precisely the same arguments and the fall-through computes the same normal_cdf. Measured, not asserted: a fixture printing fire_probability, discriminability, population_information and levels_information over 18 sigmas (0.0, -0.0, +/-5e-324, f64::MIN_POSITIVE, +/-1e-300, +/-0.1, +/-1.0, 1e300, f64::MAX, +/-inf, NaN) crossed with 7 signal/threshold pairs -- 504 printed results -- is byte-identical under both spellings."
+ },
+ {
+  "label": "the noiseless step is inverted",
+  "old": "return Ok(if margin >= 0.0 { 1.0 } else { 0.0 });",
+  "new": "return Ok(if margin >= 0.0 { 0.0 } else { 1.0 });"
+ },
+ {
+  "label": "the firing probability is the upper tail rather than the lower",
+  "old": "Ok(normal_cdf(margin / sigma))",
+  "new": "Ok(1.0 - normal_cdf(margin / sigma))"
+ },
+ {
+  "label": "the margin is divided by the variance rather than the standard deviation",
+  "old": "Ok(normal_cdf(margin / sigma))",
+  "new": "Ok(normal_cdf(margin / (sigma * sigma)))"
+ },
+ {
+  "label": "discriminability adds the two rates rather than differencing them",
+  "old": "Ok(fire_probability(high, threshold, sigma)? - fire_probability(low, threshold, sigma)?)",
+  "new": "Ok(fire_probability(high, threshold, sigma)? + fire_probability(low, threshold, sigma)?)"
+ },
+ {
+  "label": "the false-alarm rate is measured without noise",
+  "old": "- fire_probability(low, threshold, sigma)?)",
+  "new": "- fire_probability(low, threshold, 0.0)?)"
+ },
+ {
+  "label": "an infinite value is handed an optimal noise",
+  "old": " || !low.is_finite() || !threshold.is_finite() {",
+  "new": " {"
+ },
+ {
+  "label": "a value exactly at the threshold is given an optimum",
+  "old": "high < threshold) ||",
+  "new": "high <= threshold) ||"
+ },
+ {
+  "label": "two equal values are given an optimal noise",
+  "old": "if !(low < high && high",
+  "new": "if !(low <= high && high"
+ },
+ {
+  "label": "the logarithm in the optimal noise is inverted",
+  "old": "(2.0 * (b / a).ln())",
+  "new": "(2.0 * (a / b).ln())"
+ },
+ {
+  "label": "the numerator of the optimal noise adds the squared distances",
+  "old": "(b * b - a * a)",
+  "new": "(b * b + a * a)"
+ },
+ {
+  "label": "the farther distance is the threshold itself rather than its gap to the lower value",
+  "old": "let (a, b) = (threshold - high, threshold - low);",
+  "new": "let (a, b) = (threshold - high, threshold);"
+ },
+ {
+  "label": "the dither margin is the threshold minus the signal",
+  "old": "    let margin = finite(\"signal\", signal)? - finite(\"threshold\", threshold)?;\n    if !(width > 0.0) || !width.is_finite() {",
+  "new": "    let margin = finite(\"threshold\", threshold)? - finite(\"signal\", signal)?;\n    if !(width > 0.0) || !width.is_finite() {"
+ },
+ {
+  "label": "a dither of zero width is accepted",
+  "old": "    if !(width > 0.0) || !width.is_finite() {",
+  "new": "    if width < 0.0 || !width.is_finite() {"
+ },
+ {
+  "label": "an infinitely wide dither is accepted",
+  "old": "    if !(width > 0.0) || !width.is_finite() {",
+  "new": "    if !(width > 0.0) {"
+ },
+ {
+  "label": "the dither width is taken as a half-width",
+  "old": "Ok((margin / width + 0.5).clamp(0.0, 1.0))",
+  "new": "Ok((margin / (0.5 * width) + 0.5).clamp(0.0, 1.0))"
+ },
+ {
+  "label": "the dither's refusal says a width of zero is admissible",
+  "old": "low: f64::MIN_POSITIVE, high: f64::INFINITY }",
+  "new": "low: 0.0, high: f64::INFINITY }"
+ },
+ {
+  "label": "the binary entropy drops the term for the silent outcome",
+  "old": "    term(p) + term(1.0 - p)",
+  "new": "    term(p)"
+ },
+ {
+  "label": "the binary entropy is negative",
+  "old": "let term = |x: f64| if x > 0.0 { -x * x.log2() } else { 0.0 };",
+  "new": "let term = |x: f64| if x > 0.0 { x * x.log2() } else { 0.0 };"
+ },
+ {
+  "label": "the zero-probability term is evaluated rather than skipped",
+  "old": "let term = |x: f64| if x > 0.0 { -x * x.log2() } else { 0.0 };",
+  "new": "let term = |x: f64| if x >= 0.0 { -x * x.log2() } else { 0.0 };"
+ },
+ {
+  "label": "the marginal firing probability is the sum of the two rather than their mean",
+  "old": "h2(0.5 * (p_low + p_high))",
+  "new": "h2(p_low + p_high)"
+ },
+ {
+  "label": "the channel information is not floored at zero",
+  "old": "(h2(p_low) + h2(p_high))).max(0.0))",
+  "new": "(h2(p_low) + h2(p_high))))"
+ },
+ {
+  "label": "only the first of the two probabilities is range-checked",
+  "old": "    if !(0.0..=1.0).contains(&p_low) || !(0.0..=1.0).contains(&p_high) {",
+  "new": "    if !(0.0..=1.0).contains(&p_low) {"
+ },
+ {
+  "label": "a unit that always fires is refused as out of range",
+  "old": "!(0.0..=1.0).contains(&p_high)",
+  "new": "!(0.0..1.0).contains(&p_high)"
+ },
+ {
+  "label": "a degenerate probability is sent through the log-space recursion",
+  "old": "    if p <= 0.0 || p >= 1.0 {",
+  "new": "    if p < 0.0 || p > 1.0 {"
+ },
+ {
+  "label": "the degenerate count distribution is one entry short",
+  "old": "let mut pmf = vec![0.0; n + 1];",
+  "new": "let mut pmf = vec![0.0; n];"
+ },
+ {
+  "label": "the binomial recursion overwrites its running log rather than accumulating",
+  "old": "        log += ((n - k) as f64 / (k + 1) as f64).ln() + ratio;",
+  "new": "        log = ((n - k) as f64 / (k + 1) as f64).ln() + ratio;"
+ },
+ {
+  "label": "the binomial recursion divides by k rather than by k plus one",
+  "old": "((n - k) as f64 / (k + 1) as f64).ln()",
+  "new": "((n - k) as f64 / k as f64).ln()"
+ },
+ {
+  "label": "the recursion advances before the term it has computed is stored",
+  "old": "        pmf.push(log.exp());\n        log += ((n - k) as f64 / (k + 1) as f64).ln() + ratio;",
+  "new": "        log += ((n - k) as f64 / (k + 1) as f64).ln() + ratio;\n        pmf.push(log.exp());"
+ },
+ {
+  "label": "the per-step factor is the log probability rather than the log odds",
+  "old": "let ratio = (p / (1.0 - p)).ln();",
+  "new": "let ratio = p.ln();"
+ },
+ {
+  "label": "both conditional distributions are built from the lower value",
+  "old": "let hi = binomial(n, fire_probability(high, threshold, sigma)?);",
+  "new": "let hi = binomial(n, fire_probability(low, threshold, sigma)?);"
+ },
+ {
+  "label": "the higher value's count distribution is built for one unit fewer",
+  "old": "let hi = binomial(n, fire_probability(high, threshold, sigma)?);",
+  "new": "let hi = binomial(n - 1, fire_probability(high, threshold, sigma)?);"
+ },
+ {
+  "label": "the mixture over the two signal values is not halved",
+  "old": "let mix = 0.5 * (a + b);",
+  "new": "let mix = a + b;"
+ },
+ {
+  "label": "the sum over counts overwrites rather than accumulates",
+  "old": "bits += 0.5 * cond * (cond / mix).log2();",
+  "new": "bits = 0.5 * cond * (cond / mix).log2();"
+ },
+ {
+  "label": "a count of zero probability is summed rather than skipped",
+  "old": "            if cond > 0.0 {",
+  "new": "            if cond >= 0.0 {"
+ },
+ {
+  "label": "the population information is not clamped to a bit",
+  "old": "Ok(bits.clamp(0.0, 1.0))",
+  "new": "Ok(bits)"
+ },
+ {
+  "label": "the population's ceiling is half a bit",
+  "old": "Ok(bits.clamp(0.0, 1.0))",
+  "new": "Ok(bits.clamp(0.0, 0.5))"
+ },
+ {
+  "label": "an empty population is accepted",
+  "old": "    if n == 0 || n > MAX_UNITS {",
+  "new": "    if n > MAX_UNITS {"
+ },
+ {
+  "label": "the two count distributions are read one count apart",
+  "old": "for (&a, &b) in lo.iter().zip(&hi) {",
+  "new": "for (&a, &b) in lo.iter().skip(1).zip(&hi) {"
+ },
+ {
+  "label": "the number of levels is not bounded above",
+  "old": "    if levels.len() < 2 || levels.len() > MAX_UNITS {",
+  "new": "    if levels.len() < 2 {"
+ },
+ {
+  "label": "the refusal of a one-level signal names the population instead",
+  "old": "OutOfRange { what: \"levels\", value: levels.len() as f64",
+  "new": "OutOfRange { what: \"n\", value: levels.len() as f64"
+ },
+ {
+  "label": "the bound on levels times units is dropped",
+  "old": "    if n == 0 || n > MAX_UNITS || n.saturating_mul(levels.len()) > 64 * MAX_UNITS {",
+  "new": "    if n == 0 || n > MAX_UNITS {"
+ },
+ {
+  "label": "an empty population is accepted for a multi-level signal",
+  "old": "    if n == 0 || n > MAX_UNITS || n.saturating_mul(levels.len()) > 64 * MAX_UNITS {",
+  "new": "    if n > MAX_UNITS || n.saturating_mul(levels.len()) > 64 * MAX_UNITS {"
+ },
+ {
+  "label": "every level's conditional is built at the threshold",
+  "old": "conditionals.push(binomial(n, fire_probability(level, threshold, sigma)?));",
+  "new": "conditionals.push(binomial(n, fire_probability(threshold, threshold, sigma)?));"
+ },
+ {
+  "label": "the level weights are shared out over one level too many",
+  "old": "let weight = 1.0 / levels.len() as f64;",
+  "new": "let weight = 1.0 / (levels.len() + 1) as f64;"
+ },
+ {
+  "label": "the sum over counts omits the all-firing outcome",
+  "old": "    for k in 0..=n {\n        let mix: f64",
+  "new": "    for k in 0..n {\n        let mix: f64"
+ },
+ {
+  "label": "the count ceiling forgets the silent outcome",
+  "old": "let ceiling = (levels.len().min(n + 1) as f64).log2();",
+  "new": "let ceiling = (levels.len().min(n) as f64).log2();"
+ },
+ {
+  "label": "the count ceiling is the larger of the two rather than the smaller",
+  "old": "let ceiling = (levels.len().min(n + 1) as f64).log2();",
+  "new": "let ceiling = (levels.len().max(n + 1) as f64).log2();"
+ },
+ {
+  "label": "the many-level information is capped at one bit",
+  "old": "Ok(bits.clamp(0.0, ceiling))",
+  "new": "Ok(bits.clamp(0.0, 1.0))"
  }
 ]

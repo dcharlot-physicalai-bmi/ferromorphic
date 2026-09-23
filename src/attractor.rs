@@ -642,4 +642,146 @@ mod tests {
         assert_eq!(cue[0], 3.0);
         assert!((cue[4] - 1.0).abs() < 1e-15);
     }
+
+    /// The published step cap is a hundred million. Pinned as a compile-time assertion because the
+    /// one test that reaches it writes `MAX_STEPS + 1`, which follows the constant wherever it is
+    /// moved to — a cap cut by a decade still refuses one past itself and reads as covered.
+    #[test]
+    fn the_published_step_cap_is_a_hundred_million() {
+        const { assert!(MAX_STEPS == 100_000_000) };
+    }
+
+    /// The RENDERED text of all four refusals: what is too small, which length was supplied and
+    /// which was required and in that order, the value and its range, and where the first bad
+    /// entry is. Pinned because every existing refusal test destructures the variant and reads
+    /// `what` alone, so no assertion in this module ever ran the `Display` body — a message naming
+    /// a minimum its own guard does not enforce, or reporting the length it wanted as the length
+    /// it got, is fluent and invisible.
+    #[test]
+    fn a_refusal_renders_what_was_wrong_in_the_order_it_names() {
+        assert_eq!(
+            Ring::new(2, -1.0, 3.0, 1e-2).unwrap_err().to_string(),
+            "a ring of 2 neurons cannot carry a bump (needs three)"
+        );
+        // …and three is what the guard enforces, so the number in the message is the true one.
+        assert!(Ring::new(3, -1.0, 3.0, 1e-2).is_ok());
+        let mut ring = Ring::new(8, -1.0, 3.0, 1e-2).unwrap();
+        assert_eq!(ring.step(1e-3, &[0.0; 7]).unwrap_err().to_string(), "input has length 7, expected 8");
+        assert_eq!(
+            ring.run(1e-3, &[0.0; 8], MAX_STEPS + 1).unwrap_err().to_string(),
+            "steps = 100000001 is outside [0, 100000000]"
+        );
+        let mut one_bad = [0.0; 8];
+        one_bad[6] = f64::NAN;
+        assert_eq!(ring.step(1e-3, &one_bad).unwrap_err().to_string(), "input is not finite at 6");
+    }
+
+    /// A time constant must be finite as well as positive, and the refusal names the smallest
+    /// positive double as its floor and infinity as its ceiling — in that order. Pinned because
+    /// `positive` is only ever reached with `0.0`, which `v > 0.0` rejects on its own, and because
+    /// nothing read the bounds the refusal carries: `τ = ∞` makes every Euler step a no-op
+    /// (`dt / τ` is zero) and no fixed point in this module would move.
+    #[test]
+    fn a_time_constant_must_be_finite_and_the_refusal_names_its_floor_first() {
+        let Err(AttractorError::OutOfRange { what, value, low, high }) = Ring::new(8, -1.0, 3.0, f64::INFINITY) else {
+            panic!("an infinite time constant was accepted");
+        };
+        assert_eq!((what, value), ("tau", f64::INFINITY));
+        assert_eq!((low, high), (f64::MIN_POSITIVE, f64::INFINITY));
+        assert!(matches!(Ring::new(8, -1.0, 3.0, f64::NAN), Err(AttractorError::OutOfRange { what: "tau", .. })));
+        assert!(matches!(Ring::new(8, -1.0, 3.0, -1e-2), Err(AttractorError::OutOfRange { what: "tau", .. })));
+    }
+
+    /// An input array is refused for its LENGTH in both directions, the FIRST bad entry is the one
+    /// reported, and a run of exactly [`MAX_STEPS`] steps is admissible. Pinned because the
+    /// existing refusals supply a SHORT input and a single bad entry: a longer input with its tail
+    /// silently ignored, a last-bad-entry report, and a count guard one step tight all pass a
+    /// suite built from those two fixtures.
+    #[test]
+    fn the_step_refuses_a_long_input_reports_the_first_bad_entry_and_admits_the_whole_cap() {
+        let mut ring = Ring::new(8, -1.0, 3.0, 1e-2).unwrap();
+        assert!(matches!(
+            ring.step(1e-3, &[0.0; 9]),
+            Err(AttractorError::Dimension { what: "input", got: 9, want: 8 })
+        ));
+        let mut two_bad = [0.0; 8];
+        two_bad[2] = f64::INFINITY;
+        two_bad[5] = f64::NAN;
+        assert!(matches!(ring.step(1e-3, &two_bad), Err(AttractorError::NonFinite { what: "input", index: 2 })));
+        // Exactly MAX_STEPS passes the count guard, so the refusal here comes from the STEP — the
+        // hundred million steps are never taken because `dt = 0` is rejected on the first one.
+        assert!(
+            matches!(ring.run(0.0, &[0.0; 8], MAX_STEPS), Err(AttractorError::OutOfRange { what: "dt", .. })),
+            "a run of exactly MAX_STEPS steps must be admitted by the count guard"
+        );
+    }
+
+    /// The flush that keeps a decaying rate from stalling is at the smallest NORMAL double, not at
+    /// machine epsilon: a rate of `1e-18` is a rate. Pinned because the existing flush test starts
+    /// at `1e-300` and decays to zero, which a threshold fourteen decades higher erases just as
+    /// well, and because every other rate this module produces is of order one.
+    #[test]
+    fn a_rate_far_below_epsilon_but_above_the_smallest_normal_is_kept() {
+        let mut faint = Ring::new(8, -1.0, 3.0, 1e-2).unwrap();
+        // A silent ring has no recurrent input, so one step of τ/4 lands on a quarter of the drive.
+        faint.step(2.5e-3, &[4e-18; 8]).unwrap();
+        assert_eq!(faint.m, vec![1e-18; 8]);
+        assert_eq!(faint.active_half_width(), PI, "a faint ring is an ACTIVE ring");
+        // 1e-18 separates the two thresholds: two decades below f64::EPSILON (2.2e-16) and 290
+        // decades above f64::MIN_POSITIVE (2.2e-308), so only the higher one erases it.
+    }
+
+    /// The tolerance below which a first Fourier component is rounding rather than a heading
+    /// carries a factor of `N`: the state below has a component of 3.2 ulps of its rates on a ring
+    /// of sixteen, and points nowhere. Pinned because every uniform state this module builds has a
+    /// component BELOW one ulp — measured at 0.21 to 1.2 ulps for `N` from 4 to 64 — so a
+    /// tolerance with the `N` dropped rejects nothing the suite ever built.
+    #[test]
+    fn a_first_component_of_a_few_ulps_is_rounding_and_not_a_heading() {
+        let mut ring = Ring::new(16, -1.0, 3.0, 1e-2).unwrap();
+        let angles: Vec<f64> = (0..16).map(|i| TAU * f64::from(i) / 16.0).collect();
+        ring.m = angles.iter().map(|a| 7.0f64.mul_add(f64::EPSILON * a.cos(), 1.0)).collect();
+        let (heading, r1) = ring.population_vector();
+        assert_eq!(heading, None, "{} ulps of the rates is not a direction", r1 / f64::EPSILON);
+        assert!(r1 > f64::EPSILON, "and it is above ONE ulp, which is what makes the factor visible: {r1}");
+        assert!(r1 < 16.0 * f64::EPSILON, "and below N ulps, which is the tolerance: {r1}");
+    }
+
+    /// A non-positive input has no bump even where the uniform inhibition is too weak to hold one.
+    /// Pinned because the existing `i0 = 0` and `i0 = −1` cases are both taken with `J₀ = −4`,
+    /// where the denominator is negative and the positivity test at the end rejects them anyway —
+    /// on the OTHER side of that edge the same guard is the only thing standing between a negative
+    /// input and a perfectly positive, perfectly finite amplitude.
+    #[test]
+    fn a_negative_input_has_no_bump_on_either_side_of_the_runaway_edge() {
+        let width = bump_half_width(6.0).unwrap();
+        let runaway = -width.cos() / f0(width);
+        assert_eq!(bump_amplitude(-1.0, runaway + 0.01, 6.0), None, "too weak to hold a bump, and the input is negative");
+        assert_eq!(bump_amplitude(-1.0, runaway - 0.01, 6.0), None);
+        assert_eq!(bump_amplitude(0.0, runaway + 0.01, 6.0), None);
+        // The same coupling with a POSITIVE input is the runaway the function already refuses,
+        // which is why the sign of the input is the only thing being read here.
+        assert_eq!(bump_amplitude(1.0, runaway + 0.01, 6.0), None);
+        assert!(bump_amplitude(1.0, runaway - 0.01, 6.0).is_some());
+    }
+
+    /// The half-width `tuned_bump` returns for this input, exactly. Pinned because the coarse scan
+    /// that brackets the root only sets where the eighty halvings START: a two-point scan brackets
+    /// the SAME root — measured over 432 498 rectified parameter sets, `g` never crosses zero more
+    /// than once — and lands up to 12 ulps away inside the sign-noise band of `g`, which every
+    /// existing assertion here (residuals at 1e-12, a half-width compared against half a grid
+    /// spacing) absorbs without noticing. The literal is measured: bisection from a fixed bracket
+    /// is the same operations in the same order, so the value is reproducible to the bit.
+    #[test]
+    fn the_tuned_half_width_is_the_limit_of_a_bisection_from_a_four_thousand_point_bracket() {
+        let Some(Tuned::Rectified { half_width, amplitude }) = tuned_bump(2.0, 1.125, -1.125, -0.375) else {
+            panic!("this input is rectified")
+        };
+        assert_eq!(half_width, 3.025_995_787_917_558);
+        assert_eq!(amplitude, 0.947_417_325_153_971_9);
+        // What the numbers are: the root of the width equation and the gain at it, to the same
+        // residual the module's other fixed-point assertions use.
+        assert!((2.0 + amplitude * (half_width.cos() - 1.125 * f0(half_width))).abs() < 1e-12);
+        assert!((amplitude * (1.0 + 0.375 * f1(half_width)) - 1.125).abs() < 1e-15);
+    }
 }

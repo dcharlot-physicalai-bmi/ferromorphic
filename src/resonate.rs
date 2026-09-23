@@ -733,4 +733,166 @@ mod tests {
         assert!(!below.step(1.0, 0.0).unwrap());
         assert_eq!(below.y, 1.0 - f64::EPSILON);
     }
+
+    /// The strictly-positive check's refusal carries its admissible interval the right way up —
+    /// `low` the smallest admissible value, `high` the largest — and the message prints them in
+    /// that order.
+    ///
+    /// Why the suite could not see it: every other refusal test here destructures the variant and
+    /// reads only `what`, so an `OutOfRange` built with its two bounds transposed, or a message
+    /// rendering them transposed, matched exactly the same pattern while stating the opposite of
+    /// the truth. No test in this module rendered an error at all beyond asserting its text was
+    /// non-empty.
+    #[test]
+    fn the_strictly_positive_refusal_states_its_interval_low_end_first() {
+        let Err(ResonateError::OutOfRange { what, value, low, high }) = Lmu::new(2, 0.0) else {
+            panic!("a window length of zero must be refused as out of range")
+        };
+        assert_eq!(what, "theta");
+        assert_eq!(value, 0.0);
+        assert_eq!(low, f64::MIN_POSITIVE);
+        assert_eq!(high, f64::INFINITY);
+        assert!(low < high, "an admissible interval must run upward, not [{low}, {high}]");
+        let smallest = f64::MIN_POSITIVE.to_string();
+        let rendered = ResonateError::OutOfRange { what, value, low, high }.to_string();
+        assert_eq!(rendered, format!("theta = 0 is outside [{smallest}, inf]"));
+    }
+
+    /// Both components of the reset state are checked for finiteness, not only the real one.
+    ///
+    /// Why the suite could not see it: the refusal test supplies a non-finite REAL part and stops
+    /// there, so a constructor that dropped the check on the imaginary component — the one the
+    /// threshold reads, and the one that would therefore poison every spike decision — still
+    /// refused every input any test offered it.
+    #[test]
+    fn a_non_finite_imaginary_part_of_the_reset_state_is_refused_by_name() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let built = ResonateAndFire::new(-1.0, 1.0, 1.0, (0.0, bad), 0.0);
+            assert!(
+                matches!(built, Err(ResonateError::NonFinite { what: "z_reset.1", .. })),
+                "{bad} was accepted as the imaginary part of the reset state"
+            );
+        }
+    }
+
+    /// A cell is born AT its reset state and owes no refractory period, so its first tick
+    /// integrates rather than being swallowed.
+    ///
+    /// Why the suite could not see it: every cell the other tests build resets to the origin,
+    /// where "at rest" and "at the reset state" are the same two numbers; and each of them either
+    /// kicks the cell first or drives it for far longer than one refractory period, so a cell born
+    /// at the origin instead of at its reset point, and a cell born one refractory period deep,
+    /// both reached the same assertions.
+    #[test]
+    fn a_new_cell_sits_at_its_reset_state_with_no_refractory_period_pending() {
+        let c = ResonateAndFire::new(-1.0, TAU * 10.0, 1.0, (0.25, -0.75), 5e-3).unwrap();
+        assert_eq!((c.x, c.y), (0.25, -0.75), "a new cell must start at its reset state");
+        assert_eq!(c.refractory, 0.0, "a new cell must not owe a refractory period");
+        let mut fresh = c;
+        fresh.step(1e-4, 0.0).unwrap();
+        assert_ne!((fresh.x, fresh.y), (0.25, -0.75), "the first tick was swallowed by a refractory period");
+    }
+
+    /// The textbook preset is the cell the paper illustrates: damping `−1`, natural frequency
+    /// `2π · 10 Hz`, threshold `1`, reset to the origin, no refractory period.
+    ///
+    /// Why the suite could not see it: `textbook()` is used as a convenient stable resonator and
+    /// every assertion made through it is a RELATION that holds for any stable resonator — that
+    /// the exact step composes, that an undriven cell never fires — so a preset ten times too fast
+    /// or ten times too damped passed all of them. Nothing read the preset's own numbers.
+    #[test]
+    fn the_textbook_preset_carries_the_parameters_its_paper_prints() {
+        let c = ResonateAndFire::textbook().unwrap();
+        assert_eq!(c.b, -1.0, "damping");
+        assert_eq!(c.omega, TAU * 10.0, "natural frequency");
+        assert_eq!(c.threshold, 1.0);
+        assert_eq!(c.z_reset, (0.0, 0.0));
+        assert_eq!(c.t_ref, 0.0);
+        assert_eq!(c.period(), 0.1, "ten hertz is a tenth of a second");
+    }
+
+    /// `reset` clears a refractory period a spike left pending — that is what distinguishes it
+    /// from assigning the two state variables by hand.
+    ///
+    /// Why the suite could not see it: its one `reset` call is on a cell that has never fired,
+    /// whose refractory counter was already zero, so the line that clears it could be deleted
+    /// without changing a single number any test compared.
+    #[test]
+    fn reset_clears_a_refractory_period_a_spike_left_pending() {
+        let mut c = ResonateAndFire::new(-1.0, TAU * 10.0, 1.0, (0.1, -0.3), 5e-3).unwrap();
+        let mut fired = false;
+        for _ in 0..10_000 {
+            if c.step(1e-4, 200.0).unwrap() {
+                fired = true;
+                break;
+            }
+        }
+        assert!(fired, "a 200-unit drive must fire");
+        assert_eq!(c.refractory, 5e-3, "the spike must leave a refractory period pending");
+        c.reset();
+        assert_eq!(c.refractory, 0.0, "reset left a refractory period pending");
+        c.step(1e-4, 200.0).unwrap();
+        assert_ne!((c.x, c.y), (0.1, -0.3), "the cell was still deaf after reset");
+    }
+
+    /// The gain at zero input frequency is the constant-drive fixed point. A drive `cos(0·t)` is
+    /// the constant `1`, which holds `z` at `−1/λ`, so `x = −b/(b² + ω²)` and `y = ω/(b² + ω²)`.
+    /// Checked against the closed form and against a simulation that runs thirty damping
+    /// constants.
+    ///
+    /// Why the suite could not see it: the transfer-function test drives at 4, 8 and 16 Hz and
+    /// allows 0.2%, and at those frequencies the two complex exponentials' real parts are nearly
+    /// equal, so ADDING them where the derivation subtracts them moves the gain by 0.178%
+    /// (measured, and the same figure at all three) — inside the tolerance. At zero input
+    /// frequency the two real parts are EXACTLY equal, so their difference is exactly zero while
+    /// their sum is twice one of them: for this cell the same defect moves the gain from 0.5 to
+    /// 0.7071 (measured).
+    #[test]
+    fn the_zero_frequency_gain_is_the_constant_drive_fixed_point() {
+        let cell = ResonateAndFire::new(-1.0, 1.0, 1e9, (0.0, 0.0), 0.0).unwrap();
+        let d = cell.b * cell.b + cell.omega * cell.omega;
+        assert_eq!(cell.sinusoidal_gain(0.0), cell.omega / d);
+        let mut driven = cell;
+        for _ in 0..30_000 {
+            driven.step(1e-3, 1.0).unwrap();
+        }
+        assert!((driven.y - cell.omega / d).abs() < 1e-9, "y settled at {} not {}", driven.y, cell.omega / d);
+        assert!((driven.x + cell.b / d).abs() < 1e-9, "x settled at {} not {}", driven.x, -cell.b / d);
+    }
+
+    /// A new unit holds an empty window, and `reset` empties every coefficient including the
+    /// constant one.
+    ///
+    /// Why the suite could not see it: each unit test drives the unit for ten window lengths
+    /// before reading anything, and the system is stable, so whatever state it was born in — or
+    /// whatever `reset` left behind — has decayed below the tolerances by the time an assertion
+    /// runs.
+    #[test]
+    fn a_new_unit_is_at_rest_and_reset_empties_every_coefficient() {
+        let mut lmu = Lmu::new(4, 1.5).unwrap();
+        assert_eq!(lmu.m, vec![0.0; 4], "a new unit must hold an empty window");
+        lmu.m = vec![3.0, -1.0, 2.0, -4.0];
+        lmu.reset();
+        assert_eq!(lmu.m, vec![0.0; 4], "reset must clear the constant coefficient too");
+    }
+
+    /// The delay line this unit replaces is `ceil(θ/dt)` taps — a partial tap is still a tap —
+    /// and a sampling interval that is not finite is refused rather than reported as a delay line
+    /// of no taps at all.
+    ///
+    /// Why the suite could not see it: the one tap count it asks for uses a `dt` that divides `θ`
+    /// exactly, where rounding up and truncating give the same number; and its only refusal case
+    /// is `dt = 0`, which the strictly-positive half of the guard rejects on its own, leaving the
+    /// finiteness half unexercised. An infinite interval makes `θ/dt` zero, and `0.0 as u64` is a
+    /// perfectly ordinary `Some(0)`.
+    #[test]
+    fn the_tap_count_rounds_up_and_refuses_an_interval_that_is_not_finite() {
+        let lmu = Lmu::new(3, 1.0).unwrap();
+        assert_eq!(lmu.delay_line_taps(0.3), Some(4), "three and a third taps is four taps");
+        assert_eq!(lmu.delay_line_taps(0.25), Some(4), "an exact division must not be rounded up");
+        assert_eq!(lmu.delay_line_taps(f64::INFINITY), None, "an infinite interval is not a sampling interval");
+        assert_eq!(lmu.delay_line_taps(f64::NAN), None);
+        assert_eq!(lmu.delay_line_taps(0.0), None);
+        assert_eq!(lmu.delay_line_taps(-0.5), None);
+    }
 }

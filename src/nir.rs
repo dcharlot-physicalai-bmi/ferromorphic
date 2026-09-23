@@ -5519,4 +5519,815 @@ mod tests {
         let r_at = text.find(" r=").expect("the LIF line carries an r key");
         assert!(tau_at < r_at, "measured text: {text}");
     }
+
+    // -- repairs: shape and arity guards that nothing had ever handed a bad shape -----------------
+
+    /// A `Conv2d` and a `Pool2d` require their input as `[channels, height, width]`, in that order.
+    ///
+    /// `input_shape` has two readers and neither can see a transposed pair. `check_node` hands it
+    /// to `check_shape`, which looks only for a zero axis and is blind to order; and `validate`'s
+    /// edge comparison WOULD see it, but this review did not locate a test in this module that
+    /// wires a `Conv2d` or a pool to anything — `every_node_type` pushes `c2`, `sp` and `ap`
+    /// deliberately unconnected, and the one wired convolution is a `Conv1d`, whose input shape is
+    /// `[channels, length]`. The module's one non-square fixture,
+    /// `a_two_axis_hyperparameter_keeps_its_axis_order_through_the_text_format`, asserts the node's
+    /// fields and its OUTPUT shape and never asks for its input shape. The `[4, 7]` here does.
+    #[test]
+    fn a_non_square_convolution_and_pool_require_their_input_height_axis_first() {
+        let conv = Node::Conv2d(Conv2d {
+            in_channels: 3,
+            out_channels: 1,
+            size: [4, 7],
+            kernel: [1, 1],
+            stride: [1, 1],
+            padding: [0, 0],
+            dilation: [1, 1],
+            groups: 1,
+            weight: vec![0.0; 3],
+            bias: Vec::new(),
+        });
+        assert_eq!(conv.input_shape(), Some(vec![3, 4, 7]), "channels, then height, then width");
+        assert_eq!(conv.output_shape(), Some(vec![1, 4, 7]), "a 1x1 filter keeps both axes");
+
+        let pool = Node::SumPool2d(Pool2d {
+            channels: 5,
+            size: [4, 7],
+            kernel: [1, 1],
+            stride: [1, 1],
+            padding: [0, 0],
+        });
+        assert_eq!(pool.input_shape(), Some(vec![5, 4, 7]), "channels, then height, then width");
+        let avg = Node::AvgPool2d(Pool2d {
+            channels: 5,
+            size: [4, 7],
+            kernel: [1, 1],
+            stride: [1, 1],
+            padding: [0, 0],
+        });
+        assert_eq!(avg.input_shape(), Some(vec![5, 4, 7]), "the two pools share the arm");
+    }
+
+    /// A zero stride is ANSWERED by `conv_dim` and NAMED by `validate`, and neither divides by it.
+    ///
+    /// `conv_dim`'s guard is `stride == 0 || kernel == 0`, and the `/ stride` three lines below is
+    /// what the stride half exists to protect. This review did not locate a fixture in this module
+    /// that hands `conv_dim` a zero stride at all: the malformed node in
+    /// `a_shape_query_never_panics_on_a_malformed_node` carries a huge PADDING, and every other
+    /// convolution here strides by one, two, three or four. So that divisor was non-zero on every
+    /// path the suite walked. The `Conv1d` arm of `check_node` carries the matching guard, and with
+    /// it gone the node comes back as a zero-length axis instead — the symptom rather than the
+    /// cause, and the reverse of the order `conv_dim`'s own doc promises.
+    #[test]
+    fn a_zero_stride_is_answered_rather_than_divided_by_and_the_validator_names_it() {
+        assert_eq!(conv_dim(8, 0, 1, 3, 0), 0, "a zero stride has no window count");
+        assert_eq!(conv_dim(8, 0, 1, 0, 0), 0, "and neither does a zero kernel");
+        assert_eq!(conv_dim(8, 0, 1, 3, 1), 6, "the same geometry at stride one still answers 6");
+
+        let mut g = Graph::new();
+        g.push(
+            "c",
+            Node::Conv1d(Conv1d {
+                in_channels: 1,
+                out_channels: 1,
+                length: 8,
+                kernel: 3,
+                stride: 0,
+                padding: 0,
+                dilation: 1,
+                groups: 1,
+                weight: vec![0.0; 3],
+                bias: Vec::new(),
+            }),
+        );
+        match g.validate(&Rules::default()) {
+            Err(ValidationError::BadHyperparameter { node, field, .. }) => {
+                assert_eq!((node.as_str(), field), ("c", "stride"));
+            }
+            other => panic!("expected a stride refusal, got {other:?}"),
+        }
+    }
+
+    /// A tap spacing of zero is refused on **every** axis of both convolutions.
+    ///
+    /// A `dilation` of zero collapses `dilation * (kernel - 1) + 1` to a span of one, so the output
+    /// shape stays POSITIVE and no later check notices: an unguarded zero dilation VALIDATES, and
+    /// the node then describes a filter whose taps all sit on one sample. This review did not
+    /// locate any fixture in this module that sets a dilation — or a kernel — to zero on either
+    /// node, so the `kernel/dilation` guard had never been the clause that fired.
+    #[test]
+    fn a_convolution_with_a_zero_tap_spacing_is_refused_on_either_axis() {
+        let one_d = |dilation: usize| {
+            let mut g = Graph::new();
+            g.push(
+                "c",
+                Node::Conv1d(Conv1d {
+                    in_channels: 1,
+                    out_channels: 1,
+                    length: 8,
+                    kernel: 3,
+                    stride: 1,
+                    padding: 0,
+                    dilation,
+                    groups: 1,
+                    weight: vec![0.0; 3],
+                    bias: Vec::new(),
+                }),
+            );
+            g.validate(&Rules::default())
+        };
+        match one_d(0) {
+            Err(ValidationError::BadHyperparameter { node, field, .. }) => {
+                assert_eq!((node.as_str(), field), ("c", "kernel/dilation"));
+            }
+            other => panic!("expected a dilation refusal, got {other:?}"),
+        }
+        one_d(1).expect("a dense filter is legal, so the fixture differs only in the dilation");
+
+        let two_d = |dilation: [usize; 2]| {
+            let mut g = Graph::new();
+            g.push(
+                "c",
+                Node::Conv2d(Conv2d {
+                    in_channels: 1,
+                    out_channels: 1,
+                    size: [8, 8],
+                    kernel: [3, 3],
+                    stride: [1, 1],
+                    padding: [0, 0],
+                    dilation,
+                    groups: 1,
+                    weight: vec![0.0; 9],
+                    bias: Vec::new(),
+                }),
+            );
+            g.validate(&Rules::default())
+        };
+        for axis in [[0, 1], [1, 0]] {
+            match two_d(axis) {
+                Err(ValidationError::BadHyperparameter { node, field, .. }) => {
+                    assert_eq!((node.as_str(), field), ("c", "kernel/dilation"));
+                }
+                other => panic!("expected a dilation refusal for {axis:?}, got {other:?}"),
+            }
+        }
+        two_d([1, 1]).expect("a dense filter on both axes is legal");
+    }
+
+    /// A `Linear` answers with one entry per ROW and refuses an input that is not `cols` wide.
+    ///
+    /// Both holes are the same fixture shape. The suite's two `Linear::apply` cases are a 3x3
+    /// identity — where `rows` and `cols` are the same number, so the output length says nothing —
+    /// and a matrix in `an_overflowing_weight_count_is_refused_rather_than_wrapped` whose
+    /// `rows * cols` overflows, which answers `None` from the `checked_mul` ABOVE the guard. This
+    /// one is 2x3, so the output length and the input length are different numbers, and the
+    /// surplus-input case reaches the width guard with a weight vector that is already correct.
+    #[test]
+    fn a_linear_answers_one_entry_per_row_and_refuses_an_input_of_the_wrong_width() {
+        let l = Linear { rows: 2, cols: 3, weight: vec![1.0, 2.0, 3.0, 10.0, 20.0, 30.0] };
+        // [1 2 3; 10 20 30] * [1, 1, 1] = [6, 60]: two entries, one per row.
+        assert_eq!(l.apply(&[1.0, 1.0, 1.0]), Some(vec![6.0, 60.0]));
+        assert_eq!(
+            l.apply(&[1.0, 1.0, 1.0]).map(|y| y.len()),
+            Some(2),
+            "the output is as long as the row count, not the column count"
+        );
+        assert_eq!(l.apply(&[1.0, 1.0, 1.0, 1.0]), None, "a surplus entry is not dropped");
+        assert_eq!(l.apply(&[1.0, 1.0]), None, "and a short input is not read past");
+    }
+
+    /// A `CubaLIF` element index is checked STRICTLY, and a ragged input gain is caught before it
+    /// is indexed.
+    ///
+    /// `state`'s guard is the only thing standing between a public field and an out-of-bounds
+    /// index, and every call to it in this module is `state(0)` on a node built by `cuba_node`,
+    /// whose arrays are all one entry long and all the right length. So the guard has never been
+    /// the thing that answered `None`: not its index test, which was never given the boundary
+    /// value, and not its LAST clause, `w_in`, which a fixture with every other array right is
+    /// exactly what misses.
+    #[test]
+    fn a_cuba_element_past_the_population_or_with_a_ragged_gain_has_no_state() {
+        let c = CubaLif {
+            shape: vec![2],
+            tau_syn: vec![0.0, 5e-3],
+            tau_mem: vec![20e-3, 20e-3],
+            r: vec![1.0, 1.0],
+            v_leak: vec![0.0, 0.0],
+            v_threshold: vec![1.0, 1.0],
+            v_reset: vec![0.0, 0.0],
+            w_in: vec![1.0, 1.0],
+        };
+        assert!(c.state(0).is_some(), "element 0 exists");
+        assert!(c.state(1).is_some(), "element 1 exists");
+        assert!(c.state(2).is_none(), "element 2 is one past a population of two");
+        assert!(c.state(3).is_none(), "and so is everything beyond it");
+
+        let ragged = CubaLif { w_in: vec![1.0], ..c.clone() };
+        assert!(ragged.state(0).is_none(), "a short w_in is refused before element 0 is read");
+        assert!(ragged.state(1).is_none(), "and before element 1, which is not in it at all");
+
+        let surplus = CubaLif { w_in: vec![1.0, 1.0, 1.0], ..c };
+        assert!(surplus.state(0).is_none(), "a long w_in is a ragged node too");
+    }
+
+    /// The `LIF` reduction checks its arrays against the population BEFORE it indexes them.
+    ///
+    /// `reduce_to_lif` takes its population count from `tau_mem` and then reads `r[k]` and
+    /// `w_in[k]`; the guard between the two is what makes that safe. Every fixture that reached it
+    /// was well formed, so the guard was never the thing that returned `None` — the `tau_syn`
+    /// test above it always was.
+    #[test]
+    fn the_cuba_reduction_checks_its_arrays_against_the_population_before_indexing_them() {
+        let c = CubaLif {
+            shape: vec![2],
+            tau_syn: vec![0.0, 0.0],
+            tau_mem: vec![20e-3, 10e-3],
+            r: vec![2.0, 3.0],
+            v_leak: vec![0.0, 0.0],
+            v_threshold: vec![1.0, 1.0],
+            v_reset: vec![0.0, 0.0],
+            w_in: vec![5.0, 7.0],
+        };
+        let reduced = c.reduce_to_lif().expect("tau_syn is zero at every element");
+        assert_eq!(reduced.r, vec![10.0, 21.0], "r * w_in, element by element");
+
+        assert!(
+            CubaLif { r: vec![2.0, 3.0, 4.0], ..c.clone() }.reduce_to_lif().is_none(),
+            "a surplus r entry is a ragged node, not an extra element"
+        );
+        assert!(
+            CubaLif { w_in: vec![5.0, 7.0, 9.0], ..c.clone() }.reduce_to_lif().is_none(),
+            "and so is a surplus w_in entry"
+        );
+        assert!(
+            CubaLif { r: vec![2.0], ..c.clone() }.reduce_to_lif().is_none(),
+            "a short r is refused rather than indexed past its end"
+        );
+        assert!(
+            CubaLif { w_in: vec![5.0], ..c }.reduce_to_lif().is_none(),
+            "and so is a short w_in"
+        );
+    }
+
+    /// The closed form refuses a non-finite drive and a synapse that AMPLIFIES.
+    ///
+    /// `step_response` is the oracle every propagator test is compared against, so each clause of
+    /// its guard is load-bearing. Two of them had no fixture: no caller ever passed a non-finite
+    /// `u`, and no caller ever passed a negative `tau_syn` — which `state` does not check, so it
+    /// reaches this function, and `exp(-t / -tau)` GROWS rather than decaying.
+    #[test]
+    fn the_closed_form_refuses_a_non_finite_drive_and_a_synapse_that_amplifies() {
+        let c = CubaLif {
+            shape: vec![1],
+            tau_syn: vec![5e-3],
+            tau_mem: vec![20e-3],
+            r: vec![1.0],
+            v_leak: vec![0.0],
+            v_threshold: vec![1.0],
+            v_reset: vec![0.0],
+            w_in: vec![1.0],
+        };
+        assert!(c.step_response(0, 1e-3, 1.0).is_some(), "a finite drive has an answer");
+        assert!(c.step_response(0, 1e-3, f64::INFINITY).is_none(), "an infinite drive has none");
+        assert!(c.step_response(0, 1e-3, f64::NEG_INFINITY).is_none(), "nor a negative infinity");
+        assert!(c.step_response(0, 1e-3, f64::NAN).is_none(), "nor a NaN");
+
+        let amplifying = CubaLif { tau_syn: vec![-5e-3], ..c };
+        assert!(
+            amplifying.state(0).is_some(),
+            "the sign of tau_syn is not what `state` checks, so it reaches the closed form"
+        );
+        assert!(
+            amplifying.step_response(0, 1e-3, 1.0).is_none(),
+            "a negative synaptic constant is a growing exponential, not a filter"
+        );
+    }
+
+    /// A zero-length axis is reported at the axis it is ON, and a pooling window that cannot be
+    /// placed is one of them.
+    ///
+    /// Two holes with one cause. `EmptyDimension` carries an axis index, and neither fixture that
+    /// produces one reads it: `an_infinite_parameter_and_an_axis_less_shape_are_both_refused` uses
+    /// an axis-less shape, whose index is the literal `0` the empty-shape arm writes, and
+    /// `conv2d_output_shapes_match_the_published_formula` matches on `EmptyDimension { .. }` and
+    /// looks at no field at all. And the pooling arm of `check_node` checks its INPUT shape and its
+    /// OUTPUT shape; nothing ever gave a pool a window too large for its input, so the second call
+    /// could be deleted with the suite green.
+    #[test]
+    fn a_zero_axis_is_reported_at_its_own_index_and_an_unplaceable_pool_window_is_one() {
+        let mut g = Graph::new();
+        g.push("in", Node::Input(Input { shape: vec![3, 0] }));
+        match g.validate(&Rules::default()) {
+            Err(ValidationError::EmptyDimension { node, axis }) => {
+                assert_eq!((node.as_str(), axis), ("in", 1), "the zero is on axis 1, not axis 0");
+            }
+            other => panic!("expected an empty-dimension refusal, got {other:?}"),
+        }
+
+        let mut h = Graph::new();
+        h.push("e", Node::Input(Input { shape: Vec::new() }));
+        match h.validate(&Rules::default()) {
+            Err(ValidationError::EmptyDimension { node, axis }) => {
+                assert_eq!((node.as_str(), axis), ("e", 0), "an axis-less shape reports axis 0");
+            }
+            other => panic!("expected an empty-dimension refusal, got {other:?}"),
+        }
+
+        // A 3x3 window on a 2x2 input cannot be placed once, so the pool emits [1, 0, 0].
+        let pool = Node::SumPool2d(Pool2d {
+            channels: 1,
+            size: [2, 2],
+            kernel: [3, 3],
+            stride: [1, 1],
+            padding: [0, 0],
+        });
+        assert_eq!(pool.output_shape(), Some(vec![1, 0, 0]), "the window does not fit");
+        let mut k = Graph::new();
+        k.push("p", pool);
+        match k.validate(&Rules::default()) {
+            Err(ValidationError::EmptyDimension { node, axis }) => {
+                assert_eq!(
+                    (node.as_str(), axis),
+                    ("p", 1),
+                    "the input shape is fine; the output is not"
+                );
+            }
+            other => panic!("expected an empty-dimension refusal, got {other:?}"),
+        }
+    }
+
+    /// An `Affine` needs BOTH a row and a column, not one of the two.
+    ///
+    /// With one of the pair zero the cell count is zero, an empty weight array is exactly what
+    /// `check_array` then expects, and the node validates: a matrix with no columns, which no
+    /// input can be the right width for. This review did not locate a fixture in this module with
+    /// a zero `rows` or `cols` at all — the module's one `rows/cols` refusal is the OVERFLOW in
+    /// `an_overflowing_weight_count_is_refused_rather_than_wrapped`, which comes from the
+    /// `checked_mul` below this guard rather than from the guard.
+    #[test]
+    fn an_affine_with_no_columns_or_no_rows_is_refused_either_way() {
+        let refuse = |a: Affine| {
+            let mut g = Graph::new();
+            g.push("a", Node::Affine(a));
+            match g.validate(&Rules::default()) {
+                Err(ValidationError::BadHyperparameter { node, field, .. }) => {
+                    assert_eq!((node.as_str(), field), ("a", "rows/cols"));
+                }
+                other => panic!("expected a rows/cols refusal, got {other:?}"),
+            }
+        };
+        refuse(Affine { rows: 2, cols: 0, weight: Vec::new(), bias: vec![0.0, 0.0] });
+        refuse(Affine { rows: 0, cols: 2, weight: Vec::new(), bias: Vec::new() });
+        refuse(Affine { rows: 0, cols: 0, weight: Vec::new(), bias: Vec::new() });
+
+        let mut ok = Graph::new();
+        ok.push(
+            "a",
+            Node::Affine(Affine { rows: 1, cols: 2, weight: vec![1.0, 2.0], bias: vec![0.0] }),
+        );
+        ok.validate(&Rules::default()).expect("a 1x2 matrix differs from the above only in size");
+    }
+
+    /// A `Flatten` and an `I` have their OWN shapes checked before anything is derived from them.
+    ///
+    /// Both arms open with `check_shape`, and in both the rest of the arm still answers without it:
+    /// a `Flatten`'s range check reads only `size.len()`, and `I`'s `product` of a shape holding a
+    /// zero is zero, which an empty `r` array satisfies exactly. So a degenerate shape reached
+    /// neither. Nothing in the suite gave either node a zero axis.
+    #[test]
+    fn a_flatten_and_an_ideal_integrator_have_their_own_shapes_checked() {
+        let mut g = Graph::new();
+        g.push("f", Node::Flatten(Flatten { size: vec![2, 0, 4], start_dim: 1, end_dim: 2 }));
+        match g.validate(&Rules::default()) {
+            Err(ValidationError::EmptyDimension { node, axis }) => {
+                assert_eq!((node.as_str(), axis), ("f", 1));
+            }
+            other => panic!("expected an empty-dimension refusal, got {other:?}"),
+        }
+
+        let mut h = Graph::new();
+        h.push("i", Node::I(I { shape: vec![2, 0], r: Vec::new() }));
+        match h.validate(&Rules::default()) {
+            Err(ValidationError::EmptyDimension { node, axis }) => {
+                assert_eq!((node.as_str(), axis), ("i", 1));
+            }
+            other => panic!("expected an empty-dimension refusal, got {other:?}"),
+        }
+
+        // And an axis-less shape, where `product` is 1 rather than 0 and a one-entry array fits.
+        let mut k = Graph::new();
+        k.push("i", Node::I(I { shape: Vec::new(), r: vec![1.0] }));
+        assert!(matches!(
+            k.validate(&Rules::default()),
+            Err(ValidationError::EmptyDimension { axis: 0, .. })
+        ));
+    }
+
+    /// A leaky integrator's time constant must be positive, and a `CubaLIF`'s input gain must be
+    /// as long as its shape.
+    ///
+    /// Two last-clause holes. `a_tau_of_zero_is_refused_but_a_cuba_tau_syn_of_zero_is_not` builds
+    /// a `LIF`, and the module's only `LI` node is `every_node_type`'s `li`, whose two time
+    /// constants are both positive — so the `LI` arm's identical `check_positive` had no failing
+    /// fixture at all. And `w_in` is the LAST array the `CubaLIF` arm checks: the ragged-parameter
+    /// fixture is a `LIF`'s `r`, and every `CubaLIF` here carries a `w_in` of exactly the right
+    /// length, so that call never fired either.
+    #[test]
+    fn a_leaky_integrators_tau_must_be_positive_and_a_cuba_gain_must_match_its_shape() {
+        for tau in [0.0f64, -20e-3] {
+            let mut g = Graph::new();
+            g.push(
+                "li",
+                Node::Li(Li { shape: vec![1], tau: vec![tau], r: vec![1.0], v_leak: vec![0.0] }),
+            );
+            match g.validate(&Rules::default()) {
+                Err(ValidationError::BadHyperparameter { node, field, .. }) => {
+                    assert_eq!((node.as_str(), field), ("li", "tau"), "tau = {tau}");
+                }
+                other => panic!("expected a tau refusal for {tau}, got {other:?}"),
+            }
+        }
+        let mut ok = Graph::new();
+        ok.push(
+            "li",
+            Node::Li(Li { shape: vec![1], tau: vec![20e-3], r: vec![1.0], v_leak: vec![0.0] }),
+        );
+        ok.validate(&Rules::default()).expect("a positive tau differs only in its sign");
+
+        let cuba = CubaLif {
+            shape: vec![2],
+            tau_syn: vec![0.0, 5e-3],
+            tau_mem: vec![20e-3, 20e-3],
+            r: vec![1.0, 1.0],
+            v_leak: vec![0.0, 0.0],
+            v_threshold: vec![1.0, 1.0],
+            v_reset: vec![0.0, 0.0],
+            w_in: vec![1.0],
+        };
+        let mut h = Graph::new();
+        h.push("cu", Node::CubaLif(cuba));
+        match h.validate(&Rules::default()) {
+            Err(ValidationError::RaggedParameter { node, field, len, expected }) => {
+                assert_eq!((node.as_str(), field, len, expected), ("cu", "w_in", 1, 2));
+            }
+            other => panic!("expected a ragged w_in, got {other:?}"),
+        }
+    }
+
+    // -- repairs: the text format ----------------------------------------------------------------
+
+    /// A fixed-length parameter refuses a SURPLUS entry, not just a missing one.
+    ///
+    /// `a_fixed_length_field_of_the_wrong_arity_is_refused` supplies one entry where two are
+    /// needed, which the short side of the guard catches. A three-entry value is caught by the
+    /// other side, and an equality test that had become `>=` would read the first two and drop the
+    /// third — a `[4,4,4]` written by a three-dimensional exporter becoming a plausible 2-D node.
+    #[test]
+    fn a_fixed_length_pair_refuses_a_surplus_entry_rather_than_dropping_it() {
+        let text = "ferromorphic-nir 1\nnode p SumPool2d channels=1 size=[4,4,4] stride=[2,2] kernel=[2,2] padding=[0,0]\n";
+        match Graph::from_text(text) {
+            Err(TextError::BadArity { line, key, want, got }) => {
+                assert_eq!((line, key, want, got), (2, "size", 2, 3));
+            }
+            other => panic!("expected an arity refusal, got {other:?}"),
+        }
+    }
+
+    /// An empty bracket is an EMPTY shape, not a one-element one.
+    ///
+    /// `[]` is the only dimension list with no `,` in it and no digits, and it is the one the
+    /// round trip cannot see: the writer never emits it for a legal graph, because a legal shape
+    /// has at least one axis. So the reader's empty branch was reachable only from a hand-written
+    /// file, and nothing in the suite wrote one. Read as `[1]`, a shape-less node would validate.
+    #[test]
+    fn an_empty_bracket_is_an_empty_shape_and_not_a_one_element_one() {
+        let g = Graph::from_text("ferromorphic-nir 1\nnode in Input shape=[]\n")
+            .expect("an empty dimension list parses; validate is what refuses it");
+        assert_eq!(g.nodes.len(), 1);
+        assert_eq!(g.nodes[0].node, Node::Input(Input { shape: Vec::new() }));
+        assert!(matches!(
+            g.validate(&Rules::default()),
+            Err(ValidationError::EmptyDimension { axis: 0, .. })
+        ));
+
+        // The float form of the same branch, for the same reason.
+        let h = Graph::from_text("ferromorphic-nir 1\nnode s Scale shape=[1] scale=[]\n")
+            .expect("an empty float list parses too");
+        assert_eq!(h.nodes[0].node, Node::Scale(Scale { shape: vec![1], scale: Vec::new() }));
+    }
+
+    /// A surplus token on an `edge` line and a missing type token on a `node` line are both
+    /// refused.
+    ///
+    /// This review did not locate any fixture in this module that produces a `ShortLine` at all:
+    /// every hand-written text here is well formed on both counts, and the round trip only ever
+    /// reads what this writer wrote. A `<` in place of `!=` on the edge line would read
+    /// `edge a b c` as `a -> b` and drop `c`; a `< 2` on the node line would index `toks[2]` past
+    /// the end of a two-token line.
+    #[test]
+    fn a_surplus_edge_token_and_a_missing_node_type_are_both_refused() {
+        let text = "ferromorphic-nir 1\nnode a Scale shape=[1] scale=[1.0]\nnode b Scale shape=[1] scale=[1.0]\nedge a b c\n";
+        match Graph::from_text(text) {
+            Err(TextError::ShortLine { line, want }) => {
+                assert_eq!((line, want), (4, "edge <from> <to>"));
+            }
+            other => panic!("expected a refusal of the surplus token, got {other:?}"),
+        }
+
+        match Graph::from_text("ferromorphic-nir 1\nnode lonely\n") {
+            Err(TextError::ShortLine { line, want }) => {
+                assert_eq!((line, want), (2, "node <name> <Type> [key=value ...]"));
+            }
+            other => panic!("expected a short-line refusal, got {other:?}"),
+        }
+        // One token is short too, which is the side of the bound the suite already reached.
+        assert!(matches!(
+            Graph::from_text("ferromorphic-nir 1\nnode\n"),
+            Err(TextError::ShortLine { .. })
+        ));
+    }
+
+    /// A `Conv1d`'s padding and its tap spacing each keep their OWN key, in both directions.
+    ///
+    /// `every_node_type`'s `c1` has `padding = 1` and `dilation = 1`. Two equal numbers are
+    /// interchangeable, so the writer could emit either under either key and the reader could
+    /// assign either to either field, and `graph -> text -> graph` would still be the identity.
+    /// This fixture makes the five `usize` hyperparameters pairwise distinct.
+    #[test]
+    fn a_conv1d_padding_and_tap_spacing_each_keep_their_own_key() {
+        let c1 = Conv1d {
+            in_channels: 1,
+            out_channels: 1,
+            length: 16,
+            kernel: 3,
+            stride: 4,
+            padding: 1,
+            dilation: 2,
+            groups: 1,
+            weight: vec![0.5, -0.25, 0.125],
+            bias: Vec::new(),
+        };
+        let mut g = Graph::new();
+        g.push("c", Node::Conv1d(c1.clone()));
+        g.validate(&Rules::default()).expect("the fixture is a legal node on its own");
+
+        let text = g.to_text();
+        assert!(text.contains(" padding=1 "), "measured text: {text}");
+        assert!(text.contains(" dilation=2 "), "measured text: {text}");
+
+        let back = Graph::from_text(&text).expect("the writer's own text reads back");
+        assert_eq!(back.nodes[0].node, Node::Conv1d(c1), "every field lands where it started");
+        let Node::Conv1d(read) = &back.nodes[0].node else { panic!("the fixture is a Conv1d") };
+        assert_eq!((read.padding, read.dilation), (1, 2), "and not the other way round");
+    }
+
+    /// A `CubaLIF` line writes its SYNAPTIC constant before its membrane one.
+    ///
+    /// Pins the byte order of the node's parameter keys, as
+    /// `a_lif_line_writes_its_time_constant_before_its_resistance` does for the `LIF` line and for
+    /// the same reason: the reader consumes fields BY NAME, so a permutation of the writer's keys
+    /// round-trips perfectly and the only observable is the canonical text itself. The order here
+    /// is the order the struct declares and the order the model's two equations are written in.
+    /// Both needles occur exactly once: `tau_syn=` and `tau_mem=` are this node's alone, and no
+    /// other key in the format ends in either.
+    #[test]
+    fn a_cuba_lif_line_writes_its_synaptic_constant_before_its_membrane_one() {
+        let mut g = Graph::new();
+        g.push(
+            "cu",
+            Node::CubaLif(CubaLif {
+                shape: vec![1],
+                tau_syn: vec![5.0e-3],
+                tau_mem: vec![2.0e-2],
+                r: vec![1.0e7],
+                v_leak: vec![0.0],
+                v_threshold: vec![1.0],
+                v_reset: vec![0.0],
+                w_in: vec![1.0],
+            }),
+        );
+        let text = g.to_text();
+        assert_eq!(text.matches(" tau_syn=").count(), 1, "measured text: {text}");
+        assert_eq!(text.matches(" tau_mem=").count(), 1, "measured text: {text}");
+        let syn_at = text.find(" tau_syn=").expect("the CubaLIF line carries a tau_syn key");
+        let mem_at = text.find(" tau_mem=").expect("the CubaLIF line carries a tau_mem key");
+        assert!(syn_at < mem_at, "measured text: {text}");
+    }
+
+    // -- repairs: the bridge ---------------------------------------------------------------------
+
+    /// A timestep that is zero, infinite or not a number converts nothing.
+    ///
+    /// `to_net`'s guard is `!(dt > 0.0) || !dt.is_finite()`, written in the rejecting form because
+    /// `dt <= 0.0` ACCEPTS a `NaN`. Nothing in the suite handed `to_net` a bad `dt` at all — the
+    /// only `BadTimeStep` fixture goes through `from_net` — so all of these were unreached, and a
+    /// graph with no `Delay` node converts perfectly happily at `dt = 0`, since `dt` is read
+    /// nowhere else on that path.
+    #[test]
+    fn a_timestep_that_is_zero_infinite_or_not_a_number_converts_nothing() {
+        let g = bridge_fixture();
+        g.to_net(1e-4).expect("the same graph at a real tick length converts");
+        for dt in [0.0f64, -1e-4, f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            match g.to_net(dt) {
+                Err(BridgeError::BadTimeStep { dt: reported }) => {
+                    assert_eq!(
+                        reported.to_bits(),
+                        dt.to_bits(),
+                        "the refusal quotes what it was given"
+                    );
+                }
+                other => panic!("expected a timestep refusal for {dt}, got {other:?}"),
+            }
+        }
+    }
+
+    /// A `Delay` that feeds two populations is refused rather than half converted.
+    ///
+    /// `NIR` delays per element, and a `Net` carries the delay on the synapse, so a `Delay` node
+    /// belongs to exactly ONE weight block. With the count test weakened to "at least one", the
+    /// second outgoing edge is silently dropped and the conversion succeeds with a synapse block
+    /// missing. The suite's fan-out fixture is a WEIGHT node with two outputs, which the weight
+    /// node's own `ins.len() != 1 || outs.len() != 1` test refuses before the `Delay` branch is
+    /// entered at all.
+    #[test]
+    fn a_delay_that_feeds_two_populations_is_refused_rather_than_half_converted() {
+        let mut g = Graph::new();
+        g.push("in", Node::Input(Input { shape: vec![2] }));
+        g.push("a", Node::Lif(lif_params(2, 20e-3)));
+        g.push("w", Node::Linear(Linear { rows: 2, cols: 2, weight: vec![1e-3; 4] }));
+        g.push("dl", Node::Delay(Delay { shape: vec![2], delay: vec![1e-4, 1e-4] }));
+        g.push("b", Node::Lif(lif_params(2, 20e-3)));
+        g.push("c", Node::Lif(lif_params(2, 20e-3)));
+        g.edge("in", "a");
+        g.edge("a", "w");
+        g.edge("w", "dl");
+        g.edge("dl", "b");
+        g.edge("dl", "c");
+        g.validate(&Rules::default()).expect("every shape lines up; the wiring is the problem");
+        match g.to_net(1e-4) {
+            Err(BridgeError::DelayOutOfPlace { name }) => assert_eq!(name, "dl"),
+            other => panic!("expected a delay-out-of-place refusal, got {other:?}"),
+        }
+
+        // With the second consumer gone the same graph converts, so the fan-out is what was read.
+        let mut h = Graph::new();
+        h.push("in", Node::Input(Input { shape: vec![2] }));
+        h.push("a", Node::Lif(lif_params(2, 20e-3)));
+        h.push("w", Node::Linear(Linear { rows: 2, cols: 2, weight: vec![1e-3; 4] }));
+        h.push("dl", Node::Delay(Delay { shape: vec![2], delay: vec![1e-4, 1e-4] }));
+        h.push("b", Node::Lif(lif_params(2, 20e-3)));
+        h.edge("in", "a");
+        h.edge("a", "w");
+        h.edge("w", "dl");
+        h.edge("dl", "b");
+        let c = h.to_net(1e-4).expect("one consumer is the supported shape");
+        assert_eq!(c.net.n_syn, 4, "the whole 2x2 block crosses");
+    }
+
+    /// An empty network has no `NIR` form, and an INFINITE neuron parameter is refused as firmly
+    /// as a `NaN` one.
+    ///
+    /// Two holes in `from_net`'s preamble. This review did not locate a fixture that hands it a
+    /// zero-neuron network — every `Net` here comes from a conversion, and `to_net` refuses a graph
+    /// with no `LIF` long before this — and with that guard gone `n - 1` is computed on a zero. Nor
+    /// did it locate any fixture that reaches the finiteness sweep: `from_net_refuses_what_nir_cannot_say`
+    /// covers the refractory period, the neuron count, the timestep and the split delay, and
+    /// `BridgeError::NonFiniteNeuron` had no test of its own. Written `value.is_nan()` that sweep
+    /// lets an infinity through, and an infinite `tau` or `v_threshold` is a neuron that never
+    /// fires.
+    #[test]
+    fn an_empty_network_has_no_nir_form_and_an_infinite_neuron_parameter_is_refused() {
+        let empty = crate::net::NetBuilder::new(0).build();
+        assert!(matches!(Graph::from_net(&empty, &[], 1e-4), Err(BridgeError::NoNeurons)));
+
+        let c = bridge_fixture().to_net(1e-4).expect("fixture");
+        let base = c.neurons[0];
+        for sign in [f64::INFINITY, f64::NEG_INFINITY] {
+            let mut cases: Vec<(&'static str, crate::neuron::Lif)> = Vec::new();
+            let mut x = base;
+            x.tau_m = sign;
+            cases.push(("tau", x));
+            let mut x = base;
+            x.r_m = sign;
+            cases.push(("r", x));
+            let mut x = base;
+            x.v_rest = sign;
+            cases.push(("v_leak", x));
+            let mut x = base;
+            x.v_th = sign;
+            cases.push(("v_threshold", x));
+            let mut x = base;
+            x.v_reset = sign;
+            cases.push(("v_reset", x));
+            for (want_field, neuron) in cases {
+                let mut neurons = c.neurons.clone();
+                neurons[1] = neuron;
+                match Graph::from_net(&c.net, &neurons, 1e-4) {
+                    Err(BridgeError::NonFiniteNeuron { neuron: k, field }) => {
+                        assert_eq!((k, field), (1, want_field));
+                    }
+                    other => panic!("expected {want_field} to be refused at {sign}, got {other:?}"),
+                }
+            }
+        }
+        Graph::from_net(&c.net, &c.neurons, 1e-4).expect("the unmodified neurons still convert");
+    }
+
+    // -- repairs: the two-valued messages ---------------------------------------------------------
+
+    /// Every two-valued `ValidationError` message names its values in the order its WORDS promise.
+    ///
+    /// These messages are the whole output of a refusal, and the suite reads the error's FIELDS,
+    /// never its text — `match ... { Err(ShapeMismatch { .. }) => }` is satisfied by a `Display`
+    /// that has the two shapes the wrong way round. A swapped pair sends a reader to fix the node
+    /// at the other end of the edge. The fixtures below are asymmetric on purpose: a `[2]` against
+    /// a `[3, 5]`, a 3 against a 7, spikes against continuous.
+    #[test]
+    fn every_two_valued_validation_message_names_its_values_in_the_order_its_words_promise() {
+        assert_eq!(
+            ValidationError::ShapeMismatch {
+                from: "a".to_string(),
+                to: "b".to_string(),
+                emitted: vec![2],
+                expected: vec![3, 5],
+            }
+            .to_string(),
+            "edge a -> b: a emits [2] and b requires [3, 5]"
+        );
+        assert_eq!(
+            ValidationError::RaggedParameter {
+                node: "n".to_string(),
+                field: "tau",
+                len: 3,
+                expected: 7,
+            }
+            .to_string(),
+            "node n: parameter tau has 3 entries where the shape implies 7"
+        );
+        assert_eq!(
+            ValidationError::SignalMismatch {
+                from: "a".to_string(),
+                to: "t".to_string(),
+                emitted: Signal::Spikes,
+                required: Signal::Continuous,
+            }
+            .to_string(),
+            "edge a -> t: a emits spikes and t requires continuous"
+        );
+        // The three signal spellings themselves, which that message is built out of.
+        assert_eq!(Signal::Spikes.to_string(), "spikes");
+        assert_eq!(Signal::Continuous.to_string(), "continuous");
+        assert_eq!(Signal::Either.to_string(), "either");
+        // The two boundary messages differ only in the word that says which boundary is missing.
+        assert_eq!(ValidationError::MissingInputNode.to_string(), "the graph has no Input node");
+        assert_eq!(ValidationError::MissingOutputNode.to_string(), "the graph has no Output node");
+    }
+
+    /// Every two-valued `TextError` message names its values in the order its WORDS promise.
+    ///
+    /// Same hole, same shape: `a_wrong_magic_line_and_a_wrong_directive_are_refused` and
+    /// `a_fixed_length_field_of_the_wrong_arity_is_refused` both read fields and neither renders
+    /// the error. "first line is X, not Y" with X and Y exchanged reports the file as holding the
+    /// magic line it is missing.
+    #[test]
+    fn every_two_valued_text_message_names_its_values_in_the_order_its_words_promise() {
+        assert_eq!(MAGIC, "ferromorphic-nir 1", "the literal the message below quotes");
+        assert_eq!(
+            TextError::WrongMagic { found: "nir 2".to_string() }.to_string(),
+            "first line is \"nir 2\", not \"ferromorphic-nir 1\""
+        );
+        assert_eq!(
+            TextError::BadArity { line: 4, key: "kernel", want: 2, got: 5 }.to_string(),
+            "line 4: kernel needs 2 entries and has 5"
+        );
+    }
+
+    /// Every two-valued `BridgeError` message names its values in the order its WORDS promise, and
+    /// a wrapped validation error says the graph does NOT validate.
+    ///
+    /// `the_bridge_refuses_wiring_it_cannot_express`, `from_net_refuses_what_nir_cannot_say` and
+    /// `the_bridge_refuses_an_invalid_graph_in_the_validators_words` all destructure the error and
+    /// none of them renders it, so every one of these sentences could say the opposite of what it
+    /// means with the suite green. The fan-out fixture is 1-against-3 and the neuron count
+    /// 4-against-5 so that the two numbers cannot be confused.
+    #[test]
+    fn every_two_valued_bridge_message_names_its_values_in_the_order_its_words_promise() {
+        assert_eq!(
+            BridgeError::WeightFanout { name: "w".to_string(), incoming: 1, outgoing: 3 }
+                .to_string(),
+            "node w has 1 incoming and 3 outgoing edges; a weight node must have exactly one of each"
+        );
+        assert_eq!(
+            BridgeError::WrongNeuronCount { got: 4, want: 5 }.to_string(),
+            "4 neurons supplied for a network of 5"
+        );
+        assert_eq!(
+            BridgeError::SplitDelay { post: 7, a: 1, b: 3 }.to_string(),
+            "neuron 7 receives synapses delayed 1 and 3 ticks, and NIR delays per element rather \
+             than per synapse"
+        );
+        assert_eq!(
+            BridgeError::Invalid(ValidationError::MissingInputNode).to_string(),
+            "the graph does not validate: the graph has no Input node"
+        );
+    }
 }

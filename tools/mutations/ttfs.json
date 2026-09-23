@@ -118,5 +118,370 @@
   "label": "lif peak one half",
   "old": "            Self::Lif { .. } => 0.25,\n",
   "new": "            Self::Lif { .. } => 0.5,\n"
+ },
+ {
+  "label": "the empty-count message says the opposite of what happened",
+  "old": "Self::Empty { what } => write!(f, \"{what} is empty\"),",
+  "new": "Self::Empty { what } => write!(f, \"{what} is full\"),"
+ },
+ {
+  "label": "the dimension message reports the supplied and the required length the wrong way round",
+  "old": "write!(f, \"{what} has length {got}, expected {want}\")",
+  "new": "write!(f, \"{what} has length {want}, expected {got}\")"
+ },
+ {
+  "label": "every refusal of a non-positive parameter names the threshold",
+  "old": "Err(TtfsError::OutOfRange { what, value: v, low: f64::MIN_POSITIVE, high: f64::INFINITY })",
+  "new": "Err(TtfsError::OutOfRange { what: \"theta\", value: v, low: f64::MIN_POSITIVE, high: f64::INFINITY })"
+ },
+ {
+  "label": "an infinite parameter passes as positive",
+  "old": "if v.is_finite() && v > 0.0 {",
+  "new": "if v > 0.0 {"
+ },
+ {
+  "label": "the non-leaky model reports twice its synaptic time constant",
+  "old": "Self::NonLeaky { tau } => tau,",
+  "new": "Self::NonLeaky { tau } => 2.0 * tau,"
+ },
+ {
+  "label": "the non-leaky kernel's peak is the leaky one's",
+  "old": "            Self::NonLeaky { .. } => 1.0,\n",
+  "new": "            Self::NonLeaky { .. } => 0.25,\n"
+ },
+ {
+  "label": "the potential is not zero before its input arrives",
+  "old": "if !(s > 0.0) {\n            return 0.0;\n        }\n        match *self {\n            Self::NonLeaky { tau } => -(-s / tau).exp_m1(),",
+  "new": "if false {\n            return 0.0;\n        }\n        match *self {\n            Self::NonLeaky { tau } => -(-s / tau).exp_m1(),"
+ },
+ {
+  "label": "the slope's guard lets the instant of arrival through",
+  "old": "if !(s > 0.0) {\n            return 0.0;\n        }\n        match *self {\n            Self::NonLeaky { tau } => (-s / tau).exp() / tau,",
+  "new": "if s < 0.0 {\n            return 0.0;\n        }\n        match *self {\n            Self::NonLeaky { tau } => (-s / tau).exp() / tau,"
+ },
+ {
+  "label": "the non-leaky potential is the decay rather than its complement",
+  "old": "Self::NonLeaky { tau } => -(-s / tau).exp_m1(),",
+  "new": "Self::NonLeaky { tau } => (-s / tau).exp(),"
+ },
+ {
+  "label": "the leaky slope's two terms carry the same sign",
+  "old": "Self::Lif { tau_s } => -(-s / (2.0 * tau_s)).exp() / (2.0 * tau_s) + (-s / tau_s).exp() / tau_s,",
+  "new": "Self::Lif { tau_s } => (-s / (2.0 * tau_s)).exp() / (2.0 * tau_s) + (-s / tau_s).exp() / tau_s,"
+ },
+ {
+  "label": "a silent input contributes its whole weight to the membrane",
+  "old": "weights.iter().zip(times).map(|(w, t)| t.map_or(0.0, |t| w * self.psp(at - t))).sum()",
+  "new": "weights.iter().zip(times).map(|(w, t)| t.map_or(*w, |t| w * self.psp(at - t))).sum()"
+ },
+ {
+  "label": "the membrane asks how long until an input arrives rather than how long since",
+  "old": "|t| w * self.psp(at - t)",
+  "new": "|t| w * self.psp(t - at)"
+ },
+ {
+  "label": "only a times array longer than the weights is refused",
+  "old": "if weights.len() != times.len() {",
+  "new": "if weights.len() < times.len() {"
+ },
+ {
+  "label": "an infinite weight is accepted",
+  "old": "if let Some(i) = weights.iter().position(|w| !w.is_finite()) {",
+  "new": "if let Some(i) = weights.iter().position(|w| w.is_nan()) {"
+ },
+ {
+  "label": "a silent input is refused as a non-finite time",
+  "old": "if let Some(i) = times.iter().position(|t| t.is_some_and(|t| !t.is_finite())) {",
+  "new": "if let Some(i) = times.iter().position(|t| t.is_none_or(|t| !t.is_finite())) {"
+ },
+ {
+  "label": "a zero time constant is accepted",
+  "old": "        positive(\"tau\", self.tau())?;\n",
+  "new": "        let _ = positive(\"tau\", self.tau());\n"
+ },
+ {
+  "label": "inputs are taken in reverse order of arrival",
+  "old": "order.sort_by(|a, b| a.0.total_cmp(&b.0));",
+  "new": "order.sort_by(|a, b| b.0.total_cmp(&a.0));"
+ },
+ {
+  "label": "the prefix that contains the last input to arrive is never tried",
+  "old": "for k in 1..=order.len() {",
+  "new": "for k in 1..order.len() {"
+ },
+ {
+  "label": "a prefix is solved even when the next input arrives at the same instant",
+  "old": "if !(next > last) {",
+  "new": "if !(next >= last) {"
+ },
+ {
+  "label": "a crossing before the prefix's last input is accepted",
+  "old": "candidate.filter(|t| *t >= last && *t <= next)",
+  "new": "candidate.filter(|t| *t <= next)"
+ },
+ {
+  "label": "the weighted sum counts inputs that have not yet arrived",
+  "old": "let weighted: f64 = order[..k].iter().map(|p| p.1 * ((p.0 - last) / tau).exp()).sum();",
+  "new": "let weighted: f64 = order.iter().map(|p| p.1 * ((p.0 - last) / tau).exp()).sum();"
+ },
+ {
+  "label": "the arrivals are measured forwards from the prefix's last input rather than back to it",
+  "old": "p.1 * ((p.0 - last) / tau).exp()",
+  "new": "p.1 * ((last - p.0) / tau).exp()"
+ },
+ {
+  "label": "mostafa's ratio is inverted",
+  "old": "Some(last + tau * (weighted / (sum - theta)).ln())",
+  "new": "Some(last + tau * ((sum - theta) / weighted).ln())"
+ },
+ {
+  "label": "the membrane is not twice as slow as the synapse",
+  "old": "let tau_m = 2.0 * tau_s;",
+  "new": "let tau_m = 0.5 * tau_s;"
+ },
+ {
+  "label": "the quadratic's linear coefficient uses the synaptic constant",
+  "old": "let a2: f64 = order[..k].iter().map(|p| p.1 * ((p.0 - last) / tau_m).exp()).sum();",
+  "new": "let a2: f64 = order[..k].iter().map(|p| p.1 * ((p.0 - last) / tau_s).exp()).sum();"
+ },
+ {
+  "label": "the quadratic's square coefficient counts inputs that have not yet arrived",
+  "old": "let a1: f64 = order[..k].iter().map(|p| p.1 * ((p.0 - last) / tau_s).exp()).sum();",
+  "new": "let a1: f64 = order.iter().map(|p| p.1 * ((p.0 - last) / tau_s).exp()).sum();"
+ },
+ {
+  "label": "the root of the quadratic drops the two in its denominator",
+  "old": "let x = (a2 + disc.sqrt()) / (2.0 * a1);",
+  "new": "let x = (a2 + disc.sqrt()) / a1;"
+ },
+ {
+  "label": "the rising test on the quadratic is dropped",
+  "old": "if x > 0.0 && x <= 1.0 && a2 - 2.0 * a1 * x < 0.0 {",
+  "new": "if x > 0.0 && x <= 1.0 {"
+ },
+ {
+  "label": "the leaky spike time inverts the logarithm",
+  "old": "Some(last - tau_m * x.ln())",
+  "new": "Some(last + tau_m * x.ln())"
+ },
+ {
+  "label": "the leaky spike time converts its root back with the synaptic constant",
+  "old": "Some(last - tau_m * x.ln())",
+  "new": "Some(last - tau_s * x.ln())"
+ },
+ {
+  "label": "the reported slope is the membrane's value rather than its derivative",
+  "old": "let slope: f64 = order[..k].iter().map(|p| p.1 * self.psp_slope(t - p.0)).sum();",
+  "new": "let slope: f64 = order[..k].iter().map(|p| p.1 * self.psp(t - p.0)).sum();"
+ },
+ {
+  "label": "the reported slope forgets the weights",
+  "old": "let slope: f64 = order[..k].iter().map(|p| p.1 * self.psp_slope(t - p.0)).sum();",
+  "new": "let slope: f64 = order[..k].iter().map(|p| self.psp_slope(t - p.0)).sum();"
+ },
+ {
+  "label": "only the inputs that arrive after the spike get a gradient",
+  "old": "if let Some(t) = t.filter(|t| *t < spike.time) {",
+  "new": "if let Some(t) = t.filter(|t| *t > spike.time) {"
+ },
+ {
+  "label": "an input's age is measured from the input to the spike backwards",
+  "old": "let s = spike.time - t;",
+  "new": "let s = t - spike.time;"
+ },
+ {
+  "label": "the weight gradient is not divided by the membrane's slope",
+  "old": "d_weight[p] = -kernel.psp(s) / spike.slope;",
+  "new": "d_weight[p] = -kernel.psp(s);"
+ },
+ {
+  "label": "the time gradient uses the potential where the implicit function theorem needs its slope",
+  "old": "d_time[p] = w * kernel.psp_slope(s) / spike.slope;",
+  "new": "d_time[p] = w * kernel.psp(s) / spike.slope;"
+ },
+ {
+  "label": "the time gradient's sign is flipped",
+  "old": "d_time[p] = w * kernel.psp_slope(s) / spike.slope;",
+  "new": "d_time[p] = -w * kernel.psp_slope(s) / spike.slope;"
+ },
+ {
+  "label": "the gradient arrays are filled from the last input backwards",
+  "old": "for (p, (w, t)) in weights.iter().zip(times).enumerate() {",
+  "new": "for (p, (w, t)) in weights.iter().zip(times).rev().enumerate() {"
+ },
+ {
+  "label": "the winner is read off the first layer rather than the output layer",
+  "old": "let out = self.spikes.last()?;",
+  "new": "let out = self.spikes.first()?;"
+ },
+ {
+  "label": "a tie is won by the highest index rather than the lowest",
+  "old": "&& best.is_none_or(|b| s.time < b.1)",
+  "new": "&& best.is_none_or(|b| s.time <= b.1)"
+ },
+ {
+  "label": "a network of one layer size is accepted",
+  "old": "if sizes.len() < 2 || sizes.contains(&0) {",
+  "new": "if sizes.len() < 1 || sizes.contains(&0) {"
+ },
+ {
+  "label": "a layer of zero neurons is accepted",
+  "old": "if sizes.len() < 2 || sizes.contains(&0) {",
+  "new": "if sizes.len() < 2 {"
+ },
+ {
+  "label": "the initial weights drive a neuron to one threshold rather than two",
+  "old": "let top = 4.0 * scale * theta / (p[0] as f64 * kernel.peak());",
+  "new": "let top = 2.0 * scale * theta / (p[0] as f64 * kernel.peak());"
+ },
+ {
+  "label": "the initial weights are normalised by the fan-out rather than the fan-in",
+  "old": "let top = 4.0 * scale * theta / (p[0] as f64 * kernel.peak());",
+  "new": "let top = 4.0 * scale * theta / (p[1] as f64 * kernel.peak());"
+ },
+ {
+  "label": "a layer's fan-in and fan-out are swapped",
+  "old": "Layer { n_in: p[0], n_out: p[1], w: (0..p[0] * p[1]).map(|_| top * rng.next_f64()).collect() }",
+  "new": "Layer { n_in: p[1], n_out: p[0], w: (0..p[0] * p[1]).map(|_| top * rng.next_f64()).collect() }"
+ },
+ {
+  "label": "every initial weight is the same, so a layer cannot break its own symmetry",
+  "old": "w: (0..p[0] * p[1]).map(|_| top * rng.next_f64()).collect()",
+  "new": "w: (0..p[0] * p[1]).map(|_| top * (0.5 + 0.0 * rng.next_f64())).collect()"
+ },
+ {
+  "label": "the input's length is checked against the output layer",
+  "old": "let first = self.layers.first().ok_or(TtfsError::Empty { what: \"layers\" })?;",
+  "new": "let first = self.layers.last().ok_or(TtfsError::Empty { what: \"layers\" })?;"
+ },
+ {
+  "label": "an input shorter than the first layer is accepted",
+  "old": "if input.len() != first.n_in {",
+  "new": "if input.len() > first.n_in {"
+ },
+ {
+  "label": "the network fires at a threshold of one whatever it was built with",
+  "old": "out.push(self.kernel.first_spike(&layer.w[j * layer.n_in..(j + 1) * layer.n_in], &times, self.theta)?);",
+  "new": "out.push(self.kernel.first_spike(&layer.w[j * layer.n_in..(j + 1) * layer.n_in], &times, 1.0)?);"
+ },
+ {
+  "label": "the forward pass reads overlapping rows of the weight matrix",
+  "old": "out.push(self.kernel.first_spike(&layer.w[j * layer.n_in..(j + 1) * layer.n_in], &times, self.theta)?);",
+  "new": "out.push(self.kernel.first_spike(&layer.w[j..j + layer.n_in], &times, self.theta)?);"
+ },
+ {
+  "label": "the spike count keeps only the last layer's spikes",
+  "old": "spike_count += out.iter().flatten().count();",
+  "new": "spike_count = out.iter().flatten().count();"
+ },
+ {
+  "label": "every layer is fed the network's input rather than the layer below it",
+  "old": "times = out.iter().map(|s| s.map(|s| s.time)).collect();",
+  "new": "times = input.to_vec();"
+ },
+ {
+  "label": "the target index bound is off by one",
+  "old": "if target >= outputs {",
+  "new": "if target > outputs {"
+ },
+ {
+  "label": "the output count is read off the first layer",
+  "old": "let outputs = self.layers[n_layers - 1].n_out;",
+  "new": "let outputs = self.layers[0].n_out;"
+ },
+ {
+  "label": "the loss is read off the first layer's spikes",
+  "old": "let out = &fwd.spikes[n_layers - 1];",
+  "new": "let out = &fwd.spikes[0];"
+ },
+ {
+  "label": "the silent list names the neurons that did fire",
+  "old": "layer.iter().enumerate().filter(|(_, s)| s.is_none()).map(move |(j, _)| (l, j))",
+  "new": "layer.iter().enumerate().filter(|(_, s)| s.is_some()).map(move |(j, _)| (l, j))"
+ },
+ {
+  "label": "a silent neuron is named neuron first and layer second",
+  "old": "layer.iter().enumerate().filter(|(_, s)| s.is_none()).map(move |(j, _)| (l, j))",
+  "new": "layer.iter().enumerate().filter(|(_, s)| s.is_none()).map(move |(j, _)| (j, l))"
+ },
+ {
+  "label": "the loss measures the first output's spike rather than the target's",
+  "old": "let Some(hit) = out[target] else {",
+  "new": "let Some(hit) = out[0] else {"
+ },
+ {
+  "label": "a silent output counts in the softmax as though it had fired first",
+  "old": "let expo: Vec<f64> = out.iter().map(|s| s.map_or(0.0, |s| (-(s.time - earliest) / tau).exp())).collect();",
+  "new": "let expo: Vec<f64> = out.iter().map(|s| s.map_or(1.0, |s| (-(s.time - earliest) / tau).exp())).collect();"
+ },
+ {
+  "label": "the softmax is over positive spike times, so firing last is being most probable",
+  "old": "let expo: Vec<f64> = out.iter().map(|s| s.map_or(0.0, |s| (-(s.time - earliest) / tau).exp())).collect();",
+  "new": "let expo: Vec<f64> = out.iter().map(|s| s.map_or(0.0, |s| ((s.time - earliest) / tau).exp())).collect();"
+ },
+ {
+  "label": "the target's term is not shifted by the earliest spike although the softmax is",
+  "old": "let loss = (hit.time - earliest) / tau + total.ln();",
+  "new": "let loss = hit.time / tau + total.ln();"
+ },
+ {
+  "label": "the layers are visited from the input side",
+  "old": "for l in (0..n_layers).rev() {",
+  "new": "for l in 0..n_layers {"
+ },
+ {
+  "label": "a layer's own spikes are its inputs in the backward pass",
+  "old": "fwd.spikes[l - 1].iter().map(|s| s.map(|s| s.time)).collect()",
+  "new": "fwd.spikes[l].iter().map(|s| s.map(|s| s.time)).collect()"
+ },
+ {
+  "label": "the gradient matrix is written transposed",
+  "old": "gradient[l][j * layer.n_in + p] = d_time[j] * dw[p];",
+  "new": "gradient[l][p * layer.n_out + j] = d_time[j] * dw[p];"
+ },
+ {
+  "label": "the backward pass reads overlapping rows of the weight matrix",
+  "old": "let row = &layer.w[j * layer.n_in..(j + 1) * layer.n_in];",
+  "new": "let row = &layer.w[j..j + layer.n_in];"
+ },
+ {
+  "label": "the chain stops at each layer instead of carrying to the one below",
+  "old": "d_time = d_below;",
+  "new": "d_time = vec![0.0; layer.n_in];"
+ },
+ {
+  "label": "the clip measures the largest signed gradient rather than the largest magnitude",
+  "old": "let largest = g.iter().fold(0.0f64, |m, v| m.max(v.abs()));",
+  "new": "let largest = g.iter().fold(0.0f64, |m, v| m.max(*v));"
+ },
+ {
+  "label": "the clip amplifies the step it is supposed to bound",
+  "old": "let shrink = if largest > clip { clip / largest } else { 1.0 };",
+  "new": "let shrink = if largest > clip { largest / clip } else { 1.0 };"
+ },
+ {
+  "label": "each layer is updated with another layer's gradient",
+  "old": "for (layer, g) in self.layers.iter_mut().zip(&back.gradient) {",
+  "new": "for (layer, g) in self.layers.iter_mut().zip(back.gradient.iter().rev()) {"
+ },
+ {
+  "label": "an infinite boost is accepted",
+  "old": "if !(boost >= 0.0) || !boost.is_finite() {",
+  "new": "if !(boost >= 0.0) {"
+ },
+ {
+  "label": "the boost is not scaled by the threshold",
+  "old": "let push = boost * self.theta / layer.n_in as f64;",
+  "new": "let push = boost / layer.n_in as f64;"
+ },
+ {
+  "label": "the boost raises every weight of the layer, not only the silent neuron's",
+  "old": "for w in &mut layer.w[j * layer.n_in..(j + 1) * layer.n_in] {",
+  "new": "for w in &mut layer.w {"
+ },
+ {
+  "label": "what is returned is what backward finds AFTER the step, not before it",
+  "old": "        Ok(back)\n",
+  "new": "        self.backward(input, target)\n"
  }
 ]

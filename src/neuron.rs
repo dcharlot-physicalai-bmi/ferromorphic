@@ -1241,4 +1241,496 @@ mod tests {
         assert_eq!(charged - cell.theta_0 - cell.beta / (hi / cell.tau_a).exp_m1(), 0.0);
     }
 
+    /// `Lif::isi` charges from the RESET potential, and the default makes that invisible.
+    ///
+    /// `Lif::default()` sets `v_rest` and `v_reset` to the same −65 mV, so the closed form's
+    /// `v_inf − v_reset` term reads identically as `v_inf − v_rest` and the crate's headline
+    /// invariant — "the simulated firing rate matches `Lif::isi` to 0.1%" — was checked only where
+    /// the two cannot be told apart. A repetitively firing cell starts each interval at its reset,
+    /// not at rest, and for a cell that resets BELOW rest the published interval was 22% short.
+    #[test]
+    fn the_closed_form_interval_charges_from_the_reset_potential_not_from_rest() {
+        let cell = Lif { v_reset: -70e-3, t_ref: 0.0, v: -70e-3, ..Lif::default() };
+        assert!(cell.v_reset < cell.v_rest, "the point of this fixture is that they differ");
+        let i = 3e-9;
+        let isi = cell.isi(i).unwrap();
+        // The integrator starts the first interval from `v == v_reset` and computes
+        // `tau * ln((v_inf - v) / (v_inf - v_th))` — the same operations in the same order as
+        // `isi`, so the two are equal bit for bit and no tolerance belongs here.
+        let mut c = cell;
+        let mut offsets = Vec::new();
+        assert_eq!(c.step_exact_times(0.2, i, &mut offsets), Some(11));
+        // Not bit-equal, and the reason is worth knowing: the harness reports the spike at
+        // `dt - left` after setting `left -= crossing`, and `dt - (dt - crossing)` is not
+        // `crossing` in binary floating point. Measured here, the two differ by ONE ulp
+        // (1.694_595_720_774_408_3e-2 against ...73e-2). The mutation this fixture exists for
+        // moves the answer by 3.1 ms, which is fourteen orders of magnitude larger.
+        assert!((offsets[0] - isi).abs() <= 4.0 * f64::EPSILON * isi, "{} vs {isi}", offsets[0]);
+        assert!((offsets[1] - offsets[0] - isi).abs() <= 4.0 * f64::EPSILON * isi);
+        // Measured, so the size of the error the fixture rules out is on the page: reading the
+        // rest potential here gives 13.863 ms against the true 16.946 ms.
+        let wrong = cell.tau_m * ((cell.v_inf(i) - cell.v_rest) / (cell.v_inf(i) - cell.v_th)).ln();
+        assert!((isi - 16.946e-3).abs() < 1e-6 && (wrong - 13.863e-3).abs() < 1e-6);
+    }
+
+    /// A steady state sitting EXACTLY on the threshold never fires, and must say `None`.
+    ///
+    /// The guard is `v_inf <= v_th`, and at equality the closed form's denominator is zero: the
+    /// logarithm of `x/0` is `+inf`, so a `<` here returns `Some(inf)` — an interval, for a cell
+    /// that asymptotes to threshold and never crosses. Every existing fixture drives the cell
+    /// comfortably above or below rheobase, so the boundary itself was untested. The parameters
+    /// are powers of two so that `v_rest + r_m * i` lands on `v_th` exactly rather than nearly.
+    #[test]
+    fn a_steady_state_exactly_on_the_threshold_has_no_interval() {
+        let cell = Lif { tau_m: 0.02, v_rest: -0.0625, v_th: -0.03125, v_reset: -0.0625,
+                         r_m: 1.0, t_ref: 0.0, v: -0.0625, refractory: 0.0 };
+        let i = 0.03125;
+        assert_eq!(cell.v_inf(i), cell.v_th, "the fixture is only about this case");
+        assert_eq!(cell.isi(i), None);
+        assert_eq!(cell.rate(i), None);
+        // And the boundary is HERE: one ulp more current fires.
+        assert!(cell.isi(i * (1.0 + f64::EPSILON)).is_some());
+    }
+
+    /// An infinite time step is refused, and the refusal cannot be replaced by the loop's own exit.
+    ///
+    /// `!(dt > 0.0)` already rejects a NaN, so `!dt.is_finite()` looks redundant and is not: with
+    /// it removed and a sub-threshold current, `crossing` is `+inf`, `crossing <= left` is
+    /// `inf <= inf` — true — and the step reports a SPIKE, at `dt - left` = NaN, before `left`
+    /// becomes NaN and ends the loop. The function returns `Some(1)` in microseconds rather than
+    /// hanging, so this fixture fails fast rather than timing out.
+    #[test]
+    fn an_infinite_time_step_is_refused_rather_than_integrated() {
+        let mut cell = Lif::default();
+        assert!(cell.v_inf(0.0) < cell.v_th, "sub-threshold, so the crossing is infinite");
+        assert_eq!(cell.step_exact(f64::INFINITY, 0.0), None);
+        assert_eq!(cell.step_exact(f64::NAN, 0.0), None);
+        assert_eq!(cell.step_exact(1e-3, f64::INFINITY), None);
+        assert_eq!(cell.potential(), Lif::default().v, "a refused step changes nothing");
+    }
+
+    /// A membrane sitting EXACTLY on the threshold has already crossed it.
+    ///
+    /// `v >= v_th` is the crossing test; with `>` a cell parked on the threshold by a synaptic
+    /// bump falls through to the sub-threshold branch, takes an infinite crossing time and decays
+    /// away instead of firing. Nothing reached the equality: the suite's cells arrive at threshold
+    /// by integrating, which overshoots.
+    #[test]
+    fn a_membrane_exactly_on_the_threshold_has_already_crossed() {
+        let mut cell = Lif { v: -50e-3, ..Lif::default() };
+        assert_eq!(cell.v, cell.v_th);
+        let mut offsets = Vec::new();
+        // Zero current: the steady state is BELOW threshold, so the only way to spike is to be
+        // already over it.
+        assert_eq!(cell.step_exact_times(1e-3, 0.0, &mut offsets), Some(1));
+        assert_eq!(offsets, vec![0.0]);
+        assert_eq!(cell.potential(), cell.v_reset);
+    }
+
+    /// A crossing landing EXACTLY on the end of the tick belongs to that tick, not the next one.
+    ///
+    /// `crossing <= left`. The boundary is unreachable by accident — it needs a `dt` equal bit for
+    /// bit to the time to threshold — so this fixture computes that time with the same operations
+    /// the integrator uses and hands it back as the step. With `<` the spike is deferred, and a
+    /// spike deferred by one tick is the failure the two simulation modes exist to rule out.
+    #[test]
+    fn a_crossing_landing_exactly_on_the_tick_end_belongs_to_that_tick() {
+        let cell = Lif { t_ref: 0.0, ..Lif::default() };
+        let i = 3e-9;
+        let v_inf = cell.v_inf(i);
+        let t_cross = cell.tau_m * ((v_inf - cell.v) / (v_inf - cell.v_th)).ln();
+        let mut c = cell;
+        let mut offsets = Vec::new();
+        assert_eq!(c.step_exact_times(t_cross, i, &mut offsets), Some(1));
+        assert_eq!(offsets, vec![t_cross]);
+    }
+
+    /// A refractory neuron is CLAMPED at its reset potential, not merely left un-integrated.
+    ///
+    /// The source says so in a comment — "a refractory neuron on real hardware holds its reset
+    /// potential rather than drifting, and the distinction shows up as an offset in the first
+    /// interval after a burst" — and nothing checked it, because every fixture enters the
+    /// refractory period from a spike, which has just set `v` to `v_reset` anyway.
+    #[test]
+    fn a_refractory_neuron_is_clamped_at_its_reset_potential() {
+        let mut cell = Lif { v: -0.03125, refractory: 1e-3, ..Lif::default() };
+        assert!(!cell.step(1e-4, 5e-9));
+        assert_eq!(cell.potential(), cell.v_reset);
+        assert_eq!(cell.refractory_left(), 1e-3 - 1e-4);
+    }
+
+    /// A refractory neuron IGNORES a synaptic bump, which is what absolute refractoriness means.
+    ///
+    /// The trait's own documentation states the consequence of getting this wrong: a model that
+    /// accumulated input during the period "would fire the instant the period ended, turning the
+    /// refractory period into a delay line rather than a rate bound". It was documented and
+    /// unpinned.
+    #[test]
+    fn a_refractory_neuron_ignores_a_bump() {
+        let mut cell = Lif { v: -65e-3, refractory: 1e-3, ..Lif::default() };
+        cell.bump(50e-3);
+        assert_eq!(cell.potential(), -65e-3);
+        // And once the period is over it takes the displacement normally.
+        cell.refractory = 0.0;
+        cell.bump(50e-3);
+        assert_eq!(cell.potential(), -65e-3 + 50e-3);
+    }
+
+    /// A bump DISPLACES the membrane; it does not replace it.
+    ///
+    /// `self.v += dv` against `self.v = dv`. Both leave a cell that spikes under enough input, so
+    /// a fixture that only counts spikes cannot tell them apart. The values are powers of two so
+    /// the sum is exact and the assertion needs no tolerance.
+    #[test]
+    fn a_bump_displaces_the_membrane_rather_than_replacing_it() {
+        let mut cell = Lif { v: -0.0625, ..Lif::default() };
+        cell.bump(0.03125);
+        assert_eq!(cell.potential(), -0.03125);
+        let mut perfect = IntegrateAndFire { v: 0.00390625, ..IntegrateAndFire::default() };
+        perfect.bump(0.001953125);
+        assert_eq!(perfect.potential(), 0.005859375);
+    }
+
+    /// The accessors report the state, not a constant.
+    ///
+    /// `potential` returning `v_rest` and `refractory_left` returning `0.0` both survived every
+    /// existing fixture: nothing read either through the trait while the answer was interesting.
+    /// `refractory_left` is the one `crate::sim` uses to land exactly on the end of a refractory
+    /// period, so a constant zero there is the sub-tick disagreement between the two modes that
+    /// the accessor was added to prevent.
+    #[test]
+    fn the_accessors_report_the_state_rather_than_a_constant() {
+        let cell = Lif { v: -0.03125, refractory: 2e-3, ..Lif::default() };
+        assert_ne!(cell.potential(), cell.v_rest);
+        assert_eq!(cell.potential(), -0.03125);
+        assert_eq!(cell.refractory_left(), 2e-3);
+        // Clamped at zero, never negative: `sim` subtracts it from a tick.
+        let spent = Lif { refractory: -1e-3, ..Lif::default() };
+        assert_eq!(spent.refractory_left(), 0.0);
+    }
+
+    /// `reset` forgets the refractory countdown as well as the potential.
+    ///
+    /// The trait says "return to the resting state, forgetting any refractory countdown". A reset
+    /// that left the countdown running gives a cell that is silent for its first few ticks of the
+    /// next run — reproducibly, and only if the previous run ended mid-period.
+    #[test]
+    fn reset_forgets_the_refractory_countdown() {
+        let mut cell = Lif { v: -0.03125, refractory: 2e-3, ..Lif::default() };
+        cell.reset();
+        assert_eq!(cell.refractory_left(), 0.0);
+        assert_eq!(cell.potential(), cell.v_rest);
+    }
+
+    /// The perfect integrator's interval counts from its RESET potential, and its default hides it.
+    ///
+    /// `IntegrateAndFire::default()` sets `v_reset: 0.0`, so `(v_th − v_reset)` reads identically
+    /// as `v_th` and the term is unexercised — the same hole as `Lif`'s `v_rest == v_reset`, in a
+    /// second model. This fixture gives the cell a non-zero reset and ties the closed form to the
+    /// integrator: the model is exactly linear, so the spike lands on a tick that can be counted.
+    #[test]
+    fn the_perfect_integrators_interval_counts_from_its_reset_potential() {
+        let cell = IntegrateAndFire { c: 1e-9, v_th: 15e-3, v_reset: 5e-3, v: 5e-3 };
+        let i = 1e-9;
+        let isi = cell.isi(i).unwrap();
+        assert!((isi - 10e-3).abs() < 1e-15, "measured: 10 ms, against 15 ms ignoring the reset");
+        let dt = 1e-6;
+        let mut c = cell;
+        let mut ticks = 0u32;
+        while !c.step(dt, i) {
+            ticks += 1;
+            assert!(ticks < 20_000, "did not fire within twice the closed-form interval");
+        }
+        // The simulated spike lands within ONE tick of the closed form, and measured here it
+        // lands exactly one tick late: 10,001 steps against the 10,000 the interval predicts.
+        // That is accumulation, not a defect — 10,000 additions of 1e-6 to 5e-3 do not reach
+        // 15e-3 in binary, so the threshold is crossed on the next step. It is also why this
+        // assertion is a tick wide and not exact.
+        // Measured: 1.0001e-2 against a closed form of 9.999_999_999_999_998e-3 — the spike is
+        // LATE, by one tick plus the closed form's own last-bit shortfall, which is why the bound
+        // is two ticks and one-sided rather than a symmetric one tick.
+        let simulated = f64::from(ticks + 1) * dt;
+        assert!(simulated > isi, "the accumulated spike is never early: {simulated} vs {isi}");
+        assert!(simulated - isi < 2.0 * dt, "simulated {simulated}, closed form {isi}");
+        assert_eq!(ticks + 1, 10_001, "measured, and stated so a change in it is visible");
+    }
+
+    /// The perfect integrator's documented defaults, pinned through a consequence.
+    ///
+    /// The doc gives 1 nF and a 15 mV threshold. A wrong capacitance or threshold changes every
+    /// figure produced with the default and nothing else, so the assertion is on the interval they
+    /// produce as well as on the values: a picofarad would make it 15 µs, a 1.5 mV threshold
+    /// 1.5 ms.
+    #[test]
+    fn the_perfect_integrators_defaults_are_the_documented_ones() {
+        let cell = IntegrateAndFire::default();
+        assert_eq!((cell.c, cell.v_th, cell.v_reset, cell.v), (1e-9, 15e-3, 0.0, 0.0));
+        assert_eq!(cell.isi(1e-9), Some(15e-3));
+    }
+
+    /// `EXACT_OVER_GAPS` is FALSE for the quadratic model, and that is a safety property.
+    ///
+    /// `Sim::new` refuses `Mode::EventDriven` for a model where it is false, so a wrong `true`
+    /// does not fail — it silently permits spike times that depend on which ticks happened to be
+    /// quiet. Two of these constants were wrong in 0.4.0. Nothing read `Izhikevich`'s, so flipping
+    /// it changed no test; this reads it, and then demonstrates WHY it is false by jumping a gap
+    /// and getting a different state.
+    #[test]
+    fn the_quadratic_model_cannot_be_jumped_across_a_gap() {
+        const { assert!(!Izhikevich::EXACT_OVER_GAPS) };
+        let i = 4e-9;
+        let mut stepped = Izhikevich::regular_spiking();
+        for _ in 0..10 {
+            stepped.step(1e-4, i);
+        }
+        let mut jumped = Izhikevich::regular_spiking();
+        jumped.step(1e-3, i);
+        assert_ne!(stepped.potential(), jumped.potential(),
+                   "if these agreed the constant would be understating the model");
+    }
+
+    /// The adapted interval charges from the RESET potential, and refuses the parameters it says
+    /// it refuses.
+    ///
+    /// Three holes in one guard, all of the same shape as the `Lif` case above. `adapted_isi`
+    /// solves `V_∞ + (V_reset − V_∞)e^{−(T−t_ref)/τ_m} = θ₀ + β/(e^{T/τ_a} − 1)` by bisection, and
+    /// its membrane term reads `v_reset` — which the default makes equal to `v_rest`, so the
+    /// substitution was invisible. The guard's other two clauses were unreached: `τ_a > 0` because
+    /// nothing passed zero, and `β >= 0` NaN-rejecting because nothing passed a NaN. A zero `τ_a`
+    /// puts `(t/τ_a).exp_m1()` at infinity and the adaptation term at zero, which silently turns
+    /// an adapting cell into a plain `Lif`; a NaN `β` makes every `gap` NaN, so the bisection runs
+    /// its 200 iterations and returns a midpoint that means nothing.
+    #[test]
+    fn the_adapted_interval_charges_from_reset_and_refuses_its_stated_parameters() {
+        let lif = Lif { v_reset: -70e-3, v: -70e-3, ..Lif::default() };
+        assert!(lif.v_reset < lif.v_rest, "the point of this fixture is that they differ");
+        let cell = AdaptiveLif::new(lif, 100e-3, 2e-3);
+        let i = 5e-9;
+        let t = cell.adapted_isi(i).unwrap();
+        // The defining equation, evaluated at the returned T with the RESET potential: the two
+        // sides meet. Reading `v_rest` instead moves the left side by 5 mV, which is more than
+        // two adaptation increments.
+        let v_inf = cell.lif.v_inf(i);
+        let charged = v_inf + (cell.lif.v_reset - v_inf) * (-(t - cell.lif.t_ref) / cell.lif.tau_m).exp();
+        let threshold = cell.theta_0 + cell.beta / (t / cell.tau_a).exp_m1();
+        assert!((charged - threshold).abs() < 1e-9, "T={t}, gap={}", charged - threshold);
+        let from_rest = v_inf + (cell.lif.v_rest - v_inf) * (-(t - cell.lif.t_ref) / cell.lif.tau_m).exp();
+        assert!((from_rest - threshold).abs() > 1e-6, "the two forms must be distinguishable here");
+
+        // The guard, clause by clause.
+        assert_eq!(AdaptiveLif::new(lif, 0.0, 2e-3).adapted_isi(i), None, "tau_a = 0");
+        assert_eq!(AdaptiveLif::new(lif, -1e-3, 2e-3).adapted_isi(i), None, "tau_a < 0");
+        assert_eq!(AdaptiveLif::new(lif, 100e-3, f64::NAN).adapted_isi(i), None, "beta NaN");
+        assert_eq!(AdaptiveLif::new(lif, f64::NAN, 2e-3).adapted_isi(i), None, "tau_a NaN");
+        // Zero adaptation is legal — it is an ordinary LIF — and must still return an interval.
+        assert!(AdaptiveLif::new(lif, 100e-3, 0.0).adapted_isi(i).is_some());
+    }
+
+    /// The three presets are the paper's four parameters, and `new` starts at the paper's rest.
+    ///
+    /// Izhikevich (2003) Figure 2: regular spiking `a=0.02, b=0.2, c=-65, d=8`; the fast-spiking
+    /// interneuron `a=0.1`; chattering `c=-50, d=2`. Every existing fixture builds a preset and
+    /// COUNTS SPIKES, and the three presets all spike, so giving regular spiking the interneuron's
+    /// `d`, or the chattering cell the regular cell's reset, changed no test. These are transcribed
+    /// constants whose only check is reading them against the source — the module doc says exactly
+    /// that — so they are read here.
+    #[test]
+    fn the_izhikevich_presets_are_the_papers_four_parameters() {
+        let rs = Izhikevich::regular_spiking();
+        assert_eq!((rs.a, rs.b, rs.c, rs.d), (0.02, 0.2, -65.0, 8.0));
+        let fs = Izhikevich::fast_spiking();
+        assert_eq!((fs.a, fs.b, fs.c, fs.d), (0.1, 0.2, -65.0, 2.0));
+        let ch = Izhikevich::chattering();
+        assert_eq!((ch.a, ch.b, ch.c, ch.d), (0.02, 0.2, -50.0, 2.0));
+        // The paper's own initial state: `v = c`, `u = b * v`. Dropping the sensitivity factor
+        // leaves `u = c`, which for regular spiking is −65 against the correct −13.
+        for p in [rs, fs, ch] {
+            assert_eq!(p.v, p.c);
+            assert_eq!(p.u, p.b * p.c);
+        }
+        assert_eq!(rs.u, -13.0);
+        // And the three are genuinely different cells, which is the only reason to ship three.
+        assert_ne!((rs.a, rs.d), (fs.a, fs.d));
+        assert_ne!(rs.c, ch.c);
+    }
+
+    /// The quadratic is integrated in the paper's HALF-steps, and cut off at its 30 mV.
+    ///
+    /// `substeps` defaults to 2 because one forward-Euler step of a whole millisecond overshoots
+    /// the upstroke — the module doc says so — and nothing checked that the loop divides the tick
+    /// rather than taking it whole twice. The recurrence is written out here in the same
+    /// operations and the same order the model uses, so the comparison is exact and needs no
+    /// tolerance.
+    #[test]
+    fn the_quadratic_is_integrated_in_the_papers_half_steps() {
+        let (dt, i) = (1e-3, 5e-9);
+        let (dt_ms, i_paper) = (dt * 1e3, i * 1e9);
+        let start = Izhikevich::regular_spiking();
+        assert_eq!(start.substeps, 2, "the paper's reference code takes two half-steps");
+        let h = dt_ms / f64::from(start.substeps);
+        let (mut v, u) = (start.v, start.u);
+        v += h * (0.04 * v * v + 5.0 * v + 140.0 - u + i_paper);
+        assert!(v < 30.0, "this fixture must not spike: {v}");
+        v += h * (0.04 * v * v + 5.0 * v + 140.0 - u + i_paper);
+        assert!(v < 30.0, "this fixture must not spike: {v}");
+        let u_next = u + dt_ms * start.a * (start.b * v - u);
+
+        let mut cell = start;
+        assert!(!cell.step(dt, i));
+        assert_eq!(cell.v, v, "two half-steps, not one whole one");
+        assert_eq!(cell.u, u_next);
+
+        // A whole-tick step lands somewhere else entirely, which is the point of the substeps.
+        let mut coarse = Izhikevich { substeps: 1, ..start };
+        assert!(!coarse.step(dt, i));
+        assert_ne!(coarse.v, v);
+
+        // Zero substeps is one substep, not a division by zero.
+        let mut none = Izhikevich { substeps: 0, ..start };
+        let mut one = Izhikevich { substeps: 1, ..start };
+        assert!(!none.step(dt, i) && !one.step(dt, i));
+        assert_eq!(none.v, one.v);
+        assert!(none.v.is_finite(), "dividing the tick by zero gives an infinity and then a NaN");
+    }
+
+    /// The cutoff is the paper's 30 mV, the reset accumulates `d`, and the recovery relaxes.
+    ///
+    /// Three constants and one sign, none of them read. A cell parked where its derivative is
+    /// exactly zero stays put under the real cutoff and fires immediately under a 3 mV one; `u`
+    /// must be INCREMENTED by `d` at a spike rather than assigned it, which no fixture could see
+    /// while its `u` happened to be zero; and `a(bv − u)` must drive `u` TOWARDS `bv`, which a
+    /// flipped sign turns into a divergence.
+    #[test]
+    fn the_cutoff_the_reset_increment_and_the_recovery_sign_are_the_papers() {
+        // 0.04·25 + 5·5 + 140 − 166 = 0 exactly: the derivative vanishes and `v` stays at 5 mV,
+        // which is above a 3 mV cutoff and far below the paper's 30.
+        let mut parked = Izhikevich { v: 5.0, u: 166.0, substeps: 1, ..Izhikevich::regular_spiking() };
+        assert!(!parked.step(1e-3, 0.0), "5 mV is not a spike");
+        assert_eq!(parked.v, 5.0);
+
+        // A spike from a non-zero `u`, so that `u += d` and `u = d` differ.
+        let mut spiking = Izhikevich { v: 29.0, u: 5.0, ..Izhikevich::regular_spiking() };
+        assert!(spiking.step(1e-3, 1e-9));
+        assert_eq!(spiking.v, spiking.c, "reset to the paper's c");
+        assert_eq!(spiking.u, 5.0 + spiking.d, "the increment accumulates; it does not replace");
+
+        // `u` starts below `b*v` and must rise towards it.
+        let mut relaxing = Izhikevich { v: -65.0, u: -20.0, substeps: 1, ..Izhikevich::regular_spiking() };
+        let target = relaxing.b * relaxing.v;
+        assert!(relaxing.u < target);
+        assert!(!relaxing.step(1e-3, 0.0));
+        assert!(relaxing.u > -20.0, "the recovery relaxes towards {target}, it does not run away");
+    }
+
+    /// The SI boundary converts both ways: volts in, volts out, millivolts inside.
+    ///
+    /// The model keeps the paper's millivolts internally — deliberately, so the constants can be
+    /// read against the source — and converts at the trait. Neither direction was checked, and a
+    /// missing conversion is a factor of a thousand that every other model in the crate would
+    /// then disagree with by that factor while every spike count stayed plausible.
+    #[test]
+    fn the_izhikevich_boundary_converts_volts_to_the_models_millivolts_and_back() {
+        let mut cell = Izhikevich::regular_spiking();
+        let before = cell.v;
+        cell.bump(2e-3);
+        assert!((cell.v - (before + 2.0)).abs() < 1e-12, "2 mV in volts is +2.0 inside: {}", cell.v);
+        let plain = Izhikevich { v: -65.0, ..Izhikevich::regular_spiking() };
+        assert!((plain.potential() + 0.065).abs() < 1e-15, "{} is not −65 mV in volts", plain.potential());
+        // The trait's contract, stated against a model that agrees about the unit.
+        assert!((plain.potential() - Lif::default().v).abs() < 1e-15);
+    }
+
+    /// The membrane is told THIS tick's threshold before it steps, and the raised one at once.
+    ///
+    /// Two orderings, both invisible to a fixture that only counts spikes over many ticks, because
+    /// both eventually settle into the same rate. `self.lif.v_th` is the copy the membrane
+    /// actually compares against, and `theta` is the authority; a step taken before the copy is
+    /// refreshed compares against LAST tick's threshold, and a spike that does not refresh it
+    /// leaves the membrane one tick behind its own adaptation. Either way a cell fires when the
+    /// model says it should not, which is a sub-tick error in a model whose whole purpose is the
+    /// timing of the next spike.
+    #[test]
+    fn the_membrane_is_told_the_current_threshold_before_it_steps_and_after_it_fires() {
+        // A cell carrying a raised threshold, with a stale copy on the membrane: `v` sits above
+        // the stale value and below the true one, so the ordering decides whether it fires.
+        let lif = Lif { v_th: -50e-3, v: -46e-3, t_ref: 0.0, ..Lif::default() };
+        let mut cell = AdaptiveLif::new(lif, 10.0, 2e-3);
+        cell.theta = -44e-3;
+        cell.lif.v_th = -50e-3; // stale on purpose
+        assert!(cell.lif.v > cell.lif.v_th && cell.lif.v < cell.theta);
+        // tau_a is 10 s against a tick of 1 ms, so the decay of theta over the tick is negligible
+        // beside the 6 mV gap: the threshold the membrane is compared against decides this.
+        assert!(!cell.step(1e-3, 0.0), "the current threshold is 2 mV above the membrane");
+        assert_eq!(cell.lif.v_th, cell.theta, "the copy is refreshed before the step");
+
+        // And after a spike the copy carries the increment immediately, not next tick.
+        let mut firing = AdaptiveLif::new(Lif { t_ref: 0.0, ..Lif::default() }, 100e-3, 3e-3);
+        let mut fired = false;
+        for _ in 0..200 {
+            if firing.step(1e-3, 5e-9) {
+                fired = true;
+                break;
+            }
+        }
+        assert!(fired, "this fixture must reach a spike");
+        assert_eq!(firing.lif.v_th, firing.theta, "the spike raised theta and the membrane knows");
+        assert!(firing.theta > firing.theta_0, "the increment was applied");
+    }
+
+    /// A cell that would fire without end is refused, and the refusal changes nothing.
+    ///
+    /// `endless` is `no refractory period AND no adaptation AND a reset at or above the threshold`,
+    /// and the threshold it compares against is the LOWER of the current and resting values —
+    /// because the current one decays back to the resting one, so a cell that clears the resting
+    /// threshold clears it forever. Every fixture leaves `theta` equal to `theta_0`, where the
+    /// lower and the higher are the same number and the mutation is invisible.
+    ///
+    /// The second assertion is the one that does the work: a refusal made up front leaves the cell
+    /// exactly as it was, while a refusal reached by running into the ten-million-spike cap has
+    /// already moved `theta`, `v` and the refractory clock.
+    #[test]
+    fn an_endlessly_firing_cell_is_refused_before_anything_moves() {
+        let lif = Lif { v_reset: -48e-3, v: -65e-3, t_ref: 0.0, v_th: -50e-3, ..Lif::default() };
+        let mut cell = AdaptiveLif::new(lif, 50e-3, 0.0);
+        cell.theta = -40e-3; // raised, so `min` and `max` disagree
+        assert!(cell.lif.v_reset >= cell.theta_0 && cell.lif.v_reset < cell.theta);
+        let before = cell;
+        assert_eq!(cell.step_exact(10e-3, 5e-9), None, "reset above the resting threshold");
+        assert_eq!(cell, before, "a refusal up front moves nothing");
+        // The guard is three conjuncts; relieve any one and the cell is admissible again.
+        let mut with_ref = AdaptiveLif::new(Lif { t_ref: 1e-3, ..lif }, 50e-3, 0.0);
+        with_ref.theta = -40e-3;
+        assert!(with_ref.step_exact(10e-3, 5e-9).is_some(), "a refractory period bounds the rate");
+        let mut with_beta = AdaptiveLif::new(lif, 50e-3, 1e-3);
+        with_beta.theta = -40e-3;
+        assert!(with_beta.step_exact(10e-3, 5e-9).is_some(), "adaptation bounds it too");
+    }
+
+    /// The runaway cap fires, and it is the ONLY thing that stops this cell.
+    ///
+    /// `endless` refuses a cell that can never stop; this is the other case — one that stops only
+    /// after an absurd number of spikes. A reset 12 mV above the resting threshold with a 1 nV
+    /// adaptation increment re-crosses instantly twelve million times in a single tick, each spike
+    /// advancing time by exactly zero. The cap at ten million turns that into a refusal.
+    ///
+    /// It took a second look to see this was testable at all. The first reading was "its only
+    /// observable is termination, so the only test that witnesses it is one that hangs" — which
+    /// would be a TIMEOUT, and this harness's own documentation says a TIMEOUT says nothing either
+    /// way. That reading was wrong: `beta > 0` makes the loop FINITE, just enormous, so removing
+    /// the cap does not hang, it returns `Some(12_000_000)` where the contract says `None`.
+    ///
+    /// This is the slowest test in the module by a wide margin — it runs the cap's ten million
+    /// iterations for real — and that is the price of pinning a guard whose whole purpose is to
+    /// bound something huge.
+    #[test]
+    fn the_runaway_spike_cap_refuses_a_cell_that_would_fire_twelve_million_times() {
+        // `v` starts AT the reset, because the cell must already be over the threshold: a tick
+        // is only a millisecond and a membrane charging from rest would not reach it inside one.
+        let lif = Lif { v_reset: -38e-3, v_th: -50e-3, t_ref: 0.0, v: -38e-3, ..Lif::default() };
+        let mut cell = AdaptiveLif::new(lif, 50e-3, 1e-9);
+        assert!(cell.lif.v_reset > cell.theta_0, "the reset must re-cross instantly");
+        assert!(cell.beta > 0.0, "and adaptation must be the only thing ending it");
+        assert_eq!(cell.step_exact(1e-3, 5e-9), None, "the cap refuses rather than counting on");
+    }
+
 }

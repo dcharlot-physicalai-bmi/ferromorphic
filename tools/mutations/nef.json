@@ -168,5 +168,412 @@
   "label": "spiking loop timing flag inverted",
   "old": "let fired: Vec<u32> = if self.exact_timing {",
   "new": "let fired: Vec<u32> = if !self.exact_timing {"
+ },
+ {
+  "label": "the rate curve is defined below the threshold current too",
+  "old": "        if !(j > 1.0) {",
+  "new": "        if !(j > 0.0) {"
+ },
+ {
+  "label": "the rate curve counts the drive from zero current rather than from threshold",
+  "old": "1.0 / (self.tau_ref + self.tau_rc * (1.0 + 1.0 / (j - 1.0)).ln())",
+  "new": "1.0 / (self.tau_ref + self.tau_rc * (1.0 + 1.0 / j).ln())"
+ },
+ {
+  "label": "the refractory period multiplies the membrane term rather than adding to it",
+  "old": "1.0 / (self.tau_ref + self.tau_rc * (1.0 + 1.0 / (j - 1.0)).ln())",
+  "new": "1.0 / (self.tau_ref * self.tau_rc * (1.0 + 1.0 / (j - 1.0)).ln())"
+ },
+ {
+  "label": "the maximum rate bound is the reciprocal of the membrane constant",
+  "old": "    pub fn max_rate_bound(&self) -> f64 {\n        1.0 / self.tau_ref",
+  "new": "    pub fn max_rate_bound(&self) -> f64 {\n        1.0 / self.tau_rc"
+ },
+ {
+  "label": "the current for a rate has the refractory period and the interval the wrong way round",
+  "old": "        Some(1.0 / (1.0 - ((self.tau_ref - 1.0 / rate) / self.tau_rc).exp()))",
+  "new": "        Some(1.0 / (1.0 - ((1.0 / rate - self.tau_ref) / self.tau_rc).exp()))"
+ },
+ {
+  "label": "the default membrane constant is ten times Nengo's",
+  "old": "        Self { tau_rc: 20e-3, tau_ref: 2e-3 }",
+  "new": "        Self { tau_rc: 200e-3, tau_ref: 2e-3 }"
+ },
+ {
+  "label": "the default refractory period is the membrane constant",
+  "old": "        Self { tau_rc: 20e-3, tau_ref: 2e-3 }",
+  "new": "        Self { tau_rc: 20e-3, tau_ref: 20e-3 }"
+ },
+ {
+  "label": "a non-positive membrane constant is accepted",
+  "old": "        in_range(\"tau_rc\", tau_rc, f64::MIN_POSITIVE, f64::INFINITY)?;",
+  "new": "        let _ = tau_rc;"
+ },
+ {
+  "label": "a non-positive refractory period is accepted",
+  "old": "        in_range(\"tau_ref\", tau_ref, f64::MIN_POSITIVE, f64::INFINITY)?;",
+  "new": "        let _ = tau_ref;"
+ },
+ {
+  "label": "the gain is the maximum-rate current itself rather than its excess over threshold",
+  "old": "        let gain = (x - 1.0) / (1.0 - intercept);",
+  "new": "        let gain = x / (1.0 - intercept);"
+ },
+ {
+  "label": "the bias forgets that the gain is applied at the intercept",
+  "old": "        let bias = 1.0 - gain * intercept;",
+  "new": "        let bias = 1.0 - gain;"
+ },
+ {
+  "label": "a non-finite parameter passes the range check",
+  "old": "    if value.is_finite() && value >= low && value <= high {",
+  "new": "    if value >= low && value <= high {"
+ },
+ {
+  "label": "a vector longer than required passes the length check",
+  "old": "    if got == want { Ok(()) } else { Err(NefError::Dimension { what, got, want }) }",
+  "new": "    if got >= want { Ok(()) } else { Err(NefError::Dimension { what, got, want }) }"
+ },
+ {
+  "label": "an infinity passes the finiteness check",
+  "old": "    if let Some(i) = v.iter().position(|x| !x.is_finite()) {",
+  "new": "    if let Some(i) = v.iter().position(|x| x.is_nan()) {"
+ },
+ {
+  "label": "a neuron's encoder is read at a one-element stride rather than a row stride",
+  "old": "        &self.encoders[i * self.dim..(i + 1) * self.dim]",
+  "new": "        &self.encoders[i..i + self.dim]"
+ },
+ {
+  "label": "every one-dimensional encoder points the same way",
+  "old": "                encoders.push(if rng.next_u32() & 1 == 1 { 1.0 } else { -1.0 });",
+  "new": "                encoders.push(if rng.next_u32() & 1 == 1 { 1.0 } else { 1.0 });"
+ },
+ {
+  "label": "the standard normal draw has half the variance it claims",
+  "old": "    (-2.0 * u1.ln()).sqrt() * (core::f64::consts::TAU * u2).cos()",
+  "new": "    (-1.0 * u1.ln()).sqrt() * (core::f64::consts::TAU * u2).cos()"
+ },
+ {
+  "label": "the encoders are scaled by their length instead of divided by it",
+  "old": "                encoders.extend(e.iter().map(|x| x / norm));",
+  "new": "                encoders.extend(e.iter().map(|x| x * norm));"
+ },
+ {
+  "label": "every neuron is given the top maximum rate rather than a drawn one",
+  "old": "            let max_rate = rlo + (rhi - rlo) * rng.next_f64();",
+  "new": "            let max_rate = rhi + 0.0 * (rhi - rlo) * rng.next_f64();"
+ },
+ {
+  "label": "an inverted maximum-rate range is accepted",
+  "old": "        if !(rlo > 0.0) || !(rhi < spec.neuron.max_rate_bound()) || !(rlo <= rhi) {",
+  "new": "        if !(rlo > 0.0) || !(rhi < spec.neuron.max_rate_bound()) {"
+ },
+ {
+  "label": "a non-finite gain is accepted into a population built from parts",
+  "old": "        finite(\"gains\", &gains)?;",
+  "new": "        let _ = &gains;"
+ },
+ {
+  "label": "the encoder array is checked against n + dim rather than n x dim",
+  "old": "        len(\"encoders\", encoders.len(), n * dim)?;",
+  "new": "        len(\"encoders\", encoders.len(), n + dim)?;"
+ },
+ {
+  "label": "the represented radius multiplies the input current instead of dividing it",
+  "old": "        Ok(self.gains[i] * dot / self.radius + self.biases[i])",
+  "new": "        Ok(self.gains[i] * dot * self.radius + self.biases[i])"
+ },
+ {
+  "label": "the rate path drops the bias current that the current path keeps",
+  "old": "                self.neuron.rate(self.gains[i] * dot / self.radius + self.biases[i])",
+  "new": "                self.neuron.rate(self.gains[i] * dot / self.radius)"
+ },
+ {
+  "label": "the one-dimensional sample points cover only the positive half of the ball",
+  "old": "                    return vec![self.radius * (2.0 * rng.next_f64() - 1.0)];",
+  "new": "                    return vec![self.radius * rng.next_f64()];"
+ },
+ {
+  "label": "the sample radius is not corrected for the dimension, so the points pile up at the centre",
+  "old": "                let scale = self.radius * rng.next_f64().powf(1.0 / self.dim as f64) / norm;",
+  "new": "                let scale = self.radius * rng.next_f64() / norm;"
+ },
+ {
+  "label": "the sample points ignore the represented radius",
+  "old": "                let scale = self.radius * rng.next_f64().powf(1.0 / self.dim as f64) / norm;",
+  "new": "                let scale = rng.next_f64().powf(1.0 / self.dim as f64) / norm;"
+ },
+ {
+  "label": "the default population radius is two",
+  "old": "            radius: 1.0,",
+  "new": "            radius: 2.0,"
+ },
+ {
+  "label": "the default maximum-rate range is a tenth of Nengo's",
+  "old": "            max_rate: (200.0, 400.0),",
+  "new": "            max_rate: (20.0, 40.0),"
+ },
+ {
+  "label": "the default intercepts cover only the middle half of the ball",
+  "old": "            intercept: (-0.999, 0.999),",
+  "new": "            intercept: (-0.5, 0.5),"
+ },
+ {
+  "label": "the output dimension is taken from the sample rather than from the target",
+  "old": "        let out_dim = targets[0].len();",
+  "new": "        let out_dim = samples[0].len();"
+ },
+ {
+  "label": "the Gram matrix is a sum over samples rather than a mean",
+  "old": "                    gamma[i * n + k] += a[i] * a[k] / s;",
+  "new": "                    gamma[i * n + k] += a[i] * a[k];"
+ },
+ {
+  "label": "the decoders' right-hand side is a sum over samples rather than a mean",
+  "old": "                    upsilon[i * out_dim + j] += a[i] * yj / s;",
+  "new": "                    upsilon[i * out_dim + j] += a[i] * yj;"
+ },
+ {
+  "label": "the Gram matrix's own diagonal is never accumulated",
+  "old": "                for k in i..n {",
+  "new": "                for k in i + 1..n {"
+ },
+ {
+  "label": "the symmetric fill copies the empty triangle over the full one",
+  "old": "                gamma[k * n + i] = gamma[i * n + k];",
+  "new": "                gamma[i * n + k] = gamma[k * n + i];"
+ },
+ {
+  "label": "the ridge is added to the first column rather than to the diagonal",
+  "old": "            gamma[i * n + i] += ridge;",
+  "new": "            gamma[i * n] += ridge;"
+ },
+ {
+  "label": "every neuron is treated as silent while the Gram matrix is accumulated",
+  "old": "                if a[i] == 0.0 {\n                    continue;\n                }",
+  "new": "                if true {\n                    continue;\n                }"
+ },
+ {
+  "label": "the silent-neuron skip is removed from the Gram accumulation",
+  "old": "                if a[i] == 0.0 {\n                    continue;\n                }",
+  "new": "                if false {\n                    continue;\n                }",
+  "equivalent": "EQUIVALENT: the skip is a running-time guard, not a semantic one, and this was checked by BUILDING BOTH and comparing rather than by reading the suite. When a[i] == 0.0 the two loops the `continue` protects add a[i]*a[k]/s and a[i]*y_j/s. For finite rates those are +-0.0 (targets are checked finite one line above; s >= 1), and gamma and upsilon start at +0.0 and only ever accumulate from there -- x + (-0.0) == x for every f64 and 0.0 + (-0.0) == +0.0, so neither array can ever hold -0.0 and neither can be moved by adding a signed zero. For NON-finite rates the two sides stay equal for a different reason: a non-finite a[k] makes gamma[k*n+k] non-finite, hence `trace` non-finite, hence `ridge = lambda * trace / n` non-finite for EVERY lambda (with lambda = 0 it is 0.0 * inf = NaN), and the ridge is added to every diagonal entry -- so cholesky reports `matrix[0] is not a finite number` either way and the extra NaN the mutant puts in an off-diagonal is never what it sees. MEASURED with the mutation applied to a private copy of the crate: the decoders of three fixtures (40x1, 25x2 with two outputs and negative and zero targets, 80x1), in which about half of all (sample, neuron) pairs are silent (2383/4800, 1696/3000, 4801/9600), are BIT-IDENTICAL to the unmutated ones -- FNV-1a over every decoder bit gives 1369da8bccea14f8, afc841f65e73244a and b717fe8b25efcf52 both with and without the skip; and a population built through `from_parts` with a hand-made `LifRate` whose denormal tau_ref makes `rate()` overflow to +inf beside a silent neuron returns the identical Err(Solve(NonFinite{what: \"matrix\", index: 0})) both ways, at lambda 0.0 and 0.1."
+ },
+ {
+  "label": "the decode overwrites its accumulator with the last neuron's contribution",
+  "old": "                *o += a * decoders.d[i * decoders.out_dim + j];",
+  "new": "                *o = a * decoders.d[i * decoders.out_dim + j];"
+ },
+ {
+  "label": "the decoders are read column-major in the decode",
+  "old": "                *o += a * decoders.d[i * decoders.out_dim + j];",
+  "new": "                *o += a * decoders.d[j * decoders.n + i];"
+ },
+ {
+  "label": "the decoding error is a mean square rather than its root",
+  "old": "        Ok((acc / count as f64).sqrt())",
+  "new": "        Ok(acc / count as f64)"
+ },
+ {
+  "label": "the decoding error is averaged over samples rather than over the scalars compared",
+  "old": "        Ok((acc / count as f64).sqrt())",
+  "new": "        Ok((acc / samples.len() as f64).sqrt())"
+ },
+ {
+  "label": "the transform is read column-major",
+  "old": "                    acc += transform[r * self.out_dim + j] * self.d[i * self.out_dim + j];",
+  "new": "                    acc += transform[j * rows + r] * self.d[i * self.out_dim + j];"
+ },
+ {
+  "label": "the transformed decoders are written transposed",
+  "old": "                d[i * rows + r] = acc;",
+  "new": "                d[r * self.n + i] = acc;"
+ },
+ {
+  "label": "the transformed decoders are read column-major in the weight product",
+  "old": "                acc += e[k] * td.d[i * post.dim + k];",
+  "new": "                acc += e[k] * td.d[k * post.dim + i];"
+ },
+ {
+  "label": "the weight matrix is stored transposed",
+  "old": "            w[j * n_pre + i] = post.gains[j] * acc / post.radius;",
+  "new": "            w[i * n_post + j] = post.gains[j] * acc / post.radius;"
+ },
+ {
+  "label": "the full matrix's traffic is charged per represented dimension rather than per postsynaptic neuron",
+  "old": "    let full = spikes_per_tick.saturating_mul(n_post);",
+  "new": "    let full = spikes_per_tick.saturating_mul(dim);"
+ },
+ {
+  "label": "the factorised encoder pass is charged per spike, so a silent tick is free",
+  "old": "    let factorised = spikes_per_tick.saturating_mul(dim).saturating_add(dim.saturating_mul(n_post));",
+  "new": "    let factorised = spikes_per_tick.saturating_mul(dim).saturating_add(spikes_per_tick.saturating_mul(n_post));"
+ },
+ {
+  "label": "the break-even divides by the sum of the two counts rather than their difference",
+  "old": "    Some(dim as f64 * n_post as f64 / (n_post - dim) as f64)",
+  "new": "    Some(dim as f64 * n_post as f64 / (n_post + dim) as f64)"
+ },
+ {
+  "label": "a factorisation that never breaks even reports a break-even of infinity",
+  "old": "    if dim >= n_post || n_post == 0 {",
+  "new": "    if dim > n_post || n_post == 0 {"
+ },
+ {
+  "label": "the low-pass decay inverts the step and the time constant",
+  "old": "        let decay = (-dt / self.tau).exp();",
+  "new": "        let decay = (-self.tau / dt).exp();"
+ },
+ {
+  "label": "the low-pass decays the input rather than the state",
+  "old": "        self.y = x + (self.y - x) * decay;",
+  "new": "        self.y = self.y + (x - self.y) * decay;"
+ },
+ {
+  "label": "the recurrent matrix is not scaled by the synapse's time constant",
+  "old": "    let mut a2 = a.iter().map(|x| tau * x).collect::<Vec<f64>>();",
+  "new": "    let mut a2 = a.iter().copied().collect::<Vec<f64>>();"
+ },
+ {
+  "label": "the input matrix is not scaled by the synapse's time constant",
+  "old": "    let b2 = b.iter().map(|x| tau * x).collect();",
+  "new": "    let b2 = b.iter().copied().collect();"
+ },
+ {
+  "label": "the identity is written onto the diagonal rather than added to it",
+  "old": "        a2[i * dim + i] += 1.0;",
+  "new": "        a2[i * dim + i] = 1.0;"
+ },
+ {
+  "label": "the identity lands on the first column rather than on the diagonal",
+  "old": "        a2[i * dim + i] += 1.0;",
+  "new": "        a2[i * dim] += 1.0;"
+ },
+ {
+  "label": "the recurrent matrix is applied transposed in rate mode",
+  "old": "                acc += self.a_prime[i * dim + j] * self.x_hat[j];",
+  "new": "                acc += self.a_prime[j * dim + i] * self.x_hat[j];"
+ },
+ {
+  "label": "the population is driven by the unfiltered recurrent term",
+  "old": "            drive[i] = self.synapses[i].step(dt, acc);",
+  "new": "            drive[i] = { let _ = self.synapses[i].step(dt, acc); acc };"
+ },
+ {
+  "label": "a kick sets the decoded state but leaves the synapses at zero",
+  "old": "            s.y = v;",
+  "new": "            s.y = 0.0 * v;"
+ },
+ {
+  "label": "the rate loop takes the whole B matrix's length as its input dimension",
+  "old": "        let input_dim = b.len() / dim;\n        let synapses = (0..dim).map(|_| Lowpass::new(tau)).collect::<Result<Vec<_>, _>>()?;",
+  "new": "        let input_dim = b.len();\n        let synapses = (0..dim).map(|_| Lowpass::new(tau)).collect::<Result<Vec<_>, _>>()?;"
+ },
+ {
+  "label": "the spiking population is driven by its readout synapses rather than its recurrent ones",
+  "old": "        let state: Vec<f64> = self.synapses.iter().map(|s| s.y).collect();",
+  "new": "        let state: Vec<f64> = self.readout.iter().map(|s| s.y).collect();"
+ },
+ {
+  "label": "a lone spike in a tick is not decoded",
+  "old": "        for (i, &count) in fired.iter().enumerate().filter(|(_, c)| **c > 0) {",
+  "new": "        for (i, &count) in fired.iter().enumerate().filter(|(_, c)| **c > 1) {"
+ },
+ {
+  "label": "the recurrent matrix is applied transposed in the spiking loop",
+  "old": "                acc += self.a_prime[i * dim + j] * pulse[j];",
+  "new": "                acc += self.a_prime[j * dim + i] * pulse[j];"
+ },
+ {
+  "label": "the decoders are read column-major in the spiking loop",
+  "old": "                *p += f64::from(count) * self.decoders.d[i * dim + j] / dt;",
+  "new": "                *p += f64::from(count) * self.decoders.d[j * dim + i] / dt;"
+ },
+ {
+  "label": "the readout filters the recurrent state instead of the decoded spikes",
+  "old": "            let _ = self.synapses[i].step(dt, acc);\n            self.x_hat[i] = self.readout[i].step(dt, pulse[i]);",
+  "new": "            let filtered = self.synapses[i].step(dt, acc);\n            self.x_hat[i] = self.readout[i].step(dt, filtered);"
+ },
+ {
+  "label": "the spiking loop takes the whole B matrix's length as its input dimension",
+  "old": "        let input_dim = b.len() / dim;\n        let bank = || (0..dim).map(|_| Lowpass::new(tau)).collect::<Result<Vec<_>, _>>();",
+  "new": "        let input_dim = b.len();\n        let bank = || (0..dim).map(|_| Lowpass::new(tau)).collect::<Result<Vec<_>, _>>();"
+ },
+ {
+  "label": "the contraction is set by the sum of the rates rather than by their squares",
+  "old": "        let energy: f64 = rates.iter().map(|a| a * a).sum();\n        1.0 - self.kappa * energy / rates.len().max(1) as f64",
+  "new": "        let energy: f64 = rates.iter().map(|a| a.abs()).sum();\n        1.0 - self.kappa * energy / rates.len().max(1) as f64"
+ },
+ {
+  "label": "the contraction of an empty population divides by zero",
+  "old": "1.0 - self.kappa * energy / rates.len().max(1) as f64",
+  "new": "1.0 - self.kappa * energy / rates.len() as f64"
+ },
+ {
+  "label": "the stability limit is set by the sum of the rates rather than by their squares",
+  "old": "        let energy: f64 = rates.iter().map(|a| a * a).sum();\n        if energy > 0.0 && energy.is_finite() { Some(2.0 * rates.len() as f64 / energy) } else { None }",
+  "new": "        let energy: f64 = rates.iter().map(|a| a.abs()).sum();\n        if energy > 0.0 && energy.is_finite() { Some(2.0 * rates.len() as f64 / energy) } else { None }"
+ },
+ {
+  "label": "a silent population is given a stability limit",
+  "old": "        if energy > 0.0 && energy.is_finite() { Some(2.0 * rates.len() as f64 / energy) } else { None }",
+  "new": "        if energy.is_finite() { Some(2.0 * rates.len() as f64 / energy) } else { None }"
+ },
+ {
+  "label": "the decoded error is the last active neuron's contribution rather than the sum",
+  "old": "                    *e += a * decoders.d[i * out + j];",
+  "new": "                    *e = a * decoders.d[i * out + j];"
+ },
+ {
+  "label": "the error is read from the decoders column-major",
+  "old": "                    *e += a * decoders.d[i * out + j];",
+  "new": "                    *e += a * decoders.d[j * out + i];"
+ },
+ {
+  "label": "the update writes the silent neurons and skips the active ones",
+  "old": "        for (i, &a) in rates.iter().enumerate() {\n            if a != 0.0 {\n                for (j, e) in error.iter().enumerate() {",
+  "new": "        for (i, &a) in rates.iter().enumerate() {\n            if a == 0.0 {\n                for (j, e) in error.iter().enumerate() {"
+ },
+ {
+  "label": "the tick-based step overwrites its spike count instead of accumulating it",
+  "old": "                self.counts[i] += 1;",
+  "new": "                self.counts[i] = 1;"
+ },
+ {
+  "label": "the normalised current is divided by the amperes per unit rather than multiplied",
+  "old": "            let amps = j * self.amps_per_unit;",
+  "new": "            let amps = j / self.amps_per_unit;"
+ },
+ {
+  "label": "the exact step drives the cells with the normalised current, unconverted",
+  "old": "            let spikes = cell.step_exact(dt, j * self.amps_per_unit).unwrap_or(0);",
+  "new": "            let spikes = cell.step_exact(dt, j).unwrap_or(0);"
+ },
+ {
+  "label": "the measured rate is spikes per tick rather than per second",
+  "old": "        let t = self.ticks as f64 * dt;",
+  "new": "        let t = self.ticks as f64;"
+ },
+ {
+  "label": "a population that has not been stepped reports a rate",
+  "old": "        if self.ticks == 0 {\n            return None;\n        }",
+  "new": "        if false {\n            return None;\n        }"
+ },
+ {
+  "label": "the amperes per unit are measured from the reset potential",
+  "old": "        let amps_per_unit = (proto.v_th - proto.v_rest) / proto.r_m;",
+  "new": "        let amps_per_unit = (proto.v_th - proto.v_reset) / proto.r_m;",
+  "equivalent": "EQUIVALENT: `amps_per_unit` is assigned in exactly one place, `SpikingEnsemble::new`, and the FIRST statement of that function is `let curve = LifRate::of_lif(&proto)?;`, which returns OutOfRange whenever `proto.v_reset != proto.v_rest`. The mutated line is therefore unreachable unless v_reset and v_rest compare equal, and then `v_th - v_reset` and `v_th - v_rest` are the same subtraction. The only f64 pair that compares equal with different bits is (+0.0, -0.0), and `a - (+0.0)` differs from `a - (-0.0)` only for a = -0.0 -- a case refused two lines earlier by `in_range(\"v_th - v_rest\", .., f64::MIN_POSITIVE, ..)`, which a difference of +-0.0 cannot pass. MEASURED, not argued from the suite: over seven prototypes including both orderings of a +-0.0 rest and reset, every proto `SpikingEnsemble::new` accepts gives bit-identical (v_th-v_rest)/r_m and (v_th-v_reset)/r_m (for example 41ddcd64ffffffff for v_rest = -0.0, v_reset = 0.0, v_th = 2.0, r_m = 1e-9, and 3e212e0be826d695 for the mirror image), and the only two protos where the two expressions could differ, v_th = +0.0 and v_th = -0.0, are refused by name. The guard this rests on is itself pinned: the recorded mutation `reset != rest accepted` comes back caught."
+ },
+ {
+  "label": "a cell whose threshold sits at or below rest is accepted",
+  "old": "        in_range(\"v_th − v_rest\", proto.v_th - proto.v_rest, f64::MIN_POSITIVE, f64::INFINITY)?;",
+  "new": "        let _ = proto.v_th - proto.v_rest;"
+ },
+ {
+  "label": "a reset leaves the cells' membrane potentials where they were",
+  "old": "        for c in &mut self.cells {\n            c.reset();\n        }",
+  "new": "        for c in &mut self.cells {\n            let _ = c;\n        }"
  }
 ]

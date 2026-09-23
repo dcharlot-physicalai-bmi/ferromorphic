@@ -1435,7 +1435,7 @@ mod tests {
     };
     use crate::crossover::Verdict;
     use crate::ledger::Ledger;
-    use crate::net::NetBuilder;
+    use crate::net::{Net, NetBuilder};
     use crate::neuron::Lif;
     use crate::sim::{Mode, Sim};
     use crate::spike::{Spike, Train};
@@ -2530,5 +2530,341 @@ mod tests {
         let acc0 = account_for_train(&net0, &t, 10).unwrap();
         assert_eq!(acc0.delivered, 0);
         assert_eq!(acc0.in_flight, 1);
+    }
+
+    // ---- (g) bounds, refusals and the printed surface -------------------------------------------
+
+    /// The run's two upper bounds are EXCLUSIVE: neuron `neurons` and tick `ticks` are both
+    /// outside a run of `neurons` neurons over `ticks` ticks, and a spike naming either is refused.
+    ///
+    /// Why the suite could not see it: both existing refusal fixtures overshoot the bound — source
+    /// 7 against 2 neurons, tick 100 against 5 ticks — and the legal side is pinned one below it,
+    /// at `neurons - 1` and `ticks - 1`. A `>=` weakened to `>` admits exactly the one index AT the
+    /// bound and nothing else, and no fixture in this module named that index. Admitted, the spike
+    /// is counted as an active neuron-timestep inside a window it was never in, which lowers the
+    /// reported sparsity by one neuron-timestep's worth.
+    #[test]
+    fn the_first_neuron_and_the_first_tick_past_the_run_are_both_refused() {
+        let past_last_neuron = Train::from_spikes(vec![Spike { t: 0, source: 2 }]);
+        assert_eq!(
+            activation_sparsity_of_run(&past_last_neuron, 2, 5).unwrap_err(),
+            MetricError::SourceOutOfRange { source: 2, n: 2 }
+        );
+        // One below the bound is the last neuron the run has, and it is counted: 9 of 10 silent.
+        let last_neuron = Train::from_spikes(vec![Spike { t: 0, source: 1 }]);
+        assert_eq!(activation_sparsity_of_run(&last_neuron, 2, 5).unwrap(), 0.9);
+
+        let past_last_tick = Train::from_spikes(vec![Spike { t: 5, source: 0 }]);
+        assert_eq!(
+            activation_sparsity_of_run(&past_last_tick, 2, 5).unwrap_err(),
+            MetricError::ImpossibleSpike {
+                t: 5,
+                source: 0,
+                why: "is on a tick at or past the end of the run",
+            }
+        );
+        // And one below that bound is the run's last tick, which is legal.
+        let last_tick = Train::from_spikes(vec![Spike { t: 4, source: 0 }]);
+        assert_eq!(activation_sparsity_of_run(&last_tick, 2, 5).unwrap(), 0.9);
+    }
+
+    /// `account_for_train` refuses a spike from neuron `net.n` — the FIRST index the network does
+    /// not have — rather than posting nothing for it.
+    ///
+    /// Why the suite could not see it: its refusal fixture names neuron 5 in a network of 2, which
+    /// a bound written `>` still rejects. At the bound itself `Net::out_of` is documented to return
+    /// an empty iterator rather than panicking, so an off-by-one here raises nothing, posts
+    /// nothing, and reports the run as having done less work than it did.
+    #[test]
+    fn a_spike_from_the_first_neuron_the_network_does_not_have_is_refused() {
+        let mut b = NetBuilder::new(2);
+        b.connect(0, 1, 20e-3, 1).unwrap();
+        b.connect(1, 0, 20e-3, 1).unwrap();
+        let net = b.build();
+
+        let past_the_end = Train::from_spikes(vec![Spike { t: 0, source: 2 }]);
+        assert_eq!(
+            account_for_train(&net, &past_the_end, 10).unwrap_err(),
+            MetricError::SourceOutOfRange { source: 2, n: 2 }
+        );
+        // One below it is a neuron the network has, and its outgoing synapse is posted.
+        let legal = Train::from_spikes(vec![Spike { t: 0, source: 1 }]);
+        assert_eq!(account_for_train(&net, &legal, 10).unwrap().posted, 1);
+    }
+
+    /// A layer with NO activations is refused, not measured as a layer that performed no
+    /// operations.
+    ///
+    /// Why the suite could not see it: `layer_synops` derives its fan-in from `activations.len()`,
+    /// so an empty slice needs an empty weight matrix, passes every shape check, and returns
+    /// `SynOps { dense: 0, effective_macs: 0, effective_acs: 0 }` — whose `reduction()` is `None`,
+    /// exactly as a silent layer's is. Every "silent layer" fixture in this module HAS activations
+    /// and they are all zero, which is a measurement of quiet rather than a measurement of nothing.
+    #[test]
+    fn a_layer_with_no_activations_at_all_is_refused_rather_than_measured() {
+        for kind in [ActivationKind::Spiking, ActivationKind::RealValued] {
+            assert_eq!(
+                layer_synops(&[], &[], 3, kind).unwrap_err(),
+                MetricError::Empty { what: "activations" },
+                "{kind:?}"
+            );
+        }
+        // The meter refuses it too, and does not record the layer as seen.
+        let mut m = SynOpMeter::default();
+        assert!(m.layer(&[], &[], 3, ActivationKind::Spiking).is_err());
+        assert_eq!(m.layers_seen, 0);
+
+        // A layer that HAS activations and is silent is a different claim, and it is measured.
+        let quiet =
+            layer_synops(&[0.0, 0.0], &[1.0, 1.0, 1.0, 1.0], 2, ActivationKind::Spiking).unwrap();
+        assert_eq!(quiet.dense, 4);
+        assert_eq!(quiet.effective_acs, 0);
+        assert_eq!(quiet.reduction(), None);
+    }
+
+    /// 64 bits is the WIDEST accepted width, not the first refused one: the error's own text names
+    /// the range `1..=64`, and a 64-bit float parameter is the commonest value in it.
+    ///
+    /// Why the suite could not see it: the refusal fixture tries 0 and 65, and a bound weakened
+    /// from `> 64` to `>= 64` refuses both of those as well. The only width whose verdict moves is
+    /// 64 itself, and every footprint in this module is 2, 3, 4, 8 or 32 bits wide.
+    #[test]
+    fn a_sixty_four_bit_value_is_the_widest_accepted_and_not_the_first_refused() {
+        let f = Footprint::new(10, 64, 10, 64).unwrap();
+        assert_eq!(f.parameter_bits, 640);
+        assert_eq!(f.state_bits, 640);
+        assert_eq!(f.bytes().unwrap(), 160);
+        // A model stored at `f64` is the ordinary case this admits.
+        assert_eq!(Footprint::new(1_000_000, 64, 0, 8).unwrap().bytes().unwrap(), 8_000_000);
+        // And the stated range is the one the message promises.
+        assert_eq!(
+            MetricError::BadBitWidth { bits: 65 }.to_string(),
+            "65 bits per value is out of range 1..=64"
+        );
+        assert_eq!(Footprint::new(10, 65, 0, 8).unwrap_err(), MetricError::BadBitWidth { bits: 65 });
+    }
+
+    /// A hand-assembled CSR row is SORTED before its parallel synapses are grouped, because
+    /// `Net`'s fields are public and only `NetBuilder::build` guarantees ascending `post` order.
+    ///
+    /// Why the suite could not see it: every `Net` in this module comes from `NetBuilder`, whose
+    /// rows are already ascending, so the sort under test is a no-op on all of them. Only a row the
+    /// builder cannot produce — two synapses onto one postsynaptic neuron with a third onto another
+    /// between them — separates the grouping from the sort, and then the run-length grouping counts
+    /// one connection twice.
+    #[test]
+    fn a_hand_assembled_row_is_sorted_before_its_parallel_synapses_are_grouped() {
+        // Neuron 0 wired to 1, then 0, then 1 again: one delay line to neuron 1 written on either
+        // side of the self-edge. Two distinct ordered pairs, three stored synapses.
+        let net = Net {
+            n: 2,
+            offset: vec![0, 3, 3],
+            post: vec![1, 0, 1],
+            w: vec![5e-3, 5e-3, 5e-3],
+            delay: vec![1, 2, 3],
+            n_syn: 3,
+            max_delay: 3,
+        };
+        // Two of the four connections of a 2-neuron architecture are present, so two are absent.
+        // Counting the row's RUNS instead of its distinct posts gives three pairs and 0.25.
+        assert_eq!(connection_sparsity_of(&net, 4).unwrap(), 0.5);
+
+        // The same three synapses in ascending order, which is what the builder would have left,
+        // give the same answer — that is the invariant the sort exists to restore.
+        let sorted = Net { post: vec![0, 1, 1], delay: vec![2, 1, 3], ..net.clone() };
+        assert_eq!(connection_sparsity_of(&sorted, 4).unwrap(), 0.5);
+    }
+
+    /// A non-finite score is refused by top-`k` rather than ranked.
+    ///
+    /// Why the suite could not see it: `NaN` compares false against everything, so the count of
+    /// classes scoring strictly higher than the true class is an ordinary integer and the accuracy
+    /// is an ordinary fraction — nothing in the number says a score was missing. The only
+    /// non-finite fixtures in this module are on `mean_squared_error`'s inputs and on layer
+    /// activations and weights.
+    #[test]
+    fn a_non_finite_score_is_refused_by_top_k_rather_than_ranked() {
+        let truth = [0usize, 1];
+        let mut scores = vec![0.1, 0.9, 0.9, 0.1];
+        assert_eq!(top_k_accuracy(&scores, 2, &truth, 1).unwrap(), 0.0);
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            scores[2] = bad;
+            assert_eq!(
+                top_k_accuracy(&scores, 2, &truth, 1).unwrap_err(),
+                MetricError::NonFinite { what: "score", index: 2 },
+                "{bad}"
+            );
+        }
+    }
+
+    /// The mean squared error of an EMPTY test set is refused, not computed.
+    ///
+    /// Why the suite could not see it: with no samples the numerator is `0.0` and the divisor is
+    /// `0.0`, so the guarded-away path returns `NaN` rather than panicking. `accuracy` carries the
+    /// identical guard and IS exercised on empty input, which is what made this look covered; they
+    /// are different functions, and `r_squared`'s copy of the guard is a third.
+    #[test]
+    fn the_mean_squared_error_of_an_empty_test_set_is_refused() {
+        assert_eq!(
+            mean_squared_error(&[], &[]).unwrap_err(),
+            MetricError::Empty { what: "test set" }
+        );
+        // One sample is the smallest test set that has an answer, and it has one.
+        assert_eq!(mean_squared_error(&[3.0], &[1.0]).unwrap(), 4.0);
+        // The neighbouring guards, so that "empty" is refused by each of the three separately.
+        assert_eq!(r_squared(&[], &[]).unwrap_err(), MetricError::Empty { what: "test set" });
+        assert_eq!(accuracy(&[], &[]).unwrap_err(), MetricError::Empty { what: "test set" });
+    }
+
+    /// A non-finite score is refused by average precision rather than sorted.
+    ///
+    /// Why the suite could not see it: the ranking is ordered by `total_cmp`, which is a TOTAL
+    /// order — a `NaN` sorts deterministically above every finite score, an infinity sorts at the
+    /// end it belongs to — so the function returns an ordinary average precision with no sign that
+    /// a score was missing. Every ranking fixture in this module is finite.
+    #[test]
+    fn a_non_finite_score_is_refused_by_average_precision_rather_than_sorted() {
+        assert_eq!(
+            average_precision(&[f64::NAN, 0.5], &[false, true]).unwrap_err(),
+            MetricError::NonFinite { what: "score", index: 0 }
+        );
+        assert_eq!(
+            average_precision(&[0.5, f64::NEG_INFINITY], &[true, false]).unwrap_err(),
+            MetricError::NonFinite { what: "score", index: 1 }
+        );
+        assert_eq!(
+            average_precision(&[0.5, 0.4, f64::INFINITY], &[true, false, true]).unwrap_err(),
+            MetricError::NonFinite { what: "score", index: 2 }
+        );
+    }
+
+    /// `mean_average_precision` reads its score matrix ROW-major, at the same stride as its
+    /// labels: sample `s`'s entry for class `c` is at `s * classes + c`.
+    ///
+    /// Why the suite could not see it: the only fixture was two samples of two classes, where the
+    /// transposition swaps one pair of entries and leaves both columns' RANKINGS — and therefore
+    /// both average precisions — unchanged. Three samples of two classes separates them, and the
+    /// labels stay row-major either way, so a transposed read silently pairs each score with
+    /// another sample's label.
+    #[test]
+    fn the_score_matrix_is_read_row_major_like_its_labels() {
+        // Three samples, two classes, row-major: sample `s` occupies `scores[2 * s..2 * s + 2]`.
+        let scores = [0.9, 0.1, 0.2, 0.8, 0.3, 0.7];
+        let labels = [true, false, false, true, false, true];
+
+        // Class 0's column is [0.9, 0.2, 0.3] against [T, F, F]: the one positive ranks first,
+        // AP 1.0. Class 1's column is [0.1, 0.8, 0.7] against [F, T, T]: both positives rank
+        // first and second, AP 1.0. The mean over the two classes is exactly 1.0.
+        assert_eq!(average_precision(&[0.9, 0.2, 0.3], &[true, false, false]).unwrap(), 1.0);
+        assert_eq!(average_precision(&[0.1, 0.8, 0.7], &[false, true, true]).unwrap(), 1.0);
+        assert_eq!(mean_average_precision(&scores, &labels, 2).unwrap(), 1.0);
+
+        // Read column-major, class 1's column would be `scores[3..6]` = [0.8, 0.3, 0.7] against
+        // the same labels [F, T, T], whose positives then rank second and third.
+        let transposed = average_precision(&[0.8, 0.3, 0.7], &[false, true, true]).unwrap();
+        assert_eq!(transposed, (1.0 / 2.0 + 2.0 / 3.0) / 2.0);
+    }
+
+    /// A score matrix whose length is not a whole number of samples is refused, not truncated.
+    ///
+    /// Why the suite could not see it: `samples` is `scores.len() / classes`, an integer division,
+    /// so a trailing partial sample is dropped and the mean comes back over the samples that did
+    /// divide — an ordinary number carrying no sign that a sample was discarded. The neighbouring
+    /// guard, `scores.len() != labels.len()`, passes, because both arrays are the same wrong
+    /// length; that is the shape a caller who mis-declared `classes` actually produces.
+    #[test]
+    fn a_score_matrix_that_is_not_a_whole_number_of_samples_is_refused() {
+        // Five entries over two classes is two samples and a half.
+        let short = [0.9, 0.1, 0.2, 0.8, 0.3];
+        let short_labels = [true, false, false, true, false];
+        assert_eq!(
+            mean_average_precision(&short, &short_labels, 2).unwrap_err(),
+            MetricError::LengthMismatch { a: 5, b: 2 }
+        );
+        // Six of them is three whole samples, and that is measured.
+        let whole = [0.9, 0.1, 0.2, 0.8, 0.3, 0.7];
+        let whole_labels = [true, false, false, true, false, true];
+        assert_eq!(mean_average_precision(&whole, &whole_labels, 2).unwrap(), 1.0);
+    }
+
+    /// `summarise` divides by the INFERENCE count it was given, not by the run's tick count.
+    ///
+    /// Why the suite could not see it: both summary fixtures in this module pass `ticks` for
+    /// `inferences`, which the doc names as the free-running exception rather than the rule. With
+    /// the two equal the denominator cannot say which variable it read — and a spiking classifier
+    /// integrates over a window of ticks per presented sample, so on the workloads the metric was
+    /// defined for the two differ by that window, and all three published crossover verdicts are
+    /// adjudicated from the result.
+    #[test]
+    fn the_spikes_per_synapse_denominator_is_the_inference_count_and_not_the_tick_count() {
+        let mut b = NetBuilder::new(2);
+        b.connect(0, 1, 20e-3, 1).unwrap();
+        let net = b.build();
+        let train = Train::from_spikes(vec![Spike { t: 0, source: 0 }, Spike { t: 4, source: 0 }]);
+        let ledger = Ledger { syn_ops: 2, ..Ledger::default() };
+        let fp = Footprint::new(1, 8, 2, 32).unwrap();
+
+        // 2 deliveries over 1 synapse over 4 inferences is 0.5 per synapse per inference.
+        let s = summarise(&net, &ledger, &train, 20, 4, fp).unwrap();
+        assert_eq!(s.ticks, 20);
+        assert_eq!(s.spikes_per_synapse.unwrap(), 0.5);
+        // Over the run's twenty ticks it would be 0.1 — a fifth of the number, and just as
+        // finite and just as plausible-looking in a results table.
+        assert_eq!(ledger.spikes_per_synapse(net.n_syn as u64, 20).unwrap(), 0.1);
+    }
+
+    /// The summary's idle fraction is read FROM the ledger it was handed.
+    ///
+    /// Why the suite could not see it: `None` is a legitimate value of the field — it is what a
+    /// ledger that recorded no membrane updates reports — and every hand-assembled `Ledger` in
+    /// this module's summary fixtures has exactly that, while the simulator-driven ones never read
+    /// the field at all. So a hardcoded `None` is indistinguishable from the honest answer on
+    /// every input this module had.
+    #[test]
+    fn the_summarys_idle_fraction_comes_from_the_ledger() {
+        let mut b = NetBuilder::new(2);
+        b.connect(0, 1, 20e-3, 1).unwrap();
+        let net = b.build();
+        let train = Train::from_spikes(vec![Spike { t: 0, source: 0 }]);
+        let fp = Footprint::new(1, 8, 2, 32).unwrap();
+
+        // Three idle membrane updates in four is exactly 0.75.
+        let ledger = Ledger {
+            syn_ops: 1,
+            neuron_updates_idle: 3,
+            neuron_updates_driven: 1,
+            ..Ledger::default()
+        };
+        let s = summarise(&net, &ledger, &train, 10, 10, fp).unwrap();
+        assert_eq!(s.idle_fraction, Some(0.75));
+        assert_eq!(s.idle_fraction, ledger.idle_fraction());
+
+        // A ledger that recorded no membrane updates has no idle fraction, and the summary says
+        // so — which is why `None` on its own proves nothing.
+        let silent = Ledger { syn_ops: 1, ..Ledger::default() };
+        assert_eq!(summarise(&net, &silent, &train, 10, 10, fp).unwrap().idle_fraction, None);
+    }
+
+    /// The printed report shows the activation SPARSITY it carries, not its complement.
+    ///
+    /// Why the suite could not see it: the only assertions on the printed report are `contains`
+    /// checks for the cross-check line and for "NOT MEASURED"; no test reads the sparsity line.
+    /// Printing `1 - sparsity` under a label that says "activation sparsity" turns a 96%-sparse
+    /// run into a 4%-sparse one, in the one place a reader of the report looks for the number.
+    #[test]
+    fn the_report_prints_the_sparsity_and_not_the_density() {
+        let mut b = NetBuilder::new(2);
+        b.connect(0, 1, 20e-3, 1).unwrap();
+        let net = b.build();
+        // Two spikes, two neurons, 25 ticks: 48 of 50 neuron-timesteps silent, 0.96 sparse.
+        let train = Train::from_spikes(vec![Spike { t: 0, source: 0 }, Spike { t: 4, source: 0 }]);
+        let ledger = Ledger { syn_ops: 2, ..Ledger::default() };
+        let fp = Footprint::new(1, 8, 2, 32).unwrap();
+        let s = summarise(&net, &ledger, &train, 25, 25, fp).unwrap();
+        assert_eq!(s.activation_sparsity, 0.96);
+
+        let text = format!("{s}");
+        assert!(text.contains("activation sparsity   0.960000"), "{text}");
+        assert!(!text.contains("activation sparsity   0.040000"), "{text}");
     }
 }

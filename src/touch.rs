@@ -853,4 +853,273 @@ mod tests {
         tip.reset();
         assert_eq!((tip.ticks, tip.total_spikes()), (0, 0));
     }
+
+    /// A zero gain, corner, width or duration is refused, and an INFINITY is not a finite depth.
+    /// Both guards read `is_finite() && <comparison>`; dropping either half leaves a check that
+    /// still rejects everything the suite happened to hand it — a negative depth, a `NaN`
+    /// velocity, an inverted band — so neither the zero that `> 0.0` admits when it is weakened
+    /// to `>= 0.0` nor the `+∞` that `>= 0.0` admits on its own was reachable from any existing
+    /// assertion.
+    #[test]
+    fn a_zero_magnitude_is_refused_and_an_infinity_is_not_a_finite_depth() {
+        let fs = 1000.0;
+        assert!(matches!(Afferent::sa1(0.0, 0.3, 0.2, cell()), Err(TouchError::OutOfRange { what: "gain", .. })));
+        assert!(matches!(Afferent::ra(0.0, cell()), Err(TouchError::OutOfRange { what: "gain", .. })));
+        assert!(matches!(Afferent::pc(0.0, cell()), Err(TouchError::OutOfRange { what: "gain", .. })));
+        assert!(matches!(Afferent::sa1(1.0, 0.3, 0.0, cell()), Err(TouchError::OutOfRange { what: "tau_adapt", .. })));
+        assert!(matches!(BandPass::new(0.0, 400.0), Err(TouchError::OutOfRange { what: "f_lo", .. })));
+        assert!(matches!(BandPass::new(40.0, 0.0), Err(TouchError::OutOfRange { what: "f_hi", .. })));
+        assert!(matches!(features(&[0.0, 1e-3, 2e-3], 0.0), Err(TouchError::OutOfRange { what: "fs", .. })));
+        assert!(matches!(ramp_and_hold(fs, 0.0, 0.1, 0.2, 0.05), Err(TouchError::OutOfRange { what: "depth", .. })));
+        assert!(matches!(ramp_and_hold(fs, 1e-3, 0.0, 0.2, 0.05), Err(TouchError::OutOfRange { what: "ramp_s", .. })));
+        assert!(matches!(ramp_and_hold(fs, 1e-3, 0.1, 0.0, 0.05), Err(TouchError::OutOfRange { what: "hold_s", .. })));
+        let proto = Afferent::ra(2e-7, cell()).unwrap();
+        assert!(matches!(Fingertip::line(3, 0.0, 2e-3, &proto), Err(TouchError::OutOfRange { what: "length", .. })));
+        // The finiteness half of the same two guards.
+        let mut a = Afferent::ra(2e-7, cell()).unwrap();
+        let boundless = Contact { depth: f64::INFINITY, velocity: 0.0, acceleration: 0.0 };
+        assert!(matches!(a.step(fs, &boundless), Err(TouchError::OutOfRange { what: "depth", .. })));
+        assert!(matches!(ramp_and_hold(fs, 1e-3, 0.1, 0.2, f64::INFINITY), Err(TouchError::OutOfRange { what: "pad_s", .. })));
+        assert!(matches!(Afferent::ra(f64::INFINITY, cell()), Err(TouchError::OutOfRange { what: "gain", .. })));
+        // A zero depth is a legal contact — no contact — and must NOT be refused by either.
+        assert!(a.step(fs, &Contact { depth: 0.0, velocity: 0.0, acceleration: 0.0 }).is_ok());
+    }
+
+    /// A non-finite sample of a depth trace is refused at ITS OWN index. The scan is the only
+    /// thing that reads a trace for finiteness — a `NaN` is not less than zero, so it walks
+    /// straight through the negative-depth check below it — and every existing caller hands
+    /// `features` a trace it generated itself, so a scan that could never find anything, and a
+    /// scan that always blamed slot zero, were both invisible.
+    #[test]
+    fn a_non_finite_depth_sample_is_refused_at_its_own_index() {
+        let fs = 1000.0;
+        for (slot, bad) in [(1usize, f64::NAN), (2, f64::INFINITY), (3, f64::NEG_INFINITY)] {
+            let mut trace = vec![1e-3; 4];
+            trace[slot] = bad;
+            match features(&trace, fs) {
+                Err(TouchError::NonFinite { what, index }) => assert_eq!((what, index), ("depth", slot)),
+                other => panic!("a {bad} at slot {slot} was accepted: {other:?}"),
+            }
+        }
+    }
+
+    /// Every error variant renders its own fields in the order its sentence names them. No other
+    /// test in this module renders one — they all destructure the variant and read `what` — so a
+    /// message that printed its bounds, or its two lengths, the wrong way round would say the
+    /// exact opposite of the truth to the only audience it has, and nothing would fail.
+    #[test]
+    fn every_error_renders_its_values_in_the_order_its_sentence_names_them() {
+        let out_of_range = TouchError::OutOfRange { what: "sigma", value: 9.0, low: 0.0, high: 1.0 };
+        assert_eq!(out_of_range.to_string(), "sigma = 9 is outside [0, 1]");
+        let non_finite = TouchError::NonFinite { what: "depth", index: 3 };
+        assert_eq!(non_finite.to_string(), "depth is not finite at 3");
+        assert_eq!(TouchError::Empty { what: "afferents" }.to_string(), "afferents is empty");
+        let dimension = TouchError::Dimension { what: "bias", got: 1, want: 2 };
+        assert_eq!(dimension.to_string(), "bias has 1 entries, needs 2");
+    }
+
+    /// The velocity at each end of a depth trace is a WHOLE one-sided difference taken in the
+    /// direction of time: `(d₁ − d₀)/Δt` at the start and `(d_{n−1} − d_{n−2})/Δt` at the end.
+    /// The existing derivative test reads slot 2 of a five-sample trace, which is interior, so
+    /// an end halved as though it were a central difference, or read backwards in time, changed
+    /// nothing any assertion touched.
+    #[test]
+    fn the_end_velocities_are_whole_one_sided_differences_taken_forward_in_time() {
+        // Squares at unit rate: the forward difference at the start is 1 and the backward one at
+        // the end is 7, and both are exact in binary.
+        let squares = [0.0, 1.0, 4.0, 9.0, 16.0];
+        let unit = features(&squares, 1.0).unwrap();
+        assert_eq!(unit[0].velocity, 1.0);
+        assert_eq!(unit[4].velocity, 7.0);
+        // The ends carry no second difference to take, and say so with zero rather than a guess.
+        assert_eq!(unit[0].acceleration, 0.0);
+        assert_eq!(unit[4].acceleration, 0.0);
+        // At 2 Hz the interval is exactly ½, so the same differences double rather than halve.
+        let fast = features(&squares, 2.0).unwrap();
+        assert_eq!(fast[0].velocity, 2.0);
+        assert_eq!(fast[4].velocity, 14.0);
+    }
+
+    /// A reset band-pass IS a fresh band-pass, field for field, and answers the same input
+    /// sequence identically. The one test that resets the filter measures a steady amplitude
+    /// 300 ms later, by which time any charge left in a section has decayed under its 5%
+    /// tolerance — so a reset that cleared the high-pass and left the low-pass charged was
+    /// invisible.
+    #[test]
+    fn a_reset_band_pass_is_field_for_field_a_fresh_one() {
+        let fs = 20_000.0;
+        let mut used = BandPass::new(40.0, 400.0).unwrap();
+        for k in 0..4000 {
+            used.step(fs, (core::f64::consts::TAU * 120.0 * k as f64 / fs).sin());
+        }
+        assert_ne!(used, BandPass::new(40.0, 400.0).unwrap(), "the filter never charged");
+        used.reset();
+        let mut fresh = BandPass::new(40.0, 400.0).unwrap();
+        assert_eq!(used, fresh);
+        for k in 0..64 {
+            let x = (core::f64::consts::TAU * 250.0 * k as f64 / fs).sin();
+            assert_eq!(used.step(fs, x), fresh.step(fs, x));
+        }
+    }
+
+    /// A Pacinian afferent is born carrying the band this module's table publishes, 40 to
+    /// 400 Hz, and the other two classes carry none. The vibration test builds its OWN
+    /// `BandPass` to check the transfer function and never reads the one `Afferent::pc`
+    /// installed, so a constructor that handed the cell a decade more band at either end moved
+    /// no assertion: the 250 Hz drive and the 5 Hz rejection both survive a 40–4000 Hz band.
+    #[test]
+    fn a_pacinian_is_born_with_the_published_forty_to_four_hundred_hertz_band() {
+        let pc = Afferent::pc(1e-9, cell()).unwrap();
+        let band = pc.band.expect("a PC afferent carries a band-pass");
+        assert_eq!((band.f_lo, band.f_hi), (40.0, 400.0));
+        assert_eq!(Afferent::sa1(4e-6, 0.3, 0.2, cell()).unwrap().band, None);
+        assert_eq!(Afferent::ra(2e-7, cell()).unwrap().band, None);
+    }
+
+    /// `Afferent::steady_rate` is the rate the afferent settles to with its adaptation COMPLETE,
+    /// so it is a property of the afferent's parameters and not of its current state: a fresh
+    /// SA1 and one that has held a contact for a second report the same number. And a Pacinian
+    /// has no steady rate at all, because a constant acceleration is exactly what its band-pass
+    /// rejects. Every existing use of it compares it to a MEASURED count inside a tolerance, or
+    /// asks only whether it is positive, so reading the wrong adaptation — or inventing a PC
+    /// rate from raw acceleration — was invisible.
+    #[test]
+    fn the_steady_rate_is_the_fully_adapted_one_and_a_pacinian_has_none() {
+        let fs = 1000.0;
+        let held = Contact { depth: 1e-3, velocity: 0.0, acceleration: 0.0 };
+        let mut sa = Afferent::sa1(4e-6, 0.3, 0.2, cell()).unwrap();
+        // The drive the doc names, multiplied in the order the module multiplies it.
+        let want = 1.0 / cell().isi(4e-6 * 1e-3 * (1.0 - 0.3)).unwrap();
+        assert_eq!(sa.steady_rate(&held), Some(want), "a fresh afferent does not quote its settled rate");
+        for _ in 0..1000 {
+            sa.step(fs, &held).unwrap();
+        }
+        assert_eq!(sa.steady_rate(&held), Some(want), "the quoted steady rate moved as the afferent adapted");
+        // 10 m/s² held constant is 10 nA of raw drive, near seven times the cell's rheobase.
+        let pc = Afferent::pc(1e-9, cell()).unwrap();
+        let shoved = Contact { depth: 1e-3, velocity: 0.0, acceleration: 10.0 };
+        assert!(cell().isi(1e-9 * 10.0).is_some(), "the probe acceleration is below rheobase");
+        assert_eq!(pc.steady_rate(&shoved), None, "a constant acceleration is not a vibration");
+    }
+
+    /// A `NaN` acceleration and a `NaN` contact position are each refused BY NAME. Both guards
+    /// are written `!x.is_finite()`, and an `is_infinite()` put in their place still rejects the
+    /// infinities — which is all the suite ever tried, because a `NaN` that gets through does not
+    /// panic: it becomes a `NaN` drive current the cell integrates into silence, which reads as a
+    /// quiet afferent. The position guard's `NaN` does reach an error, but the WRONG one, so the
+    /// variant is asserted rather than the failure.
+    #[test]
+    fn a_nan_acceleration_or_contact_position_is_refused_by_name() {
+        let fs = 1000.0;
+        let mut pc = Afferent::pc(1e-9, cell()).unwrap();
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let c = Contact { depth: 1e-3, velocity: 0.0, acceleration: bad };
+            assert!(
+                matches!(pc.step(fs, &c), Err(TouchError::NonFinite { what: "acceleration", index: 0 })),
+                "an acceleration of {bad} was not refused as an acceleration"
+            );
+        }
+        let proto = Afferent::ra(2e-7, cell()).unwrap();
+        let mut tip = Fingertip::line(3, 10e-3, 2e-3, &proto).unwrap();
+        let resting = Contact { depth: 1e-3, velocity: 0.0, acceleration: 0.0 };
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(
+                matches!(tip.step(fs, &resting, bad), Err(TouchError::NonFinite { what: "x_c", index: 0 })),
+                "a contact position of {bad} was not refused as a position"
+            );
+        }
+    }
+
+    /// A receptive field must have a positive, finite width: at σ = 0 the Gaussian is `exp(−∞)`
+    /// for every afferent but the one exactly under the contact, which is a fingertip that feels
+    /// nothing at all. The constructor's check had its result available to discard, and this
+    /// review did not locate any existing test that builds a line with a bad width.
+    #[test]
+    fn a_receptive_field_of_zero_or_non_finite_width_is_refused() {
+        let proto = Afferent::ra(2e-7, cell()).unwrap();
+        for bad in [0.0, -1e-3, f64::NAN, f64::INFINITY] {
+            assert!(
+                matches!(Fingertip::line(3, 10e-3, bad, &proto), Err(TouchError::OutOfRange { what: "sigma", .. })),
+                "a receptive field of width {bad} was accepted"
+            );
+        }
+    }
+
+    /// A two-afferent line has a spacing, and it is the whole line. `Fingertip::spacing` is the
+    /// resolution floor every centroid decode in this module is quoted against, so a line that
+    /// reported zero would make any decode look exact; the only lines the suite measures have
+    /// twenty-one afferents, which is above every threshold a scan of the first two slots could
+    /// be given.
+    #[test]
+    fn a_two_afferent_line_reports_the_whole_line_as_its_spacing() {
+        let proto = Afferent::sa1(4e-6, 0.3, 0.2, cell()).unwrap();
+        let pair = Fingertip::line(2, 10e-3, 2e-3, &proto).unwrap();
+        assert_eq!(pair.positions, vec![0.0, 10e-3]);
+        assert_eq!(pair.spacing(), 10e-3);
+        let trio = Fingertip::line(3, 10e-3, 2e-3, &proto).unwrap();
+        assert_eq!(trio.spacing(), 5e-3);
+        // A lone afferent has no spacing to report and says so with zero rather than a panic.
+        assert_eq!(Fingertip::line(1, 10e-3, 2e-3, &proto).unwrap().spacing(), 0.0);
+    }
+
+    /// The receptive field attenuates all THREE features an afferent sees, not the depth alone:
+    /// an afferent ten widths from a slip must not feel the slip, and one ten widths from a
+    /// buzz must not feel the buzz. The population tests drive SA1 afferents, whose drive reads
+    /// only the depth; the slip test steps each afferent by hand with a local contact it
+    /// computed itself and never calls `Fingertip::step`. So the velocity and the acceleration
+    /// the fingertip hands its afferents were, between them, read by nothing.
+    #[test]
+    fn the_receptive_field_attenuates_velocity_and_acceleration_as_well_as_depth() {
+        let fs = 10_000.0;
+        // Ten millimetres at σ = 1 mm is exp(−50): a far afferent sees 2e-22 of the contact.
+        let ra = Afferent::ra(2e-7, cell()).unwrap();
+        let mut slip = Fingertip::line(3, 20e-3, 1e-3, &ra).unwrap();
+        let moving = Contact { depth: 1e-3, velocity: 0.1, acceleration: 0.0 };
+        for _ in 0..(0.2 * fs) as usize {
+            slip.step(fs, &moving, 0.0).unwrap();
+        }
+        assert!(slip.afferents[0].spikes > 0, "the afferent under a 100 mm/s slip did not fire");
+        assert_eq!(slip.afferents[1].spikes, 0, "an afferent ten widths away felt the slip");
+        assert_eq!(slip.afferents[2].spikes, 0, "an afferent twenty widths away felt the slip");
+
+        let pc = Afferent::pc(1e-9, cell()).unwrap();
+        let mut buzz = Fingertip::line(3, 20e-3, 1e-3, &pc).unwrap();
+        let w = core::f64::consts::TAU * 250.0;
+        for k in 0..(0.2 * fs) as usize {
+            let shake = Contact { depth: 1e-3, velocity: 0.0, acceleration: 40.0 * (w * k as f64 / fs).sin() };
+            buzz.step(fs, &shake, 0.0).unwrap();
+        }
+        assert!(buzz.afferents[0].spikes > 0, "the afferent under a 250 Hz buzz did not fire");
+        assert_eq!(buzz.afferents[1].spikes, 0, "an afferent ten widths away felt the buzz");
+        assert_eq!(buzz.afferents[2].spikes, 0, "an afferent twenty widths away felt the buzz");
+    }
+
+    /// The raised-cosine stimulus pads at exactly zero and holds at exactly the depth asked for.
+    /// `cos 0` and `cos π` are ±1 to the last bit in `f64`, so both ends are exact values that
+    /// need no tolerance, and between them the ramp is monotone and lies below the straight line
+    /// in its first half and above it in its second. The channel-separation test hands the
+    /// smooth trace straight to the afferents and asserts on spike counts and on an acceleration
+    /// BOUND — all of which a stimulus of twice the depth, or one holding at zero and padding at
+    /// depth, still satisfies.
+    #[test]
+    fn the_raised_cosine_pads_at_zero_and_holds_at_exactly_the_depth_asked_for() {
+        let fs = 1000.0;
+        let depth = 2e-3;
+        let smooth = cosine_ramp_and_hold(fs, depth, 0.1, 0.2, 0.05).unwrap();
+        let straight = ramp_and_hold(fs, depth, 0.1, 0.2, 0.05).unwrap();
+        assert_eq!(smooth.len(), 500);
+        assert_eq!(smooth[0], 0.0);
+        assert_eq!(smooth[49], 0.0);
+        assert_eq!(smooth[200], depth);
+        assert_eq!(smooth[300], depth);
+        assert_eq!(smooth[499], 0.0);
+        let peak = smooth.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        assert_eq!(peak, depth, "the smooth stimulus left the depth asked for");
+        // ½(1 − cos πf) pulls the fraction toward the ends of the ramp, and only toward them.
+        assert!(smooth[75] > 0.0 && smooth[75] < straight[75], "quarter way up: {} vs {}", smooth[75], straight[75]);
+        assert!(smooth[125] > straight[125] && smooth[125] < depth, "three quarters up: {} vs {}", smooth[125], straight[125]);
+        for pair in smooth[50..=150].windows(2) {
+            assert!(pair[1] > pair[0], "the raised-cosine ramp is not monotone: {pair:?}");
+        }
+    }
 }

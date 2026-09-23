@@ -528,4 +528,137 @@ mod tests {
         assert!(cosine(&[0.0, 0.0], &[1.0, 1.0]).is_none() && cosine(&[1.0], &[1.0, 2.0]).is_none());
         assert!(AlignmentError::NoDirectFeedback.to_string().contains("direct"));
     }
+
+    /// Pins the value of [`MAX_WEIGHTS`] and that the limit is INCLUSIVE. `bad_shapes_and_values_are_refused`
+    /// asks for a layer of `2^26` weights, which is over the limit whatever the limit is and over
+    /// it whichever way the comparison is written, so a ceiling a sixteenth of the published one
+    /// and a boundary that refused a layer of exactly the published size both passed.
+    #[test]
+    fn the_weight_limit_is_sixteen_million_and_a_layer_of_exactly_that_many_is_built() {
+        const { assert!(MAX_WEIGHTS == 1 << 24, "the per-layer weight ceiling is 2^24") };
+        // 4,096 x 4,096 is MAX_WEIGHTS exactly: the largest layer the documentation admits.
+        let edge = Mlp::random(&[1 << 12, 1 << 12], Activation::Linear, 1).unwrap();
+        assert_eq!(edge.w[0].len(), MAX_WEIGHTS);
+        drop(edge);
+        // One column more is over it.
+        assert_eq!(
+            Mlp::random(&[1 << 12, (1 << 12) + 1], Activation::Linear, 1).err(),
+            Some(AlignmentError::BadShape)
+        );
+    }
+
+    /// Pins every matrix a random network draws, against the same generator run again at the
+    /// scales the constructor's doc names. Nothing in the suite reads a drawn value: the tests
+    /// either compare two rules on the SAME network, where a common scale cancels, or train and
+    /// look at a cosine, which is scale-invariant in the update it measures. So the forward
+    /// weights could go unnormalised, the sequential feedback could be normalised by the wrong one
+    /// of its two widths, and the direct feedback could lose its square root, with every test
+    /// green. The layer widths here — 2, 3, 4, 9 — are chosen so that the three scales are three
+    /// different numbers, and each is exact, so the comparison is an equality.
+    #[test]
+    fn a_random_network_draws_every_matrix_at_the_scale_its_doc_names() {
+        let net = Mlp::random(&[2, 3, 4, 9], Activation::Tanh, 11).unwrap();
+        let mut echo = Rng::new(11);
+        let mut drawn = |mag: f64, n: usize| -> Vec<f64> {
+            (0..n).map(|_| mag * (2.0 * echo.next_f64() - 1.0)).collect()
+        };
+        // Forward weights: one over the square root of the FAN-IN, which is the width below.
+        assert_eq!(net.w[0], drawn(1.0 / 2.0f64.sqrt(), 3 * 2));
+        assert_eq!(net.w[1], drawn(1.0 / 3.0f64.sqrt(), 4 * 3));
+        assert_eq!(net.w[2], drawn(1.0 / 4.0f64.sqrt(), 9 * 4));
+        // Sequential feedback carries the delta of the layer ABOVE, so its input width is that
+        // layer's: 4 for the first hidden layer, 9 for the second.
+        assert_eq!(net.feedback[0], drawn(1.0 / 4.0f64.sqrt(), 3 * 4));
+        assert_eq!(net.feedback[1], drawn(1.0 / 9.0f64.sqrt(), 4 * 9));
+        // Direct feedback carries the OUTPUT error, so both are scaled by the output width.
+        assert_eq!(net.direct[0], drawn(1.0 / 9.0f64.sqrt(), 3 * 9));
+        assert_eq!(net.direct[1], drawn(1.0 / 9.0f64.sqrt(), 4 * 9));
+        assert!(net.b.iter().flatten().all(|v| *v == 0.0), "the biases start at zero");
+    }
+
+    /// Pins what each error PRINTS. `bad_shapes_and_values_are_refused` matches on the variants and
+    /// reads one substring of one message, so a shape error that swapped the length supplied for
+    /// the length required, and a non-finite error that said the quantity WAS finite, both told a
+    /// reader the opposite of the truth while every assertion held.
+    #[test]
+    fn every_error_says_which_quantity_it_means_and_which_way_round() {
+        assert_eq!(
+            AlignmentError::Shape { what: "x", got: 2, want: 3 }.to_string(),
+            "x has 2 entries, not 3"
+        );
+        assert_eq!(AlignmentError::NonFinite { what: "rate" }.to_string(), "rate is not finite");
+        assert_eq!(
+            AlignmentError::BadShape.to_string(),
+            "a network needs at least two layers, each of at least one unit"
+        );
+        assert_eq!(
+            AlignmentError::NoDirectFeedback.to_string(),
+            "the direct feedback matrices do not match the network's shape"
+        );
+    }
+
+    /// Pins that [`Activation::Linear`] is the identity going forward and has slope one coming
+    /// back. Every test that uses a linear network compares one RULE with another on that same
+    /// network, and a wrong activation or a wrong slope sits on both sides of every one of those
+    /// comparisons: doubling the forward pass, or zeroing the slope so that every hidden update
+    /// vanishes, left `in_a_linear_network_direct_feedback_through_the_collapsed_chain_is_backpropagation`
+    /// comparing two identical wrong answers. The forward pass here is an affine map with exact
+    /// binary values; the backward pass is checked against central differences of the loss, which
+    /// the suite only ever did for `tanh`.
+    #[test]
+    fn a_linear_network_is_an_affine_map_and_its_backward_pass_is_its_gradient() {
+        let mut net = Mlp::random(&[1, 1, 1], Activation::Linear, 5).unwrap();
+        net.w = vec![vec![2.0], vec![3.0]];
+        net.b = vec![vec![0.5], vec![-1.0]];
+        let h = net.forward(&[4.0]).unwrap();
+        assert_eq!(h[1], vec![0.5 + 2.0 * 4.0], "the hidden layer is not the identity of its input");
+        assert_eq!(h[2], vec![-1.0 + 3.0 * 8.5]);
+
+        let mut wide = Mlp::random(&[3, 4, 2], Activation::Linear, 21).unwrap();
+        let mut rng = Rng::new(22);
+        for b in &mut wide.b {
+            *b = point(&mut rng, b.len());
+        }
+        let (x, t) = (point(&mut rng, 3), point(&mut rng, 2));
+        let g = wide.updates(&x, &t, Rule::Backprop).unwrap();
+        let step = 1e-6;
+        for l in 0..2 {
+            for k in 0..wide.w[l].len() {
+                let mut probe = wide.clone();
+                probe.w[l][k] += step;
+                let up = probe.loss(&x, &t).unwrap();
+                probe.w[l][k] -= 2.0 * step;
+                let fd = (up - probe.loss(&x, &t).unwrap()) / (2.0 * step);
+                assert!((g[l].w[k] - fd).abs() < 1e-8, "linear w[{l}][{k}]: {} against {fd}", g[l].w[k]);
+            }
+        }
+        assert!(
+            g[0].w.iter().any(|v| v.abs() > 1e-3),
+            "the hidden update is all zero, and a zero update matches every gradient"
+        );
+    }
+
+    /// Pins that an argument LONGER than the layer it feeds is refused rather than truncated.
+    /// `bad_shapes_and_values_are_refused` only ever passes SHORT vectors, which a `<` comparison
+    /// refuses exactly as a `!=` does — so a network could be handed a four-entry input for a
+    /// three-unit layer, or a three-entry target for a two-unit output, and quietly drop the rest.
+    #[test]
+    fn an_argument_longer_than_the_layer_it_feeds_is_refused_rather_than_truncated() {
+        let net = Mlp::random(&[3, 4, 2], Activation::Tanh, 7).unwrap();
+        assert_eq!(
+            net.forward(&[1.0, 2.0, 3.0, 4.0]).err(),
+            Some(AlignmentError::Shape { what: "x", got: 4, want: 3 })
+        );
+        assert_eq!(
+            net.loss(&[1.0, 2.0, 3.0], &[0.0, 1.0, 2.0]).err(),
+            Some(AlignmentError::Shape { what: "target", got: 3, want: 2 })
+        );
+        for rule in [Rule::Backprop, Rule::Alignment, Rule::Direct] {
+            assert_eq!(
+                net.updates(&[1.0, 2.0, 3.0], &[0.0, 1.0, 2.0], rule).err(),
+                Some(AlignmentError::Shape { what: "target", got: 3, want: 2 }),
+                "{rule:?}"
+            );
+        }
+    }
 }

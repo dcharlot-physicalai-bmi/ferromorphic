@@ -289,12 +289,22 @@ impl Qubo {
     /// number of edges whose endpoints take different values, and `−energy` **is** the cut.
     ///
     /// Each edge contributes `−(x_u + x_v − 2 x_u x_v)`: `−1` to `q_uu` and `q_vv`, `+2` to `q_uv`.
+    /// A self-loop is skipped, an edge from a vertex to itself being in no cut — and folding one in
+    /// anyway would come to the same thing, since its three writes all land on `q_uu` and
+    /// `−1 − 1 + 2 = 0` — but its endpoint is checked against `vertices` like any other.
     ///
     /// # Errors
     ///
     /// As [`Qubo::zeros`], plus [`OptimiseError::Index`] for an edge past `vertices`.
     pub fn max_cut(vertices: usize, edges: &[(usize, usize)]) -> Result<Self, OptimiseError> {
         let mut q = Self::zeros(vertices)?;
+        // Every endpoint is checked HERE, before the fold, because the fold skips a self-loop
+        // before `Qubo::add` would have seen its index: `(5, 5)` on a two-vertex graph used to
+        // come back as a problem rather than as the `Index` this doc promises.
+        if let Some(&(u, v)) = edges.iter().find(|&&(u, v)| u >= vertices || v >= vertices) {
+            let index = if u >= vertices { u } else { v };
+            return Err(OptimiseError::Index { what: "vertex", index, count: vertices });
+        }
         for &(u, v) in edges {
             if u == v {
                 continue;
@@ -577,7 +587,7 @@ impl Annealer {
 
 #[cfg(test)]
 mod tests {
-    use super::{Annealer, GraphColouring, OptimiseError, Qubo};
+    use super::{Annealer, GraphColouring, MAX_BRUTE_FORCE, OptimiseError, Qubo};
     use crate::bayes::Histogram;
     use crate::rng::Rng;
 
@@ -828,5 +838,465 @@ mod tests {
         let (best, hits) = ann.anneal_restarts(0.05, 0.1, 1, 30, &mut rng).unwrap();
         assert_eq!(best.evaluations, 30 * 6);
         assert!(hits >= 1 && best.flips <= best.evaluations);
+    }
+
+    // -----------------------------------------------------------------------------------------
+    // The third mutation sweep's survivors: the finiteness guards that refused only NaN, the
+    // index bound that admitted one past the last variable, the enumeration bound nobody stood
+    // on, the colouring penalties no state's energy was ever read against, and the annealer's
+    // bookkeeping — which sweep the best arrived on, whose spikes are in the bill.
+    // -----------------------------------------------------------------------------------------
+
+    /// An infinity is refused wherever a `NaN` is, in the matrix and in `add`.
+    ///
+    /// The suite could not see this: both finiteness guards were exercised with `NaN` alone, and
+    /// `!x.is_finite()` and `x.is_nan()` agree on `NaN`. They part on `±∞`, which is what an
+    /// overflowing penalty arrives as, and which turns a whole energy landscape into `±∞` — or
+    /// into `NaN` where two infinities of opposite sign meet in one state, at which point no
+    /// comparison in `brute_force` can order anything.
+    #[test]
+    fn an_infinite_coefficient_is_refused_wherever_a_nan_one_is() {
+        assert!(matches!(Qubo::new(1, vec![f64::INFINITY], 0.0), Err(OptimiseError::NonFinite { what: "q", index: 0 })));
+        assert!(matches!(
+            Qubo::new(2, vec![0.0, f64::NEG_INFINITY, 0.0, 0.0], 0.0),
+            Err(OptimiseError::NonFinite { what: "q", index: 1 })
+        ));
+        let mut q = Qubo::zeros(2).unwrap();
+        assert!(matches!(q.add(0, 1, f64::INFINITY), Err(OptimiseError::NonFinite { what: "coefficient", .. })));
+        assert!(matches!(q.add(0, 0, f64::NEG_INFINITY), Err(OptimiseError::NonFinite { what: "coefficient", .. })));
+        assert_eq!(q.q, vec![0.0; 4], "a refused add writes nothing");
+        // What the refusal is for, built by hand on the field the guard protects.
+        let mut poisoned = Qubo::zeros(2).unwrap();
+        poisoned.q[0] = f64::INFINITY;
+        poisoned.q[3] = f64::NEG_INFINITY;
+        assert!(poisoned.energy(0b11).unwrap().is_nan(), "∞ + (−∞) is the state no search can rank");
+    }
+
+    /// A variable index equal to the count is past the problem in EITHER position.
+    ///
+    /// The suite could not see this: its one out-of-range `add` put the bad index first, where the
+    /// `i` bound refuses it before the `j` bound is consulted. A `j` bound one too loose then lets
+    /// `add(0, 3, 1.0)` on three variables write `q[3]` — row 1 of the lower triangle, which
+    /// nothing ever reads — and report success.
+    #[test]
+    fn the_second_variable_index_is_bounded_like_the_first() {
+        let mut q = Qubo::zeros(3).unwrap();
+        assert!(matches!(q.add(0, 3, 1.0), Err(OptimiseError::Index { what: "variable", index: 3, count: 3 })));
+        assert!(matches!(q.add(3, 0, 1.0), Err(OptimiseError::Index { what: "variable", index: 3, count: 3 })));
+        assert_eq!(q.q, vec![0.0; 9], "a refused add writes nothing, not even into the dead triangle");
+        assert!(q.add(0, 2, 1.0).is_ok(), "the last variable itself is in range");
+    }
+
+    /// The flip delta refuses a state carrying bits past the problem, exactly as the energy does:
+    /// a state that cannot be priced cannot have a gradient either.
+    ///
+    /// The suite could not see this: the only `delta` refusal it asserted was an out-of-range
+    /// FLIPPED INDEX, `delta(0, 2)` on two variables, which the first half of the condition
+    /// refuses on its own. The state half was never handed a bad state.
+    #[test]
+    fn the_delta_refuses_a_state_with_bits_past_the_problem() {
+        // E = 2 x0 − 1 x1 + 3 x0 x1 + 0.5, as in the hand-value test above.
+        let q = Qubo::new(2, vec![2.0, 3.0, 0.0, -1.0], 0.5).unwrap();
+        assert_eq!(q.energy(0b100), None);
+        assert_eq!(q.delta(0b100, 0), None, "bit 2 is not a variable of a two-variable problem");
+        assert_eq!(q.delta(0b100, 1), None);
+        assert_eq!(q.delta(0b110, 1), None);
+        // The in-range case is untouched: clearing x1 out of 0b11 costs −(q11 + q01) = −2.
+        assert_eq!(q.delta(0b11, 1), Some(-2.0));
+    }
+
+    /// The enumeration bound is the one the constant documents: `2^24` states, with the largest
+    /// problem it names ACCEPTED rather than refused one short of it.
+    ///
+    /// The suite could not see this: it asked a 30-variable problem for its optimum and got
+    /// `None`, which is equally the answer for a bound of 24, of 23 and of 20. Only the boundary
+    /// itself separates them. Measured: the `2^24` enumeration below runs in 2.1 s in release on
+    /// this machine — the price of standing on the bound the doc states instead of near it.
+    #[test]
+    fn the_enumeration_bound_is_the_one_the_constant_documents() {
+        const { assert!(MAX_BRUTE_FORCE == 24, "the constant's doc says 2^24 states") };
+        assert_eq!(
+            Qubo::zeros(MAX_BRUTE_FORCE).unwrap().brute_force(),
+            Some((0, 0.0)),
+            "the largest problem the doc claims to enumerate"
+        );
+        assert_eq!(Qubo::zeros(MAX_BRUTE_FORCE + 1).unwrap().brute_force(), None, "one variable past it");
+    }
+
+    /// A colouring needs at least one colour, and each penalty is checked under its own name.
+    ///
+    /// The suite could not see this: it asserted `Empty` for zero VERTICES and `OutOfRange` for a
+    /// zero `a`, so a builder that never looked at `colours` or at `b` passed both. Zero colours
+    /// then builds a problem with no variables, which `qubo()` refuses one call later with a
+    /// message about variables; and an unchecked `b` is a conflict penalty of zero, under which
+    /// every colouring is proper and the answer is silently meaningless.
+    #[test]
+    fn a_colouring_needs_a_colour_and_both_penalties_are_checked_under_their_own_names() {
+        assert!(matches!(GraphColouring::new(3, 0, &[], 1.0, 1.0), Err(OptimiseError::Empty { what: "colours" })));
+        for bad in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert!(
+                matches!(GraphColouring::new(3, 2, &[], 1.0, bad), Err(OptimiseError::OutOfRange { what: "b", .. })),
+                "b = {bad}"
+            );
+            assert!(
+                matches!(GraphColouring::new(3, 2, &[], bad, 1.0), Err(OptimiseError::OutOfRange { what: "a", .. })),
+                "a = {bad}"
+            );
+        }
+        assert!(GraphColouring::new(3, 1, &[], 1.0, 1.0).is_ok(), "one colour is a colouring problem, if a hard one");
+    }
+
+    /// The colouring energy IS `A Σ_v (1 − Σ_c x_vc)² + B Σ_edges Σ_c x_uc x_vc`, checked against
+    /// that sum over every one of the 64 states of a three-vertex two-colour instance with
+    /// `A ≠ B`; and the variable of `(vertex, colour)` is `vertex · colours + colour`.
+    ///
+    /// The suite could not see this: it read the colouring only through brute-force MINIMA and
+    /// decoded optima, which are invariant to a great deal. `A = B = 1` in every fixture makes the
+    /// two penalties indistinguishable; halving the one-hot cross term leaves a doubly-coloured
+    /// vertex costing nothing, which no minimum of those instances reports; and a transposed
+    /// variable layout is a relabelling, which moves every state's energy and no minimum's value.
+    #[test]
+    fn the_colouring_energy_is_the_penalty_sum_over_every_state() {
+        let (vertices, colours, a, b) = (3usize, 2usize, 1.5f64, 0.75f64);
+        let edges = [(0usize, 1usize), (1, 2)];
+        let gc = GraphColouring::new(vertices, colours, &edges, a, b).unwrap();
+        assert_eq!(
+            [gc.var(0, 0), gc.var(0, 1), gc.var(1, 0), gc.var(1, 1), gc.var(2, 0), gc.var(2, 1)],
+            [0, 1, 2, 3, 4, 5],
+            "a vertex's colours are adjacent variables"
+        );
+        let q = gc.qubo().unwrap();
+        for x in 0..(1u64 << (vertices * colours)) {
+            let mut want = 0.0;
+            for v in 0..vertices {
+                let on = (0..colours).filter(|&c| x >> (v * colours + c) & 1 == 1).count();
+                let d = 1.0 - on as f64;
+                want += a * d * d;
+            }
+            for &(u, w) in &edges {
+                for c in 0..colours {
+                    if x >> (u * colours + c) & 1 == 1 && x >> (w * colours + c) & 1 == 1 {
+                        want += b;
+                    }
+                }
+            }
+            // Every term is a multiple of 1/4 and every partial sum is under 2^5, so both sides are
+            // exact in f64 whatever order they are summed in, and the comparison needs no tolerance.
+            assert_eq!(q.energy(x).unwrap(), want, "state {x:#08b}");
+        }
+    }
+
+    /// A vertex with no colour is not a colouring, even where giving it colour zero would offend
+    /// no edge.
+    ///
+    /// The suite could not see this: its uncoloured-vertex case left vertex 0 on colour 0 with an
+    /// edge between them, so a decoder that defaulted the missing vertex to colour 0 was refused
+    /// for the OTHER reason — the edge conflict — and the default never showed.
+    #[test]
+    fn a_vertex_with_no_colour_is_not_a_colouring() {
+        let gc = GraphColouring::new(2, 2, &[(0, 1)], 1.0, 1.0).unwrap();
+        let bit = |v: usize, c: usize| 1u64 << gc.var(v, c);
+        assert_eq!(gc.decode(bit(0, 1)), None, "vertex 1 has no colour, and colour 0 for it would not conflict");
+        assert_eq!(gc.decode(0), None, "no vertex has a colour at all");
+        let lone = GraphColouring::new(1, 3, &[], 1.0, 1.0).unwrap();
+        assert_eq!(lone.decode(0), None, "one vertex, no colour, and no edge to object");
+        assert_eq!(lone.decode(0b100), Some(vec![2]), "the same vertex, coloured, decodes");
+    }
+
+    /// A fresh annealer stands at the all-zero state — the state `anneal` then takes as its first
+    /// candidate for the best.
+    ///
+    /// The suite could not see this: every run it made either set `state` by hand first or went
+    /// through `anneal_restarts`, which overwrites the state with a random one before sweeping.
+    #[test]
+    fn a_fresh_annealer_starts_from_the_all_zero_state() {
+        assert_eq!(Annealer::new(Qubo::zeros(5).unwrap()).state, 0);
+        assert_eq!(Annealer::new(Qubo::zeros(64).unwrap()).state, 0);
+    }
+
+    /// The sweep refuses a temperature that is not positive AND finite: `NaN` and `+∞` are refused
+    /// as a negative β is.
+    ///
+    /// The suite could not see this: it offered the guard `0.0` alone, which `beta <= 0.0` refuses
+    /// as surely as the guard that is there. A `NaN` β makes every flip probability `NaN`, and
+    /// `rng.next_f64() < NaN` is false, so such a sweep would clear every bit it touched and
+    /// report the clearing as a run.
+    #[test]
+    fn the_sweep_refuses_a_temperature_that_is_not_positive_and_finite() {
+        let mut ann = Annealer::new(Qubo::zeros(3).unwrap());
+        ann.state = 0b101;
+        let mut rng = Rng::new(11);
+        for bad in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            assert!(
+                matches!(ann.sweep(bad, &mut rng), Err(OptimiseError::OutOfRange { what: "beta", .. })),
+                "beta = {bad}"
+            );
+        }
+        assert_eq!(ann.state, 0b101, "a refused sweep moves nothing");
+        assert!(ann.sweep(1.0, &mut rng).is_ok());
+    }
+
+    /// The update order is a uniform shuffle. Drawing `j` from `0..i` instead of `0..=i` is
+    /// Sattolo's algorithm, which produces only CYCLIC permutations — over two units, always the
+    /// swap, so unit 0 is never updated first.
+    ///
+    /// The suite could not see this: any update order leaves the Glauber sweep a correct sampler
+    /// of the same stationary distribution, so neither the total-variation check nor the
+    /// optimisation rate can tell the two shuffles apart. What separates them is a problem whose
+    /// one-sweep outcome depends on which unit moves first.
+    ///
+    /// `E = x0 − x1 − 3 x0 x1` from the all-zero state at β = 50: unit 0 alone sees field +1 and
+    /// stays down, unit 1 alone sees −1 and comes up, and once unit 1 is up, unit 0 sees
+    /// `1 − 3 = −2` and comes up too. Order `[0, 1]` therefore ends at `0b10` and order `[1, 0]`
+    /// at `0b11`. The probabilities are `logistic(±50)`, which are `1` and `1.9e−22` against a
+    /// draw quantised at `2^−53`, so the outcome is the order and nothing else.
+    #[test]
+    fn the_update_order_is_a_uniform_shuffle_not_a_cycle() {
+        let mut q = Qubo::zeros(2).unwrap();
+        q.add(0, 0, 1.0).unwrap();
+        q.add(1, 1, -1.0).unwrap();
+        q.add(0, 1, -3.0).unwrap();
+        let mut ann = Annealer::new(q);
+        let mut rng = Rng::new(17);
+        let (mut unit_zero_first, mut unit_one_first) = (0usize, 0usize);
+        for _ in 0..200 {
+            ann.state = 0;
+            ann.sweep(50.0, &mut rng).unwrap();
+            match ann.state {
+                0b10 => unit_zero_first += 1,
+                0b11 => unit_one_first += 1,
+                other => panic!("neither update order produces {other:#b}"),
+            }
+        }
+        assert!(unit_zero_first > 0, "the shuffle left unit 0 first in none of 200 sweeps: that is a cycle, not a shuffle");
+        assert!(unit_one_first > 0, "the shuffle never swapped over 200 sweeps");
+        println!("optimise: measured {unit_zero_first} of 200 sweeps updating unit 0 first (expectation 100)");
+    }
+
+    /// The last sweep runs at `beta_end`: the geometric ratio is spread over the GAPS between
+    /// sweeps, `(β_end/β_start)^(1/(S−1))`, not over the sweeps themselves.
+    ///
+    /// The suite could not see this: it annealed from 0.1 to 10 over 200 sweeps, where a ratio
+    /// taken over 200 gaps instead of 199 leaves the last sweep at β = 9.77 rather than 10 — a
+    /// difference no success rate can resolve. Two sweeps make the same off-by-one enormous: from
+    /// β = 0.04 to β = 100 the final sweep is either at 100 or at `√(0.04 · 100) = 2`.
+    ///
+    /// On the one-variable problem `E = x`, a sweep leaves the unit up with probability
+    /// `logistic(−β)`: `3.7e−44` at β = 100, which is below the `2^−53` quantum of
+    /// [`Rng::next_f64`] and so cannot be drawn, against `0.119` at β = 2.
+    #[test]
+    fn the_last_sweep_of_an_anneal_runs_at_the_final_temperature() {
+        let mut q = Qubo::zeros(1).unwrap();
+        q.add(0, 0, 1.0).unwrap();
+        let mut ann = Annealer::new(q);
+        let mut rng = Rng::new(23);
+        let mut up_after_the_cold_sweep = 0usize;
+        for _ in 0..200 {
+            ann.state = 0;
+            ann.anneal(0.04, 100.0, 2, &mut rng).unwrap();
+            up_after_the_cold_sweep += usize::from(ann.state == 1);
+        }
+        assert_eq!(up_after_the_cold_sweep, 0, "a unit costing +1 stood up after a sweep that was meant to be at β = 100");
+        // And the same unit does stand up at the starting temperature, so the zero above is a
+        // temperature rather than a rule that never lets it up: 200 · logistic(−0.04) = 98.0.
+        let mut up_after_a_hot_sweep = 0usize;
+        for _ in 0..200 {
+            ann.state = 0;
+            ann.anneal(0.04, 0.04, 1, &mut rng).unwrap();
+            up_after_a_hot_sweep += usize::from(ann.state == 1);
+        }
+        assert!(up_after_a_hot_sweep > 50, "measured {up_after_a_hot_sweep} of 200 up at β = 0.04, expectation 98");
+    }
+
+    /// `anneal` returns the BEST state it saw, and the state it started from is one of the
+    /// candidates — not a placeholder at `+∞` that the first sweep is guaranteed to beat.
+    ///
+    /// The suite could not see this: every anneal it ran started from a state that the run
+    /// improved on inside its first sweep, where a starting candidate of `+∞` and the true
+    /// starting energy give the same answer; and every run it read ended AT its best state, where
+    /// returning the final state and returning the best one also agree.
+    ///
+    /// Here the start IS the unique optimum — `E = −Σ x_i` on sixteen variables, all bits up,
+    /// energy −16 — and the twenty sweeps run at β = 1e−6, where each unit is a coin flip and the
+    /// chance of any one sweep returning to all-ones is `2^−16`.
+    #[test]
+    fn the_anneal_returns_the_best_state_seen_and_the_start_is_one_of_them() {
+        let mut q = Qubo::zeros(16).unwrap();
+        for i in 0..16 {
+            q.add(i, i, -1.0).unwrap();
+        }
+        let mut ann = Annealer::new(q);
+        ann.state = 0xFFFF;
+        let mut rng = Rng::new(29);
+        let sol = ann.anneal(1e-6, 1e-6, 20, &mut rng).unwrap();
+        assert_eq!(sol.energy, -16.0, "the run started at the optimum and never counted it");
+        assert_eq!(sol.state, 0xFFFF);
+        assert_eq!(sol.found_at_sweep, 0, "nothing beat the state it started from");
+        assert_eq!(sol.evaluations, 20 * 16);
+        assert_ne!(ann.state, 0xFFFF, "the annealer wandered off, so the final state is a different answer from the best");
+    }
+
+    /// Every field of a [`Solution`] against a sweep-by-sweep replay of the same schedule on the
+    /// same seed: the best state, its energy, the sweep it was FIRST seen on, and the two counts.
+    ///
+    /// The suite could not see `found_at_sweep` at all — it read `state`, `energy`, `evaluations`
+    /// and `flips` and never the sweep index, so reporting the first sweep for every run passed
+    /// everything. The replay also stands on the schedule: it multiplies β by the documented ratio
+    /// once per gap, and a chain run at other temperatures diverges from this one within a sweep
+    /// or two and never rejoins it.
+    #[test]
+    fn a_solution_is_the_sweep_by_sweep_record_of_its_own_run() {
+        let (sweeps, beta_start, beta_end) = (30usize, 0.01f64, 20.0f64);
+        let mut q = Qubo::zeros(16).unwrap();
+        for i in 0..16 {
+            q.add(i, i, -1.0).unwrap();
+        }
+        let mut run = Annealer::new(q.clone());
+        let sol = run.anneal(beta_start, beta_end, sweeps, &mut Rng::new(31)).unwrap();
+
+        let mut replay = Annealer::new(q);
+        let mut rng = Rng::new(31);
+        let ratio = (beta_end / beta_start).powf(1.0 / (sweeps as f64 - 1.0));
+        let mut beta = beta_start;
+        let mut lowest = (replay.state, replay.qubo.energy(replay.state).unwrap());
+        let mut first_seen_on = 0;
+        let (mut units, mut spikes) = (0u64, 0u64);
+        for s in 0..sweeps {
+            let swept = replay.sweep(beta, &mut rng).unwrap();
+            units += swept.0;
+            spikes += swept.1;
+            let energy = replay.qubo.energy(replay.state).unwrap();
+            if energy < lowest.1 {
+                lowest = (replay.state, energy);
+                first_seen_on = s;
+            }
+            beta *= ratio;
+        }
+        assert_eq!(sol.state, lowest.0);
+        assert_eq!(sol.energy, lowest.1);
+        assert_eq!(sol.found_at_sweep, first_seen_on);
+        assert_eq!(sol.evaluations, units);
+        assert_eq!(sol.flips, spikes);
+        assert!(first_seen_on > 0, "the best of this run has to arrive after the first sweep or its index proves nothing");
+        assert_eq!(sol.energy, -16.0, "the cold end of the schedule reaches the optimum");
+    }
+
+    /// Each restart starts from a RANDOM state. On a problem whose all-zero state is a strict
+    /// local minimum — `E = Σ x_i − 2 Σ_{i<j} x_i x_j` on four variables, where all-zeros costs 0,
+    /// one bit up costs +1, and all-ones costs −8 — a solver restarting from all-zeros can only
+    /// ever report 0, while from a random start it reaches the optimum from any of the eleven
+    /// states with two or more bits up and from three quarters of the four with one.
+    ///
+    /// The suite could not see this: its restart runs were max-cut and colouring instances whose
+    /// optima the annealer reaches from the all-zero state as readily as from a random one, so
+    /// discarding the random start changed none of their answers.
+    #[test]
+    fn every_restart_starts_from_a_random_state() {
+        let mut q = Qubo::zeros(4).unwrap();
+        for i in 0..4 {
+            q.add(i, i, 1.0).unwrap();
+            for j in (i + 1)..4 {
+                q.add(i, j, -2.0).unwrap();
+            }
+        }
+        assert_eq!(q.brute_force(), Some((0b1111, -8.0)), "the needle: m bits up costs m(2 − m)");
+        let mut ann = Annealer::new(q);
+        let (sol, _) = ann.anneal_restarts(20.0, 20.0, 2, 6, &mut Rng::new(43)).unwrap();
+        // Escaping all-zeros at β = 20 needs a draw below logistic(−20) = 2.1e−9, and the run
+        // makes 48 of them.
+        assert_eq!(sol.energy, -8.0, "six restarts that all began at all-zeros could not have left it");
+        assert_eq!(sol.state, 0b1111);
+    }
+
+    /// The restart bill is every restart's: the evaluations AND the spikes of the restarts that
+    /// lost are in the total, the energy reported is the best of them, and `hits` counts only the
+    /// restarts that reached that energy.
+    ///
+    /// The suite could not see this: it checked `evaluations` against a formula (of which the
+    /// flips have none), bounded `flips` by `evaluations` — a bound that a total of zero also
+    /// satisfies — and asserted `hits >= 1`, which holds for every count from one to the number of
+    /// restarts. The replay below re-runs the same restarts from the same seed and sums them
+    /// independently.
+    #[test]
+    fn the_restart_bill_is_every_restart_and_the_hits_are_the_ties() {
+        let n = 8;
+        let (sweeps, restarts) = (4usize, 8usize);
+        let (beta_start, beta_end) = (0.1f64, 1.0f64);
+        let mut draw = Rng::new(37);
+        let mut q = Qubo::zeros(n).unwrap();
+        for i in 0..n {
+            for j in i..n {
+                q.add(i, j, 2.0 * draw.next_f64() - 1.0).unwrap();
+            }
+        }
+        let mut run = Annealer::new(q.clone());
+        let (sol, hits) = run.anneal_restarts(beta_start, beta_end, sweeps, restarts, &mut Rng::new(41)).unwrap();
+
+        let mut replay = Annealer::new(q);
+        let mut rng = Rng::new(41);
+        let mask = (1u64 << n) - 1;
+        let mut each: Vec<(f64, u64)> = Vec::with_capacity(restarts);
+        let (mut evaluations, mut flips) = (0u64, 0u64);
+        for _ in 0..restarts {
+            replay.state = (u64::from(rng.next_u32()) << 32 | u64::from(rng.next_u32())) & mask;
+            let s = replay.anneal(beta_start, beta_end, sweeps, &mut rng).unwrap();
+            each.push((s.energy, s.flips));
+            evaluations += s.evaluations;
+            flips += s.flips;
+        }
+        let best = each.iter().map(|&(e, _)| e).fold(f64::INFINITY, f64::min);
+        let tied = each.iter().filter(|&&(e, _)| (e - best).abs() <= 1e-12).count();
+        assert_eq!(sol.energy, best);
+        assert_eq!(sol.evaluations, evaluations);
+        assert_eq!(sol.flips, flips);
+        assert_eq!(hits, tied);
+        // The equalities above are only worth something if this run discriminates: some restart has
+        // to lose, and a losing restart has to have flipped something.
+        assert!(tied < restarts, "every restart tied at {best}, so the hit count proves nothing here");
+        assert!(
+            each.iter().any(|&(e, f)| e > best + 1e-12 && f > 0),
+            "no losing restart flipped anything, so the flip total proves nothing here"
+        );
+    }
+
+    /// A self-loop cuts nothing, so it leaves a max-cut problem exactly as it found it — and an
+    /// endpoint past the graph is refused even when the edge is a self-loop.
+    ///
+    /// The suite could not see the second half: it refused `(0, 5)` on two vertices, where the
+    /// FIRST endpoint is out of range and the fold reaches [`Qubo::add`], which checks it. `(5, 5)`
+    /// was skipped as a self-loop before any bound was consulted and came back as a problem, in
+    /// silence — the defect this test was written for, now fixed by checking every endpoint before
+    /// the fold.
+    #[test]
+    fn a_self_loop_cuts_nothing_and_an_endpoint_past_the_graph_is_refused() {
+        let ring: Vec<(usize, usize)> = (0..4).map(|i| (i, (i + 1) % 4)).collect();
+        let plain = Qubo::max_cut(4, &ring).unwrap();
+        let mut with_loops = ring.clone();
+        with_loops.insert(0, (0, 0));
+        with_loops.push((2, 2));
+        assert_eq!(Qubo::max_cut(4, &with_loops).unwrap(), plain, "a self-loop leaves the problem alone");
+        assert!(matches!(
+            Qubo::max_cut(2, &[(5, 5)]),
+            Err(OptimiseError::Index { what: "vertex", index: 5, count: 2 })
+        ));
+        assert!(matches!(Qubo::max_cut(2, &[(0, 5)]), Err(OptimiseError::Index { index: 5, count: 2, .. })));
+        assert!(matches!(Qubo::max_cut(2, &[(5, 0)]), Err(OptimiseError::Index { index: 5, count: 2, .. })));
+    }
+
+    /// Each refusal prints the fields it carries, in the order it writes them — an interval reads
+    /// low end first.
+    ///
+    /// The suite could not see this: it asserted only that every refusal's `Display` is non-empty,
+    /// which an interval printed backwards satisfies as well as one printed forwards.
+    #[test]
+    fn the_refusal_messages_read_in_the_order_they_are_written() {
+        assert_eq!(
+            OptimiseError::OutOfRange { what: "beta", value: 9.0, low: 0.0, high: 1.0 }.to_string(),
+            "beta = 9 is outside [0, 1]"
+        );
+        assert_eq!(OptimiseError::Index { what: "vertex", index: 3, count: 2 }.to_string(), "vertex 3 is past the 2 available");
+        assert_eq!(OptimiseError::Dimension { what: "q", got: 3, want: 4 }.to_string(), "q has 3 entries, needs 4");
+        assert_eq!(OptimiseError::NonFinite { what: "offset", index: 0 }.to_string(), "offset is not finite at 0");
+        assert_eq!(OptimiseError::Empty { what: "sweeps" }.to_string(), "sweeps is empty");
     }
 }

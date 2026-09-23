@@ -133,5 +133,372 @@
   "label": "max steps unguarded",
   "old": "if steps > MAX_STEPS {",
   "new": "if false {"
+ },
+ {
+  "label": "the step ceiling is a tenth of the count the constant documents",
+  "old": "pub const MAX_STEPS: u64 = 100_000_000;",
+  "new": "pub const MAX_STEPS: u64 = 10_000_000;"
+ },
+ {
+  "label": "the non-finite refusal always names position zero",
+  "old": "        return Err(OscillatorError::NonFinite { what, index: i });",
+  "new": "        return Err(OscillatorError::NonFinite { what, index: i * 0 });"
+ },
+ {
+  "label": "an infinite dt, weight or rate passes the positivity guard",
+  "old": "    if v.is_finite() && v > 0.0 {",
+  "new": "    if v > 0.0 {"
+ },
+ {
+  "label": "the positivity guard admits zero",
+  "old": "&& v > 0.0 {",
+  "new": "&& v >= 0.0 {"
+ },
+ {
+  "label": "the non-negative guard refuses zero",
+  "old": "    if v.is_finite() && v >= 0.0 {",
+  "new": "    if v.is_finite() && v > 0.0 {"
+ },
+ {
+  "label": "a run of exactly the documented maximum number of steps is refused",
+  "old": "    if steps > MAX_STEPS {",
+  "new": "    if steps >= MAX_STEPS {"
+ },
+ {
+  "label": "the fourth runge-kutta stage probes a half step rather than a whole one",
+  "old": "        probe[i] = theta[i] + dt * k3[i];",
+  "new": "        probe[i] = theta[i] + 0.5 * dt * k3[i];"
+ },
+ {
+  "label": "the runge-kutta weights are not normalised, so every step is a fifth too long",
+  "old": "theta[i] += dt / 6.0 * (k1[i] + 2.0 * k2[i] + 2.0 * k3[i] + k4[i]);",
+  "new": "theta[i] += dt / 5.0 * (k1[i] + 2.0 * k2[i] + 2.0 * k3[i] + k4[i]);"
+ },
+ {
+  "label": "wrap_pi takes the signed remainder, so a negative angle never comes back positive",
+  "old": "    let r = x.rem_euclid(TAU);",
+  "new": "    let r = x % TAU;"
+ },
+ {
+  "label": "the lock guard lets a zero coupling through to asin(0/0)",
+  "old": "    if !(k > 0.0) || !k.is_finite()",
+  "new": "    if k < 0.0 || !k.is_finite()"
+ },
+ {
+  "label": "the lock range is one-sided, so a detuning below minus K still reports a locked phase",
+  "old": "|| delta_omega.abs() > k {",
+  "new": "|| delta_omega > k {"
+ },
+ {
+  "label": "the locked phase is the unstable branch, the one with cos below zero",
+  "old": "Some((delta_omega / k).asin())",
+  "new": "Some(PI - (delta_omega / k).asin())"
+ },
+ {
+  "label": "inside the lock range the beat frequency is a nan rather than zero",
+  "old": "    Some(if d > 0.0 { d.sqrt() } else { 0.0 })",
+  "new": "    Some(d.sqrt())"
+ },
+ {
+  "label": "the beat's coupling guard is rewritten so its first clause no longer rejects a nan",
+  "old": "    if !(k >= 0.0) || !k.is_finite()",
+  "new": "    if k < 0.0 || !k.is_finite()",
+  "equivalent": "EQUIVALENT. The guard is a disjunction and its SECOND clause, `!k.is_finite()`, already rejects every NaN and both infinities, so rewriting the first clause cannot let one through. For a FINITE k the two first clauses are exact negations of one another: `!(k >= 0.0)` and `k < 0.0` agree on every finite f64, -0.0 included, because >= and < partition the finite floats. Both forms therefore admit exactly {k finite, k >= 0}, and k is read nowhere else before `d = delta_omega*delta_omega - k*k`. Measured, not asserted: the two predicates were evaluated side by side over the 14 special values (both zeros, both infinities, both NaN signs, both subnormal extremes, both MIN/MAX), 80,000,000 random bit patterns and 2,000,000 NaN payloads of each sign -- 0 disagreements (scratch/guard.rs)."
+ },
+ {
+  "label": "a population of no oscillators is accepted",
+  "old": "        if omega.is_empty() {",
+  "new": "        if false {"
+ },
+ {
+  "label": "only a short phase array is refused, so more phases than frequencies are accepted",
+  "old": "        if theta.len() != omega.len() {",
+  "new": "        if theta.len() < omega.len() {"
+ },
+ {
+  "label": "the phases are never checked for finiteness",
+  "old": "        finite_all(\"omega\", &omega)?;\n        finite_all(\"theta\", &theta)?;",
+  "new": "        finite_all(\"omega\", &omega)?;\n        let _ = &theta;"
+ },
+ {
+  "label": "the mean field accumulates the sine into the cosine and the cosine into the sine",
+  "old": "        c += t.cos();\n        s += t.sin();",
+  "new": "        c += t.sin();\n        s += t.cos();"
+ },
+ {
+  "label": "the mean field is the sum over the population rather than its mean",
+  "old": "    (c / n, s / n)",
+  "new": "    (c, s)"
+ },
+ {
+  "label": "the mean field's sine accumulator keeps only the last oscillator",
+  "old": "        s += t.sin();",
+  "new": "        s = t.sin();"
+ },
+ {
+  "label": "the natural frequency is dropped from the mean-field velocity",
+  "old": "out[i] = self.omega[i] + self.k * (s * theta[i].cos() - c * theta[i].sin());",
+  "new": "out[i] = self.k * (s * theta[i].cos() - c * theta[i].sin());"
+ },
+ {
+  "label": "the mean-field term is divided by N a second time",
+  "old": "self.k * (s * theta[i].cos() - c * theta[i].sin())",
+  "new": "self.k / theta.len() as f64 * (s * theta[i].cos() - c * theta[i].sin())"
+ },
+ {
+  "label": "the derivative reads the stored phases rather than the state it was handed",
+  "old": "s * theta[i].cos() - c * theta[i].sin()",
+  "new": "s * self.theta[i].cos() - c * self.theta[i].sin()"
+ },
+ {
+  "label": "the pairwise reference does not divide its sum by N",
+  "old": "self.omega[i] + self.k / n as f64 * sum",
+  "new": "self.omega[i] + self.k * sum"
+ },
+ {
+  "label": "run takes a single step whatever count it is asked for",
+  "old": "        for _ in 0..step_count(steps)? {\n            self.step(dt)?;\n        }\n        Ok(())\n    }\n}\n\nfn mean_field(theta: &[f64]) -> (f64, f64) {",
+  "new": "        for _ in 0..step_count(steps)?.min(1) {\n            self.step(dt)?;\n        }\n        Ok(())\n    }\n}\n\nfn mean_field(theta: &[f64]) -> (f64, f64) {"
+ },
+ {
+  "label": "the quantiles run from the top of the distribution downward",
+  "old": "centre + gamma * (PI",
+  "new": "centre - gamma * (PI"
+ },
+ {
+  "label": "the quantile map is shifted by a half turn rather than a quarter",
+  "old": "- 0.5 * PI).tan()",
+  "new": "- PI).tan()"
+ },
+ {
+  "label": "a lorentzian of zero half-width is accepted",
+  "old": "positive(\"gamma\", gamma)?",
+  "new": "non_negative(\"gamma\", gamma)?"
+ },
+ {
+  "label": "a non-finite centre is not refused",
+  "old": "    if !centre.is_finite() {",
+  "new": "    if false {"
+ },
+ {
+  "label": "full coherence is refused as out of range",
+  "old": "(0.0..=1.0).contains(&r0)",
+  "new": "(0.0..1.0).contains(&r0)"
+ },
+ {
+  "label": "the r0 = 0 short circuit is gone, so a long run from an incoherent start returns nan",
+  "old": "    if r0 == 0.0 {",
+  "new": "    if false {"
+ },
+ {
+  "label": "the logistic variable is the coherence rather than its square",
+  "old": "    let u0 = r0 * r0;",
+  "new": "    let u0 = r0;"
+ },
+ {
+  "label": "the carrying capacity is normalised by the half-width rather than by the coupling",
+  "old": "        let cap = rate / k;",
+  "new": "        let cap = rate / (2.0 * gamma);"
+ },
+ {
+  "label": "the logistic exponent has the wrong sign",
+  "old": "(-rate * t).exp()",
+  "new": "(rate * t).exp()"
+ },
+ {
+  "label": "time zero is refused",
+  "old": "&& t >= 0.0 && t.is_finite()",
+  "new": "&& t > 0.0 && t.is_finite()"
+ },
+ {
+  "label": "a zero coupling is admitted to the ott-antonsen solution",
+  "old": "&& k > 0.0 && k.is_finite()",
+  "new": "&& k >= 0.0 && k.is_finite()"
+ },
+ {
+  "label": "the threshold branch is never taken, so K = 2 gamma divides zero by zero",
+  "old": "    let u = if rate == 0.0 {",
+  "new": "    let u = if false {"
+ },
+ {
+  "label": "a new amplitude does not start at rest",
+  "old": "        Ok(Self { a, r, r_dot: 0.0 })",
+  "new": "        Ok(Self { a, r, r_dot: 1.0 })"
+ },
+ {
+  "label": "the amplitude error is measured from the target toward the amplitude",
+  "old": "        let e0 = self.r - target;",
+  "new": "        let e0 = target - self.r;"
+ },
+ {
+  "label": "the critically damped slope subtracts the displacement term rather than adding it",
+  "old": "        let slope = self.r_dot + h * e0;",
+  "new": "        let slope = self.r_dot - h * e0;"
+ },
+ {
+  "label": "the amplitude envelope grows rather than decays",
+  "old": "        let decay = (-h * dt).exp();",
+  "new": "        let decay = (h * dt).exp();"
+ },
+ {
+  "label": "the step reports the error instead of the amplitude",
+  "old": "        self.r = target + e;",
+  "new": "        self.r = e;"
+ },
+ {
+  "label": "a non-finite target is accepted",
+  "old": "        if !target.is_finite() {",
+  "new": "        if false {"
+ },
+ {
+  "label": "a chain of one segment is accepted",
+  "old": "        if theta.len() < 2 {",
+  "new": "        if theta.len() < 1 {"
+ },
+ {
+  "label": "the second segment ignores the neighbour ahead of it",
+  "old": "            if i > 0 {",
+  "new": "            if i > 1 {"
+ },
+ {
+  "label": "the common frequency is dropped from the chain",
+  "old": "            let mut v = self.omega;",
+  "new": "            let mut v = 0.0;"
+ },
+ {
+  "label": "the coupling from the segment ahead carries no built-in lag",
+  "old": "                v += self.w * (theta[i - 1] - theta[i] - self.lag).sin();",
+  "new": "                v += self.w * (theta[i - 1] - theta[i]).sin();"
+ },
+ {
+  "label": "the lag errors are reported for one fewer pair than the chain has",
+  "old": "        self.theta.windows(2).map(|p| wrap_pi(p[0] - p[1] - self.lag)).collect()",
+  "new": "        self.theta.windows(3).map(|p| wrap_pi(p[0] - p[1] - self.lag)).collect()"
+ },
+ {
+  "label": "the lag errors are not wrapped into the half-open turn",
+  "old": "wrap_pi(p[0] - p[1] - self.lag)",
+  "new": "(p[0] - p[1] - self.lag)"
+ },
+ {
+  "label": "only one half of the weight matrix is ever written",
+  "old": "            w[v * n + u] += weight;",
+  "new": "            w[u * n + v] += weight;"
+ },
+ {
+  "label": "the vertex bound admits an index one past the graph",
+  "old": "            if u >= n {",
+  "new": "            if u > n {"
+ },
+ {
+  "label": "a self-loop is accepted",
+  "old": "            if u == v {",
+  "new": "            if false {"
+ },
+ {
+  "label": "the machine starts at antiphase rather than at zero",
+  "old": "        Ok(Self { n, w, k, k_s, theta: vec![0.0; n] })",
+  "new": "        Ok(Self { n, w, k, k_s, theta: vec![PI; n] })"
+ },
+ {
+  "label": "the phases are drawn from half the circle",
+  "old": "            *t = TAU * rng.next_f64();",
+  "new": "            *t = PI * rng.next_f64();"
+ },
+ {
+  "label": "the energy sums every ordered pair, counting each edge twice",
+  "old": "\n            for j in (i + 1)..n {\n                let wij = self.w[i * n + j];",
+  "new": "\n            for j in 0..n {\n                let wij = self.w[i * n + j];"
+ },
+ {
+  "label": "the energy reads the weight matrix transposed",
+  "old": "\n                let wij = self.w[i * n + j];",
+  "new": "\n                let wij = self.w[j * n + i];"
+ },
+ {
+  "label": "the energy skips exactly the edges that exist",
+  "old": "\n                if wij != 0.0 {",
+  "new": "\n                if wij == 0.0 {"
+ },
+ {
+  "label": "the energy's coupling term is not scaled by K",
+  "old": "                    e += self.k * wij * (self.theta[i] - self.theta[j]).cos();",
+  "new": "                    e += wij * (self.theta[i] - self.theta[j]).cos();"
+ },
+ {
+  "label": "the injection term is the first harmonic rather than the second",
+  "old": "            e -= 0.5 * self.k_s * (2.0 * self.theta[i]).cos();",
+  "new": "            e -= 0.5 * self.k_s * self.theta[i].cos();"
+ },
+ {
+  "label": "the second-harmonic injection pushes the phases away from the poles",
+  "old": "                let mut v = -self.k_s * (2.0 * self.theta[i]).sin();",
+  "new": "                let mut v = self.k_s * (2.0 * self.theta[i]).sin();"
+ },
+ {
+  "label": "the coupling ignores the edge weight",
+  "old": "                        v += self.k * wij * (self.theta[i] - self.theta[j]).sin();",
+  "new": "                        v += self.k * (self.theta[i] - self.theta[j]).sin();"
+ },
+ {
+  "label": "the gershgorin row sum drops the last column of each row",
+  "old": "self.w[i * n..(i + 1) * n]",
+  "new": "self.w[i * n..(i + 1) * n - 1]"
+ },
+ {
+  "label": "the gershgorin bound takes the smallest row sum rather than the largest",
+  "old": ".iter().sum::<f64>()).fold(0.0, f64::max)",
+  "new": ".iter().sum::<f64>()).fold(0.0, f64::min)"
+ },
+ {
+  "label": "the stable step has no floor, so an uncoupled machine is given an infinite one",
+  "old": "1.0 / (2.0 * self.k * worst + 2.0 * self.k_s).max(f64::MIN_POSITIVE)",
+  "new": "1.0 / (2.0 * self.k * worst + 2.0 * self.k_s)"
+ },
+ {
+  "label": "the euler step overwrites the phase instead of advancing it",
+  "old": "            *t += dt * vi;",
+  "new": "            *t = dt * vi;"
+ },
+ {
+  "label": "the largest energy rise starts at zero, so a run that only descended cannot report it",
+  "old": "        let mut worst = f64::NEG_INFINITY;",
+  "new": "        let mut worst = 0.0_f64;"
+ },
+ {
+  "label": "a phase exactly at the quarter turn reads as the negative spin",
+  "old": "self.theta.iter().map(|t| if t.cos() >= 0.0 { 1 } else { -1 }).collect()",
+  "new": "self.theta.iter().map(|t| if t.cos() > 0.0 { 1 } else { -1 }).collect()",
+  "equivalent": "EQUIVALENT. `t.cos() >= 0.0` and `t.cos() > 0.0` can differ only when `t.cos()` is exactly +0.0 or -0.0: for a NaN cosine both are false, and otherwise the sign decides both alike. No f64 has a cosine of exactly zero. The label's quarter turn is FRAC_PI_2, whose cosine is the measured 6.123233995736766e-17, positive under both forms; reaching +/-0.0 would need the true |cos t| < 2^-1075 = 4.9e-324, i.e. t within that distance of an odd multiple of pi/2, while the hardest double for binary64 trigonometric range reduction, t = 5.31937264832654141671e255, still has the measured cosine -4.687165924254628e-19 -- about 1e305 times the smallest subnormal. Measured, not asserted: over the 5 doubles either side of each of the 4,000,000 doubles nearest pi/2 + k*pi, 40,000,000 random bit patterns and the published hard cases, the smallest |cos| found was 4.687165924254628e-19 and the count of doubles whose cosine was exactly zero was 0 (scratch/coszero.rs). A test could only tell the two apart by exhibiting such a double."
+ },
+ {
+  "label": "binarisation reads the signed cosine rather than its magnitude",
+  "old": "self.theta.iter().map(|t| t.cos().abs()).fold(f64::INFINITY, f64::min)",
+  "new": "self.theta.iter().map(|t| t.cos()).fold(f64::INFINITY, f64::min)"
+ },
+ {
+  "label": "binarisation reports the most binary oscillator rather than the least",
+  "old": ".fold(f64::INFINITY, f64::min)",
+  "new": ".fold(f64::NEG_INFINITY, f64::max)"
+ },
+ {
+  "label": "the cut counts edges rather than their weight",
+  "old": "                    cut += self.w[i * n + j];",
+  "new": "                    cut += 1.0;"
+ },
+ {
+  "label": "best_cut never re-randomises, so every restart repeats the first",
+  "old": "        oim.randomise(rng);",
+  "new": "        let _ = &mut *rng;"
+ },
+ {
+  "label": "best_cut relaxes for a single step whatever budget it is given",
+  "old": "        oim.relax(dt, steps)?;",
+  "new": "        oim.relax(dt, steps.min(1))?;"
+ },
+ {
+  "label": "a request for no restarts is accepted",
+  "old": "    if restarts == 0 {",
+  "new": "    if false {"
  }
 ]

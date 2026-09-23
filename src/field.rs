@@ -850,4 +850,229 @@ mod tests {
         fresh.step(1e-2, &[0.25; 100]).unwrap();
         assert!(fresh.u.iter().all(|u| *u == -0.25));
     }
+
+    /// Pins the wording of the out-of-range refusal: the LOWEST admissible value is printed first.
+    /// Every test here matches that variant with `..` and reads its `what` only, so nothing in the
+    /// suite ever formatted one — a refusal that printed its interval end for end, `[tau, 0]` for a
+    /// step that must be in `(0, tau]`, said the opposite of what it meant and still passed.
+    #[test]
+    fn the_out_of_range_refusal_prints_its_lowest_bound_first() {
+        let refusal = FieldError::OutOfRange { what: "dt", value: 0.0, low: 1.0, high: 2.0 };
+        assert_eq!(refusal.to_string(), "dt = 0 is outside [1, 2]");
+        assert_eq!(FieldError::TooFew { n: 3 }.to_string(), "a field of 3 points cannot hold a bump (needs eight)");
+        let mismatch = FieldError::Dimension { what: "input", got: 9, want: 10 };
+        assert_eq!(mismatch.to_string(), "input has length 9, expected 10");
+        assert_eq!(FieldError::NonFinite { what: "centre", index: 4 }.to_string(), "centre is not finite at 4");
+    }
+
+    /// Pins that an INFINITY is refused by every range guard in this module, not only a `NaN` or a
+    /// value on the wrong side of the bound. Those are the two shapes the suite probes with, and an
+    /// infinity passes neither test: `inf > 0.0`, `inf > s_e` and `inf >= 20 s_i` are all true, so
+    /// five separate finiteness checks here could be deleted without a test noticing.
+    #[test]
+    fn an_infinity_is_not_a_value_any_of_these_guards_admits() {
+        let k = hat();
+        // `positive`, which screens `tau` and the inhibitory amplitude.
+        assert!(matches!(Field::new(k, -0.5, f64::INFINITY, 60.0, 100), Err(FieldError::OutOfRange { what: "tau", .. })));
+        assert!(matches!(Field2::new(k, -0.5, f64::INFINITY, 60.0, 16), Err(FieldError::OutOfRange { what: "tau", .. })));
+        assert!(matches!(MexicanHat::new(2.0, 1.0, f64::INFINITY, 3.0), Err(FieldError::OutOfRange { what: "a_i", .. })));
+        // The kernel's inhibitory width, which is only ever compared against the excitatory one.
+        assert!(matches!(MexicanHat::new(2.0, 1.0, 1.0, f64::INFINITY), Err(FieldError::OutOfRange { what: "s_i", .. })));
+        // The resting level, in one dimension and two.
+        assert!(matches!(regime(&k, f64::NEG_INFINITY), Err(FieldError::OutOfRange { what: "h", .. })));
+        assert!(matches!(regime2(&k, f64::NEG_INFINITY), Err(FieldError::OutOfRange { what: "h", .. })));
+        // The domain, which is only ever compared against twenty inhibitory widths.
+        assert!(matches!(Field::new(k, -0.5, 1e-2, f64::INFINITY, 100), Err(FieldError::OutOfRange { what: "length", .. })));
+        assert!(matches!(Field2::new(k, -0.5, 1e-2, f64::INFINITY, 16), Err(FieldError::OutOfRange { what: "length", .. })));
+        // An input entry, at both signs: the check is finiteness, not `is_nan`.
+        let mut f = Field::new(k, -0.5, 1e-2, 60.0, 100).unwrap();
+        let mut blown = vec![0.0; 100];
+        blown[3] = f64::INFINITY;
+        assert!(matches!(f.step(1e-3, &blown), Err(FieldError::NonFinite { what: "input", index: 3 })));
+        blown[3] = f64::NEG_INFINITY;
+        assert!(matches!(f.step(1e-3, &blown), Err(FieldError::NonFinite { what: "input", index: 3 })));
+        // And the SECOND coordinate of a sheet's seed, which no test had ever made bad.
+        let mut sheet = Field2::new(k, -0.5, 1e-2, 60.0, 16).unwrap();
+        assert!(matches!(sheet.seed([0.0, f64::INFINITY], 1.0), Err(FieldError::NonFinite { what: "centre", .. })));
+        assert!(matches!(sheet.seed([0.0, f64::NAN], 1.0), Err(FieldError::NonFinite { what: "centre", .. })));
+        assert!(matches!(sheet.seed([f64::NEG_INFINITY, 0.0], 1.0), Err(FieldError::NonFinite { what: "centre", .. })));
+    }
+
+    /// Pins that `regime` looks for `W`'s maximum at the kernel's ZERO CROSSING rather than at the
+    /// excitatory width. Measured for this kernel: `W(s_e) = 0.729463`, `W(x0) = 0.762226`. At
+    /// `h = -0.75` the field is bistable, but a classifier that took `s_e` for the peak sees
+    /// `0.729463 - 0.75 < 0` and answers `NoBump`. The suite's resting levels are `-0.5`, which is
+    /// below both, and `-0.95 W_m` and `-1.01 W_m`, both derived FROM `W(x0)` and so always on the
+    /// same side of it as of `W(s_e)` — no fixture fell in the gap between the two candidates.
+    #[test]
+    fn the_classifier_finds_w_s_maximum_at_the_zero_crossing_not_at_the_excitatory_width() {
+        let k = hat();
+        let h = -0.75;
+        assert!(
+            k.integral(k.s_e) < -h && -h < k.integral(k.zero_crossing()),
+            "the fixture is the gap between the two candidate peaks: W(s_e) = {}, W(x0) = {}",
+            k.integral(k.s_e),
+            k.integral(k.zero_crossing())
+        );
+        let Regime::Bistable { ignition, settled } = regime(&k, h).unwrap() else {
+            panic!("-h lies below W's true maximum, so this kernel is bistable at h = {h}")
+        };
+        assert!((k.integral(ignition) + h).abs() < 1e-13 && (k.integral(settled) + h).abs() < 1e-13);
+        assert!(ignition < k.zero_crossing() && k.zero_crossing() < settled);
+        assert!(k.w(ignition) > 0.0 && k.w(settled) < 0.0, "the narrow root is unstable, the wide one stable");
+    }
+
+    /// Pins that the STABLE width is bisected from the peak of `W` upward, not from zero. Started
+    /// at zero the bracket holds both roots, and `bisect` reads its direction from the two ends:
+    /// on a kernel whose half-integral `W_inf` is POSITIVE those ends are `h` and `W_inf + h`, so
+    /// `f(hi) > f(lo)` and it treats the function as rising. It then walks its LOWER end up to the
+    /// far edge and returns `x0 + 40 s_i` — measured here as `123.159` against a true stable width
+    /// of `5.324`. Every bistable fixture in the suite is net-inhibitory (`W_inf < 0`), where a
+    /// bracket started at zero happens to converge on the right root anyway.
+    #[test]
+    fn the_stable_width_is_bracketed_above_the_peak_even_when_the_half_kernel_is_net_excitatory() {
+        let broad = MexicanHat::new(2.0, 2.0, 1.0, 3.0).unwrap();
+        let h = -1.5;
+        assert!(broad.integral_at_infinity() > 0.0, "the half-kernel is net excitatory: W_inf = {}", broad.integral_at_infinity());
+        assert!(broad.integral_at_infinity() + h < 0.0, "and still bounded at this resting level");
+        let Regime::Bistable { ignition, settled } = regime(&broad, h).unwrap() else {
+            panic!("W_inf + h < 0 < W_m + h is the bistable case")
+        };
+        assert!(
+            (broad.integral(settled) + h).abs() < 1e-13,
+            "the stable width came back as {settled}, where W + h = {}",
+            broad.integral(settled) + h
+        );
+        assert!((broad.integral(ignition) + h).abs() < 1e-13);
+        assert!(broad.w(ignition) > 0.0 && broad.w(settled) < 0.0, "the narrow root is unstable, the wide one stable");
+        assert!(settled < broad.zero_crossing() + 40.0 * broad.s_i);
+    }
+
+    /// Pins that the sheet's scan reaches TWENTY inhibitory widths. Measured for this kernel:
+    /// `W2` is still `+0.2048` at `r = 4 s_i`, so at `h = -0.15` the stable radius is `9.549` —
+    /// past `2 far` if `far` were only two inhibitory widths, which leaves the bisection with a
+    /// bracket that is positive at both ends and returns that edge, `8.0`, as the radius. The
+    /// suite's one sheet fixture settles at `1.75`, comfortably inside either span, and its
+    /// `W2` has already gone negative by `2 s_i`, so no scan length could matter there.
+    #[test]
+    fn the_sheets_scan_reaches_far_enough_to_bracket_a_wide_stable_radius() {
+        let shallow = MexicanHat::new(2.0, 1.0, 0.51, 2.0).unwrap();
+        let h = -0.15;
+        assert!(shallow.rim_integral(4.0 * shallow.s_i) > -h, "the stable radius is past four inhibitory widths");
+        let Regime::Bistable { ignition, settled } = regime2(&shallow, h).unwrap() else {
+            panic!("W2_inf + h < 0 < W2_m + h is the bistable case")
+        };
+        assert!(
+            (shallow.rim_integral(settled) + h).abs() < 1e-12,
+            "the stable radius came back as {settled}, where W2 + h = {}",
+            shallow.rim_integral(settled) + h
+        );
+        assert!((shallow.rim_integral(ignition) + h).abs() < 1e-12);
+        assert!(settled > 4.0 * shallow.s_i && ignition < settled);
+        assert!(shallow.rim_integral_at_infinity() + h < 0.0);
+    }
+
+    /// Pins that the sheet's STABLE radius is bisected from the peak of `W2` upward. Started at
+    /// zero the bracket holds both roots and its lower end never moves, because `bisect` raises it
+    /// only on a positive midpoint — so the midpoints are the dyadic points `40 s_i / 2^k`, here
+    /// `2.5`, `1.25`, `0.625`. Measured at `h = -1.80`: the two roots are `1.0354` and `1.2261`,
+    /// which fall in the gap between `0.625` and `1.25`, so every midpoint is negative, the upper
+    /// end collapses and the stable radius comes back as `2.5e-59`. The suite's `h = -1.274` puts
+    /// the roots at `0.664` and `1.75`, straddling `1.25`, where the same broken bracket lands on
+    /// the right root — a single-root-per-gap fixture cannot tell a correct bracket from a lucky one.
+    #[test]
+    fn the_sheets_stable_radius_is_bracketed_above_the_peak_of_its_rim_integral() {
+        let squeezed = MexicanHat::new(2.0, 1.0, 0.6, 2.0).unwrap();
+        let h = -1.80;
+        let Regime::Bistable { ignition, settled } = regime2(&squeezed, h).unwrap() else {
+            panic!("-h lies below the maximum of W2, so this sheet is bistable at h = {h}")
+        };
+        let hi = 2.0 * 20.0 * squeezed.s_i;
+        assert!(
+            ignition > hi / 128.0 && settled < hi / 64.0,
+            "the fixture is one dyadic gap of the bracket [0, {hi}]: {ignition} {settled}"
+        );
+        assert!(
+            (squeezed.rim_integral(settled) + h).abs() < 1e-12,
+            "the stable radius came back as {settled}, where W2 + h = {}",
+            squeezed.rim_integral(settled) + h
+        );
+        assert!((squeezed.rim_integral(ignition) + h).abs() < 1e-12);
+        assert!(ignition < settled);
+    }
+
+    /// Pins that `seed` puts everything OUTSIDE the patch back to the resting level. Every other
+    /// seed in the suite is applied to a field that is already at rest, where "write `h` outside
+    /// the patch" and "leave the outside as it was" put down the same numbers; a seed that only
+    /// ever adds activity would carry the previous trial's bump into the next one.
+    #[test]
+    fn seeding_returns_the_field_outside_the_patch_to_rest() {
+        let k = hat();
+        let mut f = Field::new(k, -0.5, 1e-2, 60.0, 100).unwrap();
+        f.u.fill(7.0);
+        f.seed(30.0, 3.0).unwrap();
+        // dx = 0.6, so |x - 30| < 1.5 is the five points 48..=52 and nothing else.
+        for (i, u) in f.u.iter().enumerate() {
+            let want = if (48..=52).contains(&i) { 0.005 } else { -0.5 };
+            assert_eq!(*u, want, "point {i}");
+        }
+        assert_eq!(f.active_width(), 5.0 * 0.6);
+    }
+
+    /// Pins that a patch is seeded about the centre it was GIVEN and not about its reflection
+    /// through the origin. Every other seeded patch in the suite is centred at `0` or at half the
+    /// domain — the two points on a ring that a reflection leaves exactly where they are.
+    #[test]
+    fn a_patch_is_seeded_about_the_centre_given_not_about_its_reflection() {
+        let k = hat();
+        let mut f = Field::new(k, -0.5, 1e-2, 60.0, 120).unwrap();
+        assert_eq!(f.dx(), 0.5);
+        f.seed(10.0, 3.0).unwrap();
+        // |x - 10| < 1.5 is the five points 18..=22; reflected, it would be 98..=102.
+        for (i, u) in f.u.iter().enumerate() {
+            let want = if (18..=22).contains(&i) { 0.005 } else { -0.5 };
+            assert_eq!(*u, want, "point {i}");
+        }
+    }
+
+    /// Pins that a disc is seeded at `[x, y]` — column from the FIRST coordinate, row from the
+    /// second — and stored row-major. The suite's discs are centred at `[12, 12]`, `[0, 0]` and
+    /// `[6, 6]`, all on the diagonal, and a diagonal disc is unchanged both by transposing the
+    /// sheet and by swapping the centre's two coordinates, so neither edit was visible anywhere.
+    #[test]
+    fn a_disc_is_seeded_at_its_column_and_row_in_that_order() {
+        let k = MexicanHat::new(2.0, 1.0, 1.0, 2.0).unwrap();
+        let mut sheet = Field2::new(k, -0.5, 1e-2, 24.0, 16).unwrap();
+        // dx = 1.5, so [6, 12] is the grid point at column 4 of row 8; a radius of 2 takes it and
+        // its four edge neighbours, the diagonals being 2.12 away.
+        sheet.seed([6.0, 12.0], 2.0).unwrap();
+        let patch = [7 * 16 + 4, 8 * 16 + 3, 8 * 16 + 4, 8 * 16 + 5, 9 * 16 + 4];
+        for (q, u) in sheet.u.iter().enumerate() {
+            let want = if patch.contains(&q) { 0.005 } else { -0.5 };
+            assert_eq!(*u, want, "point {q}");
+        }
+    }
+
+    /// Pins that the sheet's recurrent sum reads each active point's ROW before its column. The
+    /// kernel table is indexed by row separation then column separation, so a pair read the other
+    /// way round is looked up at a different distance. The suite only ever steps a sheet whose
+    /// active set is a disc about a point on the diagonal, and such a set is its own transpose —
+    /// every entry it reads is the one it should have read. The two values below are the whole
+    /// Euler step written out in the same operations and the same order, so they are exact.
+    #[test]
+    fn the_sheets_recurrent_sum_reads_each_active_points_row_before_its_column() {
+        let k = MexicanHat::new(2.0, 1.0, 1.0, 2.0).unwrap();
+        let (dt, tau, dx, h) = (1e-2, 1e-2, 1.5, -0.5);
+        let mut sheet = Field2::new(k, h, tau, 24.0, 16).unwrap();
+        assert_eq!(sheet.dx(), dx);
+        sheet.u[1] = 1.0; // exactly one active point: column 1 of row 0.
+        assert_eq!(sheet.step(dt).unwrap(), 1);
+        let euler = dt / tau;
+        let settle = |lateral: f64| h + euler * (-h + lateral * dx * dx + h);
+        // Two columns along, same row: a separation of (0, 2).
+        assert_eq!(sheet.u[3], settle(k.w(dx * (0.0f64).hypot(2.0))));
+        // Three rows down, column 0: a separation of (3, 1), which is a different distance.
+        assert_eq!(sheet.u[3 * 16], settle(k.w(dx * (3.0f64).hypot(1.0))));
+        assert_ne!(sheet.u[3], sheet.u[3 * 16], "the two separations must differ for this to pin anything");
+    }
 }

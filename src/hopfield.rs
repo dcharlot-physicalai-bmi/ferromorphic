@@ -945,4 +945,320 @@ mod tests {
         assert!(worst.is_sign_positive(), "the reported zero is negative: measured {worst:?}");
         assert_eq!(format!("{worst:?}"), "0.0");
     }
+
+    // ---- the fourth sweep's repairs ----
+
+    /// The field and the recall's inlined copy of it both read ROW `i` of the weight matrix,
+    /// `h_i = Σ_j W_ij x_j`, not column `i`.
+    ///
+    /// Why the suite could not see it: [`Classical::store`] adds the Hebbian outer product
+    /// `ξ_i ξ_j / N`, which is symmetric, and skips the diagonal, so every matrix built through
+    /// the constructor and `store` satisfies `W = Wᵀ` exactly and a transpose changes no number
+    /// anywhere. It is observable all the same, because `w` is a public field: a caller can write
+    /// an asymmetric matrix, and `the_energy_monitor_fires_on_an_asymmetric_network` already
+    /// does — but its matrix has `W_01 = 2, W_10 = −1`, where the transposed recall happens to
+    /// chase the same non-converging cycle and report the same worst increase. This one is
+    /// one-directional: neuron 1 is driven by neuron 0 and does not drive it back.
+    #[test]
+    fn the_field_and_the_recall_read_the_row_of_the_weight_matrix_not_the_column() {
+        let mut net = Classical::new(2).unwrap();
+        net.w = vec![0.0, 0.0, 4.0, 0.0]; // W_01 = 0, W_10 = 4.
+        // W x at x = (1, −1) is (0·1 + 0·(−1), 4·1 + 0·(−1)) = (0, 4);
+        // Wᵀ x would be (0·1 + 4·(−1), 0·1 + 0·(−1)) = (−4, 0).
+        assert_eq!(net.field(&[1.0, -1.0]).unwrap(), vec![0.0, 4.0]);
+        // The recall does not call `field`; it recomputes the same sum. Neuron 0 sees nothing and
+        // holds at +1, neuron 1 sees +4 and flips up, and the second sweep confirms (1, 1).
+        // Under the transpose neuron 0 sees −4 and flips DOWN, landing on (−1, −1) instead.
+        let r = net.recall(&[1.0, -1.0], 5).unwrap();
+        assert_eq!(r.state, vec![1.0, 1.0]);
+        assert!(r.converged && r.sweeps == 2);
+        // E = −½ Σ h_i x_i: −½·(0·1 + 4·(−1)) = 2 at the cue, −½·(0·1 + 4·1) = −2 at the end.
+        assert_eq!(r.energy, (2.0, -2.0));
+    }
+
+    /// A neuron whose local field is exactly zero is already at rest: a zero field agrees with
+    /// either sign, which is what [`Classical::is_fixed_point`] says it does.
+    ///
+    /// Why the suite could not see it: `f64::signum` returns `+1.0` for `+0.0`, so dropping the
+    /// zero clause changes the verdict only for a neuron sitting at `−1` with no field — and the
+    /// only states given to `is_fixed_point` elsewhere are stored patterns of a Hebbian network,
+    /// whose fields are never zero. The empty network is the fixture that separates them, and the
+    /// one empty-network check in the suite goes through `recall`, which carries its own,
+    /// separate tie clause.
+    #[test]
+    fn a_neuron_with_no_field_is_already_at_rest() {
+        let empty = Classical::new(4).unwrap();
+        let x = [1.0, -1.0, 1.0, -1.0];
+        assert_eq!(empty.field(&x).unwrap(), vec![0.0; 4]);
+        assert!(empty.is_fixed_point(&x).unwrap(), "no field, nothing to disagree with");
+        assert!(empty.is_fixed_point(&[-1.0; 4]).unwrap());
+        assert!(empty.is_fixed_point(&[1.0; 4]).unwrap());
+    }
+
+    /// The recall reports the energy of the state it ENDED on, not the one it started from.
+    ///
+    /// Why the suite could not see it: every other reading of `energy.1` on a classical recall is
+    /// an inequality — `energy.1 <= energy.0` — which an unchanged copy of the starting energy
+    /// satisfies with equality, and the only exact pair asserted anywhere is the dense plateau's
+    /// `(0.0, 0.0)`, a recall that takes no flip at all. A recall that does take one pins it.
+    #[test]
+    fn the_classical_recall_reports_the_energy_of_the_state_it_ended_on() {
+        let mut net = Classical::new(4).unwrap();
+        net.store(&[1.0; 4]).unwrap(); // W_ij = 1/4 off the diagonal, exactly.
+        // From (1, 1, 1, −1): the first three neurons see ¼ and hold, the last sees ¾ and flips
+        // up. E = −½ Σ h_i x_i goes from −½·(3·¼ − ¾) = 0 to −½·(4·¾) = −3/2.
+        let r = net.recall(&[1.0, 1.0, 1.0, -1.0], 5).unwrap();
+        assert_eq!(r.state, vec![1.0; 4]);
+        assert!(r.converged && r.sweeps == 2);
+        assert_eq!(r.energy, (0.0, -1.5));
+        assert_eq!(r.energy.1, net.energy(&r.state).unwrap(), "the reported end is the end");
+    }
+
+    /// The number of corrupted entries is `round(p·N)`: the NEAREST integer, neither the floor
+    /// nor the ceiling.
+    ///
+    /// Why the suite could not see it: the single case it asserts is 15% of 310, and `0.15 * 310`
+    /// is exactly 46.5 in binary — a tie, which `f64::round` takes away from zero to 47 and
+    /// `ceil` also takes to 47. Only a fraction strictly below one half separates them:
+    /// `0.125 * 10` is exactly 1.25, where `round` flips one entry and `ceil` flips two.
+    #[test]
+    fn the_number_of_corrupted_entries_is_the_nearest_integer() {
+        let flipped = |n: usize, p: f64| {
+            let pattern = vec![1.0; n];
+            corrupt(&pattern, p, &mut Rng::new(7)).unwrap().iter().filter(|x| **x < 0.0).count()
+        };
+        assert_eq!(flipped(10, 0.125), 1, "1.25 rounds to 1; ceil gives 2");
+        assert_eq!(flipped(310, 0.15), 47, "46.5 is a tie and rounds away from zero; floor gives 46");
+        assert_eq!(flipped(10, 0.25), 3, "2.5 is a tie and rounds away from zero");
+        assert_eq!(flipped(10, 0.0), 0, "p = 0 corrupts nothing");
+        assert_eq!(flipped(10, 1.0), 10, "p = 1 corrupts everything");
+    }
+
+    /// The corruption can land on any index, because the shuffle really swaps. A swap of an
+    /// element with itself leaves the identity permutation, which puts every flip on the lowest
+    /// `k` indices of every pattern for every seed.
+    ///
+    /// Why the suite could not see it: every other use of `corrupt` reads the NUMBER of changed
+    /// entries, or the overlap that follows from it, and both are invariant under which positions
+    /// were chosen. This reads the positions. With `p·N = 1` exactly one entry is flipped and its
+    /// index is the first element of a uniform permutation, so it is uniform over the `N`
+    /// positions; the chance that some index is never chosen in `d` draws is at most
+    /// `N·(1 − 1/N)^d`, and at `N = 16`, `d = 400` that bound is `16·(15/16)^400 = 1.0e-10`.
+    #[test]
+    fn the_corruption_can_land_on_any_index_not_only_the_lowest() {
+        let n = 16usize;
+        let pattern = vec![1.0; n];
+        let mut seen = vec![false; n];
+        for seed in 0..400u64 {
+            let c = corrupt(&pattern, 1.0 / 16.0, &mut Rng::new(seed)).unwrap();
+            let hit: Vec<usize> = (0..n).filter(|&i| c[i] < 0.0).collect();
+            assert_eq!(hit.len(), 1, "1/16 of 16 neurons is one flip");
+            seen[hit[0]] = true;
+        }
+        assert!(seen.iter().all(|s| *s), "an index was never corrupted in 400 draws: {seen:?}");
+    }
+
+    /// Every constructor refuses the degenerate argument it names: a dense memory of no neurons,
+    /// a modern memory of no dimensions, and an infinite or `NaN` inverse temperature.
+    ///
+    /// Why the suite could not see it: `the_refusals_name_the_problem` exercises
+    /// `Classical::new(0)`, `Dense::new(_, 1)` and `Modern::new(_, 0.0)` and stops there, so the
+    /// zero-size guards of the other two constructors and the finiteness half of the beta guard
+    /// were never reached. `!(beta > 0.0)` already rejects `NaN`, but `INFINITY` passes it and is
+    /// refused only by the `is_finite` clause — which nothing called.
+    #[test]
+    fn the_constructors_refuse_a_zero_size_or_a_non_finite_temperature() {
+        assert!(matches!(Dense::new(0, 3), Err(HopfieldError::Empty { what: "neurons" })));
+        assert!(matches!(Modern::new(0, 1.0), Err(HopfieldError::Empty { what: "dimension" })));
+        assert!(matches!(Modern::new(4, f64::INFINITY), Err(HopfieldError::OutOfRange { what: "beta", .. })));
+        assert!(matches!(Modern::new(4, f64::NAN), Err(HopfieldError::OutOfRange { what: "beta", .. })));
+        assert!(matches!(Modern::new(4, -1.0), Err(HopfieldError::OutOfRange { what: "beta", .. })));
+        // One neuron and degree two are the smallest legal arguments, and they are accepted.
+        assert_eq!(Dense::new(1, 2).unwrap().n, 1);
+        assert_eq!(Modern::new(1, f64::MIN_POSITIVE).unwrap().n, 1);
+    }
+
+    /// A modern network keeps the inverse temperature it was given, and the softmax divides by
+    /// that one.
+    ///
+    /// Why the suite could not see it: the only network the modern tests construct is built AT
+    /// `beta = 1.0`, where substituting 1.0 is not a substitution, and the cold network they
+    /// compare it against is made by a struct update — `Modern { beta: 0.01, ..net }` — which
+    /// never goes through the constructor.
+    #[test]
+    fn a_modern_network_keeps_the_inverse_temperature_it_was_given() {
+        let mut net = Modern::new(2, 4.0).unwrap();
+        assert_eq!(net.beta, 4.0);
+        net.store(&[1.0, 0.0]).unwrap();
+        net.store(&[-1.0, 0.0]).unwrap();
+        // At ξ = (1, 0) the logits are β·(±1) = ±4, so after the shift by the larger the
+        // exponentials are 1 and e^{−8}. At β = 1 they would be 1 and e^{−2}.
+        let z = 1.0 + (-8.0f64).exp();
+        assert_eq!(net.attention(&[1.0, 0.0]).unwrap(), vec![1.0 / z, (-8.0f64).exp() / z]);
+    }
+
+    /// `max_norm` is the LARGEST stored norm, and an empty store has norm zero — it is the `M` of
+    /// the energy's `½M²` term, so both ends matter.
+    ///
+    /// Why the suite could not see it: the one store it is read on holds two thousand bipolar
+    /// patterns of the same length, where every norm is 8 and the largest, the first and the last
+    /// are the same number; and it is never called before anything is stored, so the fold's
+    /// identity element was never the answer.
+    #[test]
+    fn the_largest_stored_norm_is_the_largest_and_an_empty_store_has_norm_zero() {
+        let mut net = Modern::new(2, 1.0).unwrap();
+        assert_eq!(net.max_norm(), 0.0, "nothing stored, so no norm, and ½M² contributes nothing");
+        net.store(&[3.0, 4.0]).unwrap(); // ‖·‖ = 5.
+        net.store(&[1.0, 0.0]).unwrap(); // ‖·‖ = 1, and it is the LAST.
+        assert_eq!(net.max_norm(), 5.0);
+        net.store(&[0.0, 12.0]).unwrap(); // now the last is also the largest.
+        assert_eq!(net.max_norm(), 12.0);
+    }
+
+    /// The softmax is shifted by the LARGEST logit and divided by the partition function.
+    ///
+    /// Why the suite could not see it: a softmax is invariant to the shift in exact arithmetic,
+    /// and the modern test's logits span about ±64, so shifting by the smallest still
+    /// exponentiates finite numbers and returns the same weights to the last place. Its store is
+    /// also so sharply peaked that `Z` is 1 to well within the 1e-12 the normalisation is checked
+    /// at, so multiplying by `Z` where the code divides moves nothing it asserts. Logits two
+    /// thousand apart overflow the wrong shift to infinity, and a two-way tie makes `Z` exactly
+    /// 2 and the weights exactly a half.
+    #[test]
+    fn the_softmax_is_shifted_by_the_largest_logit_and_divided_by_the_partition_function() {
+        let mut tie = Modern::new(2, 1.0).unwrap();
+        tie.store(&[1.0, 0.0]).unwrap();
+        tie.store(&[-1.0, 0.0]).unwrap();
+        // Both logits are zero at the origin: exps (1, 1), Z = 2, weights (½, ½). Multiplying by
+        // Z instead gives (2, 2), which is not even a distribution.
+        assert_eq!(tie.attention(&[0.0, 0.0]).unwrap(), vec![0.5, 0.5]);
+        let mut far = Modern::new(1, 1.0).unwrap();
+        far.store(&[1000.0]).unwrap();
+        far.store(&[-1000.0]).unwrap();
+        // Logits (1000, −1000) at ξ = (1). Shifted by the largest: exp(0) = 1 and exp(−2000),
+        // which underflows to exactly 0. Shifted by the smallest it asks for exp(+2000), which is
+        // infinite, and infinity over infinity is NaN.
+        let a = far.attention(&[1.0]).unwrap();
+        assert_eq!(a, vec![1.0, 0.0]);
+        assert!(a.iter().all(|w| w.is_finite()), "the shift exists to keep these finite");
+    }
+
+    /// The modern energy is `−β⁻¹ lse(β, Xξ) + ½ ξᵀξ + β⁻¹ ln P + ½M²`, term by term.
+    ///
+    /// Why the suite could not see it: every assertion on this energy is an INEQUALITY — the
+    /// update does not raise it, and it is bounded below by zero — and on the store those tests
+    /// use the term `½M²` is 32 while the rest are single digits, so dropping the log-sum-exp's
+    /// shift, doubling the quadratic term, multiplying by `β` where the formula divides, or
+    /// dropping `ln P` altogether leaves both inequalities comfortably true. This fixture is
+    /// chosen so that every term is exact in binary: two stored patterns at ±800 in one
+    /// dimension, `β = ½` and the cue at 1, so the logits are ±400, the shifted exponentials are
+    /// exactly 1 and exactly 0 (`exp(−800)` is far below the smallest subnormal, which is about
+    /// `exp(−745)`), `lse` is exactly 400, `‖ξ‖²` is 1 and `M` is exactly 800. So the whole
+    /// expression is compared with `==`, in the order the code sums it.
+    #[test]
+    fn the_modern_energy_is_its_closed_form_term_by_term() {
+        let mut net = Modern::new(1, 0.5).unwrap();
+        net.store(&[800.0]).unwrap();
+        net.store(&[-800.0]).unwrap();
+        let p = net.patterns.len() as f64;
+        let want = -400.0_f64 / 0.5 + 0.5 + p.ln() / 0.5 + 0.5 * 800.0 * 800.0;
+        assert_eq!(net.energy(&[1.0]).unwrap(), want);
+        // β is not a scale on the answer: at β = 1 the logits are ±800 and both β-divided terms
+        // double their contribution the other way.
+        let cold = Modern { beta: 1.0, ..net.clone() };
+        let want_cold = -800.0_f64 / 1.0 + 0.5 + p.ln() / 1.0 + 0.5 * 800.0 * 800.0;
+        assert_eq!(cold.energy(&[1.0]).unwrap(), want_cold);
+    }
+
+    /// The separation of a stored pattern is its own overlap LESS the largest overlap with any
+    /// other pattern — the nearest neighbour, and subtracted.
+    ///
+    /// Why the suite could not see it: it is read exactly once, as `min_sep > 20.0` over two
+    /// thousand random bipolar patterns in 64 dimensions. There `own = 64`, the nearest other
+    /// overlap is about +28 and the furthest about −28, so taking the furthest (64 − (−28) = 92)
+    /// or adding the nearest (64 + 28 = 92) both give a LARGER number, and a one-sided bound
+    /// cannot tell a larger number from the right one. Three patterns with hand-chosen overlaps
+    /// separate all three formulas at once.
+    #[test]
+    fn the_separation_subtracts_the_nearest_other_pattern() {
+        let mut net = Modern::new(4, 1.0).unwrap();
+        net.store(&[1.0, 1.0, 1.0, 1.0]).unwrap();
+        net.store(&[1.0, 1.0, 1.0, -1.0]).unwrap();
+        net.store(&[-1.0, -1.0, -1.0, -1.0]).unwrap();
+        // Own overlaps are 4. The pairwise overlaps are 0·1 = +2, 0·2 = −4, 1·2 = −2.
+        // Pattern 0: 4 − max(2, −4) = 2. The furthest would give 4 − (−4) = 8, and adding the
+        // nearest 4 + 2 = 6.
+        assert_eq!(net.separation(0), Some(2.0));
+        // Pattern 1: 4 − max(2, −2) = 2. Furthest 4 − (−2) = 6, adding 4 + 2 = 6.
+        assert_eq!(net.separation(1), Some(2.0));
+        // Pattern 2: 4 − max(−4, −2) = 6. Furthest 4 − (−4) = 8, adding 4 + (−2) = 2.
+        assert_eq!(net.separation(2), Some(6.0));
+        assert_eq!(net.separation(3), None, "there is no pattern 3");
+    }
+
+    /// The dense recall runs at most `max_sweeps` sweeps, and a state that only settles on the
+    /// SECOND sweep is not a fixed point.
+    ///
+    /// Why the suite could not see it: both dense recalls in the suite are given budgets (5 and
+    /// 30) they never come near, so an off-by-one in the budget changes nothing they read; and
+    /// the only states given to `is_fixed_point` are stored patterns and an anti-pattern, every
+    /// one of which is unchanged by its first sweep, so widening that call's own budget from one
+    /// sweep to two changes no verdict either. A cue one bit away from a stored pattern does
+    /// both: it moves on the first sweep, and a budget of one runs out before the sweep that
+    /// would prove it had stopped moving.
+    #[test]
+    fn the_dense_recall_honours_its_sweep_budget_and_a_settling_state_is_not_a_fixed_point() {
+        let p = vec![1.0, -1.0, 1.0, 1.0, -1.0, -1.0, 1.0, -1.0];
+        let mut dense = Dense::new(8, 3).unwrap();
+        dense.store(&p).unwrap();
+        let mut cue = p.clone();
+        cue[0] = -cue[0];
+        // A budget of zero runs no sweep at all: the cue comes back untouched, unconverged, with
+        // its own energy twice. One bit wrong makes ξ·x = 6, and 6³ = 216.
+        let none = dense.recall(&cue, 0).unwrap();
+        assert_eq!(none.sweeps, 0);
+        assert_eq!(none.state, cue);
+        assert!(!none.converged);
+        assert_eq!(none.energy, (-216.0, -216.0));
+        // A budget of one runs exactly one sweep: it repairs the bit and stops, without the
+        // second sweep that would show nothing more changes.
+        let one = dense.recall(&cue, 1).unwrap();
+        assert_eq!(one.sweeps, 1);
+        assert_eq!(one.state, p);
+        assert!(!one.converged);
+        // So the cue is NOT a fixed point, though the pattern it settles to is.
+        assert!(!dense.is_fixed_point(&cue).unwrap());
+        assert!(dense.is_fixed_point(&p).unwrap());
+    }
+
+    /// A real-valued pattern of the wrong length is refused, at storage and at every read.
+    ///
+    /// Why the suite could not see it: the only bad argument it ever hands the finiteness check
+    /// is a `NaN` of the RIGHT length, which is caught after the length check has already passed.
+    /// Nothing gave the modern network a short pattern — and a short one would be stored, then
+    /// zipped silently against every state, because `zip` stops at the shorter side: the dot
+    /// products would be taken over a prefix and the store would hold a pattern of a dimension it
+    /// does not have.
+    #[test]
+    fn a_real_valued_pattern_of_the_wrong_length_is_refused() {
+        let mut net = Modern::new(3, 1.0).unwrap();
+        assert!(matches!(
+            net.store(&[1.0, 2.0]),
+            Err(HopfieldError::Dimension { what: "pattern", got: 2, want: 3 })
+        ));
+        assert!(matches!(
+            net.store(&[1.0, 2.0, 3.0, 4.0]),
+            Err(HopfieldError::Dimension { what: "pattern", got: 4, want: 3 })
+        ));
+        assert!(net.patterns.is_empty(), "a refused pattern is not stored");
+        net.store(&[1.0, 2.0, 3.0]).unwrap();
+        assert!(matches!(
+            net.attention(&[1.0, 2.0]),
+            Err(HopfieldError::Dimension { what: "state", got: 2, want: 3 })
+        ));
+        assert!(matches!(
+            net.energy(&[1.0, 2.0]),
+            Err(HopfieldError::Dimension { what: "state", got: 2, want: 3 })
+        ));
+    }
 }

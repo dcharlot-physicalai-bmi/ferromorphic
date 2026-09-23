@@ -796,4 +796,228 @@ mod tests {
         assert!(corner.iter().all(|&i| i < cmac.w.len()));
         assert_eq!(corner[3], 3 * 24 + 3 * 6 + 5);
     }
+
+    /// A non-finite entry is refused at ITS OWN index, whether it is a `NaN` or an infinity.
+    /// The scan is written `!x.is_finite()`; an `is_nan()` in its place still rejects everything
+    /// the suite hands it, because every existing non-finite fixture in this module is a `NaN`,
+    /// and every one of them sits in slot 0 or slot 1 of a two-element array, where an index
+    /// hard-coded to zero is right half the time and unread the other half.
+    #[test]
+    fn a_non_finite_entry_is_refused_at_its_own_index_whether_nan_or_infinite() {
+        let mut cell = AdaptiveFilter::new(4, 0.1).unwrap();
+        for (slot, bad) in [(0usize, f64::NAN), (1, f64::INFINITY), (3, f64::NEG_INFINITY)] {
+            let mut p = vec![1.0; 4];
+            p[slot] = bad;
+            match cell.output(&p) {
+                Err(CerebellumError::NonFinite { what, index }) => assert_eq!((what, index), ("input", slot)),
+                other => panic!("an input of {bad} at slot {slot} was accepted: {other:?}"),
+            }
+            match cell.learn(&p, 1.0) {
+                Err(CerebellumError::NonFinite { what, index }) => assert_eq!((what, index), ("input", slot)),
+                other => panic!("a learning input of {bad} at slot {slot} was accepted: {other:?}"),
+            }
+        }
+        // The same scan under the names `check_samples` and the CMAC give it.
+        match cell.epoch(&[vec![1.0, 1.0, f64::INFINITY, 1.0]], &[0.0]) {
+            Err(CerebellumError::NonFinite { what, index }) => assert_eq!((what, index), ("sample", 2)),
+            other => panic!("a sample carrying an infinity was accepted: {other:?}"),
+        }
+        let cmac = Cmac::new(vec![0.0, 0.0], &[1.0, 1.0], 0.1, 4, 1.0).unwrap();
+        match cmac.quantise(&[0.5, f64::INFINITY]) {
+            Err(CerebellumError::NonFinite { what, index }) => assert_eq!((what, index), ("input", 1)),
+            other => panic!("a lookup at an infinite coordinate was accepted: {other:?}"),
+        }
+    }
+
+    /// An infinite parameter is not a positive one. `positive` reads `is_finite() && v > 0.0`,
+    /// and the suite's only probes of it are zero and a negative number, both of which the
+    /// comparison alone still rejects — so `+∞` seconds of time constant, of time step or of
+    /// learning rate walked through a guard that exists to stop exactly that.
+    #[test]
+    fn an_infinite_parameter_is_not_a_positive_one() {
+        assert!(matches!(GranuleBank::new(vec![0.1, f64::INFINITY]), Err(CerebellumError::OutOfRange { what: "tau", .. })));
+        let mut bank = GranuleBank::new(vec![0.1]).unwrap();
+        assert!(matches!(bank.step(f64::INFINITY, 1.0), Err(CerebellumError::OutOfRange { what: "dt", .. })));
+        assert!(matches!(AdaptiveFilter::new(2, f64::INFINITY), Err(CerebellumError::OutOfRange { what: "beta", .. })));
+        assert!(matches!(Cmac::new(vec![0.0], &[1.0], f64::INFINITY, 4, 1.0), Err(CerebellumError::OutOfRange { what: "res", .. })));
+    }
+
+    /// A non-finite target is refused, by name and at its own index. `check_samples` ends on
+    /// the targets, and that call's value is the function's return value — so replacing it with
+    /// `Ok(())` removes the check and leaves the signature and every caller untouched. A `NaN`
+    /// target does not panic: it makes the mean squared error `NaN` and poisons every weight,
+    /// which every existing assertion about convergence reads as a run that simply did not
+    /// converge on the fixtures it is given, none of which carry one.
+    #[test]
+    fn a_non_finite_target_is_refused_before_it_can_poison_a_weight() {
+        let mut cell = AdaptiveFilter::new(2, 0.1).unwrap();
+        let samples = vec![vec![1.0, 2.0], vec![0.5, -1.0]];
+        for (slot, bad) in [(0usize, f64::NAN), (1, f64::INFINITY)] {
+            let mut targets = vec![1.0, 2.0];
+            targets[slot] = bad;
+            match cell.error_correlation(&samples, &targets) {
+                Err(CerebellumError::NonFinite { what, index }) => assert_eq!((what, index), ("targets", slot)),
+                other => panic!("a target of {bad} at slot {slot} was accepted: {other:?}"),
+            }
+            assert!(matches!(cell.epoch(&samples, &targets), Err(CerebellumError::NonFinite { what: "targets", .. })));
+            assert!(matches!(wiener(&samples, &targets), Err(CerebellumError::NonFinite { what: "targets", .. })));
+        }
+        assert_eq!(cell.w, vec![0.0, 0.0], "a refused epoch wrote nothing");
+        // The same sample set with finite targets does solve, so the refusal is the target's.
+        assert!(wiener(&samples, &[1.0, 2.0]).is_ok());
+    }
+
+    /// The bank holds one state per time constant and the step hands every one of them back.
+    /// The exponential test zips the states with the time constants, so a bank holding a single
+    /// state checks a single integrator and passes; and it discards the step's return value
+    /// entirely, reading `bank.state` afterwards, so a step handing back an empty slice — the
+    /// only thing a caller who is not inside the module can see — was read by nothing.
+    #[test]
+    fn the_bank_holds_one_state_per_time_constant_and_hands_every_one_back() {
+        let mut bank = GranuleBank::new(vec![0.01, 0.1, 1.0]).unwrap();
+        assert_eq!(bank.state.len(), bank.taus.len());
+        assert_eq!(bank.state, vec![0.0; 3]);
+        let returned = bank.step(0.05, 2.0).unwrap().to_vec();
+        assert_eq!(returned.len(), 3, "the step handed back {} of 3 states", returned.len());
+        assert_eq!(returned, bank.state);
+        // 50 ms is five time constants for the fastest integrator and a twentieth for the
+        // slowest, so the three are strictly ordered and all three have moved off rest.
+        assert!(returned[0] > returned[1] && returned[1] > returned[2] && returned[2] > 0.0, "{returned:?}");
+    }
+
+    /// A non-finite sample never enters the correlation matrix. `correlation` is the entry point
+    /// `wiener` and `safe_beta` both go through FIRST, before `check_samples` scans anything, so
+    /// its own scan is the only thing standing between a `NaN` sample and an `R` that is `NaN`
+    /// throughout — and the existing bad-argument probes of `correlation` are all ragged lengths.
+    #[test]
+    fn a_non_finite_sample_never_enters_the_correlation_matrix() {
+        for (slot, bad) in [(0usize, f64::NAN), (1, f64::INFINITY)] {
+            let mut p = vec![1.0, 2.0];
+            p[slot] = bad;
+            match correlation(&[vec![1.0, 1.0], p]) {
+                Err(CerebellumError::NonFinite { what, index }) => assert_eq!((what, index), ("sample", slot)),
+                other => panic!("a sample of {bad} at slot {slot} entered the matrix: {other:?}"),
+            }
+        }
+        assert!(matches!(safe_beta(&[vec![1.0, f64::NAN]]), Err(CerebellumError::NonFinite { what: "sample", .. })));
+        assert!(matches!(wiener(&[vec![1.0, f64::NAN]], &[1.0]), Err(CerebellumError::NonFinite { what: "sample", .. })));
+    }
+
+    /// The Wiener solve refuses a sample set that is NEARLY dependent, not only one that is
+    /// exactly so. The guard `cholesky` is given is RELATIVE — a pivot is rejected at or below
+    /// `1e-12` of the largest diagonal entry — and the only ill-conditioned fixture in this
+    /// module is two identical inputs, whose second pivot comes out at or below zero and is
+    /// therefore refused by a guard of zero as well. Two inputs differing by one part in ten
+    /// million separate the two: measured, the second pivot is 4.33e-15 against a scale of
+    /// 0.5000000000000047 — positive, so a guard of zero admits it, and 8.7e-15 of the scale,
+    /// so the relative guard does not.
+    #[test]
+    fn the_wiener_solve_refuses_a_nearly_dependent_sample_set() {
+        let n = 400;
+        let near: Vec<Vec<f64>> = (0..n)
+            .map(|k| { let t = TAU * k as f64 / n as f64; vec![t.sin(), t.sin() + 1e-7 * t.cos()] })
+            .collect();
+        let targets: Vec<f64> = near.iter().map(|p| 2.0 * p[0] - 0.5 * p[1]).collect();
+        match wiener(&near, &targets) {
+            Err(CerebellumError::Solve(ReservoirError::IllConditioned { index, .. })) => assert_eq!(index, 1),
+            other => panic!("two inputs a part in ten million apart were solved: {other:?}"),
+        }
+        // The same size and the same targets on genuinely independent inputs still solve, so the
+        // refusal is the conditioning and not the fixture.
+        let apart: Vec<Vec<f64>> = (0..n)
+            .map(|k| { let t = TAU * k as f64 / n as f64; vec![t.sin(), t.cos()] })
+            .collect();
+        assert!(wiener(&apart, &targets).is_ok());
+    }
+
+    /// A CMAC refuses a non-finite lower corner and a `NaN` learning rate. The corner scan's
+    /// result is discarded by the mutation rather than its call, so the box is then built from
+    /// a `NaN` bound and fails later with a DIFFERENT complaint — which is why the variant is
+    /// asserted here and not merely the failure. And `!(beta > 0.0) || !(beta <= 1.0)` is the
+    /// rejecting form of the range check: written as `beta <= 0.0 || beta > 1.0` it admits a
+    /// `NaN`, which then multiplies every correction the table ever makes.
+    #[test]
+    fn a_cmac_refuses_a_non_finite_corner_or_a_nan_learning_rate() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            match Cmac::new(vec![0.0, bad], &[1.0, 1.0], 0.1, 4, 1.0) {
+                Err(CerebellumError::NonFinite { what, index }) => assert_eq!((what, index), ("low", 1)),
+                other => panic!("a lower corner of {bad} was accepted: {other:?}"),
+            }
+        }
+        assert!(matches!(Cmac::new(vec![0.0], &[1.0], 0.1, 4, f64::NAN), Err(CerebellumError::OutOfRange { what: "beta", .. })));
+    }
+
+    /// The quantisation cell count COVERS the top of the box: a box one and a half steps wide
+    /// has two cells, the upper one a half-cell. Every box in this module's existing tests is a
+    /// whole number of steps across — 100/1, 1/0.1, 2/0.1, 2/0.01 — where rounding the count up
+    /// and rounding it down give the same answer, so a count that truncated would have left the
+    /// top slice of every ragged box outside the table with nothing to say so.
+    #[test]
+    fn the_cell_count_covers_the_top_of_a_box_that_is_not_a_whole_number_of_steps() {
+        let ragged = Cmac::new(vec![0.0], &[1.5], 1.0, 2, 1.0).unwrap();
+        assert_eq!(ragged.cells, vec![2]);
+        assert_eq!(ragged.quantise(&[1.2]).unwrap(), vec![1], "the top half-step of the box has a cell");
+        assert!(matches!(ragged.quantise(&[2.0]), Err(CerebellumError::OutOfRange { what: "input", .. })));
+        // And a box that IS a whole number of steps is not rounded up past it.
+        assert_eq!(Cmac::new(vec![0.0], &[3.0], 1.0, 2, 1.0).unwrap().cells, vec![3]);
+    }
+
+    /// The table ceiling is the published one, the per-axis cell count is capped against it, and
+    /// the table size SATURATES. The existing size probes reach for a table so large that every
+    /// route to refusing it reports the same saturated count, so which check fired was invisible
+    /// and a ceiling a thousand times higher refused them just the same. The three fixtures here
+    /// separate them: 67108865 cells on one axis is past the per-axis cap but its tile count is
+    /// only 67108868, so the two checks name different numbers; and three axes of 4194302 cells
+    /// at two tilings is 2 × 2^63 tiles, a product that OVERFLOWS a `usize` and wraps to exactly
+    /// zero, which would build a table of no weights and index past the end of it on the first
+    /// lookup.
+    #[test]
+    fn the_table_ceiling_is_the_published_one_and_the_size_saturates() {
+        const { assert!(MAX_WEIGHTS == 1 << 26, "the published table ceiling is 2^26 weights") };
+        assert_eq!(
+            Cmac::new(vec![0.0], &[67108865.0], 1.0, 4, 1.0),
+            Err(CerebellumError::TooLarge { weights: usize::MAX })
+        );
+        assert_eq!(
+            Cmac::new(vec![0.0; 3], &[4194302.0; 3], 1.0, 2, 1.0),
+            Err(CerebellumError::TooLarge { weights: usize::MAX })
+        );
+    }
+
+    /// The tiles of one tiling are laid out ROW-MAJOR, as the `Cmac::w` doc says: the last
+    /// dimension moves fastest. The two-dimensional tests use a square box, where reversing the
+    /// dimension order is a transposition — a bijection on tile indices — so every shared count
+    /// is preserved exactly; and the one explicit index the suite checks is `3 × 6 + 5 = 23`
+    /// against a transposed `5 × 4 + 3 = 23`, which is the same number by coincidence. This
+    /// fixture has four tiles along one axis and six along the other and reads a tile where the
+    /// two orders disagree.
+    #[test]
+    fn the_tiles_of_one_tiling_are_laid_out_row_major() {
+        let cmac = Cmac::new(vec![0.0, -1.0], &[1.0, 1.0], 0.1, 4, 1.0).unwrap();
+        assert_eq!(cmac.cells, vec![10, 20]);
+        assert_eq!(cmac.memory(), 96, "4 tiles along the first axis and 6 along the second, four tilings");
+        assert_eq!(cmac.quantise(&[0.45, -0.95]).unwrap(), vec![4, 0]);
+        // Quantisation cell (4, 0) is tile (1, 0) of tiling 0, and row-major puts it at 1×6 + 0.
+        assert_eq!(cmac.active(&[0.45, -0.95]).unwrap(), vec![6, 30, 54, 78]);
+        // A step of one tile along the LAST axis is a step of one in the index.
+        assert_eq!(cmac.active(&[0.45, -0.55]).unwrap(), vec![7, 31, 55, 79]);
+        // A step of one tile along the FIRST axis is a step of a whole row, six.
+        assert_eq!(cmac.active(&[0.85, -0.95]).unwrap(), vec![12, 36, 60, 84]);
+    }
+
+    /// Every error variant renders its own fields in the order its sentence names them. Every
+    /// other test in this module destructures the variant and reads `what`, so nothing renders
+    /// one — and a message reporting the required length as the supplied one, and the supplied
+    /// as the required, says the exact opposite of the truth to the only audience a message has.
+    #[test]
+    fn every_error_renders_its_values_in_the_order_its_sentence_names_them() {
+        assert_eq!(CerebellumError::Empty { what: "tilings" }.to_string(), "tilings is empty");
+        let dimension = CerebellumError::Dimension { what: "targets", got: 3, want: 5 };
+        assert_eq!(dimension.to_string(), "targets has length 3, expected 5");
+        let out_of_range = CerebellumError::OutOfRange { what: "beta", value: 1.5, low: 0.0, high: 1.0 };
+        assert_eq!(out_of_range.to_string(), "beta = 1.5 is outside [0, 1]");
+        assert_eq!(CerebellumError::NonFinite { what: "sample", index: 2 }.to_string(), "sample is not finite at 2");
+        let too_large = CerebellumError::TooLarge { weights: 7 };
+        assert_eq!(too_large.to_string(), "a table of 7 weights is more than MAX_WEIGHTS");
+    }
 }

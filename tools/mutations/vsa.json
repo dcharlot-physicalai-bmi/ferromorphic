@@ -88,5 +88,336 @@
   "label": "noise sd 1/D",
   "old": "if dim == 0 { f64::NAN } else { 1.0 / (dim as f64).sqrt() }",
   "new": "if dim == 0 { f64::NAN } else { 1.0 / (dim as f64) }"
+ },
+ {
+  "label": "the operation total leaves out the permutation count",
+  "old": "            .checked_add(self.permutes)?\n            .checked_add(self.similarities)",
+  "new": "            .checked_add(self.similarities)"
+ },
+ {
+  "label": "the meter overwrites each counter instead of accumulating into it",
+  "old": "    *field = field.saturating_add(n as u64);",
+  "new": "    *field = n as u64;"
+ },
+ {
+  "label": "two vectors of different dimensions are combined without complaint",
+  "old": "    if a == b { Ok(()) } else { Err(VsaError::Dimension { a, b }) }",
+  "new": "    if true { Ok(()) } else { Err(VsaError::Dimension { a, b }) }"
+ },
+ {
+  "label": "the dimension refusal names the two dimensions in the wrong order",
+  "old": "    if a == b { Ok(()) } else { Err(VsaError::Dimension { a, b }) }",
+  "new": "    if a == b { Ok(()) } else { Err(VsaError::Dimension { a: b, b: a }) }"
+ },
+ {
+  "label": "an empty dimension, codebook or bundle is accepted",
+  "old": "    if n == 0 { Err(VsaError::Empty { what }) } else { Ok(()) }",
+  "new": "    if false { Err(VsaError::Empty { what }) } else { Ok(()) }"
+ },
+ {
+  "label": "a dimension of one, or a one-member bundle, is refused as empty",
+  "old": "    if n == 0 { Err(VsaError::Empty { what }) } else { Ok(()) }",
+  "new": "    if n <= 1 { Err(VsaError::Empty { what }) } else { Ok(()) }"
+ },
+ {
+  "label": "the bipolar draw is biased two to one toward −1",
+  "old": "(0..self.dim).map(|_| if rng.next_u32() & 1 == 1 { 1.0 } else { -1.0 }).collect()",
+  "new": "(0..self.dim).map(|_| if rng.next_u32() % 3 == 1 { 1.0 } else { -1.0 }).collect()"
+ },
+ {
+  "label": "a zero passes as a bipolar symbol",
+  "old": "if x != 1.0 && x != -1.0 {",
+  "new": "if x != 1.0 && x != -1.0 && x != 0.0 {"
+ },
+ {
+  "label": "the bipolar bind returns the negated product",
+  "old": "        Ok(a.iter().zip(b).map(|(x, y)| x * y).collect())",
+  "new": "        Ok(a.iter().zip(b).map(|(x, y)| -(x * y)).collect())"
+ },
+ {
+  "label": "the bipolar bundle keeps the last member rather than the running sum",
+  "old": "                *s += x;\n            }\n        }\n        tally(&mut meter.bundles, self.dim * (members.len() + 1));\n        Ok(sum.iter().map(|&s| if s >= 0.0 { 1.0 } else { -1.0 }).collect())",
+  "new": "                *s = x;\n            }\n        }\n        tally(&mut meter.bundles, self.dim * (members.len() + 1));\n        Ok(sum.iter().map(|&s| if s >= 0.0 { 1.0 } else { -1.0 }).collect())"
+ },
+ {
+  "label": "the bipolar bundle's threshold pass is not counted",
+  "old": "        tally(&mut meter.bundles, self.dim * (members.len() + 1));\n        Ok(sum.iter()",
+  "new": "        tally(&mut meter.bundles, self.dim * members.len());\n        Ok(sum.iter()"
+ },
+ {
+  "label": "the bipolar cosine is a dot product, not divided by D",
+  "old": "        Ok(a.iter().zip(b).map(|(x, y)| x * y).sum::<f64>() / self.dim as f64)",
+  "new": "        Ok(a.iter().zip(b).map(|(x, y)| x * y).sum::<f64>())"
+ },
+ {
+  "label": "a negative shift rotates right by its magnitude rather than left",
+  "old": "    let shift = k.rem_euclid(d) as usize;",
+  "new": "    let shift = (k.abs() % d) as usize;"
+ },
+ {
+  "label": "the rotation is taken modulo D − 1, so a full turn is not the identity",
+  "old": "    let d = a.len() as i64;",
+  "new": "    let d = a.len() as i64 - 1;"
+ },
+ {
+  "label": "the binary draw returns the complement of the bit it sampled",
+  "old": "(0..self.dim).map(|_| f64::from(rng.next_u32() & 1)).collect()",
+  "new": "(0..self.dim).map(|_| f64::from(1 - (rng.next_u32() & 1))).collect()"
+ },
+ {
+  "label": "the binary bind is XNOR rather than XOR",
+  "old": "        Ok(a.iter().zip(b).map(|(x, y)| if x == y { 0.0 } else { 1.0 }).collect())",
+  "new": "        Ok(a.iter().zip(b).map(|(x, y)| if x == y { 1.0 } else { 0.0 }).collect())"
+ },
+ {
+  "label": "the binary bundle counts zeros as votes",
+  "old": "                if x == 1.0 {\n                    *c += 1;\n                }",
+  "new": "                if x == 0.0 {\n                    *c += 1;\n                }"
+ },
+ {
+  "label": "the binary majority threshold is a quarter of the members rather than half",
+  "old": "        let half = members.len();",
+  "new": "        let half = members.len() / 2;"
+ },
+ {
+  "label": "the Hamming distance counts the positions where the two agree",
+  "old": "        Ok(a.iter().zip(b).filter(|(x, y)| x != y).count())",
+  "new": "        Ok(a.iter().zip(b).filter(|(x, y)| x == y).count())"
+ },
+ {
+  "label": "a binary similarity is billed for half the elements it touches",
+  "old": "        tally(&mut meter.similarities, self.dim);\n        Ok(a.iter().zip(b).filter(|(x, y)| x != y).count())",
+  "new": "        tally(&mut meter.similarities, self.dim / 2);\n        Ok(a.iter().zip(b).filter(|(x, y)| x != y).count())"
+ },
+ {
+  "label": "a binary permutation is billed for half the elements it moves",
+  "old": "        tally(&mut meter.permutes, self.dim);\n        Ok(rotate(a, k))\n    }\n\n    /// Hamming distance: positions where the two differ.",
+  "new": "        tally(&mut meter.permutes, self.dim / 2);\n        Ok(rotate(a, k))\n    }\n\n    /// Hamming distance: positions where the two differ."
+ },
+ {
+  "label": "to_bipolar sends 0 to −1 and 1 to +1, the wrong way round",
+  "old": "        Ok(a.iter().map(|&x| 1.0 - 2.0 * x).collect())",
+  "new": "        Ok(a.iter().map(|&x| 2.0 * x - 1.0).collect())"
+ },
+ {
+  "label": "from_bipolar checks its input against the binary model",
+  "old": "        Bipolar { dim: self.dim }.check(a)?;",
+  "new": "        Binary { dim: self.dim }.check(a)?;"
+ },
+ {
+  "label": "from_bipolar maps +1 to 1 rather than to 0",
+  "old": "        Ok(a.iter().map(|&x| (1.0 - x) / 2.0).collect())",
+  "new": "        Ok(a.iter().map(|&x| (1.0 + x) / 2.0).collect())"
+ },
+ {
+  "label": "holographic symbols are drawn with sd 1/D rather than 1/√D",
+  "old": "        let sigma = 1.0 / (self.dim as f64).sqrt();",
+  "new": "        let sigma = 1.0 / (self.dim as f64);"
+ },
+ {
+  "label": "the Box-Muller radius drops its factor of two",
+  "old": "            let r = (-2.0 * u1.ln()).sqrt();",
+  "new": "            let r = (-u1.ln()).sqrt();"
+ },
+ {
+  "label": "the Box-Muller phase covers half a circle",
+  "old": "            let (s, c) = (core::f64::consts::TAU * u2).sin_cos();",
+  "new": "            let (s, c) = (core::f64::consts::PI * u2).sin_cos();"
+ },
+ {
+  "label": "the second Box-Muller coordinate repeats the first",
+  "old": "                v.push(sigma * r * s);",
+  "new": "                v.push(sigma * r * c);"
+ },
+ {
+  "label": "an infinite element passes the holographic check",
+  "old": "        if let Some(i) = v.iter().position(|x| !x.is_finite()) {",
+  "new": "        if let Some(i) = v.iter().position(|x| x.is_nan()) {"
+ },
+ {
+  "label": "the convolution sum keeps only its last term",
+  "old": "                acc += ai * b[j];",
+  "new": "                acc = ai * b[j];"
+ },
+ {
+  "label": "the convolution index runs off the end when k equals i",
+  "old": "                let j = if k >= i { k - i } else { k + d - i };",
+  "new": "                let j = if k > i { k - i } else { k + d - i };"
+ },
+ {
+  "label": "the involution reverses the vector instead of reflecting it about index 0",
+  "old": "        Ok((0..d).map(|i| a[(d - i) % d]).collect())",
+  "new": "        Ok((0..d).map(|i| a[(d - i - 1) % d]).collect())"
+ },
+ {
+  "label": "unbinding convolves with the key itself rather than with its involution",
+  "old": "        self.bind(ab, &inv, meter)",
+  "new": "        self.bind(ab, b, meter)"
+ },
+ {
+  "label": "the holographic bundle is normalised by the squared norm",
+  "old": "            let n = sum.iter().map(|x| x * x).sum::<f64>().sqrt();",
+  "new": "            let n = sum.iter().map(|x| x * x).sum::<f64>();"
+ },
+ {
+  "label": "the zero-norm guard lets an all-zero bundle divide by its own norm",
+  "old": "            if n > 0.0 {",
+  "new": "            if n >= 0.0 {"
+ },
+ {
+  "label": "the rescaling pass is billed whether or not it runs",
+  "old": "        tally(&mut meter.bundles, self.dim * (members.len() + usize::from(normalise)));",
+  "new": "        tally(&mut meter.bundles, self.dim * (members.len() + 1));"
+ },
+ {
+  "label": "the holographic similarity is divided by D like the bipolar cosine",
+  "old": "        Ok(a.iter().zip(b).map(|(x, y)| x * y).sum())",
+  "new": "        Ok(a.iter().zip(b).map(|(x, y)| x * y).sum::<f64>() / self.dim as f64)"
+ },
+ {
+  "label": "a holographic similarity is billed for half the elements it touches",
+  "old": "        tally(&mut meter.similarities, self.dim);\n        Ok(a.iter().zip(b).map(|(x, y)| x * y).sum())",
+  "new": "        tally(&mut meter.similarities, self.dim / 2);\n        Ok(a.iter().zip(b).map(|(x, y)| x * y).sum())"
+ },
+ {
+  "label": "the cosine divides by the sum of the two norms rather than their product",
+  "old": "        Ok(Some(dot / (na * nb)))",
+  "new": "        Ok(Some(dot / (na + nb)))"
+ },
+ {
+  "label": "the binomial's half is taken from k rather than from k − 1",
+  "old": "    let half = n / 2;",
+  "new": "    let half = k / 2;",
+  "equivalent": "Equivalent by the arithmetic, not by what the suite happens to contain. The function returns None before this line for every even k and for k = 0, so k is ODD wherever `half` is computed. Write k = 2j + 1: then n = k - 1 = 2j, so n / 2 = j, while k / 2 = (2j + 1) / 2 = j in integer division. The two expressions are the same integer for every reachable input, including k = 1 (both 0) and k = usize::MAX (both (usize::MAX - 1) / 2, since usize::MAX is odd). `half` is used only as the bound of the loop that accumulates C(n, half) as a product of ratios, and nothing downstream reads it, so no operand, no operation and no order of operations changes. CHECKED, not asserted: the two forms were compiled side by side and compared with f64::to_bits on every k in 0..=200000 -- identical bit pattern at every one, None at every even k -- and (k - 1) / 2 == k / 2 was checked at 1, 3, (1 << 62) + 1, usize::MAX - 2 and usize::MAX. No test could tell: there is no input at which the mutated function returns a different value."
+ },
+ {
+  "label": "the binomial product runs one factor too far",
+  "old": "    for i in 0..half {",
+  "new": "    for i in 0..=half {"
+ },
+ {
+  "label": "noise_sd answers for a dimension of zero rather than refusing",
+  "old": "if dim == 0 { f64::NAN }",
+  "new": "if false { f64::NAN }"
+ },
+ {
+  "label": "the dimension rule rounds down to the nearest dimension",
+  "old": "    Some(d.ceil() as usize)",
+  "new": "    Some(d.floor() as usize)"
+ },
+ {
+  "label": "the dimension rule ignores the requested separation",
+  "old": "    let d = ((z + z_m) / s).powi(2);",
+  "new": "    let d = (z_m / s).powi(2);"
+ },
+ {
+  "label": "a NaN separation passes the dimension rule's guard",
+  "old": "    if m < 2 || !(z > 0.0) {",
+  "new": "    if m < 2 || z <= 0.0 {"
+ },
+ {
+  "label": "a binary codebook declares a dimension one larger than its symbols",
+  "old": "    pub fn random_binary(model: &Binary, m: usize, rng: &mut Rng) -> Result<Self, VsaError> {\n        non_empty(m, \"codebook\")?;\n        Ok(Self { symbols: (0..m).map(|_| model.random(rng)).collect(), dim: model.dim })",
+  "new": "    pub fn random_binary(model: &Binary, m: usize, rng: &mut Rng) -> Result<Self, VsaError> {\n        non_empty(m, \"codebook\")?;\n        Ok(Self { symbols: (0..m).map(|_| model.random(rng)).collect(), dim: model.dim + 1 })"
+ },
+ {
+  "label": "every symbol in a holographic codebook is the same vector",
+  "old": "    pub fn random_hrr(model: &Hrr, m: usize, rng: &mut Rng) -> Result<Self, VsaError> {\n        non_empty(m, \"codebook\")?;\n        Ok(Self { symbols: (0..m).map(|_| model.random(rng)).collect(), dim: model.dim })",
+  "new": "    pub fn random_hrr(model: &Hrr, m: usize, rng: &mut Rng) -> Result<Self, VsaError> {\n        non_empty(m, \"codebook\")?;\n        let one = model.random(rng);\n        Ok(Self { symbols: (0..m).map(|_| one.clone()).collect(), dim: model.dim })"
+ },
+ {
+  "label": "a codebook reports one more symbol than it holds",
+  "old": "        self.symbols.len()\n",
+  "new": "        self.symbols.len() + 1\n"
+ },
+ {
+  "label": "a codebook never reports itself empty",
+  "old": "        self.symbols.is_empty()",
+  "new": "        false"
+ },
+ {
+  "label": "the nearest-neighbour search starts at zero rather than −∞",
+  "old": "        let mut best = (0usize, f64::NEG_INFINITY);",
+  "new": "        let mut best = (0usize, 0.0);"
+ },
+ {
+  "label": "the nearest-neighbour similarity is not divided by D",
+  "old": "            let dot = s.iter().zip(query).map(|(x, y)| x * y).sum::<f64>() / self.dim as f64;",
+  "new": "            let dot = s.iter().zip(query).map(|(x, y)| x * y).sum::<f64>();"
+ },
+ {
+  "label": "the codebook's similarity vector is not divided by D",
+  "old": "            .map(|s| s.iter().zip(query).map(|(x, y)| x * y).sum::<f64>() / self.dim as f64)",
+  "new": "            .map(|s| s.iter().zip(query).map(|(x, y)| x * y).sum::<f64>())"
+ },
+ {
+  "label": "a non-finite query passes into the codebook's similarity vector",
+  "old": "        if let Some(i) = query.iter().position(|x| !x.is_finite()) {\n            return Err(VsaError::NonFinite { index: i });\n        }\n        tally(&mut meter.similarities, self.dim * self.symbols.len());\n        Ok(self",
+  "new": "        if let Some(i) = query.iter().position(|_x| false) {\n            return Err(VsaError::NonFinite { index: i });\n        }\n        tally(&mut meter.similarities, self.dim * self.symbols.len());\n        Ok(self"
+ },
+ {
+  "label": "earlier sequence items are shifted less rather than more",
+  "old": "        shifted.push(model.permute(item, (n - 1 - i) as i64, meter)?);",
+  "new": "        shifted.push(model.permute(item, i as i64, meter)?);"
+ },
+ {
+  "label": "the sequence read shifts forward rather than back",
+  "old": "    let back = model.permute(code, -((n - 1 - position) as i64), meter)?;",
+  "new": "    let back = model.permute(code, (n - 1 - position) as i64, meter)?;"
+ },
+ {
+  "label": "a resonator accepts a codebook whose symbols are not ±1",
+  "old": "            for s in &b.symbols {\n                model.check(s)?;\n            }",
+  "new": "            for s in &b.symbols {\n                let _ = s;\n            }"
+ },
+ {
+  "label": "a resonator's codebooks are checked against their own dimension",
+  "old": "            same_dim(b.dim, model.dim)?;",
+  "new": "            same_dim(b.dim, b.dim)?;"
+ },
+ {
+  "label": "the resonator defaults to the paper's synchronous update",
+  "old": "        Ok(Self { model, books, max_iters: max_iters.max(1), synchronous: false })",
+  "new": "        Ok(Self { model, books, max_iters: max_iters.max(1), synchronous: true })"
+ },
+ {
+  "label": "the resonator starts from one hypothesis rather than the superposition of all",
+  "old": "            estimates.push(self.model.bundle(&b.symbols, meter)?);",
+  "new": "            estimates.push(b.symbols[0].clone());"
+ },
+ {
+  "label": "the synchronous flag selects the opposite update order",
+  "old": "                let source = if self.synchronous { &previous } else { &estimates };",
+  "new": "                let source = if self.synchronous { &estimates } else { &previous };"
+ },
+ {
+  "label": "a changed estimate is not recorded, so the first pass is called a fixed point",
+  "old": "                if next != estimates[i] {\n                    changed = true;\n                    estimates[i] = next;\n                }",
+  "new": "                if next != estimates[i] {\n                    changed = false;\n                    estimates[i] = next;\n                }"
+ },
+ {
+  "label": "the iteration bound is off by one, so a resonator runs max_iters + 1 times",
+  "old": "        while iterations < self.max_iters {",
+  "new": "        while iterations <= self.max_iters {"
+ },
+ {
+  "label": "every factor is read out of the first codebook",
+  "old": "            let (idx, _) = self.books[i].nearest(e, meter)?;",
+  "new": "            let (idx, _) = self.books[0].nearest(e, meter)?;"
+ },
+ {
+  "label": "the rebuilt composite starts from −1 rather than from the bind identity",
+  "old": "        let mut rebuilt = vec![1.0f64; d];",
+  "new": "        let mut rebuilt = vec![-1.0f64; d];"
+ },
+ {
+  "label": "the fidelity compares the rebuilt composite with itself",
+  "old": "        let fidelity = self.model.similarity(&rebuilt, composite, meter)?;",
+  "new": "        let fidelity = self.model.similarity(&rebuilt, &rebuilt, meter)?;"
+ },
+ {
+  "label": "an unbind is not billed for the involution's element moves",
+  "old": "        tally(&mut meter.permutes, self.dim);\n        self.bind(ab, &inv, meter)",
+  "new": "        self.bind(ab, &inv, meter)"
  }
 ]

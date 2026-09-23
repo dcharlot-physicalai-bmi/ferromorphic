@@ -1145,5 +1145,395 @@
   "label": "the unrounded quotient is cast to the tick count",
   "old": "        out.push(rounded as u32);",
   "new": "        out.push(exact as u32);"
+ },
+ {
+  "label": "the two convolutions share one spelling",
+  "old": "            Self::Conv1d => \"Conv1d\",",
+  "new": "            Self::Conv1d => \"Conv2d\","
+ },
+ {
+  "label": "the averaging pool is written under a name NIR does not use",
+  "old": "            Self::AvgPool2d => \"AvgPool2d\",",
+  "new": "            Self::AvgPool2d => \"AveragePool2d\","
+ },
+ {
+  "label": "the leaky integrator is written with the reference implementation's capitalisation lost",
+  "old": "            Self::Li => \"LI\",",
+  "new": "            Self::Li => \"Li\","
+ },
+ {
+  "label": "the ideal integrator is written under the integrate-and-fire spelling",
+  "old": "            Self::I => \"I\",",
+  "new": "            Self::I => \"IF\","
+ },
+ {
+  "label": "the input boundary is written under a name the reader does not know",
+  "old": "            Self::Input => \"Input\",",
+  "new": "            Self::Input => \"In\","
+ },
+ {
+  "label": "the reader maps the two-dimensional convolution onto the one-dimensional node",
+  "old": "            \"Conv2d\" => Self::Conv2d,",
+  "new": "            \"Conv2d\" => Self::Conv1d,"
+ },
+ {
+  "label": "the reader maps the output boundary onto the input one",
+  "old": "            \"Output\" => Self::Output,",
+  "new": "            \"Output\" => Self::Input,"
+ },
+ {
+  "label": "the reader maps the averaging pool onto the summing one",
+  "old": "            \"AvgPool2d\" => Self::AvgPool2d,",
+  "new": "            \"AvgPool2d\" => Self::SumPool2d,"
+ },
+ {
+  "label": "the reader maps the ideal integrator onto the leaky one",
+  "old": "            \"I\" => Self::I,",
+  "new": "            \"I\" => Self::Li,"
+ },
+ {
+  "label": "a summing pool reports itself as the averaging one",
+  "old": "            Self::SumPool2d(_) => Kind::SumPool2d,",
+  "new": "            Self::SumPool2d(_) => Kind::AvgPool2d,"
+ },
+ {
+  "label": "a Delay reports itself as a Scale",
+  "old": "            Self::Delay(_) => Kind::Delay,",
+  "new": "            Self::Delay(_) => Kind::Scale,"
+ },
+ {
+  "label": "a two-dimensional convolution requires its input with the two spatial axes transposed",
+  "old": "            Self::Conv2d(x) => vec![x.in_channels, x.size[0], x.size[1]],",
+  "new": "            Self::Conv2d(x) => vec![x.in_channels, x.size[1], x.size[0]],"
+ },
+ {
+  "label": "a pooling node requires its input with the two spatial axes transposed",
+  "old": "            Self::SumPool2d(x) | Self::AvgPool2d(x) => vec![x.channels, x.size[0], x.size[1]],",
+  "new": "            Self::SumPool2d(x) | Self::AvgPool2d(x) => vec![x.channels, x.size[1], x.size[0]],"
+ },
+ {
+  "label": "a one-dimensional convolution requires its channels and its length the wrong way round",
+  "old": "            Self::Conv1d(x) => vec![x.in_channels, x.length],",
+  "new": "            Self::Conv1d(x) => vec![x.length, x.in_channels],"
+ },
+ {
+  "label": "an Output node requires nothing at all on its input port",
+  "old": "            Self::Output(x) => x.shape.clone(),",
+  "new": "            Self::Output(_) => Vec::new(),"
+ },
+ {
+  "label": "a zero stride reaches the division the guard exists to stop",
+  "old": "    if stride == 0 || kernel == 0 {",
+  "new": "    if kernel == 0 {"
+ },
+ {
+  "label": "a linear's output is as wide as its input rather than as its row count",
+  "old": "        let mut y = vec![0.0; self.rows];",
+  "new": "        let mut y = vec![0.0; self.cols];"
+ },
+ {
+  "label": "a linear reads its weights column-major",
+  "old": "            let row = &self.weight[i * self.cols..(i + 1) * self.cols];\n            let mut acc = 0.0;",
+  "new": "            let row = &self.weight[i..i + self.cols];\n            let mut acc = 0.0;"
+ },
+ {
+  "label": "a linear accepts an input of any width",
+  "old": "        if x.len() != self.cols || self.weight.len() != cells {",
+  "new": "        if self.weight.len() != cells {"
+ },
+ {
+  "label": "the element index is checked non-strictly, so one past the population is indexed",
+  "old": "        if k >= n\n            || self.tau_syn.len() != n",
+  "new": "        if k > n\n            || self.tau_syn.len() != n"
+ },
+ {
+  "label": "a ragged input gain is not checked before it is indexed",
+  "old": "            || self.w_in.len() != n\n        {\n            return None;",
+  "new": "        {\n            return None;"
+ },
+ {
+  "label": "a population's size is the rank of its shape rather than its parameter length",
+  "old": "        let n = self.tau_mem.len();\n        if k >= n",
+  "new": "        let n = self.shape.len();\n        if k >= n"
+ },
+ {
+  "label": "the reduction never checks its arrays against the population before indexing them",
+  "old": "        if self.r.len() != n || self.w_in.len() != n {",
+  "new": "        if false {"
+ },
+ {
+  "label": "a non-finite input reaches the closed form",
+  "old": "        if !t.is_finite() || t < 0.0 || !u.is_finite() || !(s.tau_mem > 0.0) || s.tau_syn < 0.0 {",
+  "new": "        if !t.is_finite() || t < 0.0 || !(s.tau_mem > 0.0) || s.tau_syn < 0.0 {"
+ },
+ {
+  "label": "the closed form is evaluated for a synapse that amplifies instead of decaying",
+  "old": "        if !t.is_finite() || t < 0.0 || !u.is_finite() || !(s.tau_mem > 0.0) || s.tau_syn < 0.0 {\n            return None;",
+  "new": "        if !t.is_finite() || t < 0.0 || !u.is_finite() || !(s.tau_mem > 0.0) {\n            return None;"
+ },
+ {
+  "label": "the trait's step hands the propagator its input as the timestep",
+  "old": "        self.step_exact(dt, i)",
+  "new": "        self.step_exact(i, dt)"
+ },
+ {
+  "label": "a pushed node is prepended, so node order is not insertion order",
+  "old": "        self.nodes.push(Named { name: name.to_string(), node });",
+  "new": "        self.nodes.insert(0, Named { name: name.to_string(), node });"
+ },
+ {
+  "label": "a graph is acyclic exactly when it has a cycle",
+  "old": "        self.topological_order().is_some()",
+  "new": "        self.topological_order().is_none()"
+ },
+ {
+  "label": "the last node's name is never checked",
+  "old": "        for k in 0..self.nodes.len() {",
+  "new": "        for k in 0..self.nodes.len().saturating_sub(1) {"
+ },
+ {
+  "label": "an edge leaving an Output node is never refused",
+  "old": "            if self.nodes[a].node.kind() == Kind::Output {",
+  "new": "            if self.nodes[a].node.kind() == Kind::Output && false {"
+ },
+ {
+  "label": "a cycle refusal names every node that is NOT stuck",
+  "old": "                .filter(|i| !settled.contains(i))",
+  "new": "                .filter(|i| settled.contains(i))"
+ },
+ {
+  "label": "a zero-length axis is always reported as the first one",
+  "old": "            return Err(ValidationError::EmptyDimension { node: node.to_string(), axis });",
+  "new": "            return Err(ValidationError::EmptyDimension { node: node.to_string(), axis: 0 });"
+ },
+ {
+  "label": "an Affine with no columns is accepted as long as it has rows",
+  "old": "        Node::Affine(x) => {\n            if x.rows == 0 || x.cols == 0 {",
+  "new": "        Node::Affine(x) => {\n            if x.rows == 0 && x.cols == 0 {"
+ },
+ {
+  "label": "an Affine's bias is sized by its input width",
+  "old": "            check_array(name, \"bias\", &x.bias, x.rows)?;",
+  "new": "            check_array(name, \"bias\", &x.bias, x.cols)?;"
+ },
+ {
+  "label": "a one-dimensional convolution may step by zero",
+  "old": "            if x.stride == 0 {",
+  "new": "            if x.stride == 0 && false {"
+ },
+ {
+  "label": "a one-dimensional convolution's tap spacing may be zero",
+  "old": "            if x.kernel == 0 || x.dilation == 0 {",
+  "new": "            if x.kernel == 0 {"
+ },
+ {
+  "label": "a two-dimensional convolution's width dilation may be zero",
+  "old": "            if x.kernel[0] == 0 || x.kernel[1] == 0 || x.dilation[0] == 0 || x.dilation[1] == 0 {",
+  "new": "            if x.kernel[0] == 0 || x.kernel[1] == 0 || x.dilation[0] == 0 {"
+ },
+ {
+  "label": "a pooling window that cannot be placed is never looked at",
+  "old": "            if x.kernel[0] == 0 || x.kernel[1] == 0 {\n                return Err(bad(\"kernel\", \"must be non-zero on both axes\"));\n            }\n            check_shape(name, &node.input_shape().unwrap_or_default())?;\n            check_shape(name, &node.output_shape().unwrap_or_default())?;",
+  "new": "            if x.kernel[0] == 0 || x.kernel[1] == 0 {\n                return Err(bad(\"kernel\", \"must be non-zero on both axes\"));\n            }\n            check_shape(name, &node.input_shape().unwrap_or_default())?;"
+ },
+ {
+  "label": "a flatten's own shape is never checked",
+  "old": "        Node::Flatten(x) => {\n            check_shape(name, &x.size)?;",
+  "new": "        Node::Flatten(x) => {"
+ },
+ {
+  "label": "an ideal integrator's shape is not checked before its element count is taken",
+  "old": "        Node::I(x) => {\n            check_shape(name, &x.shape)?;\n            check_array(name, \"r\", &x.r, product(&x.shape))?;",
+  "new": "        Node::I(x) => {\n            check_array(name, \"r\", &x.r, product(&x.shape))?;"
+ },
+ {
+  "label": "a leaky integrator's time constant is not required to be positive",
+  "old": "            check_positive(name, \"tau\", &x.tau)?;\n            check_array(name, \"r\", &x.r, n)?;\n            check_array(name, \"v_leak\", &x.v_leak, n)?;\n        }\n        Node::Lif(x) => {",
+  "new": "            check_array(name, \"r\", &x.r, n)?;\n            check_array(name, \"v_leak\", &x.v_leak, n)?;\n        }\n        Node::Lif(x) => {"
+ },
+ {
+  "label": "a threshold's levels are counted by the rank of its shape",
+  "old": "            check_array(name, \"threshold\", &x.threshold, product(&x.shape))?;",
+  "new": "            check_array(name, \"threshold\", &x.threshold, x.shape.len())?;"
+ },
+ {
+  "label": "a CubaLIF's input gain is never checked against its shape",
+  "old": "            check_array(name, \"v_reset\", &x.v_reset, n)?;\n            check_array(name, \"w_in\", &x.w_in, n)?;\n        }\n        Node::Threshold(x) => {",
+  "new": "            check_array(name, \"v_reset\", &x.v_reset, n)?;\n        }\n        Node::Threshold(x) => {"
+ },
+ {
+  "label": "a node name may hold a control character",
+  "old": "        && !s.chars().any(|c| c.is_whitespace() || c == '=' || c == '#' || c.is_control())",
+  "new": "        && !s.chars().any(|c| c.is_whitespace() || c == '=' || c == '#')"
+ },
+ {
+  "label": "a fixed-length pair accepts a longer array and drops the surplus",
+  "old": "        if v.len() == 2 {",
+  "new": "        if v.len() >= 2 {"
+ },
+ {
+  "label": "an empty dimension array is read as a one-element shape",
+  "old": "        if inner.is_empty() {\n            return Ok(Vec::new());\n        }\n        let mut v = Vec::new();\n        for part in inner.split(',') {\n            v.push(part.parse::<usize>()",
+  "new": "        if inner.is_empty() {\n            return Ok(vec![1]);\n        }\n        let mut v = Vec::new();\n        for part in inner.split(',') {\n            v.push(part.parse::<usize>()"
+ },
+ {
+  "label": "an edge line with a surplus token is read and the surplus ignored",
+  "old": "                    if toks.len() != 3 {",
+  "new": "                    if toks.len() < 3 {"
+ },
+ {
+  "label": "the magic line is parsed as a directive as well as recognised",
+  "old": "                seen_magic = true;\n                continue;",
+  "new": "                seen_magic = true;"
+ },
+ {
+  "label": "a node line with no type token is read past its end",
+  "old": "    if toks.len() < 3 {",
+  "new": "    if toks.len() < 2 {"
+ },
+ {
+  "label": "a node is named after its type rather than its name",
+  "old": "    let name = toks[1].to_string();",
+  "new": "    let name = toks[2].to_string();"
+ },
+ {
+  "label": "an integrate-and-fire's threshold and reset are read the wrong way round",
+  "old": "            v_threshold: f.floats(\"v_threshold\")?,\n            v_reset: f.floats(\"v_reset\")?,\n        }),\n        Kind::Li => Node::Li(Li {",
+  "new": "            v_threshold: f.floats(\"v_reset\")?,\n            v_reset: f.floats(\"v_threshold\")?,\n        }),\n        Kind::Li => Node::Li(Li {"
+ },
+ {
+  "label": "a one-dimensional convolution's padding and tap spacing are read the wrong way round",
+  "old": "            padding: f.usize_of(\"padding\")?,\n            dilation: f.usize_of(\"dilation\")?,",
+  "new": "            padding: f.usize_of(\"dilation\")?,\n            dilation: f.usize_of(\"padding\")?,"
+ },
+ {
+  "label": "an Output node is read back as an Input",
+  "old": "        Kind::Output => Node::Output(Output { shape: f.dims(\"shape\")? }),",
+  "new": "        Kind::Output => Node::Input(Input { shape: f.dims(\"shape\")? }),"
+ },
+ {
+  "label": "a CubaLIF line writes its membrane constant before its synaptic one",
+  "old": "                    w_floats(&mut out, \"tau_syn\", &x.tau_syn);\n                    w_floats(&mut out, \"tau_mem\", &x.tau_mem);",
+  "new": "                    w_floats(&mut out, \"tau_mem\", &x.tau_mem);\n                    w_floats(&mut out, \"tau_syn\", &x.tau_syn);"
+ },
+ {
+  "label": "a Conv1d line writes its tap spacing under the padding key",
+  "old": "                    w_usize(&mut out, \"padding\", x.padding);",
+  "new": "                    w_usize(&mut out, \"padding\", x.dilation);"
+ },
+ {
+  "label": "a pooling line writes its height under the channel key",
+  "old": "                    w_usize(&mut out, \"channels\", x.channels);",
+  "new": "                    w_usize(&mut out, \"channels\", x.size[0]);"
+ },
+ {
+  "label": "a timestep of zero seconds converts a graph",
+  "old": "        self.validate(&Rules::default())?;\n        if !(dt > 0.0) || !dt.is_finite() {",
+  "new": "        self.validate(&Rules::default())?;\n        if dt < 0.0 {"
+ },
+ {
+  "label": "every population is laid down as the first block",
+  "old": "                block_of[i] = Some(blocks.len());",
+  "new": "                block_of[i] = Some(0);"
+ },
+ {
+  "label": "a population may not be followed by an Affine",
+  "old": "                    | (Kind::Lif, Kind::Affine | Kind::Linear)",
+  "new": "                    | (Kind::Lif, Kind::Linear)"
+ },
+ {
+  "label": "an Output boundary is recorded among the inputs",
+  "old": "                            outputs.push((named.name.clone(), bi));",
+  "new": "                            inputs.push((named.name.clone(), bi));"
+ },
+ {
+  "label": "a Delay may feed as many populations as it likes",
+  "old": "                        if douts.len() != 1 {",
+  "new": "                        if douts.is_empty() {"
+ },
+ {
+  "label": "every row of a delayed block takes the first element's delay",
+  "old": "                        let d = delay_ticks[row];",
+  "new": "                        let d = delay_ticks[0];"
+ },
+ {
+  "label": "a population contributes one neuron per axis rather than per element",
+  "old": "            for k in 0..product(&x.shape) {",
+  "new": "            for k in 0..x.shape.len() {"
+ },
+ {
+  "label": "a converted neuron's input resistance is one ohm whatever the node says",
+  "old": "                    r_m: x.r[k],",
+  "new": "                    r_m: 1.0,"
+ },
+ {
+  "label": "a timestep of zero seconds is carried into the rebuilt delays",
+  "old": "        if !(dt > 0.0) || !dt.is_finite() {\n            return Err(BridgeError::BadTimeStep { dt });\n        }\n        let n = net.n;",
+  "new": "        if dt < 0.0 {\n            return Err(BridgeError::BadTimeStep { dt });\n        }\n        let n = net.n;"
+ },
+ {
+  "label": "an empty network becomes a graph with a zero-length axis",
+  "old": "        let n = net.n;\n        if n == 0 {",
+  "new": "        let n = net.n;\n        if n == 0 && false {"
+ },
+ {
+  "label": "an infinite neuron parameter is carried into NIR and only a NaN refused",
+  "old": "                if !value.is_finite() {",
+  "new": "                if value.is_nan() {"
+ },
+ {
+  "label": "the shape-mismatch message reports the two shapes the wrong way round",
+  "old": "                \"edge {from} -> {to}: {from} emits {emitted:?} and {to} requires {expected:?}\"",
+  "new": "                \"edge {from} -> {to}: {from} emits {expected:?} and {to} requires {emitted:?}\""
+ },
+ {
+  "label": "the ragged-parameter message swaps the length found for the length implied",
+  "old": "                \"node {node}: parameter {field} has {len} entries where the shape implies {expected}\"",
+  "new": "                \"node {node}: parameter {field} has {expected} entries where the shape implies {len}\""
+ },
+ {
+  "label": "the signal-mismatch message reports the two signal kinds the wrong way round",
+  "old": "                \"edge {from} -> {to}: {from} emits {emitted} and {to} requires {required}\"",
+  "new": "                \"edge {from} -> {to}: {from} emits {required} and {to} requires {emitted}\""
+ },
+ {
+  "label": "a spike train is reported as a continuous signal",
+  "old": "            Self::Spikes => \"spikes\",",
+  "new": "            Self::Spikes => \"continuous\","
+ },
+ {
+  "label": "the missing-Input message names the Output boundary",
+  "old": "            Self::MissingInputNode => f.write_str(\"the graph has no Input node\"),",
+  "new": "            Self::MissingInputNode => f.write_str(\"the graph has no Output node\"),"
+ },
+ {
+  "label": "the wrong-magic message reports the expected line as the one found",
+  "old": "                write!(f, \"first line is {found:?}, not {MAGIC:?}\")",
+  "new": "                write!(f, \"first line is {MAGIC:?}, not {found:?}\")"
+ },
+ {
+  "label": "the arity message swaps the count wanted for the count found",
+  "old": "                write!(f, \"line {line}: {key} needs {want} entries and has {got}\")",
+  "new": "                write!(f, \"line {line}: {key} needs {got} entries and has {want}\")"
+ },
+ {
+  "label": "the fan-out message reports the two edge counts the wrong way round",
+  "old": "                \"node {name} has {incoming} incoming and {outgoing} outgoing edges; a weight node \\\n                 must have exactly one of each\"",
+  "new": "                \"node {name} has {outgoing} incoming and {incoming} outgoing edges; a weight node \\\n                 must have exactly one of each\""
+ },
+ {
+  "label": "the neuron-count message reports the two counts the wrong way round",
+  "old": "                write!(f, \"{got} neurons supplied for a network of {want}\")",
+  "new": "                write!(f, \"{want} neurons supplied for a network of {got}\")"
+ },
+ {
+  "label": "the split-delay message reports the two delays the wrong way round",
+  "old": "                \"neuron {post} receives synapses delayed {a} and {b} ticks, and NIR delays per \\\n                 element rather than per synapse\"",
+  "new": "                \"neuron {post} receives synapses delayed {b} and {a} ticks, and NIR delays per \\\n                 element rather than per synapse\""
+ },
+ {
+  "label": "a wrapped validation error announces that the graph validates",
+  "old": "            Self::Invalid(e) => write!(f, \"the graph does not validate: {e}\"),",
+  "new": "            Self::Invalid(e) => write!(f, \"the graph validates: {e}\"),"
  }
 ]

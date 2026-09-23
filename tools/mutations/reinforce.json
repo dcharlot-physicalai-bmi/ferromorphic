@@ -68,5 +68,222 @@
   "label": "policy action bound",
   "old": "policy.iter().find(|a| **a >= self.actions)",
   "new": "policy.iter().find(|a| **a > self.actions)"
+ },
+ {
+  "label": "the finiteness test in the unit-interval guard is dropped",
+  "old": "    let ok = v.is_finite() && v >= 0.0 && if high_open { v < 1.0 } else { v <= 1.0 };",
+  "new": "    let ok = v >= 0.0 && if high_open { v < 1.0 } else { v <= 1.0 };",
+  "equivalent": "NOT OBSERVABLE, from the arithmetic: the guard is `ok = v.is_finite() && A` with `A = v >= 0.0 && (v < 1.0 or v <= 1.0)`. IEEE 754 makes every ordered comparison against a NaN false, so `v >= 0.0` already rejects both NaNs; +inf fails `v < 1.0` and `v <= 1.0`, and -inf fails `v >= 0.0`. A is therefore true only for a v in [0, 1], which is finite -- so `is_finite() && A == A` for every bit pattern, and the Err built on the other branch carries `v` unchanged either way. The conjunct is implied by the rest, not a second test. FIXTURE (measured 2026-09-22, tools/mutate.py copy): both forms driven through all four public callers of the guard -- Critic::new for gamma and for lambda, Eligibility::new, Task::new -- over 400,021 f64 values: +/-0, +/-MIN_POSITIVE, the smallest subnormals, 1 +/- eps, +/-inf, four NaN bit patterns including a signalling one, +/-MAX, 200,000 uniform random 64-bit patterns and 200,000 draws in [-2, 2]; the FNV-1a hash of the Debug of every Result is 47ed070509f8a0fa with the finiteness test and 47ed070509f8a0fa without it, and the two predicates disagree on none of the 800,042 (value, high_open) pairs."
+ },
+ {
+  "label": "a parameter required to be positive accepts an infinity",
+  "old": "    if v.is_finite() && v > 0.0 {",
+  "new": "    if v > 0.0 {"
+ },
+ {
+  "label": "the refusal of a non-positive parameter names zero as admissible",
+  "old": "        Err(ReinforceError::OutOfRange { what, value: v, low: f64::MIN_POSITIVE, high: f64::INFINITY })",
+  "new": "        Err(ReinforceError::OutOfRange { what, value: v, low: 0.0, high: f64::INFINITY })"
+ },
+ {
+  "label": "the index refusal transposes the offending index and the count",
+  "old": "            Self::Index { what, index, count } => write!(f, \"{what} {index} is past the {count} available\"),",
+  "new": "            Self::Index { what, index, count } => write!(f, \"{what} {count} is past the {index} available\"),"
+ },
+ {
+  "label": "the expected table length is the sum of states and actions rather than their product",
+  "old": "        let want = states * actions;",
+  "new": "        let want = states + actions;"
+ },
+ {
+  "label": "a terminal array shorter than the states is accepted",
+  "old": "        if terminal.len() != states {",
+  "new": "        if terminal.len() > states {"
+ },
+ {
+  "label": "an infinite reward passes the finiteness screen",
+  "old": "        if let Some(i) = reward.iter().position(|r| !r.is_finite()) {",
+  "new": "        if let Some(i) = reward.iter().position(|r| r.is_nan()) {"
+ },
+ {
+  "label": "the left action stays put everywhere rather than stepping back",
+  "old": "            next[s * 2] = s.saturating_sub(1);",
+  "new": "            next[s * 2] = s;"
+ },
+ {
+  "label": "the right action is not clamped at the last state",
+  "old": "            next[s * 2 + 1] = (s + 1).min(n - 1);",
+  "new": "            next[s * 2 + 1] = s + 1;",
+  "equivalent": "NOT OBSERVABLE, from the construction: `.min(n - 1)` binds only at `s = n - 1`, because for every `s <= n - 2` we have `s + 1 <= n - 1` and the min is the identity. The single entry it changes is `next[(n - 1) * 2 + 1]`, and the statement `next[(n - 1) * 2 + 1] = n - 1;` two lines after the loop assigns exactly that index unconditionally -- before `Self::new` runs its `next state` bounds check and before any caller can read the field -- so the unclamped `n` is overwritten in every case and nothing downstream, validation included, can see it. FIXTURE (measured 2026-09-22): the chain's `next`, `reward` and `terminal` tables for every n in 2..=512, hashed, with and without the clamp: FNV-1a 0f2e6f5c7e28a9e3 both ways; an index sweep over the same range finds the clamp binding at 511 table entries and 0 of them outliving the overwrite. The only n at which the two expressions could differ otherwise is one where `s + 1` overflows a usize (n - 1 = usize::MAX), and `vec![0; n * 2]` fails to allocate long before the loop for both forms."
+ },
+ {
+  "label": "the terminal state's left action escapes to the start instead of self-looping",
+  "old": "        next[(n - 1) * 2] = n - 1;",
+  "new": "        next[(n - 1) * 2] = 0;"
+ },
+ {
+  "label": "the terminal self-loop pays the unit reward again",
+  "old": "        reward[(n - 1) * 2 + 1] = 0.0;",
+  "new": "        reward[(n - 1) * 2 + 1] = 1.0;"
+ },
+ {
+  "label": "value iteration backs up terminal states instead of pinning them at zero",
+  "old": "                if self.terminal[s] {\n                    continue;\n                }",
+  "new": "                if false {\n                    continue;\n                }"
+ },
+ {
+  "label": "the convergence test watches only the last state's residual",
+  "old": "                worst = worst.max((target - v[s]).abs());",
+  "new": "                worst = (target - v[s]).abs();"
+ },
+ {
+  "label": "the transition table is read transposed",
+  "old": "                let n = self.next[s * self.actions + a];",
+  "new": "                let n = self.next[a * self.states + s];"
+ },
+ {
+  "label": "the value table starts at one rather than zero",
+  "old": "        let mut v = vec![0.0; self.states];",
+  "new": "        let mut v = vec![1.0; self.states];"
+ },
+ {
+  "label": "the active count ignores the floor it was given",
+  "old": "        self.e.iter().filter(|x| **x > floor).count()",
+  "new": "        self.e.iter().filter(|x| **x > 0.0).count()"
+ },
+ {
+  "label": "the end of an episode leaves the first trace standing",
+  "old": "        self.e.iter_mut().for_each(|x| *x = 0.0);",
+  "new": "        self.e.iter_mut().skip(1).for_each(|x| *x = 0.0);"
+ },
+ {
+  "label": "the critic's trace decays by lambda alone, without the discount",
+  "old": "            trace: Eligibility::new(states, gamma * lambda)?,",
+  "new": "            trace: Eligibility::new(states, lambda)?,"
+ },
+ {
+  "label": "the trace floor is ten times too high",
+  "old": "            floor: 1e-6,",
+  "new": "            floor: 1e-5,"
+ },
+ {
+  "label": "a lambda of one is refused where the interval is closed",
+  "old": "        unit_interval(\"lambda\", lambda, false)?;",
+  "new": "        unit_interval(\"lambda\", lambda, true)?;"
+ },
+ {
+  "label": "the deposit is decayed by the step that should precede it",
+  "old": "        self.trace.step();\n        self.trace.spike(s)?;",
+  "new": "        self.trace.spike(s)?;\n        self.trace.step();"
+ },
+ {
+  "label": "the discount multiplies the whole prediction error rather than the successor's value",
+  "old": "        let delta = r + self.gamma * v_next - self.v[s];",
+  "new": "        let delta = r + self.gamma * (v_next - self.v[s]);"
+ },
+ {
+  "label": "the bootstrap reads the state just left rather than its successor",
+  "old": "else { self.v[s_next] };",
+  "new": "else { self.v[s] };"
+ },
+ {
+  "label": "a next state one past the table is accepted",
+  "old": "        if s_next >= n {",
+  "new": "        if s_next > n {"
+ },
+ {
+  "label": "the weight change ignores how large the trace is",
+  "old": "                *w += self.eta * delta * e;",
+  "new": "                *w += self.eta * delta;"
+ },
+ {
+  "label": "the weight is assigned rather than accumulated",
+  "old": "                *w += self.eta * delta * e;\n                touched += 1;",
+  "new": "                *w = self.eta * delta * e;\n                touched += 1;"
+ },
+ {
+  "label": "the synapse counter is replaced by the last update's count rather than accumulated",
+  "old": "        self.touched += touched;",
+  "new": "        self.touched = touched;"
+ },
+ {
+  "label": "the touched mean is inverted: updates per synapse rather than synapses per update",
+  "old": "        if self.updates == 0 { None } else { Some(self.touched as f64 / self.updates as f64) }",
+  "new": "        if self.updates == 0 { None } else { Some(self.updates as f64 / self.touched as f64) }"
+ },
+ {
+  "label": "the no-updates guard counts touched synapses instead of updates",
+  "old": "        if self.updates == 0 { None } else { Some(self.touched as f64 / self.updates as f64) }",
+  "new": "        if self.touched == 0 { None } else { Some(self.touched as f64 / self.updates as f64) }"
+ },
+ {
+  "label": "the critic's traces are decayed one step at the end of an episode rather than zeroed",
+  "old": "    /// Start a new episode: traces to zero, values kept.\n    pub fn end_episode(&mut self) {\n        self.trace.reset();\n    }",
+  "new": "    /// Start a new episode: traces to zero, values kept.\n    pub fn end_episode(&mut self) {\n        self.trace.step();\n    }"
+ },
+ {
+  "label": "the actor's traces survive into the next episode",
+  "old": "    /// Start a new episode.\n    pub fn end_episode(&mut self) {\n        self.trace.reset();\n    }",
+  "new": "    /// Start a new episode.\n    pub fn end_episode(&mut self) {\n        self.trace.step();\n    }"
+ },
+ {
+  "label": "the softmax multiplies by the partition function rather than dividing",
+  "old": "        Ok(exps.iter().map(|e| e / z).collect())",
+  "new": "        Ok(exps.iter().map(|e| e * z).collect())"
+ },
+ {
+  "label": "the softmax is shifted by the smallest preference rather than the largest",
+  "old": "        let top = row.iter().cloned().fold(f64::NEG_INFINITY, f64::max);",
+  "new": "        let top = row.iter().cloned().fold(f64::INFINITY, f64::min);"
+ },
+ {
+  "label": "the preference rows overlap: the row starts at the state index, not at the state's block",
+  "old": "        let row = &self.theta[s * self.actions..(s + 1) * self.actions];",
+  "new": "        let row = &self.theta[s..s + self.actions];"
+ },
+ {
+  "label": "the sampler's cumulative comparison is inverted",
+  "old": "            if u < acc {",
+  "new": "            if u > acc {"
+ },
+ {
+  "label": "the eligibility is deposited before the trace is decayed",
+  "old": "        self.trace.step();\n        for (k, &pk) in p.iter().enumerate() {\n            let g = if k == a { 1.0 - pk } else { -pk };\n            self.trace.e[s * self.actions + k] += g;\n        }",
+  "new": "        for (k, &pk) in p.iter().enumerate() {\n            let g = if k == a { 1.0 - pk } else { -pk };\n            self.trace.e[s * self.actions + k] += g;\n        }\n        self.trace.step();"
+ },
+ {
+  "label": "the actor's trace is replaced on a revisit rather than accumulated",
+  "old": "            self.trace.e[s * self.actions + k] += g;",
+  "new": "            self.trace.e[s * self.actions + k] = g;"
+ },
+ {
+  "label": "the unchosen actions' eligibility has the wrong sign",
+  "old": "            let g = if k == a { 1.0 - pk } else { -pk };",
+  "new": "            let g = if k == a { 1.0 - pk } else { pk };"
+ },
+ {
+  "label": "the actor descends the policy gradient instead of ascending it",
+  "old": "            *t += self.eta * delta * e;",
+  "new": "            *t -= self.eta * delta * e;"
+ },
+ {
+  "label": "the actor's learning rate does nothing",
+  "old": "            *t += self.eta * delta * e;",
+  "new": "            *t += delta * e;"
+ },
+ {
+  "label": "the return discounts every reward one step too many",
+  "old": "        ret += disc * r;\n        disc *= task.gamma;",
+  "new": "        disc *= task.gamma;\n        ret += disc * r;"
+ },
+ {
+  "label": "the terminal flag handed to the critic is the state left, not the state entered",
+  "old": "        let delta = critic.update(s, r, n, task.terminal[n])?;",
+  "new": "        let delta = critic.update(s, r, n, task.terminal[s])?;"
+ },
+ {
+  "label": "a start one past the last state is accepted",
+  "old": "    if start >= task.states {",
+  "new": "    if start > task.states {"
  }
 ]

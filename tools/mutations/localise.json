@@ -113,5 +113,267 @@
   "label": "unsorted train accepted",
   "old": "if let Some(i) = t.windows(2).position(|p| p[1] < p[0]) {",
   "new": "if let Some(i) = t.windows(2).position(|p| p[1] < p[0] - 1e9) {"
+ },
+ {
+  "label": "an infinite head width, period, span or window passes the positive guard",
+  "old": "    if v.is_finite() && v > 0.0 {",
+  "new": "    if v > 0.0 {"
+ },
+ {
+  "label": "zero passes the positive guard",
+  "old": "&& v > 0.0 {",
+  "new": "&& v >= 0.0 {"
+ },
+ {
+  "label": "a refused non-positive value is told that zero was admissible",
+  "old": "low: f64::MIN_POSITIVE, high: f64::MAX })",
+  "new": "low: 0.0, high: f64::MAX })"
+ },
+ {
+  "label": "a non-finite azimuth is left for the magnitude comparison to refuse",
+  "old": "    if azimuth.is_finite() && azimuth.abs() <= FRAC_PI_2 {",
+  "new": "    if azimuth.abs() <= FRAC_PI_2 {",
+  "equivalent": "EQUIVALENT by the arithmetic of the comparison, not by what the tests contain. Both forms return the same `Result` for every f64. The accept branch needs `azimuth.abs() <= FRAC_PI_2`, and IEEE-754 makes that false for every non-finite input: |NaN| is NaN and every ordered comparison with NaN is false, |+-inf| is inf which is greater than pi/2. So `is_finite()` removes nothing from the accept set and adds nothing to the reject set, and the Err it would have raised early carries the identical what/value/low/high as the one the magnitude comparison raises. Checked by building both versions side by side and comparing the returned bits (discriminant, value bits, bound bits) over 40,000,000 random 64-bit patterns covering every class (quiet and signalling NaN of both signs, both infinities, subnormals, normals), 24 named special values (+-0.0, +-pi/2, +-MIN_POSITIVE, +-5e-324, MAX, MIN, EPSILON, five NaN payloads), and the 4000 representable values either side of +-pi/2: 0 disagreements. The guard is redundant, not inert in the way a dead branch is: it states the intent, and it is the same shape as the positive() guard where dropping is_finite() IS observable (inf > 0.0 is true) -- so the two are not one finding."
+ },
+ {
+  "label": "the refused azimuth's admissible range is printed inverted",
+  "old": "low: -FRAC_PI_2, high: FRAC_PI_2 })",
+  "new": "low: FRAC_PI_2, high: -FRAC_PI_2 })"
+ },
+ {
+  "label": "an infinite spike time is reported as out of time order rather than as non-finite",
+  "old": "    if let Some(i) = t.iter().position(|x| !x.is_finite()) {\n        return Err(LocaliseError::NonFinite { what, index: i });\n    }\n    if let Some(i) = t.windows(2).position(|p| p[1] < p[0]) {\n        return Err(LocaliseError::Unsorted { what, index: i + 1 });\n    }\n",
+  "new": "    if let Some(i) = t.windows(2).position(|p| p[1] < p[0]) {\n        return Err(LocaliseError::Unsorted { what, index: i + 1 });\n    }\n    if let Some(i) = t.iter().position(|x| !x.is_finite()) {\n        return Err(LocaliseError::NonFinite { what, index: i });\n    }\n"
+ },
+ {
+  "label": "two spikes at the same time are refused as out of order",
+  "old": "position(|p| p[1] < p[0])",
+  "new": "position(|p| p[1] <= p[0])"
+ },
+ {
+  "label": "the out-of-order spike is reported at the index of its predecessor",
+  "old": "LocaliseError::Unsorted { what, index: i + 1 }",
+  "new": "LocaliseError::Unsorted { what, index: i }"
+ },
+ {
+  "label": "a non-finite spike is always reported at index zero",
+  "old": "LocaliseError::NonFinite { what, index: i }",
+  "new": "LocaliseError::NonFinite { what, index: 0 }"
+ },
+ {
+  "label": "absolute zero is transcribed as 273.0 kelvin in the temperature ratio",
+  "old": "1.0 + celsius / 273.15",
+  "new": "1.0 + celsius / 273.0"
+ },
+ {
+  "label": "the temperature correction to the speed of sound is subtracted",
+  "old": "331.3 * (1.0 + celsius",
+  "new": "331.3 * (1.0 - celsius"
+ },
+ {
+  "label": "the absolute-zero cutoff is placed at −273.0 °C",
+  "old": "celsius <= -273.15 {",
+  "new": "celsius <= -273.0 {"
+ },
+ {
+  "label": "the far-field ITD divides by the head width rather than by the speed of sound",
+  "old": "Ok(d / c * azimuth",
+  "new": "Ok(c / d * azimuth"
+ },
+ {
+  "label": "a zero ear separation slips past the far-field inverse's guard",
+  "old": "if !(d > 0.0) || !(c > 0.0)",
+  "new": "if d < 0.0 || !(c > 0.0)"
+ },
+ {
+  "label": "a zero speed of sound reads every ITD as straight ahead",
+  "old": "!(d > 0.0) || !(c > 0.0) || !d.is_finite()",
+  "new": "!(d > 0.0) || c < 0.0 || !d.is_finite()"
+ },
+ {
+  "label": "a non-finite ITD is turned into an azimuth",
+  "old": "!d.is_finite() || !c.is_finite() || !itd.is_finite()",
+  "new": "!d.is_finite() || !c.is_finite()"
+ },
+ {
+  "label": "an ITD exactly at the head's limit has no azimuth",
+  "old": "if s.abs() > 1.0 {",
+  "new": "if s.abs() >= 1.0 {"
+ },
+ {
+  "label": "a Woodworth ITD exactly at the limit is refused",
+  "old": "if target > FRAC_PI_2 + 1.0 {",
+  "new": "if target >= FRAC_PI_2 + 1.0 {"
+ },
+ {
+  "label": "the bisection target forgets the speed of sound",
+  "old": "let target = c * itd.abs() / r;",
+  "new": "let target = itd.abs() / r;"
+ },
+ {
+  "label": "the bisection brackets the azimuth at one radian rather than at π/2",
+  "old": "(0.0f64, FRAC_PI_2);",
+  "new": "(0.0f64, 1.0);"
+ },
+ {
+  "label": "the bisection inverts sin θ rather than θ + sin θ",
+  "old": "if mid + mid.sin() < target {",
+  "new": "if mid.sin() < target {"
+ },
+ {
+  "label": "the bisection never keeps the lower half",
+  "old": "if mid + mid.sin() < target {\n            lo = mid;",
+  "new": "if false {\n            lo = mid;"
+ },
+ {
+  "label": "an infinite array span reports an aliasing limit of zero",
+  "old": "if max_itd > 0.0 && max_itd.is_finite() {",
+  "new": "if max_itd > 0.0 {"
+ },
+ {
+  "label": "the resolution multiplies by the cosine rather than dividing by it",
+  "old": "Some(c * delta / (d * azimuth.cos()))",
+  "new": "Some(c * delta * azimuth.cos() / d)"
+ },
+ {
+  "label": "a zero detector spacing is a zero resolution rather than a refusal",
+  "old": "&& delta > 0.0 &&",
+  "new": "&& delta >= 0.0 &&"
+ },
+ {
+  "label": "both edges of the coincidence window are measured from the same side of the mismatch",
+  "old": "normal_cdf((-window - mismatch) / s)",
+  "new": "normal_cdf((-window + mismatch) / s)"
+ },
+ {
+  "label": "a NaN jitter slips past the sigma guard",
+  "old": "if !(sigma >= 0.0) || !sigma.is_finite() {",
+  "new": "if sigma < 0.0 {"
+ },
+ {
+  "label": "the zero-jitter path draws from the rng anyway",
+  "old": "if sigma > 0.0 { sigma * gaussian(rng) } else { 0.0 }",
+  "new": "if true { sigma * gaussian(rng) } else { 0.0 }"
+ },
+ {
+  "label": "the first spike of the train is one period after the start",
+  "old": ".map(|n| start + period * n as f64",
+  "new": ".map(|n| start + period * (n + 1) as f64"
+ },
+ {
+  "label": "the train is put in reverse time order",
+  "old": "    t.sort_by(f64::total_cmp);",
+  "new": "    t.sort_by(|a, b| f64::total_cmp(b, a));"
+ },
+ {
+  "label": "a train of no cycles is accepted",
+  "old": "    if cycles == 0 {",
+  "new": "    if false {"
+ },
+ {
+  "label": "a non-finite start is accepted",
+  "old": "    if !start.is_finite() {",
+  "new": "    if false {"
+ },
+ {
+  "label": "a one-detector array is accepted",
+  "old": "        if detectors < 2 {",
+  "new": "        if detectors < 1 {"
+ },
+ {
+  "label": "the delays run from +max_itd down to −max_itd",
+  "old": ".map(|k| -max_itd + step * k as f64)",
+  "new": ".map(|k| max_itd - step * k as f64)"
+ },
+ {
+  "label": "the spacing divides the span by the number of detectors",
+  "old": "/ (self.delays.len() - 1) as f64 }",
+  "new": "/ self.delays.len() as f64 }"
+ },
+ {
+  "label": "a one-detector array's spacing is computed rather than declared zero",
+  "old": "if self.delays.len() < 2 {",
+  "new": "if self.delays.len() < 1 {"
+ },
+ {
+  "label": "the low pointer discards right spikes still inside the early half of the window",
+  "old": "right[lo] + delta < tl - self.window {",
+  "new": "right[lo] + delta < tl {"
+ },
+ {
+  "label": "the high pointer is never pulled forward to the low one",
+  "old": "                    if hi < lo {\n                        hi = lo;\n                    }\n",
+  "new": "                    if false {\n                        hi = lo;\n                    }\n",
+  "equivalent": "UNREACHABLE, and deliberately so. `coincidences` now refuses a non-positive `window` at its first statement (the entry 'a bypassed window is not re-checked at the point of use' pins that guard and comes back `caught`), and with `window > 0` the pull-forward cannot change the answer. Proof from the walk: `hi < lo` requires the high pointer to have stopped at some index k on an earlier left spike, so `right[k] + delta > tl' + window`, and the low pointer to have since passed k, so `right[k] + delta < tl - window`. The `while` that follows starts from that same old `hi` and advances while `right[hi] + delta <= tl + window`; every index the low pointer passed satisfies `right[i] + delta < tl - window <= tl + window`, so the loop walks through all of them and finishes at exactly the index the pull-forward would have started it from. The final `hi` is identical either way, so `hi - lo` is identical. The line matters only for a NEGATIVE window, where without it `hi - lo` wraps and the detector reports 18,446,744,073,709,551,615 coincidences — and that input no longer reaches the walk. MEASURED: 200,000 random (left, right, delays, window>0) cases, 0 differences and 0 wraps; the same fixture with window = -1.0 wraps without the line and is refused with the guard. The line is kept as defence in case the guard is ever relaxed, and this argument's premise is that guard, whose own mutation is caught."
+ },
+ {
+  "label": "every detector counts the right train against itself",
+  "old": "for &tl in left {",
+  "new": "for &tl in right {"
+ },
+ {
+  "label": "the high pointer subtracts the detector delay rather than adding it",
+  "old": "while hi < right.len() && right[hi] + delta <= tl + self.window {",
+  "new": "while hi < right.len() && right[hi] - delta <= tl + self.window {"
+ },
+ {
+  "label": "every detector starts with one coincidence already counted",
+  "old": "let mut count = 0u64;",
+  "new": "let mut count = 1u64;"
+ },
+ {
+  "label": "the count keeps only the last left spike's pairs",
+  "old": "count += (hi - lo) as u64;",
+  "new": "count = (hi - lo) as u64;"
+ },
+ {
+  "label": "the peak is the least-visited detector",
+  "old": ".max().unwrap_or(0);",
+  "new": ".min().unwrap_or(0);"
+ },
+ {
+  "label": "the reading starts at the last tied detector rather than the first",
+  "old": "counts.iter().position(|&c| c == best)",
+  "new": "counts.iter().rposition(|&c| c == best)"
+ },
+ {
+  "label": "the plateau counts every tied detector in the array, not the run",
+  "old": ".take_while(|&&c| c == best).count();",
+  "new": ".filter(|&&c| c == best).count();"
+ },
+ {
+  "label": "the reading is the sum over the plateau rather than its mean",
+  "old": ".iter().sum::<f64>() / run as f64;",
+  "new": ".iter().sum::<f64>();"
+ },
+ {
+  "label": "the peak-width convention is quarter height rather than half",
+  "old": "|&c| 2 * c >= best",
+  "new": "|&c| 4 * c >= best"
+ },
+ {
+  "label": "the cost is one event per spike PAIR rather than per spike visit",
+  "old": ".saturating_mul((left.len() + right.len()) as u64);",
+  "new": ".saturating_mul((left.len() * right.len()) as u64);"
+ },
+ {
+  "label": "an empty-count refusal does not name what was empty",
+  "old": "Self::Empty { what } => write!(f, \"{what} is empty\"),",
+  "new": "Self::Empty { what } => write!(f, \"{} is empty\", what.len()),"
+ },
+ {
+  "label": "an out-of-range refusal does not print the offending value",
+  "old": "write!(f, \"{what} = {value} is outside [{low}, {high}]\")",
+  "new": "write!(f, \"{what} is outside [{low}, {high}]\")"
+ },
+ {
+  "label": "the positive refusal names an upper bound its own guard rejects",
+  "old": "low: f64::MIN_POSITIVE, high: f64::MAX })",
+  "new": "low: f64::MIN_POSITIVE, high: f64::INFINITY })"
+ },
+ {
+  "label": "a bypassed window is not re-checked at the point of use",
+  "old": "        positive(\"window\", self.window)?;\n        sorted(\"left\", left)?;",
+  "new": "        sorted(\"left\", left)?;"
  }
 ]

@@ -63,5 +63,225 @@
   "label": "silent never counted",
   "old": "silent += 1;",
   "new": "silent += 0;"
+ },
+ {
+  "label": "the index of the first non-finite element is reported one past it",
+  "old": "PhasorError::NonFinite { index: i }",
+  "new": "PhasorError::NonFinite { index: i + 1 }"
+ },
+ {
+  "label": "two dimensions never disagree, so every combination of mismatched symbols is accepted",
+  "old": "    if a == b { Ok(()) } else { Err(PhasorError::Dimension { a, b }) }",
+  "new": "    if true { Ok(()) } else { Err(PhasorError::Dimension { a, b }) }"
+ },
+ {
+  "label": "the constructor keeps the phases it was handed unwrapped",
+  "old": "Ok(Self { phase: phase.iter().map(|&p| wrap(p)).collect() })",
+  "new": "Ok(Self { phase: phase.to_vec() })"
+ },
+ {
+  "label": "a random symbol of dimension zero is built rather than refused",
+  "old": "    pub fn random(dim: usize, rng: &mut Rng) -> Result<Self, PhasorError> {\n        if dim == 0 {",
+  "new": "    pub fn random(dim: usize, rng: &mut Rng) -> Result<Self, PhasorError> {\n        if false {"
+ },
+ {
+  "label": "random phases are drawn from half a turn rather than the whole cycle",
+  "old": "(0..dim).map(|_| core::f64::consts::TAU * rng.next_f64())",
+  "new": "(0..dim).map(|_| core::f64::consts::PI * rng.next_f64())"
+ },
+ {
+  "label": "the dimension is one short of the number of phases",
+  "old": "    pub fn dim(&self) -> usize {\n        self.phase.len()\n    }",
+  "new": "    pub fn dim(&self) -> usize {\n        self.phase.len() - 1\n    }"
+ },
+ {
+  "label": "binding doubles its left operand instead of adding the right one",
+  "old": ".map(|(a, b)| wrap(a + b))",
+  "new": ".map(|(a, b)| { let _ = b; wrap(a + a) })"
+ },
+ {
+  "label": "unbinding subtracts the wrong way round, so it negates the answer",
+  "old": ".map(|(a, b)| wrap(a - b))",
+  "new": ".map(|(a, b)| wrap(b - a))"
+ },
+ {
+  "label": "unbinding accepts two symbols of different dimensions and truncates to the shorter",
+  "old": "    pub fn unbind(&self, other: &Self) -> Result<Self, PhasorError> {\n        same(self.dim(), other.dim())?;",
+  "new": "    pub fn unbind(&self, other: &Self) -> Result<Self, PhasorError> {"
+ },
+ {
+  "label": "the conjugate leaves every phase as it is",
+  "old": ".map(|&p| wrap(-p))",
+  "new": ".map(|&p| wrap(p))"
+ },
+ {
+  "label": "the permutation shifts left where the doc says right",
+  "old": "phase.rotate_right(k.rem_euclid(d) as usize);",
+  "new": "phase.rotate_left(k.rem_euclid(d) as usize);"
+ },
+ {
+  "label": "the permutation moves nothing whatever shift it is given",
+  "old": "        phase.rotate_right(k.rem_euclid(d) as usize);\n        Self { phase }",
+  "new": "        phase.rotate_right(0 * k.rem_euclid(d) as usize);\n        Self { phase }"
+ },
+ {
+  "label": "the similarity is the sum over elements rather than the mean",
+  "old": ".sum::<f64>() / self.dim() as f64)",
+  "new": ".sum::<f64>())"
+ },
+ {
+  "label": "a rhythm of zero period is accepted, so every spike time is zero",
+  "old": "    pub fn spike_times(&self, period: f64) -> Result<Vec<f64>, PhasorError> {\n        if !(period > 0.0) || !period.is_finite() {",
+  "new": "    pub fn spike_times(&self, period: f64) -> Result<Vec<f64>, PhasorError> {\n        if !(period >= 0.0) || !period.is_finite() {"
+ },
+ {
+  "label": "the spike time inverts the period ratio, dividing the phase by the period",
+  "old": "period * p / core::f64::consts::TAU",
+  "new": "core::f64::consts::TAU * p / period"
+ },
+ {
+  "label": "spike times are read back on a period that is never checked, so zero, negative and NaN rhythms all pass",
+  "old": "    pub fn from_spike_times(times: &[f64], period: f64) -> Result<Self, PhasorError> {\n        if !(period > 0.0) || !period.is_finite() {",
+  "new": "    pub fn from_spike_times(times: &[f64], period: f64) -> Result<Self, PhasorError> {\n        if false {"
+ },
+ {
+  "label": "an empty list of spike times becomes a symbol of dimension zero",
+  "old": "        if times.is_empty() {\n            return Err(PhasorError::Empty { what: \"times\" });\n        }",
+  "new": "        if false {\n            return Err(PhasorError::Empty { what: \"times\" });\n        }"
+ },
+ {
+  "label": "the inverse of the spike-time map multiplies by the period instead of dividing",
+  "old": "wrap(core::f64::consts::TAU * t / period)",
+  "new": "wrap(core::f64::consts::TAU * t * period)"
+ },
+ {
+  "label": "a bundle of no members is built and then indexed",
+  "old": "        if members.is_empty() {\n            return Err(PhasorError::Empty { what: \"bundle\" });\n        }",
+  "new": "        if false {\n            return Err(PhasorError::Empty { what: \"bundle\" });\n        }"
+ },
+ {
+  "label": "the bundle overwrites rather than accumulates, so only its last member survives",
+  "old": "                re[k] += p.cos();\n                im[k] += p.sin();",
+  "new": "                re[k] = p.cos();\n                im[k] = p.sin();"
+ },
+ {
+  "label": "members of disagreeing dimension are summed into the first member's width",
+  "old": "            same(m.dim(), d)?;",
+  "new": "            let _ = same(m.dim(), d);"
+ },
+ {
+  "label": "the bundle similarity drops its imaginary term, halving a member's score",
+  "old": ".map(|(k, &p)| self.re[k] * p.cos() + self.im[k] * p.sin())",
+  "new": ".map(|(k, &p)| self.re[k] * p.cos())"
+ },
+ {
+  "label": "the bundle similarity is normalised by D squared",
+  "old": "            / d)",
+  "new": "            / (d * d))"
+ },
+ {
+  "label": "the bundle similarity accepts a symbol of another dimension",
+  "old": "        same(self.re.len(), symbol.dim())?;",
+  "new": "        let _ = same(self.re.len(), symbol.dim());"
+ },
+ {
+  "label": "the bundle reads back the conjugate of its circular mean",
+  "old": "wrap(i.atan2(*r))",
+  "new": "wrap(-i.atan2(*r))"
+ },
+ {
+  "label": "the factor of two in the noise floor is added to D rather than multiplying it",
+  "old": "1.0 / (2.0 * dim as f64).sqrt()",
+  "new": "1.0 / (2.0 + dim as f64).sqrt()"
+ },
+ {
+  "label": "a memory of dimension zero is built rather than refused",
+  "old": "    pub fn new(dim: usize, threshold: f64) -> Result<Self, PhasorError> {\n        if dim == 0 {",
+  "new": "    pub fn new(dim: usize, threshold: f64) -> Result<Self, PhasorError> {\n        if false {"
+ },
+ {
+  "label": "a negative threshold is admitted",
+  "old": "        if !(0.0..1.0).contains(&threshold) {",
+  "new": "        if !(-1.0..1.0).contains(&threshold) {"
+ },
+ {
+  "label": "the memory discards the threshold it was constructed with and silences nothing",
+  "old": "Ok(Self { dim, patterns: Vec::new(), threshold })",
+  "new": "Ok(Self { dim, patterns: Vec::new(), threshold: 0.0 * threshold })"
+ },
+ {
+  "label": "every stored pattern is recorded twice, so P is double what was stored",
+  "old": "        self.patterns.push(pattern.clone());",
+  "new": "        self.patterns.push(pattern.clone());\n        self.patterns.push(pattern.clone());"
+ },
+ {
+  "label": "a memory with nothing stored returns a field of zeros rather than refusing",
+  "old": "        if self.patterns.is_empty() {\n            return Err(PhasorError::Empty { what: \"patterns\" });\n        }",
+  "new": "        if false {\n            return Err(PhasorError::Empty { what: \"patterns\" });\n        }"
+ },
+ {
+  "label": "the overlap is taken against the stored pattern itself rather than against the state",
+  "old": "for (a, b) in p.phase.iter().zip(&z.phase) {",
+  "new": "for (a, b) in p.phase.iter().zip(&p.phase) {"
+ },
+ {
+  "label": "the overlap keeps only its real part, so the field ignores the phase of the match",
+  "old": "                oi += (b - a).sin();",
+  "new": "                oi += 0.0 * (b - a).sin();"
+ },
+ {
+  "label": "the real part of the pattern times the overlap adds the cross term instead of subtracting it",
+  "old": "                re[k] += c * or - s * oi;",
+  "new": "                re[k] += c * or + s * oi;"
+ },
+ {
+  "label": "the silencing threshold is an absolute field magnitude rather than a fraction of D",
+  "old": "        let floor = self.threshold * self.dim as f64;",
+  "new": "        let floor = self.threshold;"
+ },
+ {
+  "label": "retrieval starts from an all-zero state rather than from the cue",
+  "old": "        let mut state = cue.clone();",
+  "new": "        let mut state = Phasor { phase: vec![0.0; cue.dim()] };"
+ },
+ {
+  "label": "the field magnitude is left squared, so the threshold is compared against D squared",
+  "old": "let mag = (f.re[k] * f.re[k] + f.im[k] * f.im[k]).sqrt();",
+  "new": "let mag = f.re[k] * f.re[k] + f.im[k] * f.im[k];"
+ },
+ {
+  "label": "the largest movement is the last element's movement rather than the maximum",
+  "old": "                moved = moved.max(delta);",
+  "new": "                moved = delta;"
+ },
+ {
+  "label": "the iteration cap is off by one, so max_iters iterations become max_iters plus one",
+  "old": "        while iterations < max_iters {",
+  "new": "        while iterations <= max_iters {"
+ },
+ {
+  "label": "convergence is never reported even when the phases have stopped moving",
+  "old": "                converged = true;",
+  "new": "                converged = false;"
+ },
+ {
+  "label": "the silent count is never reset, so it is the total over every iteration rather than the last one's",
+  "old": "            silent = 0;",
+  "new": "            silent += 0;"
+ },
+ {
+  "label": "the crosstalk ratio counts the pattern against itself, so it is sqrt(P/D)",
+  "old": "(self.patterns.len().saturating_sub(1)) as f64 / self.dim as f64",
+  "new": "self.patterns.len() as f64 / self.dim as f64"
+ },
+ {
+  "label": "the dimension message names the two dimensions the wrong way round",
+  "old": "write!(f, \"dimension {a} against dimension {b}\")",
+  "new": "write!(f, \"dimension {b} against dimension {a}\")"
+ },
+ {
+  "label": "an emptiness refusal prints nothing at all",
+  "old": "Self::Empty { what } => write!(f, \"{what} is empty\"),",
+  "new": "Self::Empty { what } => { let _ = what; write!(f, \"\") },"
  }
 ]

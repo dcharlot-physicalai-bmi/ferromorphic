@@ -66,6 +66,20 @@ deterministic for a fixed seed.
 - **Add a neuron model**: implement `Neuron`, set `EXACT_OVER_GAPS` honestly, and add a test that
   checks it against a closed form. A model with no analytic check does not belong here yet.
 
+## Before you commit
+
+`tools/gates.sh`. Nine results, every one of which must be 0: the test suite, clippy at
+`-D warnings` over all targets, the wasm build, the three examples, `tools/prose_check.py`,
+`tools/readme_numbers.py` (which recomputes the README's headline counts from the repository and
+refuses if the file disagrees — the last time those were typed by hand the test count was 423 low),
+and rustdoc with `-D warnings`. The script refuses unless it sees all eight, because a gate runner that
+reads the tail cannot tell a truncated run from a clean one — and a release here was once committed
+with the rustdoc gate red, the gates and the commit having been chained so the commit ran regardless.
+
+The prose gate is there because the other seven check code. `readme = "README.md"` means crates.io
+serves that file verbatim, and the commit that corrected 43 false claims in it doubled five of its
+paragraphs and shipped them with everything else green.
+
 ## Traps this crate has already hit
 
 - A test that started a `Lif` at −40 mV to watch it decay: that is ABOVE the −50 mV threshold, so the

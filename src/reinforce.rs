@@ -745,4 +745,298 @@ mod tests {
         assert_eq!(task.unwrap_err(), ReinforceError::Index { what: "next state", index: 2, count: 2 });
         assert!(Task::new(2, 1, vec![1, 0], vec![0.0, 0.0], vec![false, false], 0.9).is_ok());
     }
+
+    /// A parameter that must be positive refuses an infinity, and the refusal names the smallest
+    /// admissible value rather than the excluded zero. The suite tested only `eta = 0`, which the
+    /// comparison `v > 0.0` refuses on its own, and it matched every refusal with `..`, so the
+    /// finiteness half of the guard and the `low` field it reports were both unread.
+    #[test]
+    fn a_positive_parameter_refuses_an_infinity_and_names_the_smallest_admissible_value() {
+        let inf = f64::INFINITY;
+        assert!(matches!(Critic::new(3, inf, 0.9, 0.5), Err(ReinforceError::OutOfRange { what: "eta", .. })));
+        assert!(matches!(Actor::new(3, 2, inf, 0.5), Err(ReinforceError::OutOfRange { what: "eta", .. })));
+        let task = Task::chain(3, 0.9).unwrap();
+        assert!(matches!(task.values_of(&[1, 1, 1], inf), Err(ReinforceError::OutOfRange { what: "tol", .. })));
+        // The bound the refusal names is the one that is admissible: `MIN_POSITIVE` is accepted and
+        // zero is not, so reporting `low = 0.0` would name an inadmissible value as the floor.
+        assert_eq!(
+            Critic::new(3, 0.0, 0.9, 0.5).unwrap_err(),
+            ReinforceError::OutOfRange { what: "eta", value: 0.0, low: f64::MIN_POSITIVE, high: inf }
+        );
+        assert!(Critic::new(3, f64::MIN_POSITIVE, 0.9, 0.5).is_ok());
+    }
+
+    /// Every refusal prints its own fields where its message says they go: the offending index
+    /// before the count it had to be below. The suite asserted only that the four strings are
+    /// non-empty, which any transposition of the fields satisfies.
+    #[test]
+    fn the_refusal_strings_print_their_fields_in_the_right_places() {
+        assert_eq!(ReinforceError::Empty { what: "states" }.to_string(), "states is empty");
+        assert_eq!(
+            ReinforceError::Index { what: "next state", index: 5, count: 2 }.to_string(),
+            "next state 5 is past the 2 available"
+        );
+        assert_eq!(
+            ReinforceError::OutOfRange { what: "gamma", value: 9.0, low: 0.0, high: 1.0 }.to_string(),
+            "gamma = 9 is outside [0, 1]"
+        );
+        assert_eq!(ReinforceError::NonFinite { what: "reward", index: 3 }.to_string(), "reward is not finite at 3");
+    }
+
+    /// A terminal array of the wrong length is refused in both directions, and an infinite reward
+    /// is refused like a `NaN`. The suite's only length refusal was a short `next`, and its only
+    /// non-finite reward was a `NaN` — which `is_nan()` alone already rejects, so the screen could
+    /// lose its infinities and every fixture would still pass.
+    #[test]
+    fn a_task_refuses_a_mismatched_terminal_array_and_a_non_finite_reward_of_either_kind() {
+        assert_eq!(
+            Task::new(3, 1, vec![0, 1, 2], vec![0.0; 3], vec![false, false], 0.5).unwrap_err(),
+            ReinforceError::Index { what: "terminal (length)", index: 2, count: 3 }
+        );
+        assert_eq!(
+            Task::new(3, 1, vec![0, 1, 2], vec![0.0; 3], vec![false; 4], 0.5).unwrap_err(),
+            ReinforceError::Index { what: "terminal (length)", index: 4, count: 3 }
+        );
+        assert_eq!(
+            Task::new(2, 1, vec![0, 1], vec![0.0, f64::INFINITY], vec![false, true], 0.5).unwrap_err(),
+            ReinforceError::NonFinite { what: "reward", index: 1 }
+        );
+        assert_eq!(
+            Task::new(2, 1, vec![0, 1], vec![f64::NEG_INFINITY, 0.0], vec![false, true], 0.5).unwrap_err(),
+            ReinforceError::NonFinite { what: "reward", index: 0 }
+        );
+    }
+
+    /// The chain's two tables, literally. The suite read the chain only through the always-right
+    /// policy and through episodes that stop on entering the terminal state, so the left column and
+    /// the terminal row — two of the four things `chain` writes — were never read by any assertion.
+    #[test]
+    fn the_chain_writes_this_exact_transition_and_reward_table() {
+        // s: left, right. State 3 is terminal and maps to itself both ways; the unit reward is on
+        // the step INTO it, from state 2.
+        let four = Task::chain(4, 0.9).unwrap();
+        assert_eq!(four.next, vec![0, 1, 0, 2, 1, 3, 3, 3]);
+        assert_eq!(four.reward, vec![0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0]);
+        assert_eq!(four.terminal, vec![false, false, false, true]);
+        let two = Task::chain(2, 0.5).unwrap();
+        assert_eq!(two.next, vec![0, 1, 1, 1]);
+        assert_eq!(two.reward, vec![0.0, 1.0, 0.0, 0.0]);
+        assert_eq!(two.terminal, vec![false, true]);
+    }
+
+    /// Value iteration pins a terminal state at zero however well its own row pays. On the chain
+    /// the terminal row pays nothing into itself, so a sweep that backs terminal states up lands on
+    /// zero there anyway and every fixture in the suite agrees with it.
+    #[test]
+    fn value_iteration_pins_a_terminal_state_at_zero_however_well_its_own_row_pays() {
+        // One action. State 1 is terminal and its row pays 1.0 into itself, which a sweep that
+        // backed it up would value at 1/(1 − γ) = 2 and pass back to state 0 as 0.5 + 0.5·2 = 1.5.
+        let task = Task::new(2, 1, vec![1, 1], vec![0.5, 1.0], vec![false, true], 0.5).unwrap();
+        assert_eq!(task.values_of(&[0, 0], 1e-14).unwrap(), vec![0.5, 0.0]);
+    }
+
+    /// `active` counts the traces above the floor it was handed, not the ones that are merely
+    /// non-zero, and `reset` reaches synapse 0 as well as the rest. The suite called `active` with
+    /// a trace of 0.19 against a floor of 1e-6 and with an all-zero vector — never with a trace
+    /// between the two — and it spiked synapse 1 rather than synapse 0 before resetting.
+    #[test]
+    fn the_active_count_respects_its_floor_and_a_reset_reaches_the_first_synapse() {
+        let mut e = Eligibility::new(3, 0.5).unwrap();
+        e.spike(0).unwrap();
+        e.spike(2).unwrap();
+        for _ in 0..30 {
+            e.step();
+        }
+        // Halving is exact in binary, so this is 2^-30 = 9.3e-10 to the last bit: non-zero, and
+        // three orders of magnitude below the floor.
+        assert_eq!(e.e, vec![0.5f64.powi(30), 0.0, 0.5f64.powi(30)]);
+        assert_eq!(e.active(1e-6), 0);
+        assert_eq!(e.active(0.0), 2);
+        e.reset();
+        assert_eq!(e.e, vec![0.0, 0.0, 0.0]);
+    }
+
+    /// `λ = 1` is inside the closed interval the critic documents, and it leaves the trace decaying
+    /// by the discount alone. Every fixture used λ ∈ {0, 0.5, 0.8} and the only λ the suite saw
+    /// refused was 1.5, which a half-open guard refuses too.
+    #[test]
+    fn a_lambda_of_exactly_one_is_accepted_and_leaves_the_trace_decaying_by_the_discount() {
+        let c = Critic::new(4, 0.1, 0.9, 1.0).unwrap();
+        assert_eq!(c.trace.decay, 0.9, "γλ at λ = 1 is γ");
+        assert!(matches!(
+            Critic::new(4, 0.1, 0.9, 1.0 + f64::EPSILON),
+            Err(ReinforceError::OutOfRange { what: "lambda", .. })
+        ));
+        // γ stays half-open: at γ = λ = 1 the trace would never fade at all.
+        assert!(matches!(Critic::new(4, 0.1, 1.0, 1.0), Err(ReinforceError::OutOfRange { what: "gamma", .. })));
+    }
+
+    /// The critic refuses a successor one past its table whether or not that successor is flagged
+    /// terminal. The suite's only index refusal was the state LEFT; the successors it passed were
+    /// inside the table, and a terminal successor is never read, so an off-by-one there does not
+    /// even panic — it returns an error-free update.
+    #[test]
+    fn the_critic_refuses_a_successor_one_past_its_table_even_when_it_is_terminal() {
+        let mut c = Critic::new(3, 0.1, 0.9, 0.5).unwrap();
+        assert_eq!(
+            c.update(0, 0.0, 3, true).unwrap_err(),
+            ReinforceError::Index { what: "next state", index: 3, count: 3 }
+        );
+        assert_eq!(
+            c.update(0, 0.0, 3, false).unwrap_err(),
+            ReinforceError::Index { what: "next state", index: 3, count: 3 }
+        );
+        assert_eq!(c.updates, 0, "a refused transition is not an update");
+    }
+
+    /// The weight change carries the SIZE of the trace: under one error, a synapse eligible at 0.5
+    /// moves half as far as one eligible at 1. The suite read the trace only through runs that
+    /// converge — `η δ` alone has the same fixed point as `η δ e` on the chain, since both stop
+    /// when δ does — and through λ = 0, where the one eligible trace is exactly 1 and the factor
+    /// cannot be seen.
+    #[test]
+    fn the_weight_change_is_the_error_times_the_trace_and_not_the_error_alone() {
+        // η = 0.5, γ = 0.5, λ = 1 → the trace decays by 0.5 a step, so one step after its spike
+        // state 0 is eligible at 0.5 while state 1 is eligible at 1.
+        let mut c = Critic::new(3, 0.5, 0.5, 1.0).unwrap();
+        assert_eq!(c.update(0, 0.0, 1, false).unwrap(), 0.0);
+        assert_eq!(c.update(1, 1.0, 2, true).unwrap(), 1.0, "δ = 1 + γ·0 − V(1)");
+        assert_eq!(c.v, vec![0.5 * 1.0 * 0.5, 0.5 * 1.0 * 1.0, 0.0], "η δ e per synapse");
+        assert_eq!(c.touched, 3);
+        assert_eq!(c.updates, 2);
+        assert_eq!(c.touched_per_update(), Some(1.5));
+    }
+
+    /// `touched_per_update` is `None` only before the first update — an update that found nothing
+    /// eligible is `Some(0.0)`, a different fact. No fixture raised the floor, and under the
+    /// default 1e-6 the state just spiked is always eligible at 1 or more, so `touched == 0` and
+    /// `updates == 0` were the same condition everywhere the suite looked.
+    #[test]
+    fn the_touched_mean_is_none_only_before_the_first_update_not_when_nothing_was_eligible() {
+        let mut c = Critic::new(3, 0.5, 0.5, 0.0).unwrap();
+        assert_eq!(c.touched_per_update(), None);
+        c.floor = 2.0; // above the 1.0 a single spike deposits: nothing is eligible
+        assert_eq!(c.update(0, 1.0, 1, true).unwrap(), 1.0);
+        assert_eq!(c.touched, 0);
+        assert_eq!(c.updates, 1);
+        assert_eq!(c.touched_per_update(), Some(0.0));
+        assert_eq!(c.v, vec![0.0, 0.0, 0.0], "an update that touches nothing moves nothing");
+    }
+
+    /// Ending an episode ZEROES both traces rather than decaying them one step: credit must not
+    /// cross the seam between episodes. The suite ended episodes only inside runs whose verdict is
+    /// a converged value table or a learned policy, and one decayed step of stale trace per episode
+    /// is a perturbation those tolerances absorb.
+    #[test]
+    fn ending_an_episode_zeroes_the_critics_and_the_actors_traces() {
+        let mut c = Critic::new(3, 0.5, 0.9, 0.8).unwrap();
+        c.update(0, 1.0, 1, false).unwrap();
+        assert_eq!(c.trace.e, vec![1.0, 0.0, 0.0]);
+        c.end_episode();
+        assert_eq!(c.trace.e, vec![0.0, 0.0, 0.0]);
+        let mut a = Actor::new(2, 2, 0.5, 0.72).unwrap();
+        let mut rng = Rng::new(11);
+        a.act(0, &mut rng).unwrap();
+        assert_eq!(a.trace.e[2..], [0.0, 0.0], "the act touched only state 0's row");
+        assert!(a.trace.e[0] != 0.0 && a.trace.e[1] != 0.0, "and left something there to clear");
+        a.end_episode();
+        assert_eq!(a.trace.e, vec![0.0, 0.0, 0.0, 0.0]);
+    }
+
+    /// The softmax subtracts the LARGEST preference before exponentiating, so a preference no `exp`
+    /// can represent still gives a policy. The suite's actors started at θ = 0 and learned
+    /// preferences of a few units, where subtracting the smallest is as good as subtracting the
+    /// largest — the shift is an overflow guard, and only an overflow reads it.
+    #[test]
+    fn the_softmax_subtracts_the_largest_preference_so_a_huge_one_does_not_overflow() {
+        let mut a = Actor::new(1, 3, 0.1, 0.5).unwrap();
+        // exp(800) is +∞ in f64 — the ceiling is exp(709.78) — and exp(−800) underflows to 0, so
+        // shifting by the smallest preference gives ∞/∞ = NaN where shifting by the largest gives
+        // the policy of the differences.
+        a.theta = vec![800.0, 799.0, 0.0];
+        let p = a.policy(0).unwrap();
+        assert!(p.iter().all(|x| x.is_finite()), "policy {p:?}");
+        let z = 1.0 + (-1.0f64).exp();
+        assert_eq!(p, vec![1.0 / z, (-1.0f64).exp() / z, 0.0]);
+    }
+
+    /// The actor's eligibility ACCUMULATES over a revisit inside one episode: the second visit's
+    /// gradient is added to the decayed first, not written over it. Every fixture walked the chain
+    /// left to right, visiting each state once per episode, and a single visit is the one case in
+    /// which `=` and `+=` agree.
+    #[test]
+    fn the_actors_eligibility_accumulates_when_a_state_is_visited_twice() {
+        let mut a = Actor::new(1, 2, 0.1, 0.5).unwrap();
+        a.theta = vec![4.0f64.ln(), 0.0]; // π = (0.8, 0.2), so the two gradients differ
+        let mut rng = Rng::new(3);
+        a.act(0, &mut rng).unwrap();
+        let first = a.trace.e.clone();
+        assert!(first[0] != 0.0 && first[1] != 0.0, "both synapses carry a gradient: {first:?}");
+        let again = a.act(0, &mut rng).unwrap();
+        let p = a.policy(0).unwrap(); // θ is untouched: `act` deposits, it does not learn
+        for k in 0..2 {
+            let g = if k == again { 1.0 - p[k] } else { -p[k] };
+            assert_eq!(a.trace.e[k], first[k] * 0.5 + g, "synapse {k}");
+        }
+    }
+
+    /// The actor's learning rate scales its preference change. The suite read the actor only
+    /// through a policy that had converged past P(right) > 0.9 and a late average return, and a
+    /// policy gradient taken at a rate of 1 rather than 0.5 arrives there too — sooner, which no
+    /// assertion measured.
+    #[test]
+    fn the_actors_learning_rate_scales_the_preference_change() {
+        let mut a = Actor::new(1, 2, 0.5, 0.5).unwrap();
+        a.trace.e = vec![1.0, -1.0];
+        a.reinforce(2.0);
+        assert_eq!(a.theta, vec![0.5 * 2.0, -(0.5 * 2.0)], "η δ e per synapse, with e = ±1");
+    }
+
+    /// The first reward of an episode is UNDISCOUNTED: the return is `Σ γ^t r_t` with `t` starting
+    /// at zero. The suite compared a late average return against `V(0) = 0.656` at a tolerance of
+    /// 0.1, and one spurious factor of γ = 0.9 moves it by 0.066 — inside that tolerance.
+    #[test]
+    fn the_first_reward_of_an_episode_is_undiscounted() {
+        // One action per state, so the actor's sampling cannot vary the trajectory: 0 → 1 → 2 with
+        // a unit reward on each of the two steps and γ = 0.5.
+        let task = Task::new(3, 1, vec![1, 2, 2], vec![1.0, 1.0, 0.0], vec![false, false, true], 0.5).unwrap();
+        let mut c = Critic::new(3, 0.1, 0.5, 0.0).unwrap();
+        let mut a = Actor::new(3, 1, 0.1, 0.0).unwrap();
+        let mut rng = Rng::new(5);
+        let (ret, steps) = episode(&task, &mut c, &mut a, 0, 10, &mut rng).unwrap();
+        assert_eq!(steps, 2);
+        assert_eq!(ret, 1.0 + 0.5 * 1.0);
+    }
+
+    /// The terminal flag an episode hands the critic is the state ENTERED, not the state left. The
+    /// loop runs only while the state left is non-terminal, so `terminal[s]` is false at every
+    /// call — and on the chain the critic's cell for the terminal state is never written, so it
+    /// holds the 0 the flag would have supplied and the substitution is invisible.
+    #[test]
+    fn the_terminal_flag_the_episode_passes_is_the_state_entered() {
+        let task = Task::new(2, 1, vec![1, 1], vec![1.0, 0.0], vec![false, true], 0.5).unwrap();
+        let mut c = Critic::new(2, 0.5, 0.5, 0.0).unwrap();
+        c.v[1] = 4.0; // a terminal state whose stored value is not zero
+        let mut a = Actor::new(2, 1, 0.1, 0.0).unwrap();
+        let mut rng = Rng::new(5);
+        let (ret, steps) = episode(&task, &mut c, &mut a, 0, 10, &mut rng).unwrap();
+        assert_eq!((ret, steps), (1.0, 1));
+        // δ = 1 + γ·0 − V(0) = 1, so V(0) moves by η δ e = 0.5·1·1. Bootstrapping off V(1) = 4
+        // instead would make δ = 1 + 0.5·4 = 3 and V(0) = 1.5.
+        assert_eq!(c.v, vec![0.5, 4.0]);
+    }
+
+    /// An episode refuses a start exactly one past the last state. The suite's only start refusal
+    /// was 9 against 3 states, which an off-by-one in that guard still catches.
+    #[test]
+    fn an_episode_refuses_a_start_exactly_one_past_the_last_state() {
+        let task = Task::chain(3, 0.9).unwrap();
+        let mut c = Critic::new(3, 0.1, 0.9, 0.5).unwrap();
+        let mut a = Actor::new(3, 2, 0.1, 0.5).unwrap();
+        let mut rng = Rng::new(1);
+        assert_eq!(
+            episode(&task, &mut c, &mut a, 3, 10, &mut rng).unwrap_err(),
+            ReinforceError::Index { what: "start", index: 3, count: 3 }
+        );
+    }
 }

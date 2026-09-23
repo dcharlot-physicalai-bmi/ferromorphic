@@ -63,5 +63,411 @@
   "label": "gesture interval order unchecked",
   "old": "        if v[2] < v[1] {",
   "new": "        if false {"
+ },
+ {
+  "label": "the flattened address is the column times the width plus the row",
+  "old": "u32::from(self.y).checked_mul(u32::from(width))?.checked_add(u32::from(self.x))?;",
+  "new": "u32::from(self.x).checked_mul(u32::from(width))?.checked_add(u32::from(self.y))?;"
+ },
+ {
+  "label": "unflattening takes the row from the remainder rather than the quotient",
+  "old": "        let y = u16::try_from(e.address / w).ok()?;",
+  "new": "        let y = u16::try_from(e.address % w).ok()?;"
+ },
+ {
+  "label": "the davis346 polarity bit's sense is the opposite of the one the preset states",
+  "old": "        p_shift: 11,\n        p_on_is_one: true,",
+  "new": "        p_shift: 11,\n        p_on_is_one: false,"
+ },
+ {
+  "label": "the dvs128 polarity bit's sense is the opposite of the one the preset states",
+  "old": "        p_shift: 0,\n        p_on_is_one: false,",
+  "new": "        p_shift: 0,\n        p_on_is_one: true,"
+ },
+ {
+  "label": "the davis346 column is counted from the right edge",
+  "old": "        x_shift: 12,\n        x_bits: 10,\n        x_invert: false,",
+  "new": "        x_shift: 12,\n        x_bits: 10,\n        x_invert: true,"
+ },
+ {
+  "label": "the davis346 preset is a pixel narrower than the sensor it names",
+  "old": "        width: 346,\n        height: 260,",
+  "new": "        width: 345,\n        height: 260,"
+ },
+ {
+  "label": "the dvs128 preset leaves bit 15 of the address out of its special mask",
+  "old": "        special_mask: !0x7FFF,",
+  "new": "        special_mask: !0xFFFF,"
+ },
+ {
+  "label": "a layout whose special mask sits inside a coordinate field reports no overlap",
+  "old": "        (x & y) | (x & p) | (y & p) | (x & self.special_mask) | (y & self.special_mask)\n            | (p & self.special_mask)",
+  "new": "        (x & y) | (x & p) | (y & p)"
+ },
+ {
+  "label": "the column inversion is applied when writing but not when reading",
+  "old": "        let v = if invert { m - raw } else { raw };",
+  "new": "        let v = if invert { raw } else { raw };"
+ },
+ {
+  "label": "an inverted column is written one place above the top of its field",
+  "old": "        let raw = if invert { m.saturating_sub(u32::from(v)) } else { u32::from(v) };",
+  "new": "        let raw = if invert { (m + 1).saturating_sub(u32::from(v)) } else { u32::from(v) };"
+ },
+ {
+  "label": "a coordinate field too wide for a u16 is accepted by the decoder",
+  "old": "            if u64::from(span) > u64::from(u16::MAX) {\n                return Err(DecodeError::FieldOutOfRange {",
+  "new": "            if u64::from(span) > u64::from(u32::MAX) {\n                return Err(DecodeError::FieldOutOfRange {"
+ },
+ {
+  "label": "two events in the same microsecond are reported as out of order",
+  "old": "        if events[i].t < events[i - 1].t {",
+  "new": "        if events[i].t <= events[i - 1].t {"
+ },
+ {
+  "label": "the first timestamp is never compared against the counter's range",
+  "old": "        fit(0, \"first timestamp\", first.t, max_time)?;",
+  "new": "        fit(0, \"first timestamp\", first.t.min(max_time), max_time)?;"
+ },
+ {
+  "label": "a gap of exactly the largest encodable size is refused",
+  "old": "        if gap > max_gap {",
+  "new": "        if gap >= max_gap {"
+ },
+ {
+  "label": "the gap is measured from the first event rather than from the previous one",
+  "old": "        let gap = events[i].t.saturating_sub(events[i - 1].t);",
+  "new": "        let gap = events[i].t.saturating_sub(events[0].t);"
+ },
+ {
+  "label": "a field value one past its maximum still fits",
+  "old": "    if value > max {",
+  "new": "    if value > max.saturating_add(1) {"
+ },
+ {
+  "label": "a truncated read reports the bytes it needed as the bytes it had",
+  "old": "        have: b.len().saturating_sub(at),",
+  "new": "        have: n,"
+ },
+ {
+  "label": "a little-endian 16-bit word is assembled most significant byte first",
+  "old": "    Ok(u16::from(s[0]) | (u16::from(s[1]) << 8))",
+  "new": "    Ok(u16::from(s[1]) | (u16::from(s[0]) << 8))"
+ },
+ {
+  "label": "the big-endian reader assembles its word least significant byte first",
+  "old": "    Ok((u32::from(s[0]) << 24)\n        | (u32::from(s[1]) << 16)\n        | (u32::from(s[2]) << 8)\n        | u32::from(s[3]))",
+  "new": "    Ok((u32::from(s[3]) << 24)\n        | (u32::from(s[2]) << 16)\n        | (u32::from(s[1]) << 8)\n        | u32::from(s[0]))"
+ },
+ {
+  "label": "a header line keeps the carriage return of its terminator",
+  "old": "                if e > start && b[e - 1] == b'\\r' { e - 1 } else { e }",
+  "new": "                if e > start && b[e - 1] == b'\\r' { e } else { e }"
+ },
+ {
+  "label": "a horizontal tab in a header line ends the header",
+  "old": "    if s.chars().any(|c| c.is_control() && c != '\\t') {",
+  "new": "    if s.chars().any(|c| c.is_control()) {"
+ },
+ {
+  "label": "a candidate line that is not text is eaten as a header line anyway",
+  "old": "        let Some(text) = header_text(&b[start..text_end]) else { break };",
+  "new": "        let text = header_text(&b[start..text_end]).unwrap_or_default();"
+ },
+ {
+  "label": "the aedat2 wrap rule fires on a backwards jump of a quarter of the counter",
+  "old": "                if p - raw_t > 1u32 << 31 {\n                    wrap += 1u64 << 32;\n                } else {\n                    return Err(DecodeError::NonMonotonicTimestamp {\n                        offset: at + 4,",
+  "new": "                if p - raw_t > 1u32 << 30 {\n                    wrap += 1u64 << 32;\n                } else {\n                    return Err(DecodeError::NonMonotonicTimestamp {\n                        offset: at + 4,"
+ },
+ {
+  "label": "the special-address test is inverted, so ordinary records become markers",
+  "old": "            if layout.special_mask != 0 && addr & layout.special_mask != 0 {",
+  "new": "            if layout.special_mask != 0 && addr & layout.special_mask == 0 {"
+ },
+ {
+  "label": "the aedat2 timestamp is read from the address half of the record",
+  "old": "            let raw_t = u32_be(bytes, at + 4)?;",
+  "new": "            let raw_t = u32_be(bytes, at)?;"
+ },
+ {
+  "label": "a decoded column is range-checked against the sensor's height",
+  "old": "            if layout.width != 0 && x >= layout.width {",
+  "new": "            if layout.height != 0 && x >= layout.width {"
+ },
+ {
+  "label": "the polarity bit is read from the bottom of the row field",
+  "old": "            let bit = (addr >> layout.p_shift) & 1 == 1;",
+  "new": "            let bit = (addr >> layout.y_shift) & 1 == 1;"
+ },
+ {
+  "label": "the aedat2 magic line is never prepended to a file being written",
+  "old": "        if !header.first().is_some_and(|l| l.starts_with(Self::MAGIC)) {\n            lines.push(\"!AER-DAT2.0\".to_string());\n        }",
+  "new": "        if false {\n            lines.push(\"!AER-DAT2.0\".to_string());\n        }"
+ },
+ {
+  "label": "the polarity bit is written for the sense opposite to the layout's",
+  "old": "            if on == layout.p_on_is_one {\n                addr |= 1u32 << layout.p_shift;",
+  "new": "            if on != layout.p_on_is_one {\n                addr |= 1u32 << layout.p_shift;"
+ },
+ {
+  "label": "the evt2 low time field is five bits rather than six",
+  "old": "            let low = u64::from((w >> 22) & 0x3F);",
+  "new": "            let low = u64::from((w >> 22) & 0x1F);"
+ },
+ {
+  "label": "the evt2 column and row are read from each other's fields",
+  "old": "                    let x = ((w >> 11) & 0x7FF) as u16;\n                    let y = (w & 0x7FF) as u16;",
+  "new": "                    let x = (w & 0x7FF) as u16;\n                    let y = ((w >> 11) & 0x7FF) as u16;"
+ },
+ {
+  "label": "the evt2 time base leaves seven bits for a six-bit low field",
+  "old": "                    base = (wraps << 34) | (u64::from(high) << 6);",
+  "new": "                    base = (wraps << 34) | (u64::from(high) << 7);"
+ },
+ {
+  "label": "a time-high word stepping back by exactly half its range is counted as a wrap",
+  "old": "                        if high - h > 1u32 << 27 {",
+  "new": "                        if high - h >= 1u32 << 27 {"
+ },
+ {
+  "label": "an evt2 time-high word is written for every event rather than when the window changes",
+  "old": "            if last_high != Some(high) {\n                let w = (u32::from(Self::TIME_HIGH) << 28) | high;",
+  "new": "            if last_high != Some(high) || true {\n                let w = (u32::from(Self::TIME_HIGH) << 28) | high;"
+ },
+ {
+  "label": "the high field the evt2 encoder writes is shifted one bit from the one it reads",
+  "old": "            let high = ((e.t >> 6) & 0x0FFF_FFFF) as u32;",
+  "new": "            let high = ((e.t >> 5) & 0x0FFF_FFFF) as u32;"
+ },
+ {
+  "label": "a second camera's events are merged into the first camera's coordinate space",
+  "old": "                    if payload & 0x800 != 0 {\n                        return Err(DecodeError::UnsupportedSystemType { offset: at });\n                    }",
+  "new": "                    if false {\n                        return Err(DecodeError::UnsupportedSystemType { offset: at });\n                    }"
+ },
+ {
+  "label": "a vector base advances by the number of events rather than by the mask width",
+  "old": "                    vect_base = Some(base.saturating_add(width));",
+  "new": "                    vect_base = Some(base.saturating_add(mask.count_ones() as u16));"
+ },
+ {
+  "label": "an eight-wide vector mask is read as twelve bits",
+  "old": "                        (8u16, payload & 0x00FF)",
+  "new": "                        (8u16, payload)",
+  "equivalent": "In this match arm `mask` is read in exactly one place -- `mask & (1 << k)` inside `for k in 0..width` -- and for a VECT_8 word `width` is 8, so only bits 0..=7 are ever tested. `payload & 0x00FF` equals `payload` on bits 0..=7 by definition of the AND and differs only on bits 8..=11, which the loop never reaches; `width` and the advance of `vect_base` are computed from `code`, not from `mask`, and nothing after the tuple reads `payload` again. So for every 16-bit input word the two expressions give the same loop outcomes and therefore the same events, markers, errors and offsets: no input could tell them apart. The observable decision a test could pin instead is a different one -- refusing a VECT_8 whose unused bits 11-8 are set -- and this review did not locate a statement that those bits are guaranteed zero on the wire, so making the decoder refuse real Prophesee recordings on that guess is the change this module declines elsewhere (see the special_mask note on Aedat2Layout::DAVIS346)."
+ },
+ {
+  "label": "a vector mask bit implying a column past the sensor is decoded rather than refused",
+  "old": "                        if x > 2047 {",
+  "new": "                        if x > 4095 {"
+ },
+ {
+  "label": "a repeated low time word is taken for a wrap of the window",
+  "old": "                    if l < low {",
+  "new": "                    if l <= low {"
+ },
+ {
+  "label": "a time-high word repeating the value already held clears the remembered low",
+  "old": "                    if h != high {\n                        if h < high {",
+  "new": "                    if h != high || true {\n                        if h < high {"
+ },
+ {
+  "label": "a time-high word that goes backwards does not count the overflow it evidences",
+  "old": "                    if h != high {\n                        if h < high {\n                            overflows += 1;\n                        }",
+  "new": "                    if h != high {\n                        if false {\n                            overflows += 1;\n                        }"
+ },
+ {
+  "label": "the reconstructed time puts the high word one bit too high",
+  "old": "                    low = l;\n                    t = (overflows << 24) | (u64::from(high) << 12) | u64::from(low);",
+  "new": "                    low = l;\n                    t = (overflows << 24) | (u64::from(high) << 13) | u64::from(low);"
+ },
+ {
+  "label": "a counted overflow adds twice the wrap period",
+  "old": "                        low = 0;\n                    }\n                    t = (overflows << 24) | (u64::from(high) << 12) | u64::from(low);",
+  "new": "                        low = 0;\n                    }\n                    t = (overflows << 25) | (u64::from(high) << 12) | u64::from(low);"
+ },
+ {
+  "label": "the encoder allows the high word to advance by one step more than the wire holds",
+  "old": "                if adv > 4095 {",
+  "new": "                if adv > 4096 {"
+ },
+ {
+  "label": "a vector run may repeat a column, which the mask then carries once",
+  "old": "                    && events[j].x > events[j - 1].x",
+  "new": "                    && events[j].x >= events[j - 1].x"
+ },
+ {
+  "label": "a vector run re-bases only after a gap wider than the mask it then writes",
+  "old": "                    if run[k].x >= base.saturating_add(12) {",
+  "new": "                    if run[k].x >= base.saturating_add(16) {"
+ },
+ {
+  "label": "the dat row field starts one bit inside the column field",
+  "old": "            let y = ((data >> 14) & 0x3FFF) as u16;",
+  "new": "            let y = ((data >> 13) & 0x3FFF) as u16;"
+ },
+ {
+  "label": "the dat polarity is read from the top bit of the payload",
+  "old": "            let polarity = if (data >> 28) & 1 == 1 { Polarity::On } else { Polarity::Off };",
+  "new": "            let polarity = if (data >> 31) & 1 == 1 { Polarity::On } else { Polarity::Off };"
+ },
+ {
+  "label": "the dat encoder writes the polarity one bit below the field table's",
+  "old": "            let data = u32::from(e.x) | (u32::from(e.y) << 14) | (p << 28);",
+  "new": "            let data = u32::from(e.x) | (u32::from(e.y) << 14) | (p << 27);"
+ },
+ {
+  "label": "the dat record descriptor's type and size bytes are read the other way round",
+  "old": "        let (record_type, record_size) = (desc[0], desc[1]);",
+  "new": "        let (record_type, record_size) = (desc[1], desc[0]);"
+ },
+ {
+  "label": "any header line's second word is taken as the value being looked for",
+  "old": "            if it.next() == Some(key)\n                && let Some(v) = it.next()",
+  "new": "            if it.next().is_some()\n                && let Some(v) = it.next()"
+ },
+ {
+  "label": "the declared width bounds the row and the declared height the column",
+  "old": "            fit(i, \"column\", u64::from(e.x), w_lim)?;\n            fit(i, \"row\", u64::from(e.y), h_lim)?;",
+  "new": "            fit(i, \"column\", u64::from(e.x), h_lim)?;\n            fit(i, \"row\", u64::from(e.y), w_lim)?;"
+ },
+ {
+  "label": "a declared width of n admits column n, which the decoder then refuses",
+  "old": "            .map_or(Self::MAX_COORD, |w| Self::MAX_COORD.min(u64::from(w.saturating_sub(1))));",
+  "new": "            .map_or(Self::MAX_COORD, |w| Self::MAX_COORD.min(u64::from(w)));"
+ },
+ {
+  "label": "the dat header is terminated with the crlf only jaer writes",
+  "old": "        push_header_lines(&mut out, header, b'%', false)?;",
+  "new": "        push_header_lines(&mut out, header, b'%', true)?;"
+ },
+ {
+  "label": "the flat header's declared count is not compared with the records present",
+  "old": "        if declared != actual || !body.is_multiple_of(Self::RECORD_SIZE) {",
+  "new": "        if !body.is_multiple_of(Self::RECORD_SIZE) {"
+ },
+ {
+  "label": "the flat record's row is read from the column's two bytes",
+  "old": "            let y = u16_le(bytes, at + 10)?;",
+  "new": "            let y = u16_le(bytes, at + 8)?;"
+ },
+ {
+  "label": "the polarity byte is checked as if it were a reserved byte",
+  "old": "            for (j, &b) in rec[1..].iter().enumerate() {",
+  "new": "            for (j, &b) in rec.iter().enumerate() {"
+ },
+ {
+  "label": "a dirty reserved byte is named one byte before where it is",
+  "old": "                    return Err(DecodeError::ReservedNotZero { offset: at + 13 + j });",
+  "new": "                    return Err(DecodeError::ReservedNotZero { offset: at + 12 + j });"
+ },
+ {
+  "label": "the flat header states the height where the width belongs",
+  "old": "        out.extend_from_slice(&u32::from(width).to_le_bytes());\n        out.extend_from_slice(&u32::from(height).to_le_bytes());",
+  "new": "        out.extend_from_slice(&u32::from(height).to_le_bytes());\n        out.extend_from_slice(&u32::from(width).to_le_bytes());"
+ },
+ {
+  "label": "the flatbuffers vtable is found by adding the signed offset rather than subtracting it",
+  "old": "        let vtable = i64::try_from(root).map_err(|_| bad(\"vtable\"))? - i64::from(soffset);",
+  "new": "        let vtable = i64::try_from(root).map_err(|_| bad(\"vtable\"))? + i64::from(soffset);"
+ },
+ {
+  "label": "the first element of the vector is read where its count is",
+  "old": "        let first = vec_at + 4;",
+  "new": "        let first = vec_at;"
+ },
+ {
+  "label": "the cross-packet monotonicity cursor is never advanced",
+  "old": "        *last_t = cursor;\n        Ok(events)",
+  "new": "        Ok(events)"
+ },
+ {
+  "label": "an aedat4 event's row is read from the column's two bytes",
+  "old": "            let sy = u16_le(p, at + 10).map_err(|_| bad(\"vector\"))? as i16;",
+  "new": "            let sy = u16_le(p, at + 8).map_err(|_| bad(\"vector\"))? as i16;"
+ },
+ {
+  "label": "a coordinate of minus one passes the signed-field check",
+  "old": "                if v < 0 {",
+  "new": "                if v < -1 {"
+ },
+ {
+  "label": "the vtable says field zero is six bytes into the table rather than four",
+  "old": "        p.extend_from_slice(&8u16.to_le_bytes());\n        p.extend_from_slice(&4u16.to_le_bytes());",
+  "new": "        p.extend_from_slice(&8u16.to_le_bytes());\n        p.extend_from_slice(&6u16.to_le_bytes());"
+ },
+ {
+  "label": "a re-saved packet is regenerated from its decoded events rather than written verbatim",
+  "old": "            out.extend_from_slice(&p.payload);",
+  "new": "            out.extend_from_slice(&Self::write_event_packet(p.events.as_deref().unwrap_or(&[])));"
+ },
+ {
+  "label": "a request for zero events per packet is passed straight to chunks",
+  "old": "        let chunk = events_per_packet.max(1);",
+  "new": "        let chunk = events_per_packet;"
+ },
+ {
+  "label": "a refused event is numbered within its packet rather than within the stream",
+  "old": "                    EncodeError::FieldOutOfRange { index: c * chunk + index, field, value, max }",
+  "new": "                    EncodeError::FieldOutOfRange { index, field, value, max }"
+ },
+ {
+  "label": "a file with no format line is assumed to be lz4",
+  "old": "            .map_or(Aedat4Compression::Raw, |v| Aedat4Compression::parse(v.trim()));",
+  "new": "            .map_or(Aedat4Compression::Lz4, |v| Aedat4Compression::parse(v.trim()));"
+ },
+ {
+  "label": "the tick index rounds up rather than down",
+  "old": "            spikes.push(crate::spike::Spike { t: e.t / self.tick_us, source: address });",
+  "new": "            spikes.push(crate::spike::Spike { t: e.t.div_ceil(self.tick_us), source: address });"
+ },
+ {
+  "label": "the off events are the ones moved into the second address plane",
+  "old": "            if self.split_polarity && e.polarity == Polarity::On {",
+  "new": "            if self.split_polarity && e.polarity == Polarity::Off {"
+ },
+ {
+  "label": "a map that states a height of zero is accepted",
+  "old": "        if self.tick_us == 0 || self.width == 0 || self.height == 0 {",
+  "new": "        if self.tick_us == 0 || self.width == 0 {"
+ },
+ {
+  "label": "the address count doubles whether or not the polarity is split",
+  "old": "        if self.split_polarity { plane.checked_mul(2) } else { Some(plane) }",
+  "new": "        if self.split_polarity { plane.checked_mul(2) } else { plane.checked_mul(2) }"
+ },
+ {
+  "label": "two n-mnist events in the same microsecond are refused as going backwards",
+  "old": "            if let Some(p) = previous.filter(|&p| t < p) {\n                return Err(DecodeError::NonMonotonicTimestamp { offset: at, previous: p, found: t });",
+  "new": "            if let Some(p) = previous.filter(|&p| t <= p) {\n                return Err(DecodeError::NonMonotonicTimestamp { offset: at, previous: p, found: t });"
+ },
+ {
+  "label": "the n-mnist polarity is the record's second-highest bit",
+  "old": "            let polarity = if r[2] & 0x80 != 0 { Polarity::On } else { Polarity::Off };",
+  "new": "            let polarity = if r[2] & 0x40 != 0 { Polarity::On } else { Polarity::Off };"
+ },
+ {
+  "label": "the n-mnist timestamp keeps the polarity bit in its high byte",
+  "old": "            let t = (u64::from(r[2] & 0x7F) << 16) | (u64::from(r[3]) << 8) | u64::from(r[4]);",
+  "new": "            let t = (u64::from(r[2]) << 16) | (u64::from(r[3]) << 8) | u64::from(r[4]);"
+ },
+ {
+  "label": "a column of 256 is written into the n-mnist byte that cannot hold it",
+  "old": "            if e.x > 255 || e.y > 255 || e.t > Self::MAX_TIMESTAMP {",
+  "new": "            if e.x > 256 || e.y > 255 || e.t > Self::MAX_TIMESTAMP {"
+ },
+ {
+  "label": "the gesture sensor is recorded as the davis346's array",
+  "old": "pub const GESTURE_SENSOR: (u16, u16) = (128, 128);",
+  "new": "pub const GESTURE_SENSOR: (u16, u16) = (346, 260);"
+ },
+ {
+  "label": "a label line with a fourth field is accepted and its extra column ignored",
+  "old": "        let parsed: Option<Vec<u64>> = if parts.len() == 3 { parts.iter().map(|p| p.trim().parse().ok()).collect() } else { None };",
+  "new": "        let parsed: Option<Vec<u64>> = if parts.len() >= 3 { parts.iter().map(|p| p.trim().parse().ok()).collect() } else { None };"
+ },
+ {
+  "label": "the byte offset of a label line does not count the line terminators before it",
+  "old": "        at += line.len() + 1;",
+  "new": "        at += line.len();"
  }
 ]

@@ -539,6 +539,14 @@ impl Hrr {
     /// As [`Hrr::bind`].
     pub fn unbind(&self, ab: &[f64], b: &[f64], meter: &mut Meter) -> Result<Vec<f64>, VsaError> {
         let inv = self.involution(b)?;
+        // The involution is a PERMUTATION — `a[(d - i) % d]` — and it moves `D` elements. Every
+        // other element move in this module is billed (`Bipolar::permute`, `Binary::permute`,
+        // `Hrr::permute` all `tally(.., self.dim)`), and this one was not, so an unbind was
+        // charged the bind's `D²` and nothing for the `D` moves it also does. An under-count of
+        // `D` out of `D² + D` is 0.4% at `D = 256` — small, systematic, and in the direction that
+        // flatters the operation. `Hrr::involution` itself stays unmetered because it is a public
+        // helper a caller may use on its own; `unbind` is the metered entry point, so it bills.
+        tally(&mut meter.permutes, self.dim);
         self.bind(ab, &inv, meter)
     }
 
@@ -1356,4 +1364,397 @@ mod tests {
         assert_eq!(hrr.bundle(&[a, b], true, &mut meter).unwrap(), vec![0.6, 0.8, 0.0, 0.0]);
         assert_eq!(meter.bundles, 8 + 12, "and the rescaling is a third pass");
     }
+
+    // ---- what the third mutation sweep found: guards, bookkeeping, billing, bounds ----
+
+    /// The bipolar alphabet is exactly `{−1, +1}`, both at the model's own guard and at the
+    /// resonator's check of every codebook symbol — a `0.0` is refused by both.
+    ///
+    /// Why the suite could not see it: every vector it handed to `check` came either from
+    /// `random` or from a literal it had already decided was symbolic, and its one non-symbolic
+    /// literal was `0.5`. A guard widened to admit `0.0` — the value a zeroed buffer, a cleared
+    /// accumulator or an un-thresholded sum actually carries, and the one value that makes a
+    /// bind silently return zeros — passed every assertion. The resonator's per-symbol check had
+    /// no test at all: the only codebook it was ever handed came from `random_bipolar`.
+    #[test]
+    fn a_zero_is_not_a_bipolar_symbol_at_the_guard_or_inside_a_resonator_codebook() {
+        let mut meter = Meter::default();
+        let bp = Bipolar::new(3).unwrap();
+        assert!(matches!(
+            bp.check(&[1.0, 0.0, -1.0]),
+            Err(VsaError::NotSymbolic { index: 1, value }) if value == 0.0
+        ));
+        assert!(matches!(
+            bp.bind(&[1.0, 1.0, 1.0], &[1.0, 0.0, -1.0], &mut meter),
+            Err(VsaError::NotSymbolic { index: 1, .. })
+        ));
+        assert!(matches!(
+            bp.bundle(&[vec![0.0, 0.0, 0.0]], &mut meter),
+            Err(VsaError::NotSymbolic { index: 0, .. })
+        ));
+        assert!(matches!(bp.permute(&[1.0, 1.0, 0.0], 1, &mut meter), Err(VsaError::NotSymbolic { index: 2, .. })));
+        // A resonator checks the CONTENTS of every codebook, not just its shape: a zeroed symbol
+        // and a fractional one are both refused, and the well-formed codebook is accepted.
+        let zeroed = Codebook { symbols: vec![vec![1.0, -1.0, 1.0], vec![0.0, 0.0, 0.0]], dim: 3 };
+        assert!(matches!(
+            Resonator::new(bp, vec![zeroed], 10),
+            Err(VsaError::NotSymbolic { index: 0, value }) if value == 0.0
+        ));
+        let fractional = Codebook { symbols: vec![vec![1.0, 0.5, 1.0]], dim: 3 };
+        assert!(matches!(
+            Resonator::new(bp, vec![fractional], 10),
+            Err(VsaError::NotSymbolic { index: 1, value }) if value == 0.5
+        ));
+        let clean = Codebook { symbols: vec![vec![1.0, -1.0, 1.0], vec![-1.0, -1.0, 1.0]], dim: 3 };
+        assert!(Resonator::new(bp, vec![clean], 10).is_ok());
+    }
+
+    /// Every guard that says "not finite" refuses an INFINITY as well as a `NaN`, at both of the
+    /// codebook's readouts, and the dimension rule refuses a `NaN` separation rather than
+    /// answering with a dimension.
+    ///
+    /// Why the suite could not see it: `Hrr::check` was only ever handed a `NaN` and
+    /// `Codebook::nearest` only ever an infinity, so a guard narrowed from `!x.is_finite()` to
+    /// `x.is_nan()` kept one of the two green and nothing exercised the other;
+    /// `Codebook::similarities` was never handed a non-finite query at all; and `dimension_for`
+    /// was never called with a non-finite `z`, so rewriting its NaN-rejecting `!(z > 0.0)` as the
+    /// NaN-accepting `z <= 0.0` changed no assertion. A `NaN` separation then yields
+    /// `NaN.ceil() as usize`, which is `0`: a capacity rule answering "zero dimensions".
+    #[test]
+    fn every_non_finite_guard_refuses_the_value_it_is_named_for() {
+        let mut meter = Meter::default();
+        let hrr = Hrr::new(2).unwrap();
+        assert!(matches!(hrr.check(&[0.0, f64::INFINITY]), Err(VsaError::NonFinite { index: 1 })));
+        assert!(matches!(hrr.check(&[f64::NEG_INFINITY, 0.0]), Err(VsaError::NonFinite { index: 0 })));
+        assert!(matches!(hrr.check(&[0.0, f64::NAN]), Err(VsaError::NonFinite { index: 1 })));
+        assert!(matches!(hrr.bind(&[1.0, f64::INFINITY], &[1.0, 1.0], &mut meter), Err(VsaError::NonFinite { index: 1 })));
+        assert!(matches!(hrr.bundle(&[vec![f64::INFINITY, 0.0]], false, &mut meter), Err(VsaError::NonFinite { index: 0 })));
+
+        let book = Codebook { symbols: vec![vec![1.0, 1.0], vec![1.0, -1.0]], dim: 2 };
+        assert!(matches!(book.similarities(&[1.0, f64::NAN], &mut meter), Err(VsaError::NonFinite { index: 1 })));
+        assert!(matches!(book.similarities(&[f64::INFINITY, 1.0], &mut meter), Err(VsaError::NonFinite { index: 0 })));
+        assert!(matches!(book.nearest(&[1.0, f64::NAN], &mut meter), Err(VsaError::NonFinite { index: 1 })));
+
+        // The dimension rule: a NaN separation is not a separation.
+        assert_eq!(dimension_for(7, 1000, f64::NAN), None);
+        assert_eq!(dimension_for(7, 1000, f64::INFINITY), Some(usize::MAX), "an infinite separation saturates rather than wrapping");
+        assert_eq!(dimension_for(7, 1000, 0.0), None);
+        assert_eq!(dimension_for(7, 1000, -1.0), None);
+    }
+
+    /// The binary and holographic models bill every element their operations touch: a Hamming
+    /// distance and a similarity are `D` steps each, a permutation is `D` element moves, an HRR
+    /// dot product is `D` multiply-accumulates, and a codebook's full similarity vector is `M·D`.
+    ///
+    /// Why the suite could not see it: the meter test counted the BIPOLAR model's four operations
+    /// and the HRR bind, and nothing else. `Binary::hamming`, `Binary::permute`, `Hrr::similarity`
+    /// and `Codebook::similarities` each ran inside other tests with a meter whose counters were
+    /// never read, so halving any of their tallies changed no assertion — the module's whole
+    /// argument is that an operation count is a number it is honest about, and half of `D` is the
+    /// failure that reads as a plausible optimisation.
+    #[test]
+    fn the_binary_and_holographic_meters_bill_every_element_the_operation_touches() {
+        let mut rng = Rng::new(11);
+        let bn = Binary::new(16).unwrap();
+        let (x, y) = (bn.random(&mut rng), bn.random(&mut rng));
+        let mut m = Meter::default();
+        bn.bind(&x, &y, &mut m).unwrap();
+        assert_eq!(m.binds, 16, "an XOR bind is D element operations");
+        bn.bundle(&[x.clone(), y.clone(), x.clone()], &mut m).unwrap();
+        assert_eq!(m.bundles, 64, "three members plus the threshold pass");
+        bn.permute(&x, 5, &mut m).unwrap();
+        assert_eq!(m.permutes, 16, "a rotation moves every element, not half of them");
+        bn.hamming(&x, &y, &mut m).unwrap();
+        assert_eq!(m.similarities, 16, "a Hamming distance compares every position");
+        bn.similarity(&x, &y, &mut m).unwrap();
+        assert_eq!(m.similarities, 32, "and the normalised similarity is one more pass over D");
+        assert_eq!(m.total(), Some(16 + 64 + 16 + 32));
+
+        let hrr = Hrr::new(8).unwrap();
+        let (a, b) = (hrr.random(&mut rng), hrr.random(&mut rng));
+        let mut h = Meter::default();
+        hrr.similarity(&a, &b, &mut h).unwrap();
+        assert_eq!(h.similarities, 8, "a dot product is D multiply-accumulates");
+        hrr.cosine(&a, &b, &mut h).unwrap().unwrap();
+        assert_eq!(h.similarities, 16, "a cosine is a dot product plus two norms");
+        hrr.permute(&a, 3, &mut h).unwrap();
+        assert_eq!(h.permutes, 8);
+
+        // A codebook's full similarity vector is M·D, the same M·D its nearest-neighbour search is.
+        let bp = Bipolar::new(20).unwrap();
+        let book = Codebook::random_bipolar(&bp, 6, &mut rng).unwrap();
+        let q = bp.random(&mut rng);
+        let mut c = Meter::default();
+        book.similarities(&q, &mut c).unwrap();
+        assert_eq!(c.similarities, 120);
+        book.nearest(&q, &mut c).unwrap();
+        assert_eq!(c.similarities, 240);
+    }
+
+    /// A codebook reports the dimension its symbols actually have, the count it actually holds,
+    /// and emptiness truthfully — for all three constructors.
+    ///
+    /// Why the suite could not see it: every codebook it built was read back through `symbols`
+    /// directly, so `len()` was never called; its one `is_empty` assertion was `!book.is_empty()`
+    /// on a codebook with a symbol in it, which a hard-coded `false` also satisfies; and
+    /// `Codebook::random_binary` appears in no other test at all, so a `dim` field one larger
+    /// than the symbols it describes was never compared with anything — until a query of the
+    /// model's dimension reaches it and is refused for the wrong length.
+    #[test]
+    fn a_codebook_reports_its_own_dimension_symbol_count_and_emptiness() {
+        let mut rng = Rng::new(12);
+        let mut meter = Meter::default();
+        let bp = Bipolar::new(8).unwrap();
+        let bn = Binary::new(8).unwrap();
+        let hr = Hrr::new(8).unwrap();
+        let books = [
+            Codebook::random_bipolar(&bp, 5, &mut rng).unwrap(),
+            Codebook::random_binary(&bn, 5, &mut rng).unwrap(),
+            Codebook::random_hrr(&hr, 5, &mut rng).unwrap(),
+        ];
+        for (which, book) in books.iter().enumerate() {
+            assert_eq!(book.dim, 8, "codebook {which} declares the model's dimension");
+            assert_eq!(book.len(), 5, "codebook {which} holds what it was asked for");
+            assert_eq!(book.len(), book.symbols.len(), "codebook {which}: len() is the symbol count");
+            assert!(!book.is_empty());
+            for s in &book.symbols {
+                assert_eq!(s.len(), book.dim, "codebook {which}: a symbol is as long as the declared dimension");
+            }
+            // A declared dimension that does not match the symbols makes every readout a
+            // Dimension refusal; a correct one answers with one score per symbol.
+            let sims = book.similarities(&[1.0; 8], &mut meter).unwrap();
+            assert_eq!(sims.len(), 5);
+        }
+        // Binary symbols are 0/1, bipolar are ±1, and each model accepts its own codebook.
+        for s in &books[1].symbols {
+            assert!(bn.check(s).is_ok());
+        }
+        for s in &books[0].symbols {
+            assert!(bp.check(s).is_ok());
+        }
+        let empty = Codebook { symbols: Vec::new(), dim: 8 };
+        assert!(empty.is_empty(), "a codebook with no symbols is empty");
+        assert_eq!(empty.len(), 0);
+    }
+
+    /// A random codebook's symbols are DISTINCT and near-orthogonal — the property every capacity
+    /// claim in this module divides by — in all three models.
+    ///
+    /// Why the suite could not see it: a codebook of one repeated vector answers every `nearest`
+    /// and every `similarities` call perfectly well, and the tests that use codebooks read a
+    /// symbol back by index or ask for a ranking, never for the relationship BETWEEN two symbols.
+    /// `Codebook::random_hrr` is used by no other test at all. So a constructor that drew one
+    /// vector and cloned it `M` times — which collapses the whole representation onto a single
+    /// symbol — passed the entire suite.
+    ///
+    /// The bound is arithmetic, in each model's own similarity: two independent symbols score a
+    /// mean of `D` fair `±1` products, whose standard deviation is `1/√D = 1/16` at `D = 256`, so
+    /// `0.375` is six standard deviations and the 28 pairs of an eight-symbol codebook clear it
+    /// with probability better than `1 − 1e-7`. A symbol against ITSELF scores exactly `1`, which
+    /// is what two clones would score against each other.
+    #[test]
+    fn a_random_codebook_draws_distinct_near_orthogonal_symbols() {
+        let mut rng = Rng::new(13);
+        let mut meter = Meter::default();
+        let d = 256usize;
+        let bound = 6.0 * noise_sd(d);
+        let bp = Bipolar::new(d).unwrap();
+        let bn = Binary::new(d).unwrap();
+        let hr = Hrr::new(d).unwrap();
+        let bipolar = Codebook::random_bipolar(&bp, 8, &mut rng).unwrap();
+        let binary = Codebook::random_binary(&bn, 8, &mut rng).unwrap();
+        let holographic = Codebook::random_hrr(&hr, 8, &mut rng).unwrap();
+        for (which, book) in [("bipolar", &bipolar), ("binary", &binary), ("hrr", &holographic)] {
+            for i in 0..book.len() {
+                for j in 0..book.len() {
+                    let (x, y) = (&book.symbols[i], &book.symbols[j]);
+                    let s = match which {
+                        "bipolar" => bp.similarity(x, y, &mut meter).unwrap(),
+                        "binary" => bn.similarity(x, y, &mut meter).unwrap(),
+                        _ => hr.cosine(x, y, &mut meter).unwrap().unwrap(),
+                    };
+                    if i == j {
+                        assert!((s - 1.0).abs() < 1e-12, "{which}: symbol {i} scores {s} against itself");
+                    } else {
+                        assert!(s.abs() < bound, "{which}: symbols {i} and {j} score {s} — not independent draws");
+                        assert_ne!(x, y, "{which}: symbols {i} and {j} are the same vector");
+                    }
+                }
+            }
+        }
+    }
+
+    /// The codebook readout is the COSINE — the dot product divided by `D` — and the search is
+    /// initialised below every score it could see, so a query whose every match is negative still
+    /// reports the best of them rather than a default.
+    ///
+    /// Why the suite could not see either: every readout it made was of a bundle or a permuted
+    /// code that CONTAINED the answer, so the winning score was positive and a search initialised
+    /// at `0.0` found it anyway; and every assertion on a similarity was a threshold comparison
+    /// (`> 0.2`, `< 0.15`, `> best`) that an undivided dot product — `D` times too large —
+    /// passes at least as easily. Here the scores are exact small integers over `D = 4`.
+    #[test]
+    fn the_codebook_readout_is_divided_by_d_and_ranks_an_all_negative_query() {
+        let mut meter = Meter::default();
+        let book = Codebook { symbols: vec![vec![1.0, 1.0, 1.0, 1.0], vec![1.0, 1.0, 1.0, -1.0]], dim: 4 };
+        // Dot products −4 and −2 over D = 4: the cosines are −1.0 and −0.5, both negative.
+        let all_negative = vec![-1.0, -1.0, -1.0, -1.0];
+        assert_eq!(book.similarities(&all_negative, &mut meter).unwrap(), vec![-1.0, -0.5]);
+        assert_eq!(book.nearest(&all_negative, &mut meter).unwrap(), (1, -0.5), "the best of two negative matches is still the answer");
+        // The score `nearest` reports is the entry `similarities` computes, to the last bit: the
+        // two are the same expression over the same operands in the same order.
+        let (idx, score) = book.nearest(&all_negative, &mut meter).unwrap();
+        assert_eq!(score, book.similarities(&all_negative, &mut meter).unwrap()[idx]);
+        // And a symbol is its own nearest neighbour at a cosine of exactly 1.
+        assert_eq!(book.similarities(&book.symbols[0], &mut meter).unwrap(), vec![1.0, 0.5]);
+        assert_eq!(book.nearest(&book.symbols[0], &mut meter).unwrap(), (0, 1.0));
+    }
+
+    /// A normalised holographic bundle whose members cancel exactly is returned AS the zero
+    /// vector, not divided by its own zero norm.
+    ///
+    /// Why the suite could not see it: the only normalised bundle it ever built was
+    /// `[3,0,0,0] + [0,4,0,0]`, whose norm is 5, so the `n > 0.0` guard was never reached with a
+    /// zero. Relaxing it to `n >= 0.0` makes the result `0.0 / 0.0`, a vector of `NaN`s that no
+    /// assertion in the module compared against anything — and that a downstream `Hrr::check`
+    /// would only reject much later, at a call site that had already lost the cause.
+    #[test]
+    fn a_holographic_bundle_that_cancels_normalises_to_zero_rather_than_nan() {
+        let mut meter = Meter::default();
+        let hrr = Hrr::new(4).unwrap();
+        let a = vec![1.0, -2.0, 0.5, 0.0];
+        let minus_a: Vec<f64> = a.iter().map(|x| -x).collect();
+        let out = hrr.bundle(&[a, minus_a], true, &mut meter).unwrap();
+        assert_eq!(out, vec![0.0; 4], "a zero sum stays zero under the normalise flag");
+        assert!(out.iter().all(|x| x.is_finite()));
+        assert!(hrr.check(&out).is_ok(), "and the result is still a symbol of the model");
+        assert_eq!(meter.bundles, 12, "two members plus the rescaling pass over D = 4");
+        // The all-zero member list is the same case reached the other way.
+        assert_eq!(hrr.bundle(&[vec![0.0; 4], vec![0.0; 4]], true, &mut meter).unwrap(), vec![0.0; 4]);
+    }
+
+    /// A resonator checks each codebook's declared dimension against the MODEL's, not against
+    /// itself.
+    ///
+    /// Why the suite could not see it: its one dimension refusal handed a 999-dimensional model
+    /// codebooks of 4000-dimensional symbols, so the per-symbol `check` raised
+    /// `VsaError::Dimension` as well and a `matches!` on the variant passed with the codebook
+    /// check disabled. The separating case is a codebook whose `dim` field disagrees with its own
+    /// symbols: the symbols then satisfy the model and only the declared dimension is wrong —
+    /// and that field is what `Codebook::nearest` and `Codebook::similarities` divide by inside
+    /// the resonator's own loop.
+    #[test]
+    fn a_resonator_checks_each_codebook_against_the_models_dimension_not_its_own() {
+        let bp = Bipolar::new(4).unwrap();
+        let mislabelled = Codebook { symbols: vec![vec![1.0, -1.0, 1.0, -1.0]], dim: 8 };
+        assert!(matches!(
+            Resonator::new(bp, vec![mislabelled], 10),
+            Err(VsaError::Dimension { a: 8, b: 4 })
+        ));
+        let honest = Codebook { symbols: vec![vec![1.0, -1.0, 1.0, -1.0]], dim: 4 };
+        assert!(Resonator::new(bp, vec![honest.clone()], 10).is_ok());
+        // Mixed: the second codebook is the wrong one, and it is still caught.
+        let wrong = Codebook { symbols: vec![vec![1.0, 1.0, 1.0, 1.0]], dim: 2 };
+        assert!(matches!(
+            Resonator::new(bp, vec![honest, wrong], 10),
+            Err(VsaError::Dimension { a: 2, b: 4 })
+        ));
+    }
+
+    /// `max_iters` bounds the iterations RUN — a resonator given one iteration runs exactly one —
+    /// and the `synchronous` flag selects the paper's update order rather than the sequential one.
+    ///
+    /// Why the suite could not see either: the only resonator test ran to convergence with
+    /// `max_iters = 100`, so the loop bound was never the thing that stopped it and running one
+    /// iteration too many changed nothing it asserted; and `synchronous` was only ever read
+    /// (`assert!(!res.synchronous)`), never SET, so the two branches of the update were never
+    /// compared and swapping them was invisible.
+    ///
+    /// The iteration counts are MEASURED on this instance (`D = 512`, three codebooks of eight,
+    /// seed 23, factors 1, 4 and 7) and are deterministic by seed: sequential reaches its fixed
+    /// point in 3 iterations, the synchronous form in 4 — consistent with the struct doc's table,
+    /// where the sequential update is the better of the two on every row.
+    #[test]
+    fn a_resonator_runs_exactly_max_iters_and_the_synchronous_flag_picks_the_papers_update() {
+        let mut rng = Rng::new(23);
+        let mut meter = Meter::default();
+        let bp = Bipolar::new(512).unwrap();
+        let books: Vec<Codebook> = (0..3).map(|_| Codebook::random_bipolar(&bp, 8, &mut rng).unwrap()).collect();
+        let want = [1usize, 4, 7];
+        let mut s = vec![1.0f64; 512];
+        for (b, &i) in books.iter().zip(&want) {
+            s = bp.bind(&s, &b.symbols[i], &mut meter).unwrap();
+        }
+
+        // One iteration means one iteration: the fixed point is not reached in it, so the bound
+        // is what stops the loop and the count it reports is the bound itself.
+        let capped = Resonator::new(bp, books.clone(), 1).unwrap();
+        let f = capped.factor(&s, &mut meter).unwrap();
+        assert_eq!(f.iterations, 1, "a resonator bounded at one iteration ran {}", f.iterations);
+        assert!(!f.converged, "no fixed point was detected inside the bound");
+
+        let sequential = Resonator::new(bp, books.clone(), 100).unwrap();
+        let mut synchronous = sequential.clone();
+        synchronous.synchronous = true;
+        let seq = sequential.factor(&s, &mut meter).unwrap();
+        let syn = synchronous.factor(&s, &mut meter).unwrap();
+        assert_eq!(seq.indices, want);
+        assert_eq!(syn.indices, want);
+        assert_eq!(seq.fidelity, 1.0);
+        assert_eq!(syn.fidelity, 1.0);
+        assert!(seq.converged && syn.converged);
+        assert_eq!(seq.iterations, 3, "measured: the sequential update reaches the fixed point in 3");
+        assert_eq!(syn.iterations, 4, "measured: the paper's synchronous update needs 4 on the same instance");
+    }
+
+    /// The binary draw returns the generator's bit, not its complement.
+    ///
+    /// Why the suite could not see it: the complement of a fair coin is a fair coin, so every
+    /// statistical property the suite checks — bundle similarity, orthogonality, Hamming
+    /// distance, the isomorphism to the bipolar model — holds exactly as well on the complemented
+    /// stream, and no test compared a drawn symbol against anything the generator had said. This
+    /// pins it against the bipolar draw, which reads the same low bit of the same stream: from
+    /// one seed the two models' symbols agree position by position under `b ↦ 2b − 1`, so a
+    /// complemented binary draw disagrees at EVERY position.
+    #[test]
+    fn the_binary_draw_is_the_generators_bit_and_not_its_complement() {
+        let bn = Binary::new(64).unwrap();
+        let bp = Bipolar::new(64).unwrap();
+        let mut one = Rng::new(31);
+        let mut two = Rng::new(31);
+        let bits = bn.random(&mut one);
+        let signs = bp.random(&mut two);
+        let from_signs: Vec<f64> = signs.iter().map(|&s| (s + 1.0) / 2.0).collect();
+        assert_eq!(bits, from_signs, "the two discrete models read the same bit with the same orientation");
+        assert!(bn.check(&bits).is_ok());
+        assert!(bits.contains(&1.0) && bits.contains(&0.0), "the draw is not constant");
+    }
+    /// An unbind is billed for the involution it performs as well as for the convolution.
+    ///
+    /// `Hrr::unbind` is `involution` then `bind`. The bind is `D²` multiply-accumulates and was
+    /// billed; the involution is `D` element moves — the reversal permutation `a[(d − i) % d]` —
+    /// and was billed nothing, although every other element move in this module is counted
+    /// (`Bipolar::permute`, `Binary::permute` and `Hrr::permute` all `tally(.., self.dim)`).
+    ///
+    /// Measured: the under-count is `D` out of `D² + D`, which is 0.4% at `D = 256`. Small, but
+    /// systematic and in the direction that flatters the operation — and this crate's whole
+    /// argument is that it prices what it does. No fixture read an unbind's meter at all, which is
+    /// why correcting it changed no existing test.
+    #[test]
+    fn an_unbind_is_billed_for_the_involution_as_well_as_the_convolution() {
+        let d = 64;
+        let hrr = Hrr::new(d).unwrap();
+        let mut rng = Rng::new(5);
+        let a = hrr.random(&mut rng);
+        let b = hrr.random(&mut rng);
+        let mut meter = Meter::default();
+        let ab = hrr.bind(&a, &b, &mut meter).unwrap();
+        assert_eq!((meter.binds, meter.permutes), ((d * d) as u64, 0), "a bind moves nothing");
+        let mut meter = Meter::default();
+        let _ = hrr.unbind(&ab, &b, &mut meter).unwrap();
+        assert_eq!(meter.binds, (d * d) as u64, "the convolution, as before");
+        assert_eq!(meter.permutes, d as u64, "and the D element moves the involution makes");
+        assert_eq!(meter.total(), Some((d * d + d) as u64));
+    }
+
 }

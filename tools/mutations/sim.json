@@ -43,5 +43,166 @@
   "label": "the exact path uses the tick-based step",
   "old": "        let count = if self.exact_timing {",
   "new": "        let count = if false && self.exact_timing {"
+ },
+ {
+  "label": "the event-driven refusal tests the exactness property the wrong way round",
+  "old": "        if mode == Mode::EventDriven && !N::EXACT_OVER_GAPS {",
+  "new": "        if mode == Mode::EventDriven && N::EXACT_OVER_GAPS {"
+ },
+ {
+  "label": "the delivery ring is one bucket short, so the longest delay lands on the tick being processed",
+  "old": "        let ring_len = net.max_delay as usize + 1;",
+  "new": "        let ring_len = net.max_delay as usize;"
+ },
+ {
+  "label": "every neuron starts dated one tick into the run, so its first catch-up is one tick short",
+  "old": "            as_of: vec![0; n],",
+  "new": "            as_of: vec![1; n],"
+ },
+ {
+  "label": "the exact-timing tick guard accepts an infinite tick",
+  "old": "        if !(self.dt > 0.0) || !self.dt.is_finite() {",
+  "new": "        if !(self.dt > 0.0) {"
+ },
+ {
+  "label": "the exact-timing tick guard accepts a tick of zero seconds",
+  "old": "        if !(self.dt > 0.0) || !self.dt.is_finite() {",
+  "new": "        if self.dt < 0.0 || !self.dt.is_finite() {"
+ },
+ {
+  "label": "the accessor reports whether the model COULD keep exact timing rather than whether it was switched on",
+  "old": "    pub fn exact_timing(&self) -> bool {\n        self.exact_timing\n    }",
+  "new": "    pub fn exact_timing(&self) -> bool {\n        N::EXACT_TIMING\n    }"
+ },
+ {
+  "label": "the tick-based path drops the external current",
+  "old": "            u32::from(self.neurons[i].step(self.dt, ext))",
+  "new": "            u32::from(self.neurons[i].step(self.dt, 0.0))"
+ },
+ {
+  "label": "a short external current vector is accepted and drives only the neurons it reaches",
+  "old": "            external.is_empty() || external.len() == self.net.n,",
+  "new": "            external.is_empty() || external.len() <= self.net.n,"
+ },
+ {
+  "label": "volts arriving in the same tick replace one another rather than summing",
+  "old": "            self.inject[p] += w;",
+  "new": "            self.inject[p] = w;"
+ },
+ {
+  "label": "a delivery is billed as a synaptic operation but never as a weight fetch",
+  "old": "            self.ledger.syn_ops += 1;\n            self.ledger.syn_fetches += 1;",
+  "new": "            self.ledger.syn_ops += 1;"
+ },
+ {
+  "label": "a neuron driven only by an external current is never queued in event-driven mode",
+  "old": "        if !external.is_empty() {\n            for i in 0..self.net.n {",
+  "new": "        if false {\n            for i in 0..self.net.n {"
+ },
+ {
+  "label": "a neuron already queued this tick can be queued a second time by the external-current scan",
+  "old": "                if external[i] != 0.0 && self.inject[i] == 0.0 && !self.touched.contains(&(i as u32))\n                {",
+  "new": "                if external[i] != 0.0 && self.inject[i] == 0.0\n                {"
+ },
+ {
+  "label": "a neuron driven only by an external current is billed as an idle update",
+  "old": "                    let driven = self.inject[i] != 0.0\n                        || (!external.is_empty() && external[i] != 0.0);",
+  "new": "                    let driven = self.inject[i] != 0.0;"
+ },
+ {
+  "label": "the clocked mode steps the neuron before the tick's arriving volts are added",
+  "old": "                        self.ledger.neuron_updates_idle += 1;\n                    }\n                    let ext = if external.is_empty() { 0.0 } else { external[i] };\n                    self.neurons[i].bump(self.inject[i]);\n                    self.advance(i, ext, &mut fired);",
+  "new": "                        self.ledger.neuron_updates_idle += 1;\n                    }\n                    let ext = if external.is_empty() { 0.0 } else { external[i] };\n                    self.advance(i, ext, &mut fired);\n                    self.neurons[i].bump(self.inject[i]);"
+ },
+ {
+  "label": "the arriving volts are added before the neuron is caught up, so the quiet gap decays them too",
+  "old": "                    self.catch_up(i);\n                    self.ledger.neuron_updates_driven += 1;\n                    let ext = if external.is_empty() { 0.0 } else { external[i] };\n                    self.neurons[i].bump(self.inject[i]);",
+  "new": "                    self.ledger.neuron_updates_driven += 1;\n                    let ext = if external.is_empty() { 0.0 } else { external[i] };\n                    self.neurons[i].bump(self.inject[i]);\n                    self.catch_up(i);"
+ },
+ {
+  "label": "the event-driven mode updates the tick's neurons in descending order",
+  "old": "                touched.sort_unstable();",
+  "new": "                touched.sort_unstable_by(|a, b| b.cmp(a));"
+ },
+ {
+  "label": "a spike is delivered on the tick it was emitted rather than the tick after",
+  "old": "                let when = (self.t + 1 + u64::from(d)) as usize % self.ring.len();",
+  "new": "                let when = (self.t + u64::from(d)) as usize % self.ring.len();"
+ },
+ {
+  "label": "the blanket inject clear runs in event-driven mode rather than clocked",
+  "old": "        if self.mode == Mode::Clocked {\n            self.inject.iter_mut().for_each(|x| *x = 0.0);\n        }",
+  "new": "        if self.mode == Mode::EventDriven {\n            self.inject.iter_mut().for_each(|x| *x = 0.0);\n        }",
+  "equivalent": "EQUIVALENT, not a hole, and it is the per-touched clear that makes it so. INVARIANT: `inject` is all-zero at the head of every tick. It holds at construction and after `reset_state`, and it is restored each tick because an entry can only become non-zero through `self.inject[p] += w` in the delivery loop, and that loop pushes `p` onto `touched` whenever it finds `self.inject[p] == 0.0` -- which, by the invariant, is true of the FIRST delivery to `p` in the tick. So every neuron whose `inject` the tick could have written is on `touched` (possibly more than once, when a zero weight or a cancelling pair leaves the running total at zero and a later delivery pushes it again -- that makes the list redundant, never short); `touched` is cleared at the head of the tick and, in event-driven mode, taken and put back before the clear runs; and the end-of-tick loop that writes 0.0 at every index in `touched` therefore zeroes every entry that moved, in BOTH modes. The blanket pass consequently only ever writes 0.0 over entries that are already 0.0, so running it under one mode rather than the other cannot change any value that any read of `inject` returns, in either mode. The external-current scan only ADDS indices to `touched`, so it cannot shorten the clear either. MEASURED with a standalone fixture holding the real `sim` beside the mutated copy, both driven over the same randomised networks -- 20,000 simulations of 2 to 5 neurons, 1 to 9 synapses including zero weights and exactly cancelling pairs, delays 0 to 3, both modes, exact timing on and off, three tick lengths, four refractory periods, 200 to 500 ticks each -- comparing the spike trains, every ledger counter and every membrane potential bit for bit: 0 disagreed."
+ },
+ {
+  "label": "the gap is measured from the current tick backwards, so nothing is ever caught up",
+  "old": "        let gap = self.t.saturating_sub(self.as_of[i]);",
+  "new": "        let gap = self.as_of[i].saturating_sub(self.t);"
+ },
+ {
+  "label": "the gap is turned into seconds by dividing by the tick rather than multiplying",
+  "old": "        let gap_s = gap as f64 * self.dt;",
+  "new": "        let gap_s = gap as f64 / self.dt;"
+ },
+ {
+  "label": "the non-exact catch-up jumps the whole gap in one step, refractory period and all",
+  "old": "        } else if r > 0.0 {",
+  "new": "        } else if false && r > 0.0 {"
+ },
+ {
+  "label": "the refractory period is rounded DOWN to a tick boundary rather than up",
+  "old": "            let r_ticks = (r / self.dt).ceil().min(gap as f64);",
+  "new": "            let r_ticks = (r / self.dt).floor().min(gap as f64);"
+ },
+ {
+  "label": "the refractory jump is not clamped to the gap, so a neuron is advanced past the current tick",
+  "old": "            let r_ticks = (r / self.dt).ceil().min(gap as f64);",
+  "new": "            let r_ticks = (r / self.dt).ceil();"
+ },
+ {
+  "label": "the quiet remainder is the whole gap, so the refractory part of it is integrated twice",
+  "old": "            let rest = gap_s - r_s;",
+  "new": "            let rest = gap_s;"
+ },
+ {
+  "label": "the catch-up dates the neuron one tick further forward than it advanced it",
+  "old": "        self.as_of[i] = self.t;\n    }",
+  "new": "        self.as_of[i] = self.t + 1;\n    }"
+ },
+ {
+  "label": "every spike is stamped with the tick after the one it fired on",
+  "old": "            let t = self.t;",
+  "new": "            let t = self.t + 1;"
+ },
+ {
+  "label": "a run is one tick shorter than it was asked for",
+  "old": "        for _ in 0..ticks {",
+  "new": "        for _ in 0..ticks.saturating_sub(1) {"
+ },
+ {
+  "label": "an event-driven readout reports each neuron as of the last tick it happened to be touched",
+  "old": "        if self.mode == Mode::EventDriven {\n            for i in 0..self.net.n {\n                self.catch_up(i);\n            }\n        }",
+  "new": "        if false {\n            for i in 0..self.net.n {\n                self.catch_up(i);\n            }\n        }"
+ },
+ {
+  "label": "a readout of the whole network is billed as a single read",
+  "old": "        self.ledger.reads += self.net.n as u64;",
+  "new": "        self.ledger.reads += 1;"
+ },
+ {
+  "label": "the readout returns the potentials in reverse neuron order",
+  "old": "        self.neurons.iter().map(Neuron::potential).collect()",
+  "new": "        self.neurons.iter().rev().map(Neuron::potential).collect()"
+ },
+ {
+  "label": "a reset throws away the ledger of what the run has already paid for",
+  "old": "        self.as_of.iter_mut().for_each(|x| *x = self.t);\n        self.touched.clear();",
+  "new": "        self.as_of.iter_mut().for_each(|x| *x = self.t);\n        self.touched.clear();\n        self.ledger = Ledger::default();"
+ },
+ {
+  "label": "a reset leaves every neuron's state exactly where it was",
+  "old": "        for n in &mut self.neurons {\n            n.reset();\n        }",
+  "new": "        for n in &mut self.neurons {\n            let _ = n;\n        }"
  }
 ]

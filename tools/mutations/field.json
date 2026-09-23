@@ -178,5 +178,485 @@
   "label": "short sheet accepted",
   "old": "if !(length >= 12.0 * kernel.s_i) || !length.is_finite() {",
   "new": "if !length.is_finite() {"
+ },
+ {
+  "label": "the out-of-range message reports its bounds backwards",
+  "old": "write!(f, \"{what} = {value} is outside [{low}, {high}]\")",
+  "new": "write!(f, \"{what} = {value} is outside [{high}, {low}]\")"
+ },
+ {
+  "label": "an infinite parameter counts as positive",
+  "old": "    if v.is_finite() && v > 0.0 {",
+  "new": "    if v > 0.0 {"
+ },
+ {
+  "label": "zero counts as positive",
+  "old": "    if v.is_finite() && v > 0.0 {",
+  "new": "    if v.is_finite() && v >= 0.0 {"
+ },
+ {
+  "label": "a kernel whose two lobes have equal amplitude is built",
+  "old": "if !(a_e > a_i) || !a_e.is_finite() {",
+  "new": "if !(a_e >= a_i) || !a_e.is_finite() {"
+ },
+ {
+  "label": "a kernel whose two lobes have equal width is built",
+  "old": "if !(s_i > s_e) || !s_i.is_finite() {",
+  "new": "if !(s_i >= s_e) || !s_i.is_finite() {"
+ },
+ {
+  "label": "an infinite inhibitory width is accepted",
+  "old": "if !(s_i > s_e) || !s_i.is_finite() {",
+  "new": "if !(s_i > s_e) {"
+ },
+ {
+  "label": "the inhibitory gaussian has no two in its denominator",
+  "old": "self.a_i * (-x * x / (2.0 * self.s_i * self.s_i)).exp()",
+  "new": "self.a_i * (-x * x / (self.s_i * self.s_i)).exp()"
+ },
+ {
+  "label": "the kernel's two widths are swapped",
+  "old": "(2.0 * self.s_e * self.s_e)).exp() - self.a_i * (-x * x / (2.0 * self.s_i * self.s_i)).exp()",
+  "new": "(2.0 * self.s_i * self.s_i)).exp() - self.a_i * (-x * x / (2.0 * self.s_e * self.s_e)).exp()"
+ },
+ {
+  "label": "the excitatory lobe falls with distance rather than distance squared",
+  "old": "self.a_e * (-x * x / (2.0 * self.s_e * self.s_e)).exp()",
+  "new": "self.a_e * (-x / (2.0 * self.s_e * self.s_e)).exp()"
+ },
+ {
+  "label": "the integral drops its root pi over two",
+  "old": "FRAC_PI_2.sqrt() * (self.a_e * self.s_e * erf(a / (self.s_e * SQRT_2))",
+  "new": "(self.a_e * self.s_e * erf(a / (self.s_e * SQRT_2))"
+ },
+ {
+  "label": "the integral adds its two lobes rather than subtracting them",
+  "old": "erf(a / (self.s_e * SQRT_2)) - self.a_i * self.s_i * erf",
+  "new": "erf(a / (self.s_e * SQRT_2)) + self.a_i * self.s_i * erf"
+ },
+ {
+  "label": "the integral's inhibitory term forgets its width",
+  "old": "- self.a_i * self.s_i * erf(a / (self.s_i * SQRT_2))",
+  "new": "- self.a_i * erf(a / (self.s_i * SQRT_2))"
+ },
+ {
+  "label": "the amplitude ratio at the zero crossing is inverted",
+  "old": "(self.a_e / self.a_i).ln()",
+  "new": "(self.a_i / self.a_e).ln()"
+ },
+ {
+  "label": "the zero crossing adds the two inverse squared widths",
+  "old": "1.0 / (self.s_e * self.s_e) - 1.0 / (self.s_i * self.s_i)",
+  "new": "1.0 / (self.s_e * self.s_e) + 1.0 / (self.s_i * self.s_i)"
+ },
+ {
+  "label": "the zero crossing is reported as its square",
+  "old": "- 1.0 / (self.s_i * self.s_i))).sqrt()",
+  "new": "- 1.0 / (self.s_i * self.s_i)))"
+ },
+ {
+  "label": "w infinity drops its root pi over two",
+  "old": "FRAC_PI_2.sqrt() * (self.a_e * self.s_e - self.a_i * self.s_i)",
+  "new": "(self.a_e * self.s_e - self.a_i * self.s_i)"
+ },
+ {
+  "label": "w infinity pairs each amplitude with the other lobe's width",
+  "old": "(self.a_e * self.s_e - self.a_i * self.s_i)",
+  "new": "(self.a_e * self.s_i - self.a_i * self.s_e)"
+ },
+ {
+  "label": "the bisection assumes the bracketed function rises",
+  "old": "    let rising = f(hi) > f(lo);",
+  "new": "    let rising = true;"
+ },
+ {
+  "label": "the bisection stops after eight halvings",
+  "old": "    for _ in 0..200 {",
+  "new": "    for _ in 0..8 {"
+ },
+ {
+  "label": "a resting level of exactly zero is classified",
+  "old": "pub fn regime(kernel: &MexicanHat, h: f64) -> Result<Regime, FieldError> {\n    if !(h < 0.0) || !h.is_finite() {",
+  "new": "pub fn regime(kernel: &MexicanHat, h: f64) -> Result<Regime, FieldError> {\n    if !(h <= 0.0) || !h.is_finite() {"
+ },
+ {
+  "label": "an infinitely negative resting level is classified",
+  "old": "    if !(h < 0.0) || !h.is_finite() {\n        return Err(FieldError::OutOfRange { what: \"h\", value: h, low: f64::NEG_INFINITY, high: 0.0 });\n    }\n    let x0 = kernel.zero_crossing();",
+  "new": "    if !(h < 0.0) {\n        return Err(FieldError::OutOfRange { what: \"h\", value: h, low: f64::NEG_INFINITY, high: 0.0 });\n    }\n    let x0 = kernel.zero_crossing();"
+ },
+ {
+  "label": "the peak of w is taken at the excitatory width rather than at the zero crossing",
+  "old": "    let x0 = kernel.zero_crossing();",
+  "new": "    let x0 = kernel.s_e;"
+ },
+ {
+  "label": "no kernel is ever ruled out as holding no bump",
+  "old": "    if kernel.integral(x0) + h < 0.0 {",
+  "new": "    if false {"
+ },
+ {
+  "label": "the unstable width is sought over a bracket that holds both roots",
+  "old": "let ignition = bisect(|a| kernel.integral(a) + h, 0.0, x0);",
+  "new": "let ignition = bisect(|a| kernel.integral(a) + h, 0.0, x0 + 40.0 * kernel.s_i);"
+ },
+ {
+  "label": "the stable width is sought from zero, so its bracket holds both roots",
+  "old": "let settled = bisect(|a| kernel.integral(a) + h, x0, x0 + 40.0 * kernel.s_i);",
+  "new": "let settled = bisect(|a| kernel.integral(a) + h, 0.0, x0 + 40.0 * kernel.s_i);"
+ },
+ {
+  "label": "a field of seven points is built",
+  "old": "        if n < 8 {\n            return Err(FieldError::TooFew { n });\n        }\n        if n > MAX_POINTS {",
+  "new": "        if n < 7 {\n            return Err(FieldError::TooFew { n });\n        }\n        if n > MAX_POINTS {"
+ },
+ {
+  "label": "a field past the point cap is built",
+  "old": "        if n > MAX_POINTS {",
+  "new": "        if false {"
+ },
+ {
+  "label": "a new field rests at zero rather than at h",
+  "old": "Ok(Self { kernel, h, tau, length, u: vec![h; n] })",
+  "new": "Ok(Self { kernel, h, tau, length, u: vec![0.0; n] })"
+ },
+ {
+  "label": "the ring need only be two inhibitory widths round",
+  "old": "if !(length >= 20.0 * kernel.s_i) || !length.is_finite() {",
+  "new": "if !(length >= 2.0 * kernel.s_i) || !length.is_finite() {"
+ },
+ {
+  "label": "an infinite domain is accepted",
+  "old": "if !(length >= 20.0 * kernel.s_i) || !length.is_finite() {",
+  "new": "if !(length >= 20.0 * kernel.s_i) {"
+ },
+ {
+  "label": "the grid spacing counts fence posts rather than the gaps of a ring",
+  "old": "        self.length / self.u.len() as f64",
+  "new": "        self.length / (self.u.len() - 1) as f64"
+ },
+ {
+  "label": "the active width is a point count rather than a length",
+  "old": "    pub fn active_width(&self) -> f64 {\n        self.dx() * self.u.iter()",
+  "new": "    pub fn active_width(&self) -> f64 {\n        self.u.iter()"
+ },
+ {
+  "label": "a non-finite centre is seeded",
+  "old": "        if !centre.is_finite() {",
+  "new": "        if false {"
+ },
+ {
+  "label": "a patch of zero width is seeded",
+  "old": "if !(width > 0.0) || !(width <= 0.5 * self.length) {",
+  "new": "if !(width >= 0.0) || !(width <= 0.5 * self.length) {"
+ },
+ {
+  "label": "a seeded patch may be the whole domain wide",
+  "old": "if !(width > 0.0) || !(width <= 0.5 * self.length) {",
+  "new": "if !(width > 0.0) || !(width <= self.length) {"
+ },
+ {
+  "label": "the seeded patch is ten times as active as documented",
+  "old": "*u = if d < 0.5 * width { -h / 100.0 } else { h };",
+  "new": "*u = if d < 0.5 * width { -h / 10.0 } else { h };"
+ },
+ {
+  "label": "seeding leaves the rest of the field as it was rather than at rest",
+  "old": "*u = if d < 0.5 * width { -h / 100.0 } else { h };",
+  "new": "*u = if d < 0.5 * width { -h / 100.0 } else { *u };"
+ },
+ {
+  "label": "the seeded patch is mirrored about the origin",
+  "old": "let d = (i as f64 * dx - centre).rem_euclid(length);",
+  "new": "let d = (i as f64 * dx + centre).rem_euclid(length);"
+ },
+ {
+  "label": "an input of the wrong length is indexed anyway",
+  "old": "        if input.len() != n {",
+  "new": "        if false {"
+ },
+ {
+  "label": "the dimension refusal reports the two lengths backwards",
+  "old": "return Err(FieldError::Dimension { what: \"input\", got: input.len(), want: n });",
+  "new": "return Err(FieldError::Dimension { what: \"input\", got: n, want: input.len() });"
+ },
+ {
+  "label": "an infinite input slips past the finiteness check",
+  "old": "if let Some(i) = input.iter().position(|x| !x.is_finite()) {",
+  "new": "if let Some(i) = input.iter().position(|x| x.is_nan()) {"
+ },
+ {
+  "label": "a bad input is always reported at the first grid point",
+  "old": "return Err(FieldError::NonFinite { what: \"input\", index: i });",
+  "new": "return Err(FieldError::NonFinite { what: \"input\", index: 0 });"
+ },
+ {
+  "label": "a step twice as long as tau is taken",
+  "old": "            return Err(FieldError::NonFinite { what: \"input\", index: i });\n        }\n        if !(dt > 0.0) || !(dt <= self.tau) {",
+  "new": "            return Err(FieldError::NonFinite { what: \"input\", index: i });\n        }\n        if !(dt > 0.0) || !(dt <= 2.0 * self.tau) {"
+ },
+ {
+  "label": "the euler factor is tau over dt",
+  "old": "        let a = dt / self.tau;\n        // The kernel",
+  "new": "        let a = self.tau / dt;\n        // The kernel"
+ },
+ {
+  "label": "the hop table is one entry short of half the ring",
+  "old": "let by_hops: Vec<f64> = (0..=n / 2).map(|hops| self.kernel.w(dx * hops as f64)).collect();",
+  "new": "let by_hops: Vec<f64> = (0..n / 2).map(|hops| self.kernel.w(dx * hops as f64)).collect();"
+ },
+ {
+  "label": "the hop table is built in grid points rather than in length",
+  "old": "let by_hops: Vec<f64> = (0..=n / 2).map(|hops| self.kernel.w(dx * hops as f64)).collect();",
+  "new": "let by_hops: Vec<f64> = (0..=n / 2).map(|hops| self.kernel.w(hops as f64)).collect();"
+ },
+ {
+  "label": "the euler step replaces the activation rather than adding to it",
+  "old": "self.u[i] + a * (-self.u[i] + lateral * dx + self.h + input[i])",
+  "new": "a * (-self.u[i] + lateral * dx + self.h + input[i])"
+ },
+ {
+  "label": "every point is driven by the input at the first grid point",
+  "old": "self.u[i] + a * (-self.u[i] + lateral * dx + self.h + input[i])",
+  "new": "self.u[i] + a * (-self.u[i] + lateral * dx + self.h + input[0])"
+ },
+ {
+  "label": "the step reports every point as active",
+  "old": "        self.u = next;\n        Ok(active.len())\n    }\n\n    /// Take",
+  "new": "        self.u = next;\n        Ok(n)\n    }\n\n    /// Take"
+ },
+ {
+  "label": "run takes a single step whatever it was asked for",
+  "old": "        for _ in 0..steps {\n            self.step(dt, input)?;",
+  "new": "        for _ in 0..1 {\n            self.step(dt, input)?;"
+ },
+ {
+  "label": "the step cap is a thousand",
+  "old": "pub const MAX_STEPS: u64 = 100_000_000;",
+  "new": "pub const MAX_STEPS: u64 = 1_000;"
+ },
+ {
+  "label": "the point cap is two hundred and fifty-six",
+  "old": "pub const MAX_POINTS: usize = 1 << 16;",
+  "new": "pub const MAX_POINTS: usize = 1 << 8;"
+ },
+ {
+  "label": "the scaled bessel function is not even",
+  "old": "    let x = x.abs();",
+  "new": "    let x = x;"
+ },
+ {
+  "label": "the two bessel branches meet at two rather than at twenty",
+  "old": "    if x <= 20.0 {",
+  "new": "    if x <= 2.0 {"
+ },
+ {
+  "label": "the power series argument is x squared over two",
+  "old": "let q = 0.25 * x * x;",
+  "new": "let q = 0.5 * x * x;"
+ },
+ {
+  "label": "the bessel scaling is applied with the wrong sign",
+  "old": "        sum * (-x).exp()",
+  "new": "        sum * x.exp()"
+ },
+ {
+  "label": "the power series stops three digits in",
+  "old": "if term < 1e-17 * sum {",
+  "new": "if term < 1e-3 * sum {"
+ },
+ {
+  "label": "the asymptotic series' odd numbers start at three",
+  "old": "let odd = 2.0 * f64::from(k) - 1.0;",
+  "new": "let odd = 2.0 * f64::from(k) + 1.0;"
+ },
+ {
+  "label": "the asymptotic series keeps no term past the first",
+  "old": "            if next >= term {",
+  "new": "            if next <= term {"
+ },
+ {
+  "label": "the rim integral adds the inhibitory disc",
+  "old": "part(self.a_e, self.s_e) - part(self.a_i, self.s_i)",
+  "new": "part(self.a_e, self.s_e) + part(self.a_i, self.s_i)"
+ },
+ {
+  "label": "the rim integral is the bessel term rather than its complement",
+  "old": "(1.0 - bessel_i0e(r * r / (s * s)))",
+  "new": "(1.0 + bessel_i0e(r * r / (s * s)))"
+ },
+ {
+  "label": "the rim integral's disc area is linear in sigma",
+  "old": "let part = |a: f64, s: f64| a * PI * s * s *",
+  "new": "let part = |a: f64, s: f64| a * PI * s *"
+ },
+ {
+  "label": "the rim limit sums the two discs",
+  "old": "(self.a_e * self.s_e * self.s_e - self.a_i * self.s_i * self.s_i)",
+  "new": "(self.a_e * self.s_e * self.s_e + self.a_i * self.s_i * self.s_i)"
+ },
+ {
+  "label": "a non-negative resting level is classified on the sheet",
+  "old": "pub fn regime2(kernel: &MexicanHat, h: f64) -> Result<Regime, FieldError> {\n    if !(h < 0.0) || !h.is_finite() {",
+  "new": "pub fn regime2(kernel: &MexicanHat, h: f64) -> Result<Regime, FieldError> {\n    if !h.is_finite() {"
+ },
+ {
+  "label": "the sheet's scan runs to two inhibitory widths rather than twenty",
+  "old": "    let far = 20.0 * kernel.s_i;",
+  "new": "    let far = 2.0 * kernel.s_i;"
+ },
+ {
+  "label": "the sheet's no-bump test ignores the resting level",
+  "old": "    if peak.1 + h < 0.0 {",
+  "new": "    if peak.1 < 0.0 {"
+ },
+ {
+  "label": "the sheet is never unbounded",
+  "old": "if kernel.rim_integral_at_infinity() + h >= 0.0 {",
+  "new": "if false {"
+ },
+ {
+  "label": "the sheet's unstable radius is sought over the whole scan",
+  "old": "let ignition = bisect(|r| kernel.rim_integral(r) + h, 0.0, peak.0);",
+  "new": "let ignition = bisect(|r| kernel.rim_integral(r) + h, 0.0, 2.0 * far);"
+ },
+ {
+  "label": "the sheet's stable radius is sought from zero, so its bracket holds both roots",
+  "old": "let settled = bisect(|r| kernel.rim_integral(r) + h, peak.0, 2.0 * far);",
+  "new": "let settled = bisect(|r| kernel.rim_integral(r) + h, 0.0, 2.0 * far);"
+ },
+ {
+  "label": "the sheet reports its two radii swapped",
+  "old": "    let settled = bisect(|r| kernel.rim_integral(r) + h, peak.0, 2.0 * far);\n    Ok(Regime::Bistable { ignition, settled })",
+  "new": "    let settled = bisect(|r| kernel.rim_integral(r) + h, peak.0, 2.0 * far);\n    Ok(Regime::Bistable { ignition: settled, settled: ignition })"
+ },
+ {
+  "label": "a sheet of seven points a side is built",
+  "old": "        if n < 8 {\n            return Err(FieldError::TooFew { n });\n        }\n        if n > 512 {",
+  "new": "        if n < 7 {\n            return Err(FieldError::TooFew { n });\n        }\n        if n > 512 {"
+ },
+ {
+  "label": "a sheet of more than five hundred and twelve points a side is built",
+  "old": "        if n > 512 {",
+  "new": "        if n > 1024 {"
+ },
+ {
+  "label": "a non-negative resting level is accepted by the sheet",
+  "old": "        if !(h < 0.0) || !h.is_finite() {\n            return Err(FieldError::OutOfRange { what: \"h\", value: h, low: f64::NEG_INFINITY, high: 0.0 });\n        }\n        let tau = positive(\"tau\", tau)?;\n        if !(length >= 12.0 * kernel.s_i)",
+  "new": "        if !h.is_finite() {\n            return Err(FieldError::OutOfRange { what: \"h\", value: h, low: f64::NEG_INFINITY, high: 0.0 });\n        }\n        let tau = positive(\"tau\", tau)?;\n        if !(length >= 12.0 * kernel.s_i)"
+ },
+ {
+  "label": "the sheet need only be six inhibitory widths a side",
+  "old": "if !(length >= 12.0 * kernel.s_i) || !length.is_finite() {",
+  "new": "if !(length >= 6.0 * kernel.s_i) || !length.is_finite() {"
+ },
+ {
+  "label": "a new sheet rests at zero rather than at h",
+  "old": "u: vec![h; n * n] })",
+  "new": "u: vec![0.0; n * n] })"
+ },
+ {
+  "label": "the active area is a length times a count rather than an area times a count",
+  "old": "let area = self.dx() * self.dx() * self.u.iter()",
+  "new": "let area = self.dx() * self.u.iter()"
+ },
+ {
+  "label": "the active area counts resting points",
+  "old": "let area = self.dx() * self.dx() * self.u.iter().filter(|u| **u > 0.0).count() as f64;",
+  "new": "let area = self.dx() * self.dx() * self.u.iter().filter(|u| **u >= self.h).count() as f64;"
+ },
+ {
+  "label": "a non-finite second coordinate is seeded",
+  "old": "if !centre[0].is_finite() || !centre[1].is_finite() {",
+  "new": "if !centre[0].is_finite() {"
+ },
+ {
+  "label": "a disc of zero radius is seeded",
+  "old": "if !(radius > 0.0) || !(radius <= 0.25 * self.length) {",
+  "new": "if !(radius >= 0.0) || !(radius <= 0.25 * self.length) {"
+ },
+ {
+  "label": "a seeded disc may span half the sheet",
+  "old": "if !(radius > 0.0) || !(radius <= 0.25 * self.length) {",
+  "new": "if !(radius > 0.0) || !(radius <= 0.5 * self.length) {"
+ },
+ {
+  "label": "the sheet is seeded transposed",
+  "old": "self.u[iy * n + ix]",
+  "new": "self.u[ix * n + iy]"
+ },
+ {
+  "label": "the seed's two coordinates are swapped",
+  "old": "(wrapped(ix as f64 * dx - centre[0]), wrapped(iy as f64 * dx - centre[1]))",
+  "new": "(wrapped(ix as f64 * dx - centre[1]), wrapped(iy as f64 * dx - centre[0]))"
+ },
+ {
+  "label": "the seeded disc is below rest rather than above it",
+  "old": "if ddx.hypot(ddy) < radius { -h / 100.0 } else { h };",
+  "new": "if ddx.hypot(ddy) < radius { h / 100.0 } else { h };"
+ },
+ {
+  "label": "the sheet's step guard ignores tau",
+  "old": "    pub fn step(&mut self, dt: f64) -> Result<usize, FieldError> {\n        if !(dt > 0.0) || !(dt <= self.tau) {",
+  "new": "    pub fn step(&mut self, dt: f64) -> Result<usize, FieldError> {\n        if !(dt > 0.0) {"
+ },
+ {
+  "label": "the sheet takes a step of zero",
+  "old": "    pub fn step(&mut self, dt: f64) -> Result<usize, FieldError> {\n        if !(dt > 0.0) || !(dt <= self.tau) {",
+  "new": "    pub fn step(&mut self, dt: f64) -> Result<usize, FieldError> {\n        if !(dt >= 0.0) || !(dt <= self.tau) {"
+ },
+ {
+  "label": "the kernel table is one row short",
+  "old": "        let half = n / 2 + 1;",
+  "new": "        let half = n / 2;"
+ },
+ {
+  "label": "the kernel table's separations are summed rather than euclidean",
+  "old": "self.kernel.w(dx * ((q / half) as f64).hypot((q % half) as f64))",
+  "new": "self.kernel.w(dx * ((q / half) as f64 + (q % half) as f64))"
+ },
+ {
+  "label": "the kernel table is built in grid points rather than in length",
+  "old": "self.kernel.w(dx * ((q / half) as f64).hypot((q % half) as f64))",
+  "new": "self.kernel.w(((q / half) as f64).hypot((q % half) as f64))"
+ },
+ {
+  "label": "the sheet's step treats resting points as active",
+  "old": "let active: Vec<(usize, usize)> = (0..n * n).filter(|&q| self.u[q] > 0.0).map(|q| (q / n, q % n)).collect();",
+  "new": "let active: Vec<(usize, usize)> = (0..n * n).filter(|&q| self.u[q] >= self.h).map(|q| (q / n, q % n)).collect();"
+ },
+ {
+  "label": "the active points' row and column are swapped",
+  "old": ".map(|q| (q / n, q % n)).collect();",
+  "new": ".map(|q| (q % n, q / n)).collect();"
+ },
+ {
+  "label": "the sheet's separations are not wrapped",
+  "old": "            let d = p.abs_diff(q);\n            d.min(n - d)\n        };",
+  "new": "            let d = p.abs_diff(q);\n            d.min(n / 2)\n        };"
+ },
+ {
+  "label": "the sheet's euler factor ignores tau",
+  "old": "        let a = dt / self.tau;\n        let hops = |p: usize, q: usize| {",
+  "new": "        let a = dt;\n        let hops = |p: usize, q: usize| {"
+ },
+ {
+  "label": "the sheet's euler step replaces the activation rather than adding to it",
+  "old": "self.u[q] + a * (-self.u[q] + lateral * dx * dx + self.h)",
+  "new": "a * (-self.u[q] + lateral * dx * dx + self.h)"
+ },
+ {
+  "label": "the sheet has no leak",
+  "old": "self.u[q] + a * (-self.u[q] + lateral * dx * dx + self.h)",
+  "new": "self.u[q] + a * (-self.u[q] + lateral * dx * dx)"
+ },
+ {
+  "label": "the sheet forgets its resting level",
+  "old": "self.u[q] + a * (-self.u[q] + lateral * dx * dx + self.h)",
+  "new": "self.u[q] + a * (lateral * dx * dx + self.h)"
+ },
+ {
+  "label": "the sheet reports every point as active",
+  "old": "        self.u = next;\n        Ok(active.len())\n    }\n}",
+  "new": "        self.u = next;\n        Ok(n * n)\n    }\n}"
  }
 ]

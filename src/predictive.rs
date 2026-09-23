@@ -841,4 +841,203 @@ mod tests {
         assert_eq!(relative_mismatch(&[vec![1.0]], &[vec![0.0]]), None);
         assert_eq!(relative_mismatch(&[vec![3.0, 0.0]], &[vec![0.0, 4.0]]), Some(1.25));
     }
+
+    /// Pins the value of [`MAX_STEPS`] and the INCLUSIVE upper end of the step check.
+    /// `bad_arguments_are_refused` asks only for `MAX_STEPS + 1`, which is refused whatever the
+    /// constant happens to be and whichever way the comparison is written at the boundary, so
+    /// neither a ceiling ten times too low nor a `>=` in place of `>` could fail the suite.
+    #[test]
+    fn the_step_ceiling_is_ten_million_and_a_request_for_exactly_it_is_admitted() {
+        const { assert!(MAX_STEPS == 10_000_000, "the relaxation step ceiling is ten million") };
+        assert_eq!(step_count(MAX_STEPS), Ok(MAX_STEPS));
+        assert_eq!(step_count(0), Ok(0));
+        assert_eq!(
+            step_count(MAX_STEPS + 1),
+            Err(PredictiveError::OutOfRange { what: "steps", value: 10_000_001.0, low: 0.0, high: 10_000_000.0 })
+        );
+    }
+
+    /// Pins that an INFINITY is as unacceptable as a `NaN`, and that the reported index is the
+    /// offending entry's own. Every non-finite case in `bad_arguments_are_refused` uses a `NaN`
+    /// and matches the index with `..`, so refusing only `NaN`, and reporting position zero for
+    /// an entry anywhere in the array, both passed.
+    #[test]
+    fn a_non_finite_entry_is_refused_wherever_it_sits_and_the_error_names_its_index() {
+        let m = model();
+        assert_eq!(m.map(&[0.0, f64::INFINITY, 0.0]), Err(PredictiveError::NonFinite { what: "y", index: 1 }));
+        assert_eq!(m.map(&[0.0, 0.0, f64::NAN]), Err(PredictiveError::NonFinite { what: "y", index: 2 }));
+        assert_eq!(
+            m.errors(&[0.0, f64::NEG_INFINITY], &[0.0; 3]),
+            Err(PredictiveError::NonFinite { what: "x", index: 1 })
+        );
+        assert_eq!(
+            LinearGaussian::new(2, 2, vec![1.0, 1.0, f64::INFINITY, 1.0], 1.0, 1.0, vec![0.0; 2]),
+            Err(PredictiveError::NonFinite { what: "w", index: 2 })
+        );
+        assert_eq!(
+            LinearGaussian::new(1, 2, vec![1.0, 1.0], 1.0, 1.0, vec![0.0, f64::INFINITY]),
+            Err(PredictiveError::NonFinite { what: "prior", index: 1 })
+        );
+        assert_eq!(
+            TutorialNeuron::new(f64::INFINITY, 1.0, 1.0),
+            Err(PredictiveError::NonFinite { what: "v_p", index: 0 })
+        );
+        let mut cell = TutorialNeuron::new(1.0, 1.0, 1.0).unwrap();
+        assert_eq!(cell.step(1e-3, f64::NEG_INFINITY), Err(PredictiveError::NonFinite { what: "u", index: 0 }));
+    }
+
+    /// Pins that an infinite variance is out of range. `bad_arguments_are_refused` offers `0.0`
+    /// and `-1.0`, which a bare `v > 0.0` refuses just as well — the finiteness half of the guard
+    /// was unread, and an infinite variance would have silently zeroed every precision weight.
+    #[test]
+    fn an_infinite_variance_is_not_a_positive_one() {
+        assert_eq!(
+            LinearGaussian::new(1, 1, vec![1.0], f64::INFINITY, 1.0, vec![0.0]),
+            Err(PredictiveError::OutOfRange {
+                what: "var_obs",
+                value: f64::INFINITY,
+                low: f64::MIN_POSITIVE,
+                high: f64::INFINITY
+            })
+        );
+        assert!(matches!(
+            LinearGaussian::new(1, 1, vec![1.0], 1.0, f64::INFINITY, vec![0.0]),
+            Err(PredictiveError::OutOfRange { what: "var_prior", .. })
+        ));
+        assert!(matches!(TutorialNeuron::new(1.0, f64::INFINITY, 1.0), Err(PredictiveError::OutOfRange { what: "var_p", .. })));
+        assert!(matches!(TutorialNeuron::new(1.0, 1.0, f64::INFINITY), Err(PredictiveError::OutOfRange { what: "var_u", .. })));
+        let mut rng = Rng::new(3);
+        assert!(matches!(
+            Network::random(&[2, 2], f64::INFINITY, &mut rng),
+            Err(PredictiveError::OutOfRange { what: "var_out", .. })
+        ));
+        let m = model();
+        assert!(matches!(m.step(&mut [0.0, 0.0], &[0.0; 3], f64::INFINITY), Err(PredictiveError::OutOfRange { what: "dt", .. })));
+    }
+
+    /// Pins the whole state a fresh [`TutorialNeuron`] is in: both error units START SILENT.
+    /// `the_tutorial_neuron_finds_the_tutorials_answer` reads only `phi`, and the relaxation it
+    /// then runs is a contraction that forgets any starting value of the error units, so a
+    /// constructor handing back `ε_p = ε_u = 1` changed nothing the suite looked at.
+    #[test]
+    fn the_tutorial_neuron_starts_with_both_error_units_silent() {
+        assert_eq!(
+            TutorialNeuron::new(3.0, 2.0, 0.5).unwrap(),
+            TutorialNeuron { v_p: 3.0, var_p: 2.0, var_u: 0.5, phi: 3.0, eps_p: 0.0, eps_u: 0.0 }
+        );
+    }
+
+    /// Pins ONE Euler step of the three units against hand arithmetic, from a state that is not a
+    /// fixed point. Every other tutorial-neuron test runs the relaxation to convergence and reads
+    /// the fixed point, which is the same whether the error units are stepped from the estimate
+    /// they were read with or from the already-updated one: the mid-step ordering was invisible.
+    /// Every number below is an exact binary fraction, so the comparison is an equality.
+    #[test]
+    fn one_tutorial_step_reads_all_three_units_before_any_of_them_moves() {
+        let mut cell = TutorialNeuron::new(3.0, 1.0, 1.0).unwrap();
+        cell.phi = 2.0;
+        cell.eps_p = 0.5;
+        cell.eps_u = -0.25;
+        cell.step(0.5, 2.0).unwrap();
+        // dφ = ε_u·2φ − ε_p = −1.5, dε_p = φ − v_p − Σ_p ε_p = −1.5, dε_u = u − φ² − Σ_u ε_u = −1.75,
+        // all three read at φ = 2, then each unit moved by dt = ½ times its own derivative.
+        assert_eq!(cell.phi, 1.25);
+        assert_eq!(cell.eps_p, -0.25);
+        assert_eq!(cell.eps_u, -1.125);
+    }
+
+    /// Pins [`LinearGaussian::stable_dt`] as one over the largest ABSOLUTE sum of a WHOLE row of
+    /// the precision. The only pinned value of it is on a one-by-one model, where a row is its own
+    /// diagonal entry and every entry is positive — so dropping the absolute value, and reading
+    /// only the diagonal, were both unobservable. The two-latent model below has a negative
+    /// off-diagonal, which separates all three readings: 1/3 here, 1/1 signed, 1/2 diagonal-only.
+    #[test]
+    fn the_stable_step_is_one_over_the_largest_absolute_sum_of_a_whole_row() {
+        // One observation of the DIFFERENCE of two causes: WᵀW = [[1, −1], [−1, 1]], and a unit
+        // prior variance puts 1 on each diagonal, so H = [[2, −1], [−1, 2]].
+        let opposed = LinearGaussian::new(1, 2, vec![1.0, -1.0], 1.0, 1.0, vec![0.0, 0.0]).unwrap();
+        assert_eq!(opposed.precision(), vec![2.0, -1.0, -1.0, 2.0]);
+        assert_eq!(opposed.stable_dt(), 1.0 / 3.0);
+        // And on the shared three-by-two model, whose rows sum to 3.5 and 4.5 in absolute value
+        // and to 3.125 and 4.125 on the diagonal alone.
+        let m = model();
+        assert_eq!(m.precision(), vec![3.125, 0.375, 0.375, 4.125]);
+        assert_eq!(m.stable_dt(), 1.0 / 4.5);
+        // The bound is what it is for: Euler at 1/(signed row sum) is NOT a descent here.
+        let y = [0.7];
+        let start = opposed.free_energy(&[2.0, -1.0], &y).unwrap();
+        assert!(opposed.relax(&[2.0, -1.0], &y, opposed.stable_dt(), 200).unwrap().free_energy < start);
+        assert!(opposed.relax(&[2.0, -1.0], &y, 1.0, 200).unwrap().worst_increase > 0.0);
+    }
+
+    /// Pins that [`LinearGaussian::map`] refuses a posterior whose factorisation is ill
+    /// conditioned, rather than solving it. The guard is a pivot floor RELATIVE to the largest
+    /// diagonal entry; switching it to zero still refuses a pivot that is non-positive, so every
+    /// model in the suite — all of them comfortably conditioned — factorised identically with the
+    /// guard on or off. Two causes seen only through their sum make `WᵀW` rank one, and a prior
+    /// variance of 1e15 leaves the second pivot at about 2e-15 against a scale of 1: positive,
+    /// and two hundred times under the guard's 1e-14.
+    #[test]
+    fn a_posterior_whose_second_pivot_is_under_the_guard_is_refused_rather_than_solved() {
+        let flat = LinearGaussian::new(1, 2, vec![1.0, 1.0], 1.0, 1e15, vec![0.0, 0.0]).unwrap();
+        let h = flat.precision();
+        let pivot = h[3] - (h[2] / h[0].sqrt()) * (h[2] / h[0].sqrt());
+        assert!(pivot > 0.0 && pivot < 1e-14 * h[0], "measured second pivot {pivot}, scale {}", h[0]);
+        assert!(
+            matches!(flat.map(&[1.0]), Err(PredictiveError::Solve(ReservoirError::IllConditioned { index: 1, .. }))),
+            "the near-singular posterior was solved: {:?}",
+            flat.map(&[1.0])
+        );
+        // A well-conditioned sibling still solves, so the guard is not refusing everything.
+        let apart = LinearGaussian::new(2, 2, vec![1.0, 0.0, 0.0, 1.0], 1.0, 1e15, vec![0.0, 0.0]).unwrap();
+        assert!(apart.map(&[1.0, 2.0]).is_ok());
+    }
+
+    /// Pins what a relaxation of ZERO steps reports, and that the FIRST step is monitored like
+    /// every other. `euler_at_the_stable_step_descends_and_the_monitor_can_fire` only ever runs
+    /// hundreds of steps and asks for an upper bound on the rise, which is satisfied both by a
+    /// monitor seeded at `−∞` and by one seeded at `0`; and seeding `last` at `+∞` merely makes
+    /// the first difference `−∞`, which is still under any upper bound. Both readings are exact
+    /// differences of the same two evaluations, so they are equalities.
+    #[test]
+    fn a_relaxation_of_no_steps_reports_where_it_started_and_the_first_step_is_monitored() {
+        let m = model();
+        let y = [1.2, -0.4, 0.9];
+        let x0 = [2.0, -2.0];
+        let idle = m.relax(&x0, &y, m.stable_dt(), 0).unwrap();
+        assert_eq!(idle.x, x0.to_vec());
+        assert_eq!(idle.steps, 0);
+        assert_eq!(idle.free_energy, m.free_energy(&x0, &y).unwrap());
+        // Nothing happened, so there is no rise to report at all — not a rise of zero.
+        assert_eq!(idle.worst_increase, f64::NEG_INFINITY);
+        // A step far past 2/L raises the free energy on the very first step, and that first rise
+        // is what a one-step run must report.
+        let reckless = 10.0 * m.stable_dt();
+        let mut after = x0.to_vec();
+        m.step(&mut after, &y, reckless).unwrap();
+        let one = m.relax(&x0, &y, reckless, 1).unwrap();
+        assert_eq!(one.x, after);
+        assert_eq!(one.free_energy, m.free_energy(&after, &y).unwrap());
+        assert_eq!(one.worst_increase, m.free_energy(&after, &y).unwrap() - m.free_energy(&x0, &y).unwrap());
+        assert!(one.worst_increase > 0.0, "measured first-step change {}", one.worst_increase);
+    }
+
+    /// Pins the drawn weights themselves against the same generator run again, which fixes both
+    /// the SCALE and the SIGN. `bad_arguments_are_refused` checks only `|w| ≤ 1/√fan_in`, an upper
+    /// bound that an all-positive draw on `[0, 1/√fan_in)` satisfies just as well — so a network
+    /// initialised with no negative weight at all passed, and so would one scaled by `1/fan_in`.
+    #[test]
+    fn the_initial_weights_straddle_zero_and_scale_as_one_over_the_root_of_the_fan_in() {
+        let mut rng = Rng::new(7);
+        let net = Network::random(&[3, 2], 1.0, &mut rng).unwrap();
+        let mut echo = Rng::new(7);
+        let scale = 1.0 / 3.0f64.sqrt();
+        let want: Vec<f64> = (0..6).map(|_| scale * (2.0 * echo.next_f64() - 1.0)).collect();
+        assert_eq!(net.w[0], want);
+        // And the draw does reach below zero, which an upper bound on the magnitude never says.
+        let mut wide = Rng::new(11);
+        let broad = Network::random(&[64, 64], 1.0, &mut wide).unwrap();
+        assert!(broad.w[0].iter().any(|v| *v < 0.0), "no weight of 4096 was negative");
+        assert!(broad.w[0].iter().any(|v| *v > 0.0), "no weight of 4096 was positive");
+    }
 }

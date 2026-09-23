@@ -376,4 +376,150 @@ mod tests {
         assert!(matches!(cell.learn(&[0.0], 0.5), Err(DelayError::Dimension { .. })));
         assert_eq!(cell.delays, vec![1e-3, 2e-3], "a refused presentation moved nothing");
     }
+
+    /// The refusals render the numbers they carry: a length mismatch says what it GOT and then
+    /// what it WANTED, and an admissible interval is printed low end first.
+    ///
+    /// Why the suite could not see it: every refusal here is asserted with a `matches!`, which
+    /// binds the fields for the reader and compares none of them except through the pattern's own
+    /// literals — and no test in this module renders an error at all. A message reporting the
+    /// required length as the supplied one, or an interval printed backwards, was therefore
+    /// invisible while reading as covered.
+    #[test]
+    fn the_refusals_render_the_lengths_and_bounds_they_carry() {
+        let cell = DelayNeuron::new(vec![1e-3, 2e-3], 1e-2).unwrap();
+        let Err(wrong_length) = cell.arrivals(&[0.0, 0.0, 0.0]) else { panic!("three spikes into two synapses") };
+        assert_eq!(wrong_length, DelayError::Dimension { what: "spikes", got: 3, want: 2 });
+        assert_eq!(wrong_length.to_string(), "spikes has length 3, expected 2");
+        let Err(refused) = DelayNeuron::new(vec![1e-3], 0.0) else { panic!("a longest delay of zero") };
+        let DelayError::OutOfRange { what, value, low, high } = refused.clone() else {
+            panic!("a non-positive longest delay is out of range")
+        };
+        assert_eq!(what, "max_delay");
+        assert_eq!(value, 0.0);
+        assert_eq!(low, f64::MIN_POSITIVE, "the smallest admissible longest delay");
+        assert_eq!(high, f64::INFINITY, "there is no upper bound on the hardware's longest delay");
+        let smallest = f64::MIN_POSITIVE.to_string();
+        assert_eq!(refused.to_string(), format!("max_delay = 0 is outside [{smallest}, inf]"));
+        assert_eq!(DelayError::Empty { what: "synapses" }.to_string(), "synapses is empty");
+        assert_eq!(DelayError::NonFinite { what: "delays", index: 4 }.to_string(), "delays is not finite at 4");
+    }
+
+    /// An infinite longest delay is not a longest delay: no ring buffer holds it, and a delay of
+    /// infinity would then be admissible and every arrival infinite.
+    ///
+    /// Why the suite could not see it: the only bad longest delay it supplies is zero, which the
+    /// strictly-positive half of the guard rejects on its own, so the finiteness half was never
+    /// reached.
+    #[test]
+    fn an_infinite_longest_delay_is_not_a_longest_delay() {
+        for bad in [f64::INFINITY, f64::NAN] {
+            let built = DelayNeuron::new(vec![1e-3], bad);
+            assert!(
+                matches!(built, Err(DelayError::OutOfRange { what: "max_delay", .. })),
+                "a longest delay of {bad} was accepted"
+            );
+        }
+        assert!(matches!(DelayNeuron::new(vec![1e-3], f64::NEG_INFINITY), Err(DelayError::OutOfRange { what: "max_delay", .. })));
+    }
+
+    /// A delay of exactly the longest delay is admissible — the bound is closed, which is the same
+    /// convention `learn` uses when it clamps a delay onto that wall and reports no clip.
+    ///
+    /// Why the suite could not see it: the delays it builds neurons from are strictly inside the
+    /// range, and its one out-of-range case is strictly outside it. The wall itself is reached
+    /// only through `learn`'s clamp, which writes the value straight into the field without going
+    /// back through the constructor — so a constructor that refused its own clamp's output was
+    /// never asked to.
+    #[test]
+    fn a_delay_of_exactly_the_longest_delay_is_admissible() {
+        let at_the_wall = DelayNeuron::new(vec![0.0, 5e-3, 1e-2], 1e-2).unwrap();
+        assert_eq!(at_the_wall.delays, vec![0.0, 5e-3, 1e-2]);
+        // And that is the same state `learn` produces when it clips, so the two agree.
+        let mut clipping = DelayNeuron::new(vec![0.5e-3, 9.5e-3], 10e-3).unwrap();
+        assert_eq!(clipping.learn(&[0.0, 12e-3], 1.0).unwrap().clipped, 2);
+        assert_eq!(clipping.delays, vec![10e-3, 0.0]);
+        assert!(DelayNeuron::new(clipping.delays.clone(), clipping.max_delay).is_ok(), "learn produced a state its own constructor refuses");
+    }
+
+    /// A volley of the wrong length is refused whichever way it is wrong — too few spikes and too
+    /// many.
+    ///
+    /// Why the suite could not see it: the one mismatch it supplies is SHORT (one spike into two
+    /// synapses). A check that only refuses short volleys lets a long one through, and `zip` then
+    /// silently drops the extra spikes — the neuron reports arrivals for a pattern it was not
+    /// shown.
+    #[test]
+    fn a_volley_of_the_wrong_length_is_refused_in_either_direction() {
+        let mut cell = DelayNeuron::new(vec![1e-3, 2e-3], 1e-2).unwrap();
+        assert!(matches!(cell.arrivals(&[0.0]), Err(DelayError::Dimension { got: 1, want: 2, .. })));
+        assert!(matches!(cell.arrivals(&[0.0, 0.0, 0.0]), Err(DelayError::Dimension { got: 3, want: 2, .. })));
+        assert!(matches!(cell.arrivals(&[]), Err(DelayError::Dimension { got: 0, want: 2, .. })));
+        assert!(matches!(cell.spread(&[0.0, 0.0, 0.0]), Err(DelayError::Dimension { got: 3, .. })));
+        assert!(matches!(cell.coincident(&[0.0, 0.0, 0.0], 1e-3), Err(DelayError::Dimension { got: 3, .. })));
+        assert!(matches!(cell.learn(&[0.0, 0.0, 0.0], 0.5), Err(DelayError::Dimension { got: 3, .. })));
+        assert_eq!(cell.delays, vec![1e-3, 2e-3], "a refused presentation moved nothing");
+    }
+
+    /// One synapse coincides with itself: the largest number of arrivals in a window is at least
+    /// one whenever there is an arrival at all.
+    ///
+    /// Why the suite could not see it: every neuron it builds has three or four synapses, and with
+    /// two or more arrivals the window that opens on the SECOND already covers a pair, so the
+    /// count never falls below the right answer. Only a one-synapse neuron has no second arrival
+    /// to open a window, and this module never built one.
+    #[test]
+    fn one_synapse_coincides_with_itself() {
+        let one = DelayNeuron::new(vec![3e-3], 1e-2).unwrap();
+        assert_eq!(one.coincident(&[0.0], 0.0).unwrap(), 1, "an arrival is a coincidence of one");
+        assert_eq!(one.coincident(&[0.0], 1.0).unwrap(), 1);
+        assert_eq!(one.spread(&[0.0]).unwrap(), 0.0);
+        assert_eq!(one.arrivals(&[7e-3]).unwrap(), vec![1e-2]);
+        // Two synapses far apart still answer one, which is the case that reads the same either
+        // way and is here so the contrast is on the record.
+        let two = DelayNeuron::new(vec![0.0, 9e-3], 1e-2).unwrap();
+        assert_eq!(two.coincident(&[0.0, 0.0], 1e-3).unwrap(), 1);
+    }
+
+    /// A learning rate that is not a number is refused, like every other rate outside `(0, 1]`.
+    ///
+    /// Why the suite could not see it: it supplies `0.0` and `1.5`, which an ordinary
+    /// `eta <= 0.0 || eta > 1.0` rejects just as the negated form does. `NaN` is the one value the
+    /// two forms disagree on — every comparison with it is false, so the ordinary form ACCEPTS it
+    /// and every delay becomes `NaN` on the next presentation.
+    #[test]
+    fn a_learning_rate_that_is_not_a_number_is_refused() {
+        let mut cell = DelayNeuron::new(vec![1e-3, 2e-3], 1e-2).unwrap();
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -0.5, 0.0, 1.5] {
+            let seen = cell.learn(&[0.0, 1e-3], bad);
+            assert!(
+                matches!(seen, Err(DelayError::OutOfRange { what: "eta", .. })),
+                "a learning rate of {bad} was accepted"
+            );
+            assert_eq!(cell.delays, vec![1e-3, 2e-3], "a rate of {bad} moved the delays before it was refused");
+        }
+        // The admissible ends of the range are admissible.
+        assert!(cell.learn(&[0.0, 1e-3], 1.0).is_ok());
+        assert!(cell.learn(&[0.0, 1e-3], f64::MIN_POSITIVE).is_ok());
+    }
+
+    /// A capacity that does not fit in the count's own type is refused, not wrapped around it.
+    ///
+    /// Why the suite could not see it: its one overflow case is `n = 40, d_max = u64::MAX`, where
+    /// BOTH powers overflow — so the second of the two checks refuses it even when the first is
+    /// removed, and the refusal is still reported. The total count's check is only load-bearing
+    /// where `(d_max + 1)ⁿ` overflows and `d_maxⁿ` does not, which happens exactly when `d_max + 1`
+    /// is the smallest base whose `n`-th power passes `2¹²⁸`: `n = 2` at `d_max = u64::MAX`,
+    /// `n = 4` at `2³² − 1`, `n = 8` at `2¹⁶ − 1`. Without it the wrapped difference comes back as
+    /// a perfectly plausible `Some`.
+    #[test]
+    fn a_capacity_that_would_overflow_is_refused_rather_than_wrapped() {
+        assert_eq!(distinct_patterns(2, u64::MAX), None, "(2^64)^2 is one past the count's range");
+        assert_eq!(distinct_patterns(4, (1u64 << 32) - 1), None);
+        assert_eq!(distinct_patterns(8, (1u64 << 16) - 1), None);
+        assert_eq!(distinct_patterns(16, (1u64 << 8) - 1), None);
+        // One step under the first of those, everything fits: (2^64 − 1)² − (2^64 − 2)² = 2^65 − 3.
+        assert_eq!(distinct_patterns(2, u64::MAX - 1), Some(2u128.pow(65) - 3));
+        assert_eq!(distinct_patterns(1, u64::MAX), Some(1), "one synapse stands for one pattern");
+    }
 }

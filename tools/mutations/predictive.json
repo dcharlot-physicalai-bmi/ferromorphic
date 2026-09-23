@@ -103,5 +103,267 @@
   "label": "weights not scaled by fan-in",
   "old": "let bound = 1.0 / (p[0] as f64).sqrt();",
   "new": "let bound = 1.0;"
+ },
+ {
+  "label": "the ceiling on relaxation steps is a tenth of the one the doc names",
+  "old": "pub const MAX_STEPS: u64 = 10_000_000;",
+  "new": "pub const MAX_STEPS: u64 = 1_000_000;"
+ },
+ {
+  "label": "a request for exactly the maximum number of steps is refused",
+  "old": "if steps > MAX_STEPS {",
+  "new": "if steps >= MAX_STEPS {"
+ },
+ {
+  "label": "an infinite entry is accepted where only a NaN is refused",
+  "old": "v.iter().position(|x| !x.is_finite())",
+  "new": "v.iter().position(|x| x.is_nan())"
+ },
+ {
+  "label": "the non-finite error always points at the first entry rather than the offending one",
+  "old": "return Err(PredictiveError::NonFinite { what, index: i });",
+  "new": "return Err(PredictiveError::NonFinite { what, index: 0 });"
+ },
+ {
+  "label": "an infinite variance counts as a positive one",
+  "old": "if v.is_finite() && v > 0.0 {",
+  "new": "if v > 0.0 {"
+ },
+ {
+  "label": "a variance of exactly zero is admitted",
+  "old": "if v.is_finite() && v > 0.0 {",
+  "new": "if v.is_finite() && v >= 0.0 {"
+ },
+ {
+  "label": "a model with no observations is built rather than refused",
+  "old": "        if n_obs == 0 {\n            return Err(PredictiveError::Empty { what: \"observations\" });\n        }",
+  "new": "        if false {\n            return Err(PredictiveError::Empty { what: \"observations\" });\n        }"
+ },
+ {
+  "label": "the weight matrix is sized by the sum of the two dimensions rather than their product",
+  "old": "dims(\"w\", w.len(), n_obs * n_lat)?;",
+  "new": "dims(\"w\", w.len(), n_obs + n_lat)?;"
+ },
+ {
+  "label": "a length that is short of the required one passes the dimension check",
+  "old": "if got == want { Ok(()) }",
+  "new": "if got <= want { Ok(()) }"
+ },
+ {
+  "label": "the observation error is the prediction minus the observation",
+  "old": "(y[i] - pred) / self.var_obs",
+  "new": "(pred - y[i]) / self.var_obs"
+ },
+ {
+  "label": "the prediction is made from the prior mean rather than from the current estimate",
+  "old": "(0..self.n_lat).map(|j| self.w[i * self.n_lat + j] * x[j]).sum()",
+  "new": "(0..self.n_lat).map(|j| self.w[i * self.n_lat + j] * self.prior[j]).sum()"
+ },
+ {
+  "label": "the prediction reads the generative weights column-major",
+  "old": "(0..self.n_lat).map(|j| self.w[i * self.n_lat + j] * x[j]).sum()",
+  "new": "(0..self.n_lat).map(|j| self.w[j * self.n_obs + i] * x[j]).sum()"
+ },
+ {
+  "label": "the prior error points from the prior to the estimate",
+  "old": "(x[j] - self.prior[j]) / self.var_prior",
+  "new": "(self.prior[j] - x[j]) / self.var_prior"
+ },
+ {
+  "label": "the free energy drops its factor of a half",
+  "old": "Ok(0.5 * (obs + pri))",
+  "new": "Ok(obs + pri)"
+ },
+ {
+  "label": "the free energy counts only the observation term",
+  "old": "Ok(0.5 * (obs + pri))",
+  "new": "Ok(0.5 * obs)"
+ },
+ {
+  "label": "the precision matrix is written transposed",
+  "old": "h[a * n + b] = dot / self.var_obs;",
+  "new": "h[b * n + a] = dot / self.var_obs;",
+  "equivalent": "EQUIVALENT, not a hole. `dot` is the sum over ascending `i` of `w[i*n+a] * w[i*n+b]`; swapping a and b commutes each product and leaves the summation order alone, so dot(a,b) and dot(b,a) are bit-identical for ANY contents of the public `w` field -- the symmetry is in the construction of `dot`, not in any matrix a constructor happens to accept, so no asymmetric precision is reachable. The double loop visits every ordered pair, so the mutant writes dot(a,b) into position (b,a) exactly where the original writes dot(b,a) into that same position, and the two values are the same bits. The one position written twice is the diagonal (a,a), reached in both versions at the single iteration b = a of outer step a, before that step's `+= 1.0 / var_prior`, and never written again at any later a (b*n+a == c*n+c forces b = c = a). The reads are untouched, so a `w` shortened through the public field panics at the same index in both. MEASURED with a standalone fixture running both bodies: 1,258 cases over n_obs, n_lat in 1..6 with random weights, plus a lopsided w of subnormals, zeros, +/-1e300 and 1e-320 -- every entry bit-identical."
+ },
+ {
+  "label": "the prior precision replaces the likelihood term on the diagonal rather than adding to it",
+  "old": "h[a * n + a] += 1.0 / self.var_prior;",
+  "new": "h[a * n + a] = 1.0 / self.var_prior;"
+ },
+ {
+  "label": "the posterior's right-hand side reads W column-major rather than Wᵀ",
+  "old": "(0..self.n_obs).map(|i| self.w[i * n + j] * y[i]).sum()",
+  "new": "(0..self.n_obs).map(|i| self.w[j * self.n_obs + i] * y[i]).sum()"
+ },
+ {
+  "label": "the posterior ignores the observation and returns the prior",
+  "old": "back / self.var_obs + self.prior[j] / self.var_prior",
+  "new": "self.prior[j] / self.var_prior"
+ },
+ {
+  "label": "the posterior solve's pivot guard is switched off",
+  "old": "cholesky(&self.precision(), n, 1e-14)?",
+  "new": "cholesky(&self.precision(), n, 0.0)?"
+ },
+ {
+  "label": "the Gershgorin row sum is signed rather than absolute",
+  "old": "h[a * n..(a + 1) * n].iter().map(|v| v.abs()).sum::<f64>()",
+  "new": "h[a * n..(a + 1) * n].iter().sum::<f64>()"
+ },
+ {
+  "label": "the Gershgorin bound reads only the diagonal entry of each row",
+  "old": "h[a * n..(a + 1) * n].iter().map(|v| v.abs())",
+  "new": "h[a * n..a * n + 1].iter().map(|v| v.abs())"
+ },
+ {
+  "label": "the value units read the errors through W rather than Wᵀ",
+  "old": "(0..self.n_obs).map(|i| self.w[i * self.n_lat + j] * eps_y[i]).sum()",
+  "new": "(0..self.n_obs).map(|i| self.w[j * self.n_obs + i] * eps_y[i]).sum()"
+ },
+ {
+  "label": "the Euler step overwrites the estimate rather than accumulating into it",
+  "old": "x[j] += dt * (back - eps_x[j]);",
+  "new": "x[j] = dt * (back - eps_x[j]);"
+ },
+ {
+  "label": "the free-energy monitor can report a rise but never a descent",
+  "old": "let mut worst = f64::NEG_INFINITY;",
+  "new": "let mut worst = 0.0_f64;"
+ },
+ {
+  "label": "the first step is exempt from the free-energy monitor",
+  "old": "let mut last = self.free_energy(&x, y)?;",
+  "new": "let mut last = f64::INFINITY;"
+ },
+ {
+  "label": "the monitor compares the new free energy against itself",
+  "old": "            worst = worst.max(f - last);\n            last = f;",
+  "new": "            last = f;\n            worst = worst.max(f - last);"
+ },
+ {
+  "label": "the relaxation reports no steps taken",
+  "old": "Ok(Relaxation { x, free_energy: last, worst_increase: worst, steps })",
+  "new": "Ok(Relaxation { x, free_energy: last, worst_increase: worst, steps: 0 })"
+ },
+ {
+  "label": "the learning signal is stored transposed",
+  "old": "g[i * self.n_lat + j] = eps_y[i] * x[j];",
+  "new": "g[j * self.n_obs + i] = eps_y[i] * x[j];"
+ },
+ {
+  "label": "the error units do not start silent",
+  "old": "Ok(Self { v_p, var_p, var_u, phi: v_p, eps_p: 0.0, eps_u: 0.0 })",
+  "new": "Ok(Self { v_p, var_p, var_u, phi: v_p, eps_p: 1.0, eps_u: 1.0 })"
+ },
+ {
+  "label": "an infinite prior mean is accepted where only a NaN is refused",
+  "old": "if !v_p.is_finite() {",
+  "new": "if v_p.is_nan() {"
+ },
+ {
+  "label": "an infinite observation is accepted where only a NaN is refused",
+  "old": "if !u.is_finite() {",
+  "new": "if u.is_nan() {"
+ },
+ {
+  "label": "the prior term of the posterior slope has the wrong sign",
+  "old": "(self.v_p - phi) / self.var_p",
+  "new": "(phi - self.v_p) / self.var_p"
+ },
+ {
+  "label": "the posterior slope drops g′(φ) from the sensory term",
+  "old": "2.0 * phi * (u - phi * phi) / self.var_u",
+  "new": "2.0 * (u - phi * phi) / self.var_u"
+ },
+ {
+  "label": "the generative function of the tutorial neuron is g(φ) = φ rather than φ²",
+  "old": "let d_u = u - self.phi * self.phi - self.var_u * self.eps_u;",
+  "new": "let d_u = u - self.phi - self.var_u * self.eps_u;"
+ },
+ {
+  "label": "the prior error unit overwrites itself each step rather than integrating",
+  "old": "self.eps_p += dt * d_p;",
+  "new": "self.eps_p = dt * d_p;"
+ },
+ {
+  "label": "the error units step from the already-updated estimate rather than from the state they were read in",
+  "old": "        let d_phi = self.eps_u * 2.0 * self.phi - self.eps_p;\n        let d_p = self.phi - self.v_p - self.var_p * self.eps_p;\n        let d_u = u - self.phi * self.phi - self.var_u * self.eps_u;\n        self.phi += dt * d_phi;",
+  "new": "        let d_phi = self.eps_u * 2.0 * self.phi - self.eps_p;\n        self.phi += dt * d_phi;\n        let d_p = self.phi - self.v_p - self.var_p * self.eps_p;\n        let d_u = u - self.phi * self.phi - self.var_u * self.eps_u;"
+ },
+ {
+  "label": "a single-layer request builds an empty network rather than being refused",
+  "old": "if sizes.len() < 2 {",
+  "new": "if sizes.len() < 1 {"
+ },
+ {
+  "label": "the initialisation scales as one over fan-in rather than as one over its square root",
+  "old": "let bound = 1.0 / (p[0] as f64).sqrt();",
+  "new": "let bound = 1.0 / p[0] as f64;"
+ },
+ {
+  "label": "the initial weights are all positive rather than symmetric about zero",
+  "old": "bound * (2.0 * rng.next_f64() - 1.0)",
+  "new": "bound * rng.next_f64()"
+ },
+ {
+  "label": "predictions are made from the raw activity rather than through tanh",
+  "old": "self.w[l][i * n_in + j] * below[j].tanh()",
+  "new": "self.w[l][i * n_in + j] * below[j]"
+ },
+ {
+  "label": "predictions read the weight matrix transposed",
+  "old": "self.w[l][i * n_in + j] * below[j].tanh()",
+  "new": "self.w[l][j * n_out + i] * below[j].tanh()"
+ },
+ {
+  "label": "the weakly clamped variance sits on the first hidden layer rather than on the output",
+  "old": "    fn errors(&self, x: &[Vec<f64>]) -> Vec<Vec<f64>> {\n        let top = self.w.len() - 1;",
+  "new": "    fn errors(&self, x: &[Vec<f64>]) -> Vec<Vec<f64>> {\n        let top = 0;"
+ },
+ {
+  "label": "the network free energy drops its factor of a half",
+  "old": "Ok(0.5 * eps.iter().enumerate().map(|(l, layer)| {",
+  "new": "Ok(eps.iter().enumerate().map(|(l, layer)| {"
+ },
+ {
+  "label": "the target is never clamped onto the output layer",
+  "old": "x[last] = target.to_vec();",
+  "new": "let _ = target.to_vec();"
+ },
+ {
+  "label": "the first hidden layer never relaxes",
+  "old": "for l in 1..last {",
+  "new": "for l in 2..last {"
+ },
+ {
+  "label": "the reported movement is the largest over the whole relaxation rather than on the final step",
+  "old": "moved = 0.0;",
+  "new": "moved *= 1.0;"
+ },
+ {
+  "label": "the backpropagated output error points from the target to the output",
+  "old": ".map(|(t, y)| t - y).collect();",
+  "new": ".map(|(t, y)| y - t).collect();"
+ },
+ {
+  "label": "the backward pass also computes a delta for the clamped input layer",
+  "old": "if l > 0 {",
+  "new": "if true {",
+  "equivalent": "EQUIVALENT, not a hole. The loop runs l DOWN to 0 and the guarded assignment is the last statement of the body, so at l = 0 the value stored in `delta` is read by nothing: the loop then ends and the function returns `grads`, which was written earlier in that same body. The extra pass also cannot fail where the original returns -- its only fallible reads are `self.w[0][i * n_in + j]` for i < sizes[1] and j < sizes[0], which is exactly the index range `predict_layer(0, ..)` already read in the `forward` call at the head of `backprop`, so any `w[0]` short enough to make it panic has already panicked before the backward pass starts; `x[0][j]` for j < sizes[0] was likewise already read. MEASURED with a standalone fixture running both bodies: 200 cases over the layer shapes [2,3,1], [4,6,5,3], [1,1], [3,1,1,2,4] and [5,2] with random weights, inputs and targets -- every gradient bit-identical."
+ },
+ {
+  "label": "the mismatch is normalised by the first argument rather than by the referee",
+  "old": "let norm: f64 = b.iter().flatten().map(|q| q * q).sum();",
+  "new": "let norm: f64 = a.iter().flatten().map(|q| q * q).sum();"
+ },
+ {
+  "label": "two sets of matrices with matching layer counts but different widths are compared anyway",
+  "old": "if a.len() != b.len() || a.iter().zip(b).any(|(p, q)| p.len() != q.len()) {",
+  "new": "if a.len() != b.len() {"
+ },
+ {
+  "label": "an all-zero referee yields an infinite mismatch rather than None",
+  "old": "if norm == 0.0 { None } else { Some((diff / norm).sqrt()) }",
+  "new": "if norm < 0.0 { None } else { Some((diff / norm).sqrt()) }"
  }
 ]

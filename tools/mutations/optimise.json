@@ -88,5 +88,257 @@
   "label": "colour wall product wraps",
   "old": "vertices.saturating_mul(colours)",
   "new": "vertices.wrapping_mul(colours)"
+ },
+ {
+  "label": "a problem with no variables is accepted",
+  "old": "        if n == 0 {",
+  "new": "        if false {"
+ },
+ {
+  "label": "the all-zero problem is built with a non-zero constant offset",
+  "old": "        Ok(Self { n, q: vec![0.0; n * n], offset: 0.0 })",
+  "new": "        Ok(Self { n, q: vec![0.0; n * n], offset: 1.0 })"
+ },
+ {
+  "label": "a coefficient matrix of the wrong length is accepted",
+  "old": "        if q.len() != n * n {",
+  "new": "        if false {"
+ },
+ {
+  "label": "an infinite coefficient passes the finiteness check because only NaN is refused",
+  "old": "        if let Some(i) = q.iter().position(|x| !x.is_finite()) {",
+  "new": "        if let Some(i) = q.iter().position(|x| x.is_nan()) {"
+ },
+ {
+  "label": "the offset handed to the constructor is dropped",
+  "old": "        me.offset = offset;",
+  "new": "        me.offset = 0.0;"
+ },
+ {
+  "label": "the second variable index may be one past the last variable",
+  "old": "        if j >= self.n {",
+  "new": "        if j > self.n {"
+ },
+ {
+  "label": "an infinite coefficient is added because only NaN is refused",
+  "old": "        if !v.is_finite() {",
+  "new": "        if v.is_nan() {"
+ },
+ {
+  "label": "a coefficient added twice replaces the earlier one rather than accumulating",
+  "old": "        self.q[a * self.n + b] += v;",
+  "new": "        self.q[a * self.n + b] = v;"
+ },
+ {
+  "label": "the constant offset is left out of the energy",
+  "old": "        let mut e = self.offset;",
+  "new": "        let mut e = 0.0;"
+ },
+ {
+  "label": "the linear coefficient is read from the first column rather than the diagonal",
+  "old": "            e += self.q[i * self.n + i];",
+  "new": "            e += self.q[i * self.n];"
+ },
+ {
+  "label": "the pair coefficient is read transposed, out of the empty lower triangle",
+  "old": "                    e += self.q[i * self.n + j];",
+  "new": "                    e += self.q[j * self.n + i];"
+ },
+ {
+  "label": "the flip delta omits the variable's own linear coefficient",
+  "old": "        let mut field = self.q[k * self.n + k];",
+  "new": "        let mut field = 0.0;"
+ },
+ {
+  "label": "the local field counts the flipped variable's own coefficient a second time",
+  "old": "            if j != k && x >> j & 1 == 1 {",
+  "new": "            if x >> j & 1 == 1 {"
+ },
+ {
+  "label": "the delta reads the lower triangle for a partner below the flipped variable",
+  "old": "                let (a, b) = if k < j { (k, j) } else { (j, k) };",
+  "new": "                let (a, b) = (k, j);"
+ },
+ {
+  "label": "the delta accepts a state with bits set past the problem",
+  "old": "        if k >= self.n || (self.n < 64 && x >> self.n != 0) {",
+  "new": "        if k >= self.n {"
+ },
+ {
+  "label": "the Boltzmann bias is not scaled by the inverse temperature",
+  "old": "        let bias: Vec<f64> = (0..n).map(|k| -beta * self.q[k * n + k]).collect();",
+  "new": "        let bias: Vec<f64> = (0..n).map(|k| -self.q[k * n + k]).collect();"
+ },
+ {
+  "label": "the coupling matrix is filled from the empty lower triangle",
+  "old": "                let v = -beta * self.q[i * n + j];",
+  "new": "                let v = -beta * self.q[j * n + i];"
+ },
+ {
+  "label": "the reflected half of the coupling matrix is negated",
+  "old": "                w[j * n + i] = v;",
+  "new": "                w[j * n + i] = -v;"
+ },
+ {
+  "label": "the enumeration bound refuses the largest problem it claims to take",
+  "old": "        if self.n > MAX_BRUTE_FORCE {",
+  "new": "        if self.n >= MAX_BRUTE_FORCE {"
+ },
+ {
+  "label": "the enumeration bound is 2^20 rather than the 2^24 the constant's doc states",
+  "old": "pub const MAX_BRUTE_FORCE: usize = 24;",
+  "new": "pub const MAX_BRUTE_FORCE: usize = 20;"
+ },
+ {
+  "label": "the search starts from zero, so no problem whose optimum is positive is ever improved on",
+  "old": "        let mut best = (0u64, f64::INFINITY);",
+  "new": "        let mut best = (0u64, 0.0);"
+ },
+ {
+  "label": "the all-zero state is never enumerated",
+  "old": "        for x in 0..(1u64 << self.n) {",
+  "new": "        for x in 1..(1u64 << self.n) {"
+ },
+ {
+  "label": "both of an edge's linear terms land on its first endpoint",
+  "old": "            q.add(v, v, -1.0)?;",
+  "new": "            q.add(u, u, -1.0)?;"
+ },
+ {
+  "label": "a self-loop is folded into the problem rather than skipped",
+  "old": "        for &(u, v) in edges {\n            if u == v {\n                continue;\n            }",
+  "new": "        for &(u, v) in edges {\n            if false {\n                continue;\n            }",
+  "equivalent": "Folding a self-loop and skipping it build the SAME problem. An edge (u, u) folds to `add(u, u, -1.0)`, `add(u, u, -1.0)` and then `add(u, v, 2.0)` with v == u, and that third call is a DIAGONAL write like the first two, because `add` sorts its pair and i == j lands on q_uu: the three additions are -1, -1, +2 to one cell and their net is exactly zero. Exactly, not nearly: every coefficient `max_cut` ever writes is an integer (-1 per endpoint, +2 per pair), so every partial sum is an integer of magnitude at most twice the edge count and each addition is exact in f64 far below 2^53. Nothing else in the loop depends on u != v -- there is no counter, no error path taken only by a self-loop, and `q.n` and `q.offset` are untouched -- so the returned `Qubo` is bit-identical for every graph, and so is everything computed from it. The one input that COULD once have told them apart was a self-loop whose endpoint is past the graph, `(5, 5)` on two vertices: the skip accepted it and the fold refused it through `Qubo::add`. That was a real defect on the skip's side, against this function's own `# Errors` section, and it is fixed: every endpoint is now checked against `vertices` BEFORE the fold, so both arms refuse it with the same `Index`. Verified rather than argued: both builds were compiled and their `Qubo` (n, offset, the whole q vector) and `brute_force` printed for eleven graphs -- self-loops alone, self-loops repeated three times, self-loops on every vertex, self-loops mixed with real edges, and both out-of-range forms -- and the two outputs are byte-identical."
+ },
+ {
+  "label": "a colouring with no colours at all is accepted",
+  "old": "        if colours == 0 {",
+  "new": "        if false {"
+ },
+ {
+  "label": "the conflict penalty is never validated, the one-hot penalty is checked twice",
+  "old": "        for (what, v) in [(\"a\", a), (\"b\", b)] {",
+  "new": "        for (what, v) in [(\"a\", a), (\"b\", a)] {"
+ },
+ {
+  "label": "the second endpoint of an edge is not checked against the vertex count",
+  "old": "            if v >= vertices {",
+  "new": "            if u >= vertices {"
+ },
+ {
+  "label": "the variable layout is column-major rather than row-major",
+  "old": "        vertex * self.colours + colour",
+  "new": "        colour * self.vertices + vertex"
+ },
+ {
+  "label": "every colour of a vertex shares one variable",
+  "old": "        vertex * self.colours + colour",
+  "new": "        vertex * self.colours"
+ },
+ {
+  "label": "the one-hot constant is added once rather than once per vertex",
+  "old": "        q.offset = self.a * self.vertices as f64;",
+  "new": "        q.offset = self.a;"
+ },
+ {
+  "label": "the one-hot cross term loses the factor of two the square expands to",
+  "old": "                    q.add(self.var(v, c), self.var(v, c2), 2.0 * self.a)?;",
+  "new": "                    q.add(self.var(v, c), self.var(v, c2), self.a)?;"
+ },
+ {
+  "label": "the edge conflict penalty is the one-hot penalty",
+  "old": "                q.add(self.var(u, c), self.var(v, c), self.b)?;",
+  "new": "                q.add(self.var(u, c), self.var(v, c), self.a)?;"
+ },
+ {
+  "label": "only the first colour's conflicts are penalised on an edge",
+  "old": "            for c in 0..self.colours {\n                q.add(self.var(u, c), self.var(v, c), self.b)?;",
+  "new": "            for c in 0..1 {\n                q.add(self.var(u, c), self.var(v, c), self.b)?;"
+ },
+ {
+  "label": "a vertex with no colour decodes as colour zero",
+  "old": "            colouring.push(chosen?);",
+  "new": "            colouring.push(chosen.unwrap_or(0));"
+ },
+ {
+  "label": "the one-hot choice is not reset between vertices",
+  "old": "        for v in 0..self.vertices {\n            let mut chosen = None;",
+  "new": "        let mut chosen = None;\n        for v in 0..self.vertices {"
+ },
+ {
+  "label": "the annealer does not start from the all-zero state",
+  "old": "        Self { qubo, state: 0 }",
+  "new": "        Self { qubo, state: 1 }"
+ },
+ {
+  "label": "a NaN temperature slips past the sweep's guard",
+  "old": "    pub fn sweep(&mut self, beta: f64, rng: &mut Rng) -> Result<(u64, u64), OptimiseError> {\n        if !(beta > 0.0) || !beta.is_finite() {",
+  "new": "    pub fn sweep(&mut self, beta: f64, rng: &mut Rng) -> Result<(u64, u64), OptimiseError> {\n        if beta <= 0.0 {"
+ },
+ {
+  "label": "the update order is a biased shuffle that never leaves a unit where it was",
+  "old": "            let j = rng.below((i + 1) as u32) as usize;",
+  "new": "            let j = rng.below(i as u32) as usize;"
+ },
+ {
+  "label": "the conditional is evaluated at the current state rather than with the bit cleared",
+  "old": "            let clear = self.state & !(1 << k);",
+  "new": "            let clear = self.state;"
+ },
+ {
+  "label": "the state is written before the flip is counted, so no flip is ever seen",
+  "old": "            if next != self.state {\n                flips += 1;\n            }\n            self.state = next;",
+  "new": "            self.state = next;\n            if next != self.state {\n                flips += 1;\n            }"
+ },
+ {
+  "label": "a sweep is billed as one evaluation rather than one per unit",
+  "old": "        Ok((n as u64, flips))",
+  "new": "        Ok((1, flips))"
+ },
+ {
+  "label": "the geometric schedule is spread over the sweeps rather than the gaps between them",
+  "old": "        let ratio = if sweeps > 1 { (beta_end / beta_start).powf(1.0 / (sweeps as f64 - 1.0)) } else { 1.0 };",
+  "new": "        let ratio = if sweeps > 1 { (beta_end / beta_start).powf(1.0 / (sweeps as f64)) } else { 1.0 };"
+ },
+ {
+  "label": "the starting state is never a candidate for the best",
+  "old": "        let mut best = (self.state, self.qubo.energy(self.state).unwrap_or(f64::INFINITY));",
+  "new": "        let mut best = (self.state, f64::INFINITY);"
+ },
+ {
+  "label": "the sweep the best state was found on is always reported as the first",
+  "old": "                found_at = s;",
+  "new": "                found_at = 0;"
+ },
+ {
+  "label": "the final state is returned in place of the best state seen",
+  "old": "        Ok(Solution { state: best.0, energy: best.1, found_at_sweep: found_at, evaluations, flips })",
+  "new": "        Ok(Solution { state: self.state, energy: best.1, found_at_sweep: found_at, evaluations, flips })"
+ },
+ {
+  "label": "every restart starts from the all-zero state rather than a random one",
+  "old": "            self.state = if self.qubo.n == 64 { u64::from(rng.next_u32()) << 32 | u64::from(rng.next_u32()) } else { (u64::from(rng.next_u32()) << 32 | u64::from(rng.next_u32())) & ((1u64 << self.qubo.n) - 1) };",
+  "new": "            self.state = (u64::from(rng.next_u32()) << 32 | u64::from(rng.next_u32())) & 0;"
+ },
+ {
+  "label": "the losing restarts' spikes are dropped from the bill",
+  "old": "                        b.flips += s.flips;",
+  "new": "                        b.flips += 0;"
+ },
+ {
+  "label": "every restart counts as having reached the best energy",
+  "old": "                        if (s.energy - b.energy).abs() <= 1e-12 {\n                            hits += 1;\n                        }",
+  "new": "                        hits += 1;"
+ },
+ {
+  "label": "the no-restart fallback reports a finite energy",
+  "old": "Solution { state: 0, energy: f64::INFINITY, found_at_sweep: 0, evaluations: 0, flips: 0 }",
+  "new": "Solution { state: 0, energy: 0.0, found_at_sweep: 0, evaluations: 0, flips: 0 }",
+  "equivalent": "The fallback is unreachable. `anneal_restarts` returns `Empty { what: \"restarts\" }` for `restarts == 0` in its first statement, so `for _ in 0..restarts` runs at least once, and its first pass takes the `None` arm and sets `best = Some(..)`; no arm after that can put it back to `None`. `best` is therefore always `Some` at the `unwrap_or`, whose value is the one thing thrown away. What the edit DOES do on every call is construct a different `Solution` value and discard it, and that cannot be observed: `Solution` is a plain data struct of a u64, an f64 and three integers, with no `Drop`, no interior mutability and no side effect in its construction, and the discarded value is never compared, printed or returned. No input could tell them apart, because the input that would reach the fallback is refused four lines earlier. Verified rather than argued: both builds were compiled and every `anneal_restarts` answer printed over 40 configurations -- five seeds, one, two and three restarts and the refused zero, one and three sweeps -- and the two outputs are byte-identical, the `restarts == 0` lines reading `ERR restarts is empty` in both."
+ },
+ {
+  "label": "the out-of-range refusal prints its bounds the wrong way round",
+  "old": "                write!(f, \"{what} = {value} is outside [{low}, {high}]\")",
+  "new": "                write!(f, \"{what} = {value} is outside [{high}, {low}]\")"
  }
 ]

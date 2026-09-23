@@ -178,5 +178,375 @@
   "label": "multi-train accepts a single train",
   "old": "    if trains.len() < 2 {",
   "new": "    if trains.is_empty() {"
+ },
+ {
+  "label": "the pair ceiling is a tenth of the constant it publishes",
+  "old": "pub const MAX_PAIRS: usize = 400_000_000;",
+  "new": "pub const MAX_PAIRS: usize = 40_000_000;"
+ },
+ {
+  "label": "the pair count is the product of the two lengths rather than the square of their total",
+  "old": "    let n = (a.len() + b.len()).saturating_mul(a.len() + b.len());",
+  "new": "    let n = a.len().saturating_mul(b.len());"
+ },
+ {
+  "label": "the refusal reports no pairs at all",
+  "old": "Err(DistanceError::TooLarge { pairs: n })",
+  "new": "Err(DistanceError::TooLarge { pairs: 0 })"
+ },
+ {
+  "label": "the out-of-range message transposes its bounds",
+  "old": "write!(f, \"{what} = {value} is outside [{low}, {high}]\")",
+  "new": "write!(f, \"{what} = {value} is outside [{high}, {low}]\")"
+ },
+ {
+  "label": "the too-large message says fewer where it means more",
+  "old": "Self::TooLarge { pairs } => write!(f, \"{pairs} spike pairs is more than MAX_PAIRS\"),",
+  "new": "Self::TooLarge { pairs } => write!(f, \"{pairs} spike pairs is fewer than MAX_PAIRS\"),"
+ },
+ {
+  "label": "a non-finite spike time is accepted",
+  "old": "    if let Some(i) = t.iter().position(|x| !x.is_finite()) {",
+  "new": "    if let Some(i) = t.iter().position(|_x| false) {"
+ },
+ {
+  "label": "the unsorted index names the spike before the break rather than the one out of order",
+  "old": "        return Err(DistanceError::Unsorted { what, index: i + 1 });",
+  "new": "        return Err(DistanceError::Unsorted { what, index: i });"
+ },
+ {
+  "label": "a scale of zero is positive",
+  "old": "    if v.is_finite() && v > 0.0 {",
+  "new": "    if v.is_finite() && v >= 0.0 {"
+ },
+ {
+  "label": "an infinite time constant, step or window is positive",
+  "old": "    if v.is_finite() && v > 0.0 {",
+  "new": "    if v > 0.0 {"
+ },
+ {
+  "label": "the first row of the edit table is free",
+  "old": "    let mut row: Vec<f64> = (0..=b.len()).map(|j| j as f64).collect();",
+  "new": "    let mut row: Vec<f64> = (0..=b.len()).map(|_j| 0.0).collect();"
+ },
+ {
+  "label": "the distance is read from the first column of the last row",
+  "old": "    Ok(row[b.len()])\n",
+  "new": "    Ok(row[0])\n"
+ },
+ {
+  "label": "the shift cost keeps the sign of the time difference",
+  "old": "            let shift = diagonal + q * (ta - tb).abs();",
+  "new": "            let shift = diagonal + q * (ta - tb);"
+ },
+ {
+  "label": "the shift costs the same however far the spike moves",
+  "old": "            let shift = diagonal + q * (ta - tb).abs();",
+  "new": "            let shift = diagonal + q;"
+ },
+ {
+  "label": "the edit table writes its cell one column to the left",
+  "old": "            row[j + 1] = best;",
+  "new": "            row[j] = best;"
+ },
+ {
+  "label": "an infinite cost per second is accepted",
+  "old": "    if !(q >= 0.0) || !q.is_finite() {",
+  "new": "    if !(q >= 0.0) {"
+ },
+ {
+  "label": "the kernel treats tau as a rate rather than a time constant",
+  "old": "(-(s - t).abs() / tau).exp()",
+  "new": "(-(s - t).abs() * tau).exp()"
+ },
+ {
+  "label": "the second train's self-energy is the first train's",
+  "old": "kernel_sum(a, a, tau) + kernel_sum(b, b, tau)",
+  "new": "kernel_sum(a, a, tau) + kernel_sum(a, a, tau)"
+ },
+ {
+  "label": "the squared norm is not clamped at zero",
+  "old": "- 2.0 * kernel_sum(a, b, tau))).max(0.0))",
+  "new": "- 2.0 * kernel_sum(a, b, tau))))"
+ },
+ {
+  "label": "the quadrature integrates the difference of the traces rather than its square",
+  "old": "        acc += d * d;\n",
+  "new": "        acc += d;\n"
+ },
+ {
+  "label": "the quadrature keeps only the last grid point",
+  "old": "        acc += d * d;\n",
+  "new": "        acc = d * d;\n"
+ },
+ {
+  "label": "the tail is measured in grid steps rather than in time constants",
+  "old": "    let steps = ((last - first + tail * tau) / dt).ceil();",
+  "new": "    let steps = ((last - first + tail * dt) / dt).ceil();"
+ },
+ {
+  "label": "two empty trains are one apart by quadrature",
+  "old": "        return Ok(0.0);\n",
+  "new": "        return Ok(1.0);\n"
+ },
+ {
+  "label": "the interval index is not backed off to the interval that contains the instant",
+  "old": "    t.partition_point(|s| *s <= x).saturating_sub(1).min(t.len().saturating_sub(2))",
+  "new": "    t.partition_point(|s| *s <= x).min(t.len().saturating_sub(2))"
+ },
+ {
+  "label": "the interval clamp admits the last spike as an interval start",
+  "old": "    t.partition_point(|s| *s <= x).saturating_sub(1).min(t.len().saturating_sub(2))",
+  "new": "    t.partition_point(|s| *s <= x).saturating_sub(1).min(t.len().saturating_sub(1))"
+ },
+ {
+  "label": "a spike with no later neighbour is treated as coincident with one",
+  "old": "    let after = other.get(k).map_or(f64::INFINITY, |s| s - spike);",
+  "new": "    let after = other.get(k).map_or(0.0, |s| s - spike);"
+ },
+ {
+  "label": "the gap to the previous spike is signed backwards",
+  "old": "    let before = if k > 0 { spike - other[k - 1] } else { f64::INFINITY };",
+  "new": "    let before = if k > 0 { other[k - 1] - spike } else { f64::INFINITY };"
+ },
+ {
+  "label": "a spike before the other train's first is treated as coincident with it",
+  "old": "    let before = if k > 0 { spike - other[k - 1] } else { f64::INFINITY };",
+  "new": "    let before = if k > 0 { spike - other[k - 1] } else { 0.0 };"
+ },
+ {
+  "label": "a spike exactly at the window's start does not bracket it",
+  "old": "t.first().is_some_and(|s| *s <= start)",
+  "new": "t.first().is_some_and(|s| *s < start)"
+ },
+ {
+  "label": "a spike exactly at the window's end does not bracket it",
+  "old": "t.last().is_some_and(|s| *s >= end)",
+  "new": "t.last().is_some_and(|s| *s > end)"
+ },
+ {
+  "label": "a kreuz train's disorder is reported as a missing edge rather than as disorder",
+  "old": "    train(what, t)?;\n",
+  "new": "    let _ = what;\n"
+ },
+ {
+  "label": "a non-finite window start slips past the check",
+  "old": "    if !start.is_finite() || !end.is_finite() {\n        return Err(DistanceError::NonFinite { what: \"window\", index: 0 });",
+  "new": "    if !end.is_finite() {\n        return Err(DistanceError::NonFinite { what: \"window\", index: 0 });"
+ },
+ {
+  "label": "a window of no length at all is accepted",
+  "old": "    if !(end > start) {",
+  "new": "    if !(end >= start) {"
+ },
+ {
+  "label": "breakpoints include the spikes that fall after the window's end",
+  "old": "    let mut cuts: Vec<f64> = a.iter().chain(b).copied().filter(|t| *t > start && *t < end).collect();",
+  "new": "    let mut cuts: Vec<f64> = a.iter().chain(b).copied().filter(|t| *t > start).collect();"
+ },
+ {
+  "label": "the breakpoints are not sorted before they are paired",
+  "old": "    cuts.sort_by(f64::total_cmp);\n    cuts.dedup();\n",
+  "new": "    cuts.dedup();\n"
+ },
+ {
+  "label": "the window's start is not a breakpoint, its end being pushed twice",
+  "old": "    cuts.push(start);\n",
+  "new": "    cuts.push(end);\n"
+ },
+ {
+  "label": "the isi profile compares train a's interval with itself",
+  "old": "        let (x1, x2) = (a[i + 1] - a[i], b[j + 1] - b[j]);\n        acc +=",
+  "new": "        let (x1, x2) = (a[i + 1] - a[i], a[i + 1] - a[i]);\n        acc +="
+ },
+ {
+  "label": "the isi profile keeps the sign of the difference of the intervals",
+  "old": "        acc += (x1 - x2).abs() / x1.max(x2) * (pair[1] - pair[0]);",
+  "new": "        acc += (x1 - x2) / x1.max(x2) * (pair[1] - pair[0]);"
+ },
+ {
+  "label": "the isi profile is averaged over the segments rather than over time",
+  "old": "        acc += (x1 - x2).abs() / x1.max(x2) * (pair[1] - pair[0]);",
+  "new": "        acc += (x1 - x2).abs() / x1.max(x2);"
+ },
+ {
+  "label": "the isi intervals are read at the segment's right end rather than at a point inside it",
+  "old": "        let mid = 0.5 * (pair[0] + pair[1]);\n        let (i, j) = (interval_of(a, mid), interval_of(b, mid));\n        let (x1, x2) = (a[i + 1] - a[i], b[j + 1] - b[j]);\n        acc +=",
+  "new": "        let mid = pair[1];\n        let (i, j) = (interval_of(a, mid), interval_of(b, mid));\n        let (x1, x2) = (a[i + 1] - a[i], b[j + 1] - b[j]);\n        acc +="
+ },
+ {
+  "label": "the spike profile gives each train the other's interval length",
+  "old": "        let (x1, x2) = (a[i + 1] - a[i], b[j + 1] - b[j]);\n        let gaps",
+  "new": "        let (x1, x2) = (b[j + 1] - b[j], a[i + 1] - a[i]);\n        let gaps"
+ },
+ {
+  "label": "each train's spikes are measured to their own nearest neighbours rather than the other train's",
+  "old": "        let gaps = [nearest_gap(a[i], b), nearest_gap(a[i + 1], b), nearest_gap(b[j], a), nearest_gap(b[j + 1], a)];",
+  "new": "        let gaps = [nearest_gap(a[i], a), nearest_gap(a[i + 1], a), nearest_gap(b[j], b), nearest_gap(b[j + 1], b)];"
+ },
+ {
+  "label": "the following spike's gap is read off the previous spike",
+  "old": "nearest_gap(b[j], a), nearest_gap(b[j + 1], a)];",
+  "new": "nearest_gap(b[j], a), nearest_gap(b[j], a)];"
+ },
+ {
+  "label": "the second train's profile is normalised by the first train's interval",
+  "old": "            let s2 = (gaps[2] * (b[j + 1] - t) + gaps[3] * (t - b[j])) / x2;",
+  "new": "            let s2 = (gaps[2] * (b[j + 1] - t) + gaps[3] * (t - b[j])) / x1;"
+ },
+ {
+  "label": "the spike profile is normalised by one power of the mean interval rather than two",
+  "old": "            (s1 * x2 + s2 * x1) / (2.0 * mean * mean)",
+  "new": "            (s1 * x2 + s2 * x1) / (2.0 * mean)"
+ },
+ {
+  "label": "the mean interval is the longer of the two rather than their average",
+  "old": "            let mean = 0.5 * (x1 + x2);",
+  "new": "            let mean = x1.max(x2);"
+ },
+ {
+  "label": "the trapezoid is not weighted by the segment's length",
+  "old": "        acc += 0.5 * (profile(pair[0]) + profile(pair[1])) * (pair[1] - pair[0]);",
+  "new": "        acc += 0.5 * (profile(pair[0]) + profile(pair[1]));"
+ },
+ {
+  "label": "the trapezoid does not halve the sum of its two ends",
+  "old": "        acc += 0.5 * (profile(pair[0]) + profile(pair[1])) * (pair[1] - pair[0]);",
+  "new": "        acc += (profile(pair[0]) + profile(pair[1])) * (pair[1] - pair[0]);"
+ },
+ {
+  "label": "the spike distance is the integral rather than the time average",
+  "old": "    Ok(acc / (end - start))\n}\n\n/// A pairwise distance over a window",
+  "new": "    Ok(acc)\n}\n\n/// A pairwise distance over a window"
+ },
+ {
+  "label": "only the last pair's distance survives the population loop",
+  "old": "            acc += distance(trains[i], trains[j], start, end)?;",
+  "new": "            acc = distance(trains[i], trains[j], start, end)?;"
+ },
+ {
+  "label": "a train with no spikes is summarised rather than refused",
+  "old": "    if spikes.is_empty() {\n",
+  "new": "    if false {\n"
+ },
+ {
+  "label": "a non-finite spike time is summarised rather than refused",
+  "old": "    if let Some(i) = spikes.iter().position(|x| !x.is_finite()) {",
+  "new": "    if let Some(i) = spikes.iter().position(|_x| false) {"
+ },
+ {
+  "label": "the phase runs over half a turn rather than a whole one",
+  "old": "        let phase = TAU * (t / period).rem_euclid(1.0);",
+  "new": "        let phase = PI * (t / period).rem_euclid(1.0);"
+ },
+ {
+  "label": "the cosine accumulator keeps only the last spike",
+  "old": "        c += phase.cos();\n",
+  "new": "        c = phase.cos();\n"
+ },
+ {
+  "label": "a negative jitter is accepted",
+  "old": "    if !(sigma >= 0.0) || !(period > 0.0) || !sigma.is_finite() || !period.is_finite() {",
+  "new": "    if !(period > 0.0) || !sigma.is_finite() || !period.is_finite() {"
+ },
+ {
+  "label": "a period of zero is accepted by the jitter formula",
+  "old": "    if !(sigma >= 0.0) || !(period > 0.0) || !sigma.is_finite() || !period.is_finite() {",
+  "new": "    if !(sigma >= 0.0) || !sigma.is_finite() || !period.is_finite() {"
+ },
+ {
+  "label": "an infinite period is accepted by the jitter formula",
+  "old": "|| !sigma.is_finite() || !period.is_finite() {",
+  "new": "|| !sigma.is_finite() {"
+ },
+ {
+  "label": "the jitter's characteristic function grows with the jitter",
+  "old": "Some((-2.0 * PI * PI * sigma * sigma / (period * period)).exp())",
+  "new": "Some((2.0 * PI * PI * sigma * sigma / (period * period)).exp())"
+ },
+ {
+  "label": "the jitter is scaled by the period rather than by its square",
+  "old": "Some((-2.0 * PI * PI * sigma * sigma / (period * period)).exp())",
+  "new": "Some((-2.0 * PI * PI * sigma * sigma / period).exp())"
+ },
+ {
+  "label": "a train with no spikes has a rayleigh statistic of zero rather than none",
+  "old": "    if n == 0 || !(0.0..=1.0).contains(&r) {",
+  "new": "    if !(0.0..=1.0).contains(&r) {"
+ },
+ {
+  "label": "the rayleigh test admits a vector strength above one",
+  "old": "    if n == 0 || !(0.0..=1.0).contains(&r) {",
+  "new": "    if n == 0 || !(0.0..=2.0).contains(&r) {"
+ },
+ {
+  "label": "the rayleigh p-value grows with the statistic",
+  "old": "    Some((z, (-z).exp()))",
+  "new": "    Some((z, z.exp()))"
+ },
+ {
+  "label": "a non-finite interval end is reported as a bad window count rather than as non-finite",
+  "old": "    if !start.is_finite() || !end.is_finite() {\n        return Err(DistanceError::NonFinite { what: \"interval\", index: 0 });",
+  "new": "    if !start.is_finite() {\n        return Err(DistanceError::NonFinite { what: \"interval\", index: 0 });"
+ },
+ {
+  "label": "a partial window at the end of the interval is counted as a whole one",
+  "old": "    let windows = ((end - start) / window).floor();",
+  "new": "    let windows = ((end - start) / window).ceil();"
+ },
+ {
+  "label": "one window is enough to have a variance",
+  "old": "    if !(windows >= 2.0) || windows > MAX_PAIRS as f64 {",
+  "new": "    if !(windows >= 1.0) || windows > MAX_PAIRS as f64 {"
+ },
+ {
+  "label": "the window a spike falls in ignores where the interval starts",
+  "old": "        let k = ((t - start) / window).floor();",
+  "new": "        let k = (t / window).floor();"
+ },
+ {
+  "label": "the count array is indexed one window past its end",
+  "old": "        if k >= 0.0 && k < windows {",
+  "new": "        if k >= 0.0 && k <= windows {"
+ },
+ {
+  "label": "a window's count is overwritten rather than incremented",
+  "old": "            counts[k as usize] += 1;\n",
+  "new": "            counts[k as usize] = 1;\n"
+ },
+ {
+  "label": "the counts are averaged over the spikes rather than over the windows",
+  "old": "    let n = counts.len() as f64;\n",
+  "new": "    let n = spikes.len() as f64;\n"
+ },
+ {
+  "label": "a mean count of zero gives a NaN rather than a refusal",
+  "old": "    if mean == 0.0 {\n",
+  "new": "    if false {\n"
+ },
+ {
+  "label": "the variance is the mean square rather than the mean squared deviation",
+  "old": "    let var = counts.iter().map(|&c| (c as f64 - mean) * (c as f64 - mean)).sum::<f64>() / n;",
+  "new": "    let var = counts.iter().map(|&c| (c as f64) * (c as f64)).sum::<f64>() / n;"
+ },
+ {
+  "label": "the clock's fano ratio is periods per window inverted",
+  "old": "    let ratio = window / period;",
+  "new": "    let ratio = period / window;"
+ },
+ {
+  "label": "the clock's fano uses the whole ratio where it means its fractional part",
+  "old": "    let f = ratio - ratio.floor();",
+  "new": "    let f = ratio;"
+ },
+ {
+  "label": "the clock's fano is f(1 + f) rather than f(1 - f)",
+  "old": "Some(f * (1.0 - f) / ratio)",
+  "new": "Some(f * (1.0 + f) / ratio)"
+ },
+ {
+  "label": "an infinite window is accepted by the clock's fano formula",
+  "old": "|| !period.is_finite() || !window.is_finite() {",
+  "new": "|| !period.is_finite() {"
  }
 ]

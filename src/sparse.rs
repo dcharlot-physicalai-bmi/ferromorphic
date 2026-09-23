@@ -288,8 +288,27 @@ impl Dictionary {
     }
 }
 
+/// A source of uniform draws on `[0, 1)`.
+///
+/// [`normal`] reaches its generator through this trait rather than through [`Rng`] directly, for
+/// one reason: the guard on a zero draw. `ln(0)` is `-inf`, and `Rng::next_f64` builds its result
+/// from 53 bits, so it returns exactly zero with probability `2^-53` per draw — about one draw in
+/// nine thousand million million. No test can wait for that, so the guard was reachable from
+/// nothing and a sweep that deleted it saw every test pass. A one-line stub that always hands back
+/// zero reaches it in one call.
+trait Uniform {
+    /// The next uniform draw on `[0, 1)`.
+    fn next_f64(&mut self) -> f64;
+}
+
+impl Uniform for Rng {
+    fn next_f64(&mut self) -> f64 {
+        Rng::next_f64(self)
+    }
+}
+
 /// A standard normal draw by Box-Muller on the crate's generator.
-fn normal(rng: &mut Rng) -> f64 {
+fn normal<R: Uniform>(rng: &mut R) -> f64 {
     let u1 = rng.next_f64().max(1e-300);
     let u2 = rng.next_f64();
     (-2.0 * u1.ln()).sqrt() * (core::f64::consts::TAU * u2).cos()
@@ -712,7 +731,7 @@ impl SpikingLca {
 
 #[cfg(test)]
 mod tests {
-    use super::{Dictionary, Lca, SparseError, SpikingLca, Threshold, lateral_ops_per_step};
+    use super::{Dictionary, Lca, SparseError, SpikingLca, Threshold, Uniform, lateral_ops_per_step, normal};
     use crate::rng::Rng;
 
     /// Both thresholds are the proximal operators the doc names, checked by grid search over
@@ -959,5 +978,414 @@ mod tests {
         assert_eq!(burst.step(50e-3, &[5.0, 0.0]).unwrap(), 1, "one neuron fired");
         assert_eq!(burst.spikes, vec![223, 0]);
         assert_eq!((burst.ledger.spikes_out, burst.ledger.syn_ops, burst.ledger.syn_fetches), (223, 223, 223));
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // The fourth mutation sweep: seventeen edits this module's suite could not see.
+    // ------------------------------------------------------------------------------------------
+
+    /// Every guard on the way in refuses what it was written to refuse. Four of them had never
+    /// been handed a bad input: [`Dictionary::project`] was only ever given finite signals (the
+    /// suite checked [`Dictionary::synthesise`]'s finiteness guard and assumed the twin),
+    /// [`Lca::objective`] was only ever called from [`Lca::run`], which supplies a signal of the
+    /// right length by construction, and [`SpikingLca::step`] was only ever reached through
+    /// [`SpikingLca::run`], which does the same for `b` and passes the same `dt` every tick — so
+    /// deleting any of those four checks left the whole suite green. A signal of the wrong length
+    /// scores the part that overlaps and reports a number, which is the failure mode worth
+    /// refusing: it is a smaller objective, not an error.
+    #[test]
+    fn a_projection_an_objective_and_a_spiking_step_refuse_the_input_they_cannot_score() {
+        let d = Dictionary::identity(3).unwrap();
+        assert!(matches!(
+            d.project(&[1.0, f64::NAN, 0.0]),
+            Err(SparseError::NonFinite { what: "signal", index: 1 })
+        ));
+        assert!(matches!(
+            d.project(&[f64::INFINITY, 0.0, 0.0]),
+            Err(SparseError::NonFinite { what: "signal", index: 0 })
+        ));
+        assert!(matches!(
+            d.project(&[0.0, 0.0, f64::NEG_INFINITY]),
+            Err(SparseError::NonFinite { what: "signal", index: 2 })
+        ));
+
+        let lca = Lca::new(d.clone(), 0.1, 1e-2, Threshold::Soft).unwrap();
+        // Short and long alike: a shorter signal is the dangerous one, because `zip` truncates
+        // and the objective comes back finite and smaller than the true one.
+        assert!(matches!(
+            lca.objective(&[1.0, 0.0], &[0.0; 3]),
+            Err(SparseError::Dimension { what: "signal", got: 2, want: 3 })
+        ));
+        assert!(matches!(
+            lca.objective(&[1.0, 0.0, 0.0, 0.0], &[0.0; 3]),
+            Err(SparseError::Dimension { what: "signal", got: 4, want: 3 })
+        ));
+
+        let mut sp = SpikingLca::new(d, 0.1, 1e-2, 2e-2, 100.0, Threshold::Soft).unwrap();
+        assert!(matches!(
+            sp.step(1e-3, &[0.0; 2]),
+            Err(SparseError::Dimension { what: "projection", got: 2, want: 3 })
+        ));
+        assert!(matches!(
+            sp.step(1e-3, &[0.0; 4]),
+            Err(SparseError::Dimension { what: "projection", got: 4, want: 3 })
+        ));
+        for bad in [0.0, -1e-3, f64::NAN, f64::INFINITY] {
+            assert!(
+                matches!(sp.step(bad, &[0.0; 3]), Err(SparseError::OutOfRange { what: "dt", .. })),
+                "the spiking step accepted dt = {bad}"
+            );
+        }
+        // A refused step is not a step: nothing ticked, nothing fired, nothing was charged.
+        assert_eq!(sp.ticks, 0);
+        assert_eq!(sp.ledger.neuron_updates(), 0);
+        assert!(sp.u.iter().all(|&x| x == 0.0));
+    }
+
+    /// The spike-count readout refuses a window that is not a positive length of time, `NaN`
+    /// included. The suite only ever called [`SpikingLca::counted_magnitudes`] with the same `dt`
+    /// the run used, so the guard was never handed anything to refuse — and the comparison that
+    /// does the refusing is the negated one, `!(dt > 0.0)`, precisely because the readable-looking
+    /// `dt <= 0.0` is false for `NaN` and would hand back a vector of `NaN` counts instead of
+    /// `None`. This crate allows `clippy::neg_cmp_op_on_partial_ord` for exactly that reason.
+    #[test]
+    fn the_counted_magnitudes_refuse_a_window_that_is_not_a_positive_length_of_time() {
+        let mut sp =
+            SpikingLca::new(Dictionary::identity(2).unwrap(), 0.3, 1e-2, 2e-2, 1000.0, Threshold::Soft).unwrap();
+        assert_eq!(sp.counted_magnitudes(1e-4), None, "before any tick there is no window");
+        sp.run(&[1.0, 0.0], 1e-4, 200).unwrap();
+        let counted = sp.counted_magnitudes(1e-4).expect("after 200 ticks there is a window");
+        assert!(counted[0] > 0.0, "the driven neuron fired: {counted:?}");
+        for bad in [f64::NAN, 0.0, -1e-4, f64::NEG_INFINITY] {
+            assert_eq!(sp.counted_magnitudes(bad), None, "a tick length of {bad} is not a window");
+        }
+    }
+
+    /// Mutual coherence is a maximum of MAGNITUDES, so a pair of atoms that point away from each
+    /// other is exactly as hard as a pair that points together. Every dictionary the suite fed to
+    /// [`Dictionary::coherence`] had its largest off-diagonal Gram entry POSITIVE — the hand case
+    /// `(1, 0)`, `(0.6, 0.8)`, the identity, and a random one only ever compared against an upper
+    /// bound — so dropping the `.abs()` and taking the largest signed inner product changed no
+    /// answer the suite read. Here the largest entry is negative, and the signed form reports the
+    /// dictionary as orthogonal.
+    #[test]
+    fn the_mutual_coherence_is_a_magnitude_so_an_anticorrelated_pair_is_as_hard_as_a_parallel_one() {
+        // Two unit atoms in R² at 180° − 53°: (1, 0) and (−0.6, −0.8). Their inner product is
+        // −0.6 and the coherence is 0.6.
+        let d = Dictionary::new(2, 2, vec![1.0, -0.6, 0.0, -0.8]).unwrap();
+        assert_eq!(d.gram(), vec![1.0, -0.6, -0.6, 1.0]);
+        assert_eq!(d.coherence(), Some(0.6));
+        // Three atoms where every off-diagonal entry is negative: a signed maximum reports zero.
+        let t = Dictionary::new(2, 3, vec![1.0, -0.5, -0.5, 0.0, 0.75f64.sqrt(), -0.75f64.sqrt()]).unwrap();
+        let c = t.coherence().unwrap();
+        assert!((c - 0.5).abs() < 1e-15, "the three-atom frame's coherence is 0.5, got {c}");
+        let tg = t.gram();
+        for i in 0..3 {
+            for j in 0..3 {
+                if i != j {
+                    assert!(tg[i * 3 + j] < 0.0, "off-diagonal {i},{j} is {} and not negative", tg[i * 3 + j]);
+                }
+            }
+        }
+        // And on a random dictionary it is the largest |g_ij| off the diagonal, recomputed here.
+        let mut rng = Rng::new(404);
+        let r = Dictionary::random_unit(6, 14, &mut rng).unwrap();
+        let g = r.gram();
+        let mut want = 0.0f64;
+        let mut signed = 0.0f64;
+        for i in 0..14 {
+            for j in 0..14 {
+                if i != j {
+                    want = want.max(g[i * 14 + j].abs());
+                    signed = signed.max(g[i * 14 + j]);
+                }
+            }
+        }
+        assert_eq!(r.coherence(), Some(want));
+        assert!(want > signed, "measured: largest magnitude {want} against largest signed {signed}");
+    }
+
+    /// The Box-Muller draw is standard normal — mean 0, variance 1 — pinned on the DRAW rather
+    /// than on anything downstream of it. Nothing downstream can see it: [`normal`]'s only caller
+    /// is [`Dictionary::random_unit`], which divides each column by its own norm, so scaling every
+    /// component of a column by a constant leaves the normalised atom identical to within a bit or
+    /// two. Halving the radius' factor of two halves the variance and changes no dictionary this
+    /// module can build. The tolerances are the sample size: for `n = 100_000` the standard error
+    /// of the mean is `1/sqrt(n)` = 3.2e-3 and of the variance is `sqrt(2/n)` = 4.5e-3, so the
+    /// bounds below are 6.3 and 22 standard errors — and a variance of 0.5 misses the second one
+    /// five times over.
+    #[test]
+    fn the_normal_draws_have_unit_variance_before_the_normalisation_hides_it() {
+        let mut rng = Rng::new(2718);
+        let n = 100_000;
+        let (mut s, mut s2) = (0.0f64, 0.0f64);
+        let mut extreme = 0usize;
+        for _ in 0..n {
+            let x = normal(&mut rng);
+            assert!(x.is_finite(), "a draw was {x}");
+            s += x;
+            s2 += x * x;
+            extreme += usize::from(x.abs() > 3.0);
+        }
+        let mean = s / f64::from(n);
+        let var = s2 / f64::from(n) - mean * mean;
+        assert!(mean.abs() < 0.02, "mean {mean}, bound 0.02 = 6.3 standard errors");
+        assert!((var - 1.0).abs() < 0.10, "variance {var}, bound 0.10 = 22 standard errors");
+        // A standard normal puts 0.27% of its mass outside ±3; a variance of 1/2 puts 0.003% there,
+        // which is about three draws in this sample rather than about 270.
+        assert!(extreme > 120, "only {extreme} of {n} draws exceeded 3 sigma");
+        // And the normalisation really is what hides it: the atoms come out unit-norm whatever the
+        // radius is scaled by.
+        let mut rng = Rng::new(2718);
+        let dict = Dictionary::random_unit(9, 13, &mut rng).unwrap();
+        for j in 0..13 {
+            let sq: f64 = dict.column(j).iter().map(|x| x * x).sum();
+            assert!((sq - 1.0).abs() < 1e-15, "atom {j} has squared norm {sq}");
+        }
+    }
+
+    /// A uniform draw of exactly zero does not reach the logarithm as an infinity. `ln(0)` is
+    /// `-inf`, the radius is then `inf`, and every atom of the column it lands in comes out `NaN`
+    /// once the normalisation divides by an infinite norm — so [`Dictionary::random_unit`] would
+    /// return `Err(NonFinite)` rather than a dictionary. No test of the public surface can reach
+    /// it: [`Rng::next_f64`] builds a 53-bit fraction and returns exactly zero with probability
+    /// `2^-53`, so the branch is unreachable in any run anyone will ever make, and the sweep that
+    /// deleted the guard saw a green suite. The [`Uniform`] seam exists to hand it that zero.
+    #[test]
+    fn a_zero_uniform_draw_does_not_reach_the_logarithm_as_an_infinity() {
+        /// A generator that returns the one draw the guard exists for.
+        struct AlwaysZero;
+        impl Uniform for AlwaysZero {
+            fn next_f64(&mut self) -> f64 {
+                0.0
+            }
+        }
+        let x = normal(&mut AlwaysZero);
+        assert!(x.is_finite(), "a zero uniform produced {x}");
+        // The guarded draw is exactly the one the floor defines: sqrt(-2 ln 1e-300) · cos(0).
+        assert_eq!(x, (-2.0 * 1e-300f64.ln()).sqrt());
+        // The floor is a floor and not a replacement: any draw above it passes through untouched.
+        /// A generator that hands back a fixed pair of draws, the first of them ordinary.
+        struct Fixed(f64, f64, bool);
+        impl Uniform for Fixed {
+            fn next_f64(&mut self) -> f64 {
+                self.2 = !self.2;
+                if self.2 { self.0 } else { self.1 }
+            }
+        }
+        let y = normal(&mut Fixed(0.25, 0.5, false));
+        assert_eq!(y, (-2.0 * 0.25f64.ln()).sqrt() * (core::f64::consts::TAU * 0.5).cos());
+    }
+
+    /// The soft threshold returns exactly zero at its own threshold, and never manufactures a
+    /// `NaN` from operands that are not `NaN`. The boundary comparison is the mechanism: `u > λ`
+    /// and `u >= λ` disagree on one input, `u == λ`, and for every FINITE `λ` both branches return
+    /// `+0.0` there — IEEE-754 makes `λ − λ` exactly `+0.0` — so the suite could not have seen the
+    /// difference on any admissible threshold whatever it tested. Measured, comparing the two
+    /// forms directly: 441,066 `(u, λ)` pairs with `λ` finite and positive, drawn over random bit
+    /// patterns and over every neighbour of the boundary, 0 differences. What separates them is
+    /// `λ = ∞`, where the strict form thresholds an infinite state to zero and the inclusive one
+    /// computes `∞ − ∞`. `λ` is a public field on both [`Lca`] and [`SpikingLca`], so a threshold
+    /// that no constructor would accept is one assignment away, and a `NaN` coefficient poisons
+    /// every state it then touches without ever raising anything.
+    #[test]
+    fn the_soft_threshold_is_zero_at_its_threshold_and_never_manufactures_a_nan() {
+        for lambda in [5e-324, f64::MIN_POSITIVE, 1e-300, 1e-12, 0.3, 0.7, 1.0, 1e12, f64::MAX] {
+            assert_eq!(Threshold::Soft.apply(lambda, lambda), 0.0, "at +λ = {lambda}");
+            assert_eq!(Threshold::Soft.apply(-lambda, lambda), 0.0, "at −λ = {lambda}");
+            assert_eq!(Threshold::Hard.apply(lambda, lambda), 0.0);
+        }
+        // An infinite threshold silences everything, including an infinite state.
+        assert_eq!(Threshold::Soft.apply(f64::INFINITY, f64::INFINITY), 0.0);
+        assert_eq!(Threshold::Soft.apply(f64::NEG_INFINITY, f64::INFINITY), 0.0);
+        assert_eq!(Threshold::Hard.apply(f64::INFINITY, f64::INFINITY), 0.0);
+        for t in [Threshold::Soft, Threshold::Hard] {
+            for u in [f64::INFINITY, f64::NEG_INFINITY, f64::MAX, f64::MIN, 0.0, -0.0, 1.0, -1.0, 1e-300] {
+                for lambda in [f64::INFINITY, f64::MAX, 1.0, 1e-300, f64::MIN_POSITIVE] {
+                    let a = t.apply(u, lambda);
+                    assert!(!a.is_nan(), "{t:?} made a NaN out of u = {u}, λ = {lambda}");
+                }
+            }
+        }
+    }
+
+    /// [`Lca::reset`] returns the states to zero, which nothing in this suite had ever asked it
+    /// to do: every rate-LCA test built a fresh [`Lca`] for each run, so a `reset` that did
+    /// nothing at all was invisible. The states are what the coefficients are read off, so a
+    /// no-op reset silently continues the previous signal's solution into the next one's run.
+    #[test]
+    fn the_rate_lcas_reset_returns_every_state_to_zero() {
+        let mut lca = Lca::new(Dictionary::identity(3).unwrap(), 0.1, 10e-3, Threshold::Soft).unwrap();
+        lca.run(&[1.0, -2.0, 0.5], 1e-3, 100).unwrap();
+        assert!(lca.u.iter().any(|&x| x != 0.0), "the run left no charge to clear: {:?}", lca.u);
+        assert!(lca.coefficients().iter().any(|&a| a != 0.0));
+        lca.reset();
+        assert_eq!(lca.u, vec![0.0; 3]);
+        assert_eq!(lca.coefficients(), vec![0.0; 3]);
+        // And a reset run reproduces a fresh one exactly, which is what the reset is for.
+        let mut fresh = Lca::new(Dictionary::identity(3).unwrap(), 0.1, 10e-3, Threshold::Soft).unwrap();
+        let y = [0.4, 0.9, -1.1];
+        let a = lca.run(&y, 1e-3, 50).unwrap();
+        let b = fresh.run(&y, 1e-3, 50).unwrap();
+        assert_eq!(a, b);
+    }
+
+    /// One step of the rate LCA holds the coefficients fixed across the sweep: neuron `i` is
+    /// inhibited by the coefficients as they were at the START of the step, not by whatever the
+    /// neurons before it in the loop have just become. Reading them again inside the loop turns a
+    /// Jacobi step into a Gauss-Seidel one, which converges to the SAME fixed point — so every
+    /// test in this suite, all of which check the fixed point or the objective's monotonicity,
+    /// passes either way. What changes is the trajectory, and that is what is pinned here: one
+    /// step from a known state against hand arithmetic, in the same operations and the same order,
+    /// so the comparison is exact.
+    #[test]
+    fn one_step_inhibits_with_the_coefficients_the_step_began_with() {
+        let (lambda, tau, dt) = (0.1, 10e-3, 1e-3);
+        // Two unit atoms in R² with inner product 0.6.
+        let d = Dictionary::new(2, 2, vec![1.0, 0.6, 0.0, 0.8]).unwrap();
+        let mut lca = Lca::new(d, lambda, tau, Threshold::Soft).unwrap();
+        lca.u = vec![1.0, 1.0];
+        let b = [1.0, 1.4];
+        lca.step(dt, &b).unwrap();
+
+        let decay = (-dt / tau).exp();
+        let a0 = Threshold::Soft.apply(1.0, lambda);
+        let a1 = Threshold::Soft.apply(1.0, lambda);
+        let target0 = b[0] - 0.6 * a1;
+        let target1 = b[1] - 0.6 * a0;
+        assert_eq!(lca.u[0], target0 + (1.0 - target0) * decay);
+        assert_eq!(lca.u[1], target1 + (1.0 - target1) * decay);
+
+        // The Gauss-Seidel step this is not: neuron 1 would have been inhibited by the coefficient
+        // neuron 0 acquired half a step ago. Measured, the two sweeps put u_1 at 0.986_677_238_525
+        // and 0.989_611_355_635 — a gap of 2.9e-3 after a single step of a tenth of a time
+        // constant, which is what makes the exact assertions above load-bearing rather than
+        // decorative.
+        let swept = Threshold::Soft.apply(lca.u[0], lambda);
+        let target1_swept = b[1] - 0.6 * swept;
+        let u1_swept = target1_swept + (1.0 - target1_swept) * decay;
+        assert!((lca.u[1] - u1_swept).abs() > 2e-3, "the two sweeps differ by {}", (lca.u[1] - u1_swept).abs());
+    }
+
+    /// The Gram matrix, and the lateral matrix built from it, are symmetric to the last bit —
+    /// not to a tolerance. [`Dictionary::gram`] computes each inner product once and writes that
+    /// one `f64` into both `g[i·n + j]` and `g[j·n + i]`, and `Lca::new`/`SpikingLca::new` then
+    /// zero the diagonal, which preserves symmetry. This is the invariant that makes reading the
+    /// lateral matrix transposed an equivalent edit rather than a defect, so it is asserted here
+    /// rather than left as a remark: `lateral` is private, written only from `gram()`, and has no
+    /// setter, so an asymmetric one is not a state the public API can produce. If a future
+    /// constructor ever admits one, this test fails and that equivalence argument fails with it.
+    #[test]
+    fn the_gram_matrix_and_the_lateral_matrix_are_symmetric_to_the_last_bit() {
+        let mut rng = Rng::new(31);
+        for (m, n) in [(2usize, 2usize), (5, 7), (16, 32), (3, 11)] {
+            let dict = Dictionary::random_unit(m, n, &mut rng).unwrap();
+            let g = dict.gram();
+            let lca = Lca::new(dict.clone(), 0.1, 1e-2, Threshold::Soft).unwrap();
+            let sp = SpikingLca::new(dict, 0.1, 1e-2, 2e-2, 100.0, Threshold::Soft).unwrap();
+            let mut off_diagonal_nonzero = 0usize;
+            for i in 0..n {
+                for j in 0..n {
+                    assert_eq!(g[i * n + j].to_bits(), g[j * n + i].to_bits(), "gram {i},{j} of {m}x{n}");
+                    assert_eq!(lca.lateral[i * n + j].to_bits(), lca.lateral[j * n + i].to_bits());
+                    assert_eq!(sp.lateral[i * n + j].to_bits(), sp.lateral[j * n + i].to_bits());
+                    off_diagonal_nonzero += usize::from(i != j && lca.lateral[i * n + j] != 0.0);
+                }
+            }
+            assert!(off_diagonal_nonzero > 0, "{m}x{n} has no lateral coupling to be symmetric about");
+            assert!((0..n).all(|i| lca.lateral[i * n + i] == 0.0), "the diagonal survived");
+        }
+        // The hand case, where the dictionary itself is not square and could not be symmetric.
+        let d = Dictionary::new(2, 3, vec![1.0, 0.0, 0.6, 0.0, 1.0, 0.8]).unwrap();
+        assert_eq!(d.gram(), vec![1.0, 0.0, 0.6, 0.0, 1.0, 0.8, 0.6, 0.8, 0.6 * 0.6 + 0.8 * 0.8]);
+    }
+
+    /// The worst single-step increase of the objective is floored at zero, so a run that only ever
+    /// fell reports no increase rather than reporting how far it fell. Every assertion in this
+    /// suite is of the form `worst_increase <= 1e-10`, which a large NEGATIVE number passes just as
+    /// happily as zero — so seeding the running maximum at `-inf` instead of `0.0` was invisible,
+    /// and `LcaRun::worst_increase` would have carried `-inf` for a run of no steps at all.
+    #[test]
+    fn a_run_that_only_falls_reports_no_increase_and_a_run_of_no_steps_reports_zero() {
+        let mut lca = Lca::new(Dictionary::identity(4).unwrap(), 0.2, 10e-3, Threshold::Soft).unwrap();
+        let y = [1.0, -0.8, 0.05, 2.0];
+        let idle = lca.run(&y, 1e-3, 0).unwrap();
+        assert_eq!(idle.worst_increase, 0.0, "a run of no steps has no increase to report");
+        assert_eq!(idle.steps, 0);
+        assert_eq!(idle.objective.0, idle.objective.1);
+        let run = lca.run(&y, 1e-3, 500).unwrap();
+        assert!(run.objective.1 < run.objective.0, "the objective did not fall at all");
+        assert!(
+            (0.0..=1e-12).contains(&run.worst_increase),
+            "a monotone run reported {} rather than a number in [0, 1e-12]",
+            run.worst_increase
+        );
+    }
+
+    /// [`SpikingLca::clear_counts`] leaves the sigma-delta accumulators exactly where they are,
+    /// and [`SpikingLca::reset`] discharges the synaptic traces. Both had blind spots. The suite
+    /// calls `clear_counts` between a transient and a measurement and then compares spike counts
+    /// against a rate solution at 5%, which is far too loose to see a fraction of one spike being
+    /// thrown away per neuron; and it calls `reset` and then checks the spike counts and the
+    /// ledger, never the traces — so a reset that left every neighbour's rate estimate charged
+    /// carried the previous signal's answer into the next run.
+    #[test]
+    fn clearing_the_counts_keeps_the_accumulators_and_resetting_discharges_the_traces() {
+        let mut sp =
+            SpikingLca::new(Dictionary::identity(2).unwrap(), 0.3, 10e-3, 20e-3, 1000.0, Threshold::Soft).unwrap();
+        sp.run(&[1.0, 0.0], 1e-4, 250).unwrap();
+        assert!(sp.acc.iter().any(|&a| a != 0.0), "no sigma-delta residue to preserve: {:?}", sp.acc);
+        assert!(sp.traces.iter().any(|&t| t != 0.0), "no trace to discharge: {:?}", sp.traces);
+        assert!(sp.ledger.spikes_out > 0);
+
+        let (acc, u, traces) = (sp.acc.clone(), sp.u.clone(), sp.traces.clone());
+        sp.clear_counts();
+        assert_eq!(sp.acc, acc, "clear_counts spent the fraction of a spike each neuron had banked");
+        assert_eq!(sp.u, u);
+        assert_eq!(sp.traces, traces);
+        assert_eq!(sp.ticks, 0);
+        assert_eq!(sp.ledger.spikes_out, 0);
+        assert!(sp.spikes.iter().all(|&s| s == 0));
+
+        sp.reset();
+        assert_eq!(sp.traces, vec![0.0; 2], "reset left the synaptic traces charged");
+        assert_eq!(sp.u, vec![0.0; 2]);
+        assert_eq!(sp.acc, vec![0.0; 2]);
+        // A reset network reproduces a fresh one tick for tick.
+        let mut fresh =
+            SpikingLca::new(Dictionary::identity(2).unwrap(), 0.3, 10e-3, 20e-3, 1000.0, Threshold::Soft).unwrap();
+        sp.run(&[0.7, 0.4], 1e-4, 300).unwrap();
+        fresh.run(&[0.7, 0.4], 1e-4, 300).unwrap();
+        assert_eq!(sp.traces, fresh.traces);
+        assert_eq!(sp.spikes, fresh.spikes);
+    }
+
+    /// The lateral saving is measured against what a RATE implementation would pay, and that is
+    /// `n(n − 1)` in the number of ATOMS — the size of the lateral matrix — not `m(m − 1)` in the
+    /// signal dimension. Every call to [`SpikingLca::lateral_saving`] in this suite is on the
+    /// identity dictionary, where `m = n = 8` and the two are the same number, so sizing the
+    /// baseline by the wrong one changed nothing. An overcomplete dictionary is the whole point of
+    /// sparse coding, and there `n > m`: here three atoms in two dimensions, where the true
+    /// baseline is 6 operations a step and the signal dimension would claim 2.
+    #[test]
+    fn the_lateral_saving_is_sized_by_the_atom_count_and_not_by_the_signal_dimension() {
+        // Three unit atoms in R²: (1, 0), (0, 1) and (0.6, 0.8).
+        let dict = Dictionary::new(2, 3, vec![1.0, 0.0, 0.6, 0.0, 1.0, 0.8]).unwrap();
+        assert_eq!((dict.m, dict.n), (2, 3));
+        let mut sp = SpikingLca::new(dict, 0.2, 10e-3, 20e-3, 500.0, Threshold::Soft).unwrap();
+        let ticks = 400;
+        sp.run(&[1.0, 0.9], 1e-4, ticks).unwrap();
+        assert!(sp.ledger.syn_ops > 0, "nothing fired, so every baseline reports a saving of 1");
+        assert_eq!(sp.ticks, ticks as u64);
+        // n(n − 1) = 3 · 2 = 6 lateral operations a step, against m(m − 1) = 2 for the dimension.
+        assert_eq!(lateral_ops_per_step(3), 6);
+        assert_eq!(lateral_ops_per_step(2), 2);
+        let want = 1.0 - sp.ledger.syn_ops as f64 / (6.0 * ticks as f64);
+        assert_eq!(sp.lateral_saving(), Some(want));
+        let by_dimension = 1.0 - sp.ledger.syn_ops as f64 / (2.0 * ticks as f64);
+        assert!(
+            (want - by_dimension).abs() > 1e-6,
+            "measured: atom-count baseline {want}, signal-dimension baseline {by_dimension}"
+        );
     }
 }

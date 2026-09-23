@@ -98,5 +98,245 @@
   "label": "a layer past the weight limit is built",
   "old": "sizes.len() < 2 || sizes.contains(&0) || sizes.windows(2).any(|p| p[0].saturating_mul(p[1]) > MAX_WEIGHTS)",
   "new": "sizes.len() < 2 || sizes.contains(&0)"
+ },
+ {
+  "label": "a network of one layer is built rather than refused",
+  "old": "sizes.len() < 2 || sizes.contains(&0)",
+  "new": "sizes.contains(&0)"
+ },
+ {
+  "label": "a layer of zero units is built rather than refused",
+  "old": "sizes.contains(&0) || sizes.windows(2)",
+  "new": "sizes.windows(2)"
+ },
+ {
+  "label": "the weight limit is a sixteenth of the published one",
+  "old": "pub const MAX_WEIGHTS: usize = 1 << 24;",
+  "new": "pub const MAX_WEIGHTS: usize = 1 << 20;"
+ },
+ {
+  "label": "the weight limit is exclusive, so a layer of exactly MAX_WEIGHTS is refused",
+  "old": "> MAX_WEIGHTS)",
+  "new": ">= MAX_WEIGHTS)"
+ },
+ {
+  "label": "the network ignores the seed it was given",
+  "old": "        let mut rng = Rng::new(seed);",
+  "new": "        let mut rng = Rng::new(0);"
+ },
+ {
+  "label": "the direct matrices are shaped by the input width rather than the output width",
+  "old": "        let n_out = sizes[layers];",
+  "new": "        let n_out = sizes[0];"
+ },
+ {
+  "label": "the forward weights are scaled by fan-out rather than fan-in",
+  "old": "uniform(&mut rng, sizes[l + 1], sizes[l], 1.0 / (sizes[l] as f64).sqrt())",
+  "new": "uniform(&mut rng, sizes[l + 1], sizes[l], 1.0 / (sizes[l + 1] as f64).sqrt())"
+ },
+ {
+  "label": "the forward weights are not normalised by their fan-in at all",
+  "old": "uniform(&mut rng, sizes[l + 1], sizes[l], 1.0 / (sizes[l] as f64).sqrt())",
+  "new": "uniform(&mut rng, sizes[l + 1], sizes[l], 1.0)"
+ },
+ {
+  "label": "the sequential feedback matrices are normalised by their output width",
+  "old": "1.0 / (sizes[l + 2] as f64).sqrt()",
+  "new": "1.0 / (sizes[l + 1] as f64).sqrt()"
+ },
+ {
+  "label": "the direct feedback matrices drop the square root in their scale",
+  "old": "1.0 / (n_out as f64).sqrt()",
+  "new": "1.0 / n_out as f64"
+ },
+ {
+  "label": "the random draws are not centred on zero",
+  "old": "scale * (2.0 * rng.next_f64() - 1.0)",
+  "new": "scale * rng.next_f64()"
+ },
+ {
+  "label": "a random network's biases do not start at zero",
+  "old": "vec![0.0; sizes[l + 1]]",
+  "new": "vec![1.0; sizes[l + 1]]"
+ },
+ {
+  "label": "the bias vector is sized by the layer's input width",
+  "old": "(0..layers).map(|l| vec![0.0; sizes[l + 1]]).collect()",
+  "new": "(0..layers).map(|l| vec![0.0; sizes[l]]).collect()"
+ },
+ {
+  "label": "the shape message reports the required length as the supplied one",
+  "old": "write!(f, \"{what} has {got} entries, not {want}\")",
+  "new": "write!(f, \"{what} has {want} entries, not {got}\")"
+ },
+ {
+  "label": "the missing-direct-feedback message does not say which feedback is missing",
+  "old": "f.write_str(\"the direct feedback matrices do not match the network's shape\")",
+  "new": "f.write_str(\"the feedback matrices do not match the network's shape\")"
+ },
+ {
+  "label": "the non-finite message says the quantity is finite",
+  "old": "write!(f, \"{what} is not finite\")",
+  "new": "write!(f, \"{what} is finite\")"
+ },
+ {
+  "label": "tanh's forward pass is the identity",
+  "old": "            Self::Tanh => a.tanh(),",
+  "new": "            Self::Tanh => a,"
+ },
+ {
+  "label": "the linear activation is not the identity",
+  "old": "            Self::Linear => a,",
+  "new": "            Self::Linear => 2.0 * a,"
+ },
+ {
+  "label": "the linear slope is zero, so every hidden update vanishes",
+  "old": "            Self::Linear => 1.0,",
+  "new": "            Self::Linear => 0.0,"
+ },
+ {
+  "label": "the linear slope is doubled",
+  "old": "            Self::Linear => 1.0,",
+  "new": "            Self::Linear => 2.0,"
+ },
+ {
+  "label": "an input longer than the first layer is accepted and silently truncated",
+  "old": "if x.len() != self.sizes[0] {",
+  "new": "if x.len() < self.sizes[0] {"
+ },
+ {
+  "label": "the layer's shape is transposed in the forward pass",
+  "old": "let (rows, cols) = (self.sizes[l + 1], self.sizes[l]);",
+  "new": "let (rows, cols) = (self.sizes[l], self.sizes[l + 1]);"
+ },
+ {
+  "label": "no layer is squashed: the forward pass is linear throughout",
+  "old": "let last = l + 1 == self.layers();",
+  "new": "let last = l + 1 <= self.layers();"
+ },
+ {
+  "label": "every layer reads the input rather than the layer below it",
+  "old": "let below = &h[l];",
+  "new": "let below = &h[0];"
+ },
+ {
+  "label": "the weight rows overlap: each unit reads one element further along",
+  "old": "self.w[l][i * cols..(i + 1) * cols]",
+  "new": "self.w[l][i..i + cols]"
+ },
+ {
+  "label": "the loss is measured on the last hidden layer rather than the output",
+  "old": "let y = &h[self.layers()];",
+  "new": "let y = &h[self.layers() - 1];"
+ },
+ {
+  "label": "a target of the wrong length is accepted by the loss",
+  "old": "        if target.len() != y.len() {",
+  "new": "        if false {"
+ },
+ {
+  "label": "the loss sums the residuals rather than their squares",
+  "old": "(y - t) * (y - t)",
+  "new": "(y - t)"
+ },
+ {
+  "label": "the target is checked against the input width",
+  "old": "        let n_out = self.sizes[layers];",
+  "new": "        let n_out = self.sizes[0];"
+ },
+ {
+  "label": "a target longer than the output layer is accepted and silently truncated",
+  "old": "if target.len() != n_out {",
+  "new": "if target.len() < n_out {"
+ },
+ {
+  "label": "the output delta is squashed by the output slope",
+  "old": "        let mut delta = error.clone();",
+  "new": "        let mut delta: Vec<f64> = error.iter().zip(&h[layers]).map(|(e, y)| e * self.activation.slope(*y)).collect();"
+ },
+ {
+  "label": "the backward pass runs from the input upward",
+  "old": "for l in (0..layers).rev() {",
+  "new": "for l in 0..layers {"
+ },
+ {
+  "label": "the weight update is the transpose of the outer product",
+  "old": "w: delta.iter().flat_map(|d| h[l].iter().map(move |h| d * h)).collect()",
+  "new": "w: h[l].iter().flat_map(|hh| delta.iter().map(move |d| d * hh)).collect()"
+ },
+ {
+  "label": "the weight update uses the layer's output activity rather than its input",
+  "old": "h[l].iter().map(move |h| d * h)",
+  "new": "h[l + 1].iter().map(move |h| d * h)"
+ },
+ {
+  "label": "the bias update is dropped",
+  "old": "b: delta.clone() };",
+  "new": "b: vec![0.0; delta.len()] };"
+ },
+ {
+  "label": "the backward pass does not stop at the input layer",
+  "old": "            if l == 0 {",
+  "new": "            if false {"
+ },
+ {
+  "label": "backprop sums over the layer's inputs rather than its outputs",
+  "old": "let rows = self.sizes[l + 1];",
+  "new": "let rows = self.sizes[l];"
+ },
+ {
+  "label": "the alignment feedback's row length is the layer's own width",
+  "old": "let from = self.sizes[l + 1];",
+  "new": "let from = self.sizes[l];"
+ },
+ {
+  "label": "alignment always uses the first feedback matrix",
+  "old": "let m = &self.feedback[l - 1];",
+  "new": "let m = &self.feedback[0];"
+ },
+ {
+  "label": "the direct matrices are indexed by the layer rather than by the hidden layer",
+  "old": "self.direct.get(l - 1)",
+  "new": "self.direct.get(l)"
+ },
+ {
+  "label": "the direct matrix's rows overlap",
+  "old": "m[j * n_out..(j + 1) * n_out]",
+  "new": "m[j..j + n_out]"
+ },
+ {
+  "label": "the hidden slope is taken at the layer above",
+  "old": "arriving.iter().zip(&h[l])",
+  "new": "arriving.iter().zip(&h[l + 1])"
+ },
+ {
+  "label": "an updates list shorter than the network is applied to the layers it reaches",
+  "old": "        if updates.len() != self.layers() {",
+  "new": "        if false {"
+ },
+ {
+  "label": "only an update wrong in both its weights and its biases is refused",
+  "old": "u.w.len() != self.w[l].len() || u.b.len() != self.b[l].len()",
+  "new": "u.w.len() != self.w[l].len() && u.b.len() != self.b[l].len()"
+ },
+ {
+  "label": "the learning rate is ignored",
+  "old": "|(w, g)| *w -= rate * g",
+  "new": "|(w, g)| *w -= g"
+ },
+ {
+  "label": "cosine compares vectors of different lengths by truncating",
+  "old": "    if a.len() != b.len() {\n        return None;\n    }",
+  "new": "    if false {\n        return None;\n    }"
+ },
+ {
+  "label": "the dot product sums the entries rather than their products",
+  "old": ".map(|(a, b)| a * b).sum();",
+  "new": ".map(|(a, b)| a + b).sum();"
+ },
+ {
+  "label": "the norms are squared lengths with the square root dropped",
+  "old": "(a.iter().map(|a| a * a).sum::<f64>().sqrt(), b.iter().map(|b| b * b).sum::<f64>().sqrt())",
+  "new": "(a.iter().map(|a| a * a).sum::<f64>(), b.iter().map(|b| b * b).sum::<f64>())"
  }
 ]

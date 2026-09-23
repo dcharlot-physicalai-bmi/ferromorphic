@@ -721,4 +721,367 @@ mod tests {
         assert_eq!(wrap_tau(-1e-20), 0.0);
         assert_eq!(wrap_tau(TAU + 0.5), 0.5);
     }
+
+    /// Every error's text names its quantity AND says which way round the mismatch runs.
+    ///
+    /// Why the suite could not see it: every refusal in this module is checked with `matches!` or
+    /// against the enum value, and nothing formats one. A `Display` that swapped `got` for `want`
+    /// or dropped the "not" from "is not finite" would print a fluent, plausible sentence that is
+    /// the exact opposite of what happened, and no assertion in the module reads a message at all.
+    #[test]
+    fn each_error_prints_the_quantity_it_found_and_the_one_it_wanted() {
+        assert_eq!(
+            GridError::Dimension { what: "phases", got: 1, want: 2 }.to_string(),
+            "phases has length 1, expected 2"
+        );
+        assert_eq!(
+            GridError::NonFinite { what: "orientation" }.to_string(),
+            "orientation is not finite"
+        );
+        assert_eq!(GridError::Empty { what: "modules" }.to_string(), "modules is empty");
+        assert_eq!(
+            GridError::OutOfRange { what: "dt", value: 0.0, low: 1.0, high: 2.0 }.to_string(),
+            "dt = 0 is outside [1, 2]"
+        );
+        assert_eq!(
+            GridError::Inconsistent { module: 3 }.to_string(),
+            "the phase of module 3 contradicts the modules before it"
+        );
+        assert_eq!(
+            GridError::RangeOverflow.to_string(),
+            "the least common multiple of the periods overflows u64"
+        );
+        // And the message a real mismatch produces, so the two numbers are not merely a literal
+        // in this test: a three-module code carrying two phases.
+        let mut code = ModularCode::new(vec![3, 5, 7]).unwrap();
+        code.phases = vec![0, 0];
+        assert_eq!(code.decode().unwrap_err().to_string(), "phases has length 2, expected 3");
+    }
+
+    /// An INFINITE spacing, peak rate, orientation or time step is refused, exactly as a `NaN` is.
+    ///
+    /// Why the suite could not see it: the refusal fixtures use `0.0` for the positive quantities
+    /// and `NaN` for the orientation, and both of those are caught by the `!(v > 0.0)` half of the
+    /// guard alone (`NaN > 0.0` is false). Infinity is the one value that passes the positivity
+    /// test and is still not a number a metre or a second can take — and an infinite spacing makes
+    /// every wave vector zero, so the map fires everywhere at `2/3 r_max` and never refuses.
+    #[test]
+    fn an_infinite_parameter_is_refused_as_firmly_as_a_nan() {
+        for bad in [f64::INFINITY, f64::NAN] {
+            assert!(
+                matches!(
+                    GridModule::new(bad, 0.0, [0.0, 0.0], 1.0),
+                    Err(GridError::OutOfRange { what: "spacing", .. })
+                ),
+                "spacing {bad}"
+            );
+            assert!(
+                matches!(
+                    GridModule::new(1.0, 0.0, [0.0, 0.0], bad),
+                    Err(GridError::OutOfRange { what: "rate_max", .. })
+                ),
+                "rate_max {bad}"
+            );
+            assert_eq!(
+                GridModule::new(1.0, bad, [0.0, 0.0], 1.0),
+                Err(GridError::NonFinite { what: "orientation" }),
+                "orientation {bad}"
+            );
+        }
+        // Negative infinity too, on the orientation, which `is_nan()` also lets through.
+        assert_eq!(
+            GridModule::new(1.0, f64::NEG_INFINITY, [0.0, 0.0], 1.0),
+            Err(GridError::NonFinite { what: "orientation" })
+        );
+        // And the time step: an infinite `dt` advances every phase to `NaN` and the integrator
+        // never recovers, because `wrap_tau` of a `NaN` is a `NaN`.
+        let mut est = PhaseIntegrator::at(module(), [0.0, 0.0]).unwrap();
+        let before = est.phases;
+        for bad in [f64::INFINITY, f64::NAN, 0.0, -1.0] {
+            assert!(
+                matches!(
+                    est.step([0.1, 0.0], bad),
+                    Err(GridError::OutOfRange { what: "dt", .. })
+                ),
+                "dt {bad}"
+            );
+        }
+        assert_eq!(est.phases, before, "a refused step must not have moved the phases");
+    }
+
+    /// The wave vectors are rotated `+30°` off the lattice, not `−30°`, and which way round decides
+    /// WHICH reciprocal vector each phase is.
+    ///
+    /// Why the suite could not see it: `rate` sums `cos(k_i · d)` and the cosine is even, so `k`
+    /// and `−k` are the same term; rotating the triple the other way maps it onto itself as a set
+    /// of LINES (`θ−30 ≡ θ+150 mod 180`), leaving the firing map bit for bit unchanged. The
+    /// existing lattice test only asks that every `k_i · a_j` be a whole number of turns, which
+    /// holds for both triples. What moves is the assignment: `k[1] · a[0]` is 0 turns for the real
+    /// triple and 1 turn for the mirrored one, so `PhaseIntegrator`'s two phases are different
+    /// coordinates of the same cell.
+    #[test]
+    fn the_wave_vectors_are_the_reciprocal_basis_and_not_its_mirror() {
+        let m = module();
+        let a = m.lattice_vectors();
+        let k = m.wave_vectors();
+        // Turns of `k_i` along `a_j`, exactly: [[1, 1], [0, 1], [-1, 0]].
+        let want = [[1.0, 1.0], [0.0, 1.0], [-1.0, 0.0]];
+        for i in 0..3 {
+            for j in 0..2 {
+                let turns = (k[i][0] * a[j][0] + k[i][1] * a[j][1]) / TAU;
+                assert!(
+                    (turns - want[i][j]).abs() < 1e-12,
+                    "k[{i}]·a[{j}] = {turns} turns, expected {}",
+                    want[i][j]
+                );
+            }
+        }
+        // Stated the other way: the first wave vector points 30° anticlockwise of the lattice's
+        // first vector, and the third is 120° beyond that.
+        for (i, offset) in [(0usize, PI / 6.0), (1, PI / 2.0), (2, 5.0 * PI / 6.0)] {
+            let angle = k[i][1].atan2(k[i][0]);
+            let want = m.orientation + offset;
+            assert!((angle - want).abs() < 1e-12, "k[{i}] at {angle} rad, expected {want}");
+        }
+    }
+
+    /// The starting phases are wrapped into one turn, like every phase the integrator produces
+    /// afterwards.
+    ///
+    /// Why the suite could not see it: both path-integration fixtures start within the first
+    /// lattice cell of the module's own offset, where the raw phases are already inside `[0, 2π)`
+    /// and wrapping is the identity. The comparisons that follow are all differences taken modulo
+    /// a turn (`gap.min(TAU - gap)`), and `position_in_cell` inverts the same linear map it was
+    /// given, so an unwrapped start is self-consistent — it just reports a phase of 20.7 radians
+    /// and a position several cells away from the cell it claims to be in.
+    #[test]
+    fn the_starting_phases_are_wrapped_into_one_turn() {
+        let m = module();
+        let a = m.lattice_vectors();
+        let near = [
+            m.offset[0] + 0.2 * a[0][0] + 0.1 * a[1][0],
+            m.offset[1] + 0.2 * a[0][1] + 0.1 * a[1][1],
+        ];
+        // Seven cells one way and four the other: the same phases, seven and four turns along.
+        let far = [
+            near[0] + 7.0 * a[0][0] - 4.0 * a[1][0],
+            near[1] + 7.0 * a[0][1] - 4.0 * a[1][1],
+        ];
+        let p_near = PhaseIntegrator::at(m, near).unwrap().phases;
+        let p_far = PhaseIntegrator::at(m, far).unwrap().phases;
+        for i in 0..2 {
+            assert!((0.0..TAU).contains(&p_near[i]), "phase {i} of the near start is {}", p_near[i]);
+            assert!((0.0..TAU).contains(&p_far[i]), "phase {i} of the far start is {}", p_far[i]);
+            assert!((p_near[i] - p_far[i]).abs() < 1e-12, "{} vs {}", p_near[i], p_far[i]);
+        }
+        // The documented range is the same one `step` maintains, so a start and a walk to the
+        // same place agree.
+        let mut walked = PhaseIntegrator::at(m, near).unwrap();
+        walked.step([7.0 * a[0][0] - 4.0 * a[1][0], 7.0 * a[0][1] - 4.0 * a[1][1]], 1.0).unwrap();
+        for i in 0..2 {
+            assert!((0.0..TAU).contains(&walked.phases[i]));
+            assert!((walked.phases[i] - p_far[i]).abs() < 1e-12);
+        }
+    }
+
+    /// A period below 2 is refused, and the refusal names 2 as the floor — the number the doc gives
+    /// and the reason it gives: a module of period 1 has one phase and says nothing.
+    ///
+    /// Why the suite could not see it: the existing check is `matches!(..., OutOfRange { what:
+    /// "period", .. })`, which ignores every field but the name. A floor printed as 1 would refuse
+    /// exactly the same inputs and tell the reader that the value they supplied, 1, is inside the
+    /// range they were refused for.
+    #[test]
+    fn the_refused_periods_floor_is_two_and_the_message_says_so() {
+        assert_eq!(
+            ModularCode::new(vec![5, 1]),
+            Err(GridError::OutOfRange {
+                what: "period",
+                value: 1.0,
+                low: 2.0,
+                high: u64::MAX as f64
+            })
+        );
+        assert_eq!(
+            ModularCode::new(vec![0, 5]),
+            Err(GridError::OutOfRange {
+                what: "period",
+                value: 0.0,
+                low: 2.0,
+                high: u64::MAX as f64
+            })
+        );
+        // Two itself is legal, which is what makes the floor a floor.
+        assert_eq!(ModularCode::new(vec![2, 5]).unwrap().range().unwrap(), 10);
+    }
+
+    /// A range of exactly `u64::MAX` fits in a `u64` and is accepted; the guard is `>`, not `>=`.
+    ///
+    /// Why the suite could not see it: the overflow fixtures are a triple whose product is about
+    /// `2^96`, which both forms of the guard refuse. Only a code whose least common multiple lands
+    /// exactly on `u64::MAX` separates them, and `u64::MAX = (2^32 − 1)(2^32 + 1)` with the two
+    /// factors coprime is one.
+    #[test]
+    fn a_range_of_exactly_the_largest_u64_is_accepted() {
+        let code = ModularCode::new(vec![4_294_967_295, 4_294_967_297]).unwrap();
+        assert_eq!(code.range().unwrap(), u64::MAX);
+        assert_eq!(4_294_967_295u128 * 4_294_967_297, u128::from(u64::MAX), "the fixture's arithmetic");
+        // One step past it is refused: 3 · 2^63 is the smallest multiple of 2^63 above u64::MAX.
+        assert_eq!(ModularCode::new(vec![1u64 << 63, 3]), Err(GridError::RangeOverflow));
+    }
+
+    /// The overflow guard is INSIDE the loop, so the running least common multiple is checked
+    /// before it is multiplied again.
+    ///
+    /// Why the suite could not see it: the existing overflow fixture is three periods near `2^32`,
+    /// whose product is about `2^96` — far inside a `u128`, so a guard moved to after the loop sees
+    /// the same enormous number and refuses it too. The guard only matters when the running value
+    /// wraps a `u128` on the way, and then it can wrap back DOWN: these three periods have a true
+    /// least common multiple of about `2^190`, and `(2^63 · q · r) mod 2^128` is exactly `2^63`
+    /// because `q · r ≡ 1 (mod 2^65)`. A checked-only-at-the-end guard therefore returns
+    /// `Ok(9223372036854775808)` for a code whose range does not fit in 190 bits.
+    #[test]
+    fn the_overflow_guard_runs_inside_the_loop_so_a_wrapped_lcm_cannot_pass() {
+        let q: u64 = 9_223_372_036_854_775_805;
+        let r: u64 = 15_372_286_728_091_293_013;
+        // The property that makes the wrap land on a small number, stated as arithmetic.
+        assert_eq!(u128::from(q) * u128::from(r) % (1u128 << 65), 1);
+        let periods = vec![1u64 << 63, q, r];
+        assert_eq!(ModularCode::new(periods.clone()), Err(GridError::RangeOverflow));
+        let code = ModularCode { periods, phases: vec![0, 0, 0] };
+        assert_eq!(code.range(), Err(GridError::RangeOverflow));
+        // A guard that ran only after the loop would have returned `Ok(9223372036854775808)`
+        // here — a range of 2^63 for a code whose modules cannot be held in one.
+    }
+
+    /// `decode` checks that the range fits in a `u64` before it starts, because `ModularCode`'s
+    /// fields are public and a code can be assembled without going through `new`.
+    ///
+    /// Why the suite could not see it: the overflow fixture calls `new`, which refuses the code, so
+    /// no test ever holds one whose range does not fit. Assembled directly, such a code decodes
+    /// without complaint: the accumulator is a `u128`, the answer is truncated by `x as u64` at the
+    /// end, and for phases that are all zero the answer even looks right.
+    #[test]
+    fn decode_refuses_a_code_whose_range_does_not_fit_in_a_u64() {
+        let periods = vec![4_294_967_291u64, 4_294_967_279, 4_294_967_231];
+        assert_eq!(ModularCode::new(periods.clone()), Err(GridError::RangeOverflow));
+        let code = ModularCode { periods: periods.clone(), phases: vec![0, 0, 0] };
+        assert_eq!(code.decode(), Err(GridError::RangeOverflow));
+        // Including the shape that reads as a success: every phase zero decodes to 0.
+        let ones = ModularCode { periods, phases: vec![1, 1, 1] };
+        assert_eq!(ones.decode(), Err(GridError::RangeOverflow));
+        // And `correct`, which decodes too, refuses it at the same place.
+        assert_eq!(code.correct(10), Err(GridError::RangeOverflow));
+    }
+
+    /// The running modulus inside `decode` is the least common multiple of the periods so far, not
+    /// their product, and the two differ exactly when the periods share a factor.
+    ///
+    /// Why the suite could not see it: the only shared-factor fixture is a pair, `[4, 6]`, and the
+    /// running modulus is written for the LAST time on the last module and then never read. With
+    /// two modules the difference between `m·n/g` and `m·n` is invisible by construction. A third
+    /// module reads it — through `gcd(m, n)` and through `mod_inverse(m/g, n/g)` — and then
+    /// `[4, 6, 9]` decodes 12 of its 36 positions to the wrong answer, each of them larger than the
+    /// range.
+    #[test]
+    fn the_running_modulus_is_the_lcm_of_the_periods_and_not_their_product() {
+        let mut code = ModularCode::new(vec![4, 6, 9]).unwrap();
+        assert_eq!(code.range().unwrap(), 36, "lcm, not the product 216");
+        for x in 0..36u64 {
+            code.encode(x);
+            assert_eq!(code.decode().unwrap(), x, "position {x}");
+        }
+        // The first position where a product-shaped modulus diverges, called out so the fixture's
+        // discriminating power is on the record rather than implied by the loop.
+        code.encode(13);
+        assert_eq!(code.phases, vec![1, 1, 4]);
+        assert_eq!(code.decode().unwrap(), 13);
+    }
+
+    /// A MALFORMED code word — a phase that is not below its period, or a phase vector of the wrong
+    /// length — is reported as what it is, not folded into the corruption story.
+    ///
+    /// Why the suite could not see it: every corruption fixture sets a phase to another LEGAL phase
+    /// of the same module, which is the case `correct` exists for. A malformed word reaches the
+    /// same `decode`, and swallowing its error leaves the repair loop to run on a code the type's
+    /// own invariant does not hold for — which usually ends in `Inconsistent`, a verdict that tells
+    /// the caller their hardware is faulty when their array is the wrong shape.
+    #[test]
+    fn a_malformed_code_word_is_named_as_malformed_and_not_as_corrupted() {
+        let mut code = ModularCode::new(vec![7, 9, 11, 13]).unwrap();
+        code.encode(30);
+        code.phases[2] = 11; // not below its period: a phase no module could hold
+        assert_eq!(
+            code.correct(63),
+            Err(GridError::OutOfRange { what: "phase", value: 11.0, low: 0.0, high: 10.0 })
+        );
+        // Setting module 2 aside WOULD have decoded to 30, so the repair loop has an answer ready;
+        // it must not be reached.
+        let mut without_two = ModularCode::new(vec![7, 9, 13]).unwrap();
+        without_two.encode(30);
+        assert_eq!(without_two.decode().unwrap(), 30);
+
+        // The other malformed shape: a phase vector of the wrong length.
+        code.encode(30);
+        code.phases.pop();
+        assert_eq!(
+            code.correct(63),
+            Err(GridError::Dimension { what: "phases", got: 3, want: 4 })
+        );
+    }
+
+    /// An IMPOSSIBLE code word — phases no position produces — is repaired, not returned as an
+    /// error. That is the case `correct` was written for, one module arbitrarily wrong.
+    ///
+    /// Why the suite could not see it: every correction fixture uses pairwise coprime periods,
+    /// where the generalised Chinese remainder condition is vacuous and `decode` never reports
+    /// `Inconsistent` however a phase is corrupted — it just returns the wrong position, which the
+    /// legal-range test then rejects. Periods that share a factor are the case where corruption is
+    /// detected by `decode` itself, and there the refusal has to be swallowed and the repair tried.
+    #[test]
+    fn an_impossible_code_word_is_repaired_rather_than_refused() {
+        // Position 7 in periods 5, 6, 9, with module 1's phase knocked from 1 to 0. Modules 1 and
+        // 2 share the factor 3, so the phases now contradict each other outright.
+        let mut code = ModularCode::new(vec![5, 6, 9]).unwrap();
+        code.encode(7);
+        assert_eq!(code.phases, vec![2, 1, 7]);
+        code.phases[1] = 0;
+        assert_eq!(code.decode(), Err(GridError::Inconsistent { module: 2 }));
+        assert_eq!(
+            code.correct(10).unwrap(),
+            Correction { position: 7, repaired: Some(1) }
+        );
+        // The other two suspects do not produce a legal position, which is why the answer is
+        // unique: dropping module 0 leaves a contradiction, dropping module 2 leaves 12.
+        let mut dropped_zero = ModularCode::new(vec![6, 9]).unwrap();
+        dropped_zero.phases = vec![0, 7];
+        assert_eq!(dropped_zero.decode(), Err(GridError::Inconsistent { module: 1 }));
+        let mut dropped_two = ModularCode::new(vec![5, 6]).unwrap();
+        dropped_two.phases = vec![2, 0];
+        assert_eq!(dropped_two.decode().unwrap(), 12);
+    }
+
+    /// A code of ONE module cannot correct itself: setting its only module aside leaves no modules
+    /// at all, and an empty code decodes to 0 — a legal-looking position that is evidence of
+    /// nothing.
+    ///
+    /// Why the suite could not see it: every `correct` fixture has four modules, and with four the
+    /// guard `periods.len() < 2` never fires. The guard only matters for a one-module code whose
+    /// single phase decodes outside the legal range, and then the difference is between refusing
+    /// and answering 0 while blaming the only module there is.
+    #[test]
+    fn a_lone_module_cannot_correct_itself_away() {
+        let mut lone = ModularCode::new(vec![7]).unwrap();
+        lone.encode(5);
+        assert_eq!(lone.decode().unwrap(), 5);
+        // 5 is outside a legal range of 3, and there is no second module to appeal to.
+        assert_eq!(lone.correct(3), Err(GridError::Inconsistent { module: 0 }));
+        // The empty code that dropping the only module would leave decodes to zero, which is the
+        // answer the guard exists to refuse.
+        let empty = ModularCode { periods: vec![], phases: vec![] };
+        assert_eq!(empty.decode().unwrap(), 0);
+        // Inside the legal range the same code answers, unrepaired.
+        lone.encode(2);
+        assert_eq!(lone.correct(3).unwrap(), Correction { position: 2, repaired: None });
+    }
 }

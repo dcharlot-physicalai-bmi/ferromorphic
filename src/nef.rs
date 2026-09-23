@@ -1169,7 +1169,7 @@ impl SpikingEnsemble {
 mod tests {
     use super::{
         Decoders, Ensemble, EnsembleSpec, LifRate, Lowpass, NefError, Pes, RateLoop, SpikingEnsemble, SpikingLoop,
-        connection_traffic, dynamics_transform, factorisation_break_even, full_weights,
+        connection_traffic, dynamics_transform, factorisation_break_even, full_weights, normal,
     };
     use crate::neuron::Lif;
     use crate::rng::Rng;
@@ -1728,5 +1728,460 @@ mod tests {
         assert!(matches!(Ensemble::new(&spec), Err(NefError::OutOfRange { what: "max_rate range", .. })));
         spec.max_rate = (0.5 * bound, 0.99 * bound);
         assert!(Ensemble::new(&spec).is_ok(), "just inside the bound is a legal population");
+    }
+
+    // ---- the guards (mutation repair, 0.20.0) ----
+
+    /// Every time constant of a rate curve must be strictly positive AND finite, and so must
+    /// every other parameter this module range-checks against an infinite upper bound.
+    ///
+    /// Pins the two `in_range` calls in [`LifRate::new`] and the `is_finite()` clause of
+    /// `in_range` itself. Why the suite could not see it: the only refusals asserted anywhere
+    /// were a zero radius, a zero `kappa`, a negative `tau` and a zero `dt`, and every one of
+    /// those is already refused by the `value >= low` clause alone — so an `in_range` that had
+    /// lost its finiteness test still refused every value the suite ever handed it, and the two
+    /// constants of `LifRate::new` were never given a bad one at all. An INFINITY is the value
+    /// that separates the clauses: where `high` is `f64::INFINITY` it satisfies
+    /// `value >= low && value <= high` and only `is_finite()` stops it.
+    #[test]
+    fn a_time_constant_must_be_strictly_positive_and_finite() {
+        for bad in [0.0, -1.0, -20e-3, f64::NAN, f64::INFINITY] {
+            assert!(
+                matches!(LifRate::new(bad, 2e-3), Err(NefError::OutOfRange { what: "tau_rc", .. })),
+                "tau_rc = {bad} was accepted"
+            );
+            assert!(
+                matches!(LifRate::new(20e-3, bad), Err(NefError::OutOfRange { what: "tau_ref", .. })),
+                "tau_ref = {bad} was accepted"
+            );
+        }
+        assert!(LifRate::new(f64::MIN_POSITIVE, f64::MIN_POSITIVE).is_ok(), "the smallest normal is legal");
+        assert!(
+            matches!(
+                LifRate::of_lif(&Lif { tau_m: f64::INFINITY, ..Lif::default() }),
+                Err(NefError::OutOfRange { what: "tau_rc", .. })
+            ),
+            "of_lif goes through the same gate"
+        );
+        // The same clause is the only thing guarding these four.
+        assert!(matches!(Lowpass::new(f64::INFINITY), Err(NefError::OutOfRange { what: "tau", .. })));
+        let mut spec = EnsembleSpec::default_for(4, 1, 1);
+        spec.radius = f64::INFINITY;
+        assert!(matches!(Ensemble::new(&spec), Err(NefError::OutOfRange { what: "radius", .. })));
+        assert!(matches!(
+            Ensemble::from_parts(1, f64::INFINITY, LifRate::default(), vec![1.0], vec![1.0], vec![0.0]),
+            Err(NefError::OutOfRange { what: "radius", .. })
+        ));
+        let ens = Ensemble::new(&EnsembleSpec::default_for(4, 1, 1)).unwrap();
+        assert!(matches!(
+            SpikingEnsemble::new(ens, Lif { r_m: f64::INFINITY, ..Lif::default() }),
+            Err(NefError::OutOfRange { what: "r_m", .. })
+        ));
+    }
+
+    /// A tuning range given the wrong way round is refused, and a degenerate one is not.
+    ///
+    /// Pins the `rlo <= rhi` and `ilo <= ihi` clauses of [`Ensemble::new`]. Why the suite could
+    /// not see it: an inverted range is not a value any fixture supplies, and without the clause
+    /// the draw `rlo + (rhi − rlo)·u` walks DOWNWARD from `rlo`, so a population asked for
+    /// `[400, 200]` gets maximum rates below 200 — outside both numbers the caller named, with no
+    /// error and nothing in the suite reading a population's rates against the range it asked for.
+    /// The second half is the other side of the same clause: `<=`, not `<`, so a population every
+    /// cell of which has the same maximum rate is still legal, and is built.
+    #[test]
+    fn an_inverted_tuning_range_is_refused_and_a_degenerate_one_is_not() {
+        let mut spec = EnsembleSpec::default_for(50, 1, 3);
+        spec.max_rate = (400.0, 200.0);
+        assert!(matches!(Ensemble::new(&spec), Err(NefError::OutOfRange { what: "max_rate range", .. })));
+        let mut spec = EnsembleSpec::default_for(50, 1, 3);
+        spec.intercept = (0.5, -0.5);
+        assert!(matches!(Ensemble::new(&spec), Err(NefError::OutOfRange { what: "intercept range", .. })));
+        let mut spec = EnsembleSpec::default_for(50, 1, 3);
+        spec.max_rate = (300.0, 300.0);
+        spec.intercept = (0.25, 0.25);
+        let ens = Ensemble::new(&spec).unwrap();
+        for i in 0..ens.n() {
+            let x: Vec<f64> = ens.encoder(i).iter().map(|c| c * ens.radius).collect();
+            let top = ens.rates(&x).unwrap()[i];
+            assert!((top - 300.0).abs() < 1e-9, "neuron {i} tops out at {top} Hz, not 300");
+            assert_eq!(ens.rates(&[0.25 * ens.radius * ens.encoder(i)[0]]).unwrap()[i], 0.0, "silent at its intercept");
+        }
+    }
+
+    /// A population built from explicit parts refuses a non-finite encoder, gain or bias.
+    ///
+    /// Pins all three `finite` calls in [`Ensemble::from_parts`]. Why the suite could not see the
+    /// middle one: the only `from_parts` refusal asserted anywhere is a `biases` LENGTH, and every
+    /// other call site builds its gains from [`LifRate::gain_bias`], which cannot return a
+    /// non-finite one for an intercept and rate it has itself accepted. A NaN gain makes every
+    /// current NaN and every rate silently zero, which no assertion in the suite distinguishes
+    /// from a population that is merely quiet.
+    #[test]
+    fn a_population_built_from_parts_refuses_a_non_finite_entry() {
+        let curve = LifRate::default();
+        let build = |e: Vec<f64>, g: Vec<f64>, b: Vec<f64>| Ensemble::from_parts(2, 1.0, curve, e, g, b);
+        assert!(build(vec![1.0, 0.0, 0.0, 1.0], vec![1.0, 1.0], vec![0.0, 0.0]).is_ok());
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            assert!(
+                matches!(
+                    build(vec![1.0, 0.0, bad, 1.0], vec![1.0, 1.0], vec![0.0, 0.0]),
+                    Err(NefError::NonFinite { what: "encoders", index: 2 })
+                ),
+                "encoder {bad} was accepted"
+            );
+            assert!(
+                matches!(
+                    build(vec![1.0, 0.0, 0.0, 1.0], vec![1.0, bad], vec![0.0, 0.0]),
+                    Err(NefError::NonFinite { what: "gains", index: 1 })
+                ),
+                "gain {bad} was accepted"
+            );
+            assert!(
+                matches!(
+                    build(vec![1.0, 0.0, 0.0, 1.0], vec![1.0, 1.0], vec![bad, 0.0]),
+                    Err(NefError::NonFinite { what: "biases", index: 0 })
+                ),
+                "bias {bad} was accepted"
+            );
+        }
+    }
+
+    /// A spiking population refuses a cell whose threshold does not sit strictly above rest.
+    ///
+    /// Pins the `v_th − v_rest` guard in [`SpikingEnsemble::new`]. Why the suite could not see it:
+    /// the only prototypes ever offered are [`Lif::default`] and one with a mismatched `tau_m`,
+    /// and the guard's job is to keep `amps_per_unit` — the volts-per-unit-current scale — away
+    /// from zero. A cell with `v_th = v_rest` is accepted without it, gets an `amps_per_unit` of
+    /// exactly zero, and then never fires whatever it is asked to represent.
+    #[test]
+    fn a_cell_whose_threshold_is_not_above_rest_is_refused() {
+        let ens = Ensemble::new(&EnsembleSpec::default_for(8, 1, 1)).unwrap();
+        for v_th in [-65e-3, -70e-3] {
+            let proto = Lif { v_th, v_rest: -65e-3, v_reset: -65e-3, ..Lif::default() };
+            assert!(
+                matches!(
+                    SpikingEnsemble::new(ens.clone(), proto),
+                    Err(NefError::OutOfRange { what: "v_th − v_rest", .. })
+                ),
+                "a threshold at {v_th} V against a rest of -0.065 V was accepted"
+            );
+        }
+        assert!(matches!(
+            SpikingEnsemble::new(ens.clone(), Lif { r_m: 0.0, ..Lif::default() }),
+            Err(NefError::OutOfRange { what: "r_m", .. })
+        ));
+        let ok = SpikingEnsemble::new(ens, Lif::default()).unwrap();
+        assert_eq!(ok.amps_per_unit, (Lif::default().v_th - Lif::default().v_rest) / Lif::default().r_m);
+        assert!(ok.amps_per_unit > 0.0);
+    }
+
+    // ---- what the population is made of ----
+
+    /// [`Ensemble::encoder`] returns neuron `i`'s own ROW of the row-major encoder matrix.
+    ///
+    /// Pins the row stride. Why the suite could not see it: `encoder(i)` is only ever read to
+    /// rebuild something the same population computed from the same rows — the factorised weight
+    /// check reads `post.encoder(j)` and compares it with `full_weights`, which reads it too, so
+    /// a shared stride error cancels — and for a one-dimensional population the two strides are
+    /// the same expression. Read at a one-element stride, row `i` is a window sliding across two
+    /// adjacent neurons' encoders, which is no longer a unit vector.
+    #[test]
+    fn an_encoder_is_the_neurons_own_row_of_the_encoder_matrix() {
+        let curve = LifRate::default();
+        let (g, b) = curve.gain_bias(300.0, 0.0).unwrap();
+        let rows = vec![1.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.6, 0.0, 0.8];
+        let ens = Ensemble::from_parts(3, 1.0, curve, rows, vec![g; 3], vec![b; 3]).unwrap();
+        assert_eq!(ens.encoder(0).to_vec(), vec![1.0, 0.0, 0.0]);
+        assert_eq!(ens.encoder(1).to_vec(), vec![0.0, 1.0, 0.0]);
+        assert_eq!(ens.encoder(2).to_vec(), vec![0.6, 0.0, 0.8]);
+        // Neuron 1's preferred direction is the second axis, so that is where its current peaks.
+        assert!(ens.current(1, &[0.0, 1.0, 0.0]).unwrap() > ens.current(1, &[1.0, 0.0, 0.0]).unwrap());
+        // And a drawn population's rows are unit vectors ONE ROW AT A TIME.
+        let drawn = Ensemble::new(&EnsembleSpec::default_for(50, 4, 9)).unwrap();
+        for i in 0..drawn.n() {
+            let norm = drawn.encoder(i).iter().map(|x| x * x).sum::<f64>().sqrt();
+            assert!((norm - 1.0).abs() < 1e-15, "neuron {i}'s encoder has norm {norm}");
+        }
+    }
+
+    /// The Box-Muller draw behind the encoders and the sample points is a STANDARD normal:
+    /// mean zero, variance one.
+    ///
+    /// Pins `normal`'s own documented distribution. Why the suite could not see it: both callers
+    /// divide the drawn vector by its own norm, so a constant scale on the draw cancels to within
+    /// rounding. Measured here over two hundred thousand draws per dimension, halving the variance
+    /// leaves 54.5% of the normalised coordinates BIT-IDENTICAL and moves the rest by at most 6
+    /// ulps, the largest absolute difference at any dimension from 2 to 4 being 3.33e-16. Chasing
+    /// the factor through the encoders would therefore pin floating-point noise, which is a change
+    /// detector; the function's own property is where a factor of two is a factor of two.
+    ///
+    /// The bounds are the sample size: for `N = 100_000` standard normals the standard error of
+    /// the mean is `1/sqrt(N) = 3.2e-3` and of the variance `sqrt(2/N) = 4.5e-3`, so 0.05 and 0.10
+    /// are about 15 and 22 standard errors — loose enough for any generator, and five times inside
+    /// the variance of 1/2 that a draw of `sqrt(−ln u)` rather than `sqrt(−2 ln u)` would have.
+    #[test]
+    fn the_standard_normal_draw_has_mean_zero_and_variance_one() {
+        const N: usize = 100_000;
+        for seed in [1u64, 7, 99] {
+            let mut rng = Rng::new(seed);
+            let (mut sum, mut sum_sq) = (0.0f64, 0.0f64);
+            for _ in 0..N {
+                let z = normal(&mut rng);
+                sum += z;
+                sum_sq += z * z;
+            }
+            let mean = sum / N as f64;
+            let var = sum_sq / N as f64 - mean * mean;
+            assert!(mean.abs() < 0.05, "seed {seed}: mean {mean}");
+            assert!((var - 1.0).abs() < 0.10, "seed {seed}: variance {var}");
+        }
+    }
+
+    /// The maximum rates of a population are DRAWN from across the range the spec names, not
+    /// handed out at one end of it.
+    ///
+    /// A cell's maximum rate is its rate at its own preferred direction on the represented ball,
+    /// so the whole distribution is readable through the public surface. Why the suite could not
+    /// see it: every existing assertion asks whether a rate lies INSIDE the range, and the top of
+    /// a range is inside it — giving every neuron `rhi` passes all of them while collapsing the
+    /// population's heterogeneity, which is the thing the representation's error depends on.
+    #[test]
+    fn a_populations_maximum_rates_are_drawn_from_across_the_range() {
+        let spec = EnsembleSpec::default_for(200, 1, 7);
+        let (rlo, rhi) = spec.max_rate;
+        let width = rhi - rlo;
+        let ens = Ensemble::new(&spec).unwrap();
+        let mut lo = f64::INFINITY;
+        let mut hi = f64::NEG_INFINITY;
+        for i in 0..ens.n() {
+            let x: Vec<f64> = ens.encoder(i).iter().map(|c| c * ens.radius).collect();
+            let top = ens.rates(&x).unwrap()[i];
+            assert!(top >= rlo - 1e-6 && top <= rhi + 1e-6, "neuron {i} tops out at {top} Hz, outside {rlo}..{rhi}");
+            lo = lo.min(top);
+            hi = hi.max(top);
+        }
+        // 200 independent uniform draws: the chance that none lands in the bottom quarter of the
+        // range is 0.75^200 = 1e-25, and the same at the top.
+        assert!(lo < rlo + 0.25 * width, "no cell near the bottom of the range: lowest maximum rate {lo}");
+        assert!(hi > rhi - 0.25 * width, "no cell near the top of the range: highest maximum rate {hi}");
+        assert!(hi - lo > 0.5 * width, "the drawn maxima span {} Hz of {width}", hi - lo);
+    }
+
+    /// [`Ensemble::sample_points`] draws UNIFORMLY from the represented ball — the right radius
+    /// and the right radial law.
+    ///
+    /// Why the suite could not see it: the sample points are only ever used as inputs to a least
+    /// squares and then to the error it is measured by, and both are computed from the same
+    /// points, so a population trained and tested on points that all hug the centre still reports
+    /// a small error. Nothing read where the points actually were.
+    #[test]
+    fn sample_points_are_uniform_in_the_represented_ball() {
+        let mut spec = EnsembleSpec::default_for(4, 3, 1);
+        spec.radius = 2.5;
+        let ens = Ensemble::new(&spec).unwrap();
+        let mut rng = Rng::new(5);
+        const N: usize = 20_000;
+        let mut sum = 0.0f64;
+        let mut max = 0.0f64;
+        for p in ens.sample_points(N, &mut rng) {
+            let r = p.iter().map(|v| v * v).sum::<f64>().sqrt();
+            // The norm is recomputed from the rounded coordinates, so it can sit a few ulps
+            // (4.4e-16 relative) above the scale that produced it; 1e-12 is far inside that.
+            assert!(r <= ens.radius * (1.0 + 1e-12), "a sample at |x| = {r} is outside the ball of radius 2.5");
+            sum += r;
+            max = max.max(r);
+        }
+        let mean = sum / N as f64;
+        // Uniform in a d-ball of radius R: |x|/R has density d·u^(d−1), so E|x| = R·d/(d+1) =
+        // 1.875 and sd|x| = R·sqrt(d/(d+2) − (d/(d+1))²) = 0.484. Over N = 20_000 the standard
+        // error of the mean is 3.4e-3, so 0.025 is about seven of them. Drawing the radius without
+        // the u^(1/d) correction puts the mean at R/2 = 1.25; dropping the radius puts it at 0.75.
+        assert!((mean - 1.875).abs() < 0.025, "mean |x| = {mean}, not R·d/(d+1) = 1.875");
+        assert!(max > 0.99 * ens.radius, "no sample reached the surface: the largest was {max}");
+    }
+
+    /// [`EnsembleSpec::default_for`] is the spec the documentation states, radius included.
+    ///
+    /// Why the suite could not see the radius: every test that depends on a particular radius sets
+    /// it, and every test that does not uses the radius only as the unit its own sample points and
+    /// tolerances are already expressed in — so doubling the default rescales the whole fixture
+    /// and changes nothing any assertion reads. The radius is the unit of the represented ball and
+    /// of the intercepts, so it has to be pinned where it is written down.
+    #[test]
+    fn the_default_spec_is_the_one_the_documentation_states() {
+        let spec = EnsembleSpec::default_for(64, 3, 9);
+        assert_eq!(spec.n, 64);
+        assert_eq!(spec.dim, 3);
+        assert_eq!(spec.seed, 9);
+        assert_eq!(spec.radius, 1.0, "Nengo's default radius is one");
+        assert_eq!(spec.max_rate, (200.0, 400.0));
+        assert_eq!(spec.intercept, (-0.999, 0.999));
+        assert_eq!(spec.neuron, LifRate::new(20e-3, 2e-3).unwrap());
+        // And the default population really does represent the UNIT ball: its own sample points
+        // land inside it, and it tops out at the edge of it.
+        let ens = Ensemble::new(&EnsembleSpec::default_for(40, 1, 9)).unwrap();
+        assert_eq!(ens.radius, 1.0);
+        let mut rng = Rng::new(2);
+        for p in ens.sample_points(300, &mut rng) {
+            assert!(p[0].abs() <= 1.0, "a default population samples {} , outside the unit ball", p[0]);
+        }
+        for i in 0..ens.n() {
+            let top = ens.rates(&[ens.encoder(i)[0]]).unwrap()[i];
+            assert!(top >= 200.0 - 1e-6, "neuron {i} reaches only {top} Hz at x = ±1");
+        }
+    }
+
+    // ---- what the numbers mean ----
+
+    /// [`Ensemble::rmse`] is a ROOT mean square, averaged over every scalar compared and not over
+    /// the samples they came in.
+    ///
+    /// Zero decoders decode zero whatever the rates are, so the error is exactly the target and
+    /// the answer can be written down: four scalars, `3² + 4² + 0 + 0 = 25`, over four of them is
+    /// 6.25, whose root is 2.5. A mean square would report 6.25 and a mean over the two SAMPLES
+    /// would report sqrt(12.5) = 3.5355. Why the suite could not see either: every use of `rmse`
+    /// is an inequality against a number below one, where squaring makes the value SMALLER and
+    /// every `rmse < bound` still passes, and every comparison between two of them is a ratio, in
+    /// which a missing root and a constant factor both survive.
+    #[test]
+    fn the_decoding_error_is_a_root_mean_square_over_every_scalar_compared() {
+        let curve = LifRate::default();
+        let (g, b) = curve.gain_bias(300.0, 0.0).unwrap();
+        let ens = Ensemble::from_parts(1, 1.0, curve, vec![1.0], vec![g], vec![b]).unwrap();
+        let zero = Decoders { d: vec![0.0, 0.0], n: 1, out_dim: 2 };
+        let samples = vec![vec![0.3], vec![0.7]];
+        let targets = vec![vec![3.0, 4.0], vec![0.0, 0.0]];
+        assert_eq!(ens.decode(&zero, &ens.rates(&samples[0]).unwrap()).unwrap(), vec![0.0, 0.0]);
+        assert_eq!(ens.rmse(&zero, &samples, &targets).unwrap(), 2.5);
+        // Doubling every error doubles the root mean square, which a mean square would quadruple.
+        let doubled: Vec<Vec<f64>> = targets.iter().map(|t| t.iter().map(|v| 2.0 * v).collect()).collect();
+        assert_eq!(ens.rmse(&zero, &samples, &doubled).unwrap(), 5.0);
+    }
+
+    /// [`Pes::contraction`] of a population with no neurons is one: nothing is learned and nothing
+    /// is forgotten.
+    ///
+    /// Pins the `.max(1)` on the divisor. Why the suite could not see it: the rule is only ever
+    /// asked about populations of 40 and 60 neurons, and an empty one divides zero energy by zero
+    /// neurons, which is NaN — and `assert!(x < bound)` on a NaN is the one comparison that is
+    /// false for every bound, so the defect only shows where the value is read for equality.
+    /// [`Pes::stability_limit`] already answers `None` for the same population.
+    #[test]
+    fn the_contraction_of_a_population_with_no_neurons_is_one() {
+        let pes = Pes::new(1e-3).unwrap();
+        assert_eq!(pes.contraction(&[]), 1.0);
+        assert_eq!(pes.contraction(&[0.0, 0.0]), 1.0, "a silent population contracts nothing either");
+        assert_eq!(Pes::stability_limit(&[]), None);
+        // And for a population that does fire it is the closed form, retyped.
+        let rates = [3.0, 4.0];
+        assert_eq!(pes.contraction(&rates), 1.0 - 1e-3 * 25.0 / 2.0);
+    }
+
+    // ---- the loops ----
+
+    /// The rate loop applies `A′` ROW by row: `ẋ_i` is set by row `i` of the matrix.
+    ///
+    /// The system here is `ẋ₀ = 0`, `ẋ₁ = 2x₀` — a value held on the first coordinate and ramped
+    /// onto the second. Transposed it becomes `ẋ₀ = 2x₁`, `ẋ₁ = 0`, which holds the first
+    /// coordinate and never moves the second at all. Why the suite could not see it: the only
+    /// two-dimensional system it runs is the oscillator `[[0, ω], [−ω, 0]]`, whose transpose is
+    /// the SAME oscillator run backwards — and the assertions on it are the period between zero
+    /// crossings and the surviving amplitude, both of which are invariant under time reversal.
+    #[test]
+    fn the_rate_loop_applies_the_recurrent_matrix_row_by_row() {
+        let mut rng = Rng::new(19);
+        let mut spec = EnsembleSpec::default_for(500, 2, 63);
+        spec.radius = 2.0;
+        let ens = Ensemble::new(&spec).unwrap();
+        let dec = ens.identity_decoders(1500, 0.02, &mut rng).unwrap();
+        let a = [0.0, 0.0, 2.0, 0.0];
+        let mut lp = RateLoop::new(ens, dec, &a, &[0.0, 0.0], 0.1).unwrap();
+        assert_eq!(lp.a_prime, vec![1.0, 0.0, 0.2, 1.0]);
+        lp.set_state(&[1.0, 0.0]).unwrap();
+        for _ in 0..500 {
+            lp.step(1e-3, &[0.0]).unwrap();
+        }
+        let held = lp.x_hat[0];
+        let ramped = lp.x_hat[1];
+        assert!((held - 1.0).abs() < 0.15, "the first coordinate is held by row 0 of A′: {held}");
+        assert!((ramped - 1.0).abs() < 0.2, "row 1 ramps the second coordinate to 2·1·0.5 s = 1: {ramped}");
+    }
+
+    /// The spiking loop's readout filters the DECODED SPIKES, not the recurrent state.
+    ///
+    /// Two pins. First: a population whose decoders are all zero decodes nothing, so the readout
+    /// stays exactly zero however hard the recurrent synapse is driven — and it is driven here,
+    /// to within a fifth of its input. Second: after one tick from rest the readout is the pulse
+    /// through one low-pass, computed with the same operations in the same order, so the
+    /// comparison is exact. Why the suite could not see it: in a converged loop the recurrent
+    /// synapse's output and the decoded pulse both approximate the represented state, so filtering
+    /// the state instead of the spikes changes the readout by about one extra time constant of
+    /// lag — and the only assertion on the readout compares it with the reference delayed by
+    /// exactly one time constant, which that extra lag flatters rather than breaks.
+    #[test]
+    fn the_spiking_loops_readout_filters_the_decoded_spikes() {
+        let mut rng = Rng::new(23);
+        let ens = Ensemble::new(&EnsembleSpec::default_for(120, 1, 61)).unwrap();
+        let dec = ens.identity_decoders(400, 0.02, &mut rng).unwrap();
+        let pop = SpikingEnsemble::new(ens, Lif::default()).unwrap();
+        let (tau, dt) = (0.05, 1e-3);
+
+        let silent = Decoders { d: vec![0.0; 120], n: 120, out_dim: 1 };
+        let mut mute = SpikingLoop::new(pop.clone(), silent, &[0.0], &[20.0], tau).unwrap();
+        for _ in 0..400 {
+            mute.step(dt, &[1.0]).unwrap();
+        }
+        assert!(mute.spikes > 1_000, "the population did not fire at all: {} spikes", mute.spikes);
+        assert!(mute.synapses[0].y > 0.5, "the recurrent synapse was not driven: {}", mute.synapses[0].y);
+        assert_eq!(mute.x_hat[0], 0.0, "zero decoders decode nothing, so the readout has nothing to filter");
+
+        let mut net = SpikingLoop::new(pop, dec.clone(), &[3.0], &[100.0], tau).unwrap();
+        net.synapses[0].y = 0.6;
+        net.step(dt, &[1.0]).unwrap();
+        let mut pulse = 0.0f64;
+        for (i, &c) in net.population.counts.iter().enumerate() {
+            if c > 0 {
+                pulse += c as f64 * dec.d[i] / dt;
+            }
+        }
+        assert!(pulse.abs() > 0.05, "nothing was decoded on the first tick: {pulse}");
+        let decay = (-dt / tau).exp();
+        assert_eq!(net.x_hat[0], pulse + (0.0 - pulse) * decay);
+    }
+
+    /// [`SpikingEnsemble::reset`] returns every membrane to rest and clears every refractory
+    /// countdown, not just the spike counters.
+    ///
+    /// Why the suite could not see it: the one `reset` in the suite is followed by assertions on
+    /// `counts` and `measured_rates`, which the counter half of the method already satisfies, and
+    /// then by a run long enough (2 s) for the leftover membrane state to wash out of the rates it
+    /// measures. A reset that leaves the cells charged makes the next run's first interspike
+    /// interval depend on the run before it.
+    #[test]
+    fn a_reset_returns_every_membrane_to_rest() {
+        let ens = Ensemble::new(&EnsembleSpec::default_for(40, 1, 1)).unwrap();
+        let mut sp = SpikingEnsemble::new(ens, Lif::default()).unwrap();
+        for _ in 0..50 {
+            sp.step(1e-3, &[0.9]).unwrap();
+        }
+        assert!(sp.cells.iter().any(|c| c.v != c.v_rest), "no cell charged: the reset would have nothing to undo");
+        assert!(sp.cells.iter().any(|c| c.refractory > 0.0), "no cell is refractory");
+        sp.reset();
+        for (i, c) in sp.cells.iter().enumerate() {
+            assert_eq!(c.v, c.v_rest, "cell {i} was left at {} V", c.v);
+            assert_eq!(c.refractory, 0.0, "cell {i} was left refractory");
+        }
+        assert!(sp.counts.iter().all(|&c| c == 0));
+        assert_eq!(sp.ticks, 0);
+        // A reset population is a fresh one: the same drive from here reproduces the same spikes.
+        let mut counts = Vec::new();
+        for _ in 0..2 {
+            for _ in 0..50 {
+                sp.step(1e-3, &[0.9]).unwrap();
+            }
+            counts.push(sp.counts.clone());
+            sp.reset();
+        }
+        assert_eq!(counts[0], counts[1], "the second run after a reset differed from the first");
     }
 }

@@ -73,5 +73,225 @@
   "label": "ra drive rectified",
   "old": "            Class::Ra => self.gain * c.velocity.abs(),\n            Class::Pc => {",
   "new": "            Class::Ra => self.gain * c.velocity.max(0.0),\n            Class::Pc => {"
+ },
+ {
+  "label": "a gain, a sample rate or a duration of zero is accepted",
+  "old": "    if v.is_finite() && v > 0.0 {",
+  "new": "    if v.is_finite() && v >= 0.0 {"
+ },
+ {
+  "label": "an infinite depth passes the non-negative check",
+  "old": "    if v.is_finite() && v >= 0.0 {",
+  "new": "    if v >= 0.0 {"
+ },
+ {
+  "label": "a non-finite sample in the depth trace is never found",
+  "old": "    if let Some(i) = v.iter().position(|x| !x.is_finite()) {",
+  "new": "    if let Some(i) = v.iter().position(|x| x.is_nan() && x.is_infinite()) {"
+ },
+ {
+  "label": "the out-of-range message prints its bounds the wrong way round",
+  "old": "                write!(f, \"{what} = {value} is outside [{low}, {high}]\")",
+  "new": "                write!(f, \"{what} = {value} is outside [{high}, {low}]\")"
+ },
+ {
+  "label": "the leading one-sided velocity is halved as if it were a central difference",
+  "old": "            (depth[1] - depth[0]) / dt",
+  "new": "            (depth[1] - depth[0]) / (2.0 * dt)"
+ },
+ {
+  "label": "the trailing one-sided velocity has the wrong sign",
+  "old": "            (depth[n - 1] - depth[n - 2]) / dt",
+  "new": "            (depth[n - 2] - depth[n - 1]) / dt"
+ },
+ {
+  "label": "the second difference is divided by the sample interval rather than its square",
+  "old": "            (depth[i + 1] - 2.0 * depth[i] + depth[i - 1]) / (dt * dt)",
+  "new": "            (depth[i + 1] - 2.0 * depth[i] + depth[i - 1]) / dt"
+ },
+ {
+  "label": "the high-pass section does not difference its input, so it is a second low-pass",
+  "old": "        self.hp_state = a_hp * (self.hp_state + x - self.hp_prev_in);",
+  "new": "        self.hp_state = a_hp * (self.hp_state + x);"
+ },
+ {
+  "label": "the previous input is written before it is read, so the high-pass sees no difference",
+  "old": "        self.hp_state = a_hp * (self.hp_state + x - self.hp_prev_in);\n        self.hp_prev_in = x;",
+  "new": "        self.hp_prev_in = x;\n        self.hp_state = a_hp * (self.hp_state + x - self.hp_prev_in);"
+ },
+ {
+  "label": "the low-pass section is cornered at the lower frequency",
+  "old": "        let a_lp = 1.0 - (-core::f64::consts::TAU * self.f_hi * dt).exp();",
+  "new": "        let a_lp = 1.0 - (-core::f64::consts::TAU * self.f_lo * dt).exp();"
+ },
+ {
+  "label": "the low-pass state is replaced rather than accumulated",
+  "old": "        self.lp_state += (self.hp_state - self.lp_state) * a_lp;",
+  "new": "        self.lp_state = (self.hp_state - self.lp_state) * a_lp;"
+ },
+ {
+  "label": "the magnitude response drops its upper roll-off, so the band never closes",
+  "old": "        r_lo / (1.0 + r_lo * r_lo).sqrt() / (1.0 + r_hi * r_hi).sqrt()",
+  "new": "        r_lo / (1.0 + r_lo * r_lo).sqrt() / (1.0 + 0.0 * r_hi * r_hi).sqrt()"
+ },
+ {
+  "label": "the lower frequency ratio in the magnitude response is inverted",
+  "old": "        let r_lo = f / self.f_lo;",
+  "new": "        let r_lo = self.f_lo / f;"
+ },
+ {
+  "label": "a band-pass reset leaves the low-pass section charged",
+  "old": "        self.lp_state = 0.0;",
+  "new": "        self.lp_state *= 1.0;"
+ },
+ {
+  "label": "the pacinian band starts a decade below the published 40 Hz",
+  "old": "BandPass::new(40.0, 400.0)?",
+  "new": "BandPass::new(4.0, 400.0)?"
+ },
+ {
+  "label": "the pacinian band ends a decade above the published 400 Hz",
+  "old": "BandPass::new(40.0, 400.0)?",
+  "new": "BandPass::new(40.0, 4000.0)?"
+ },
+ {
+  "label": "an sa1 afferent is born fully adapted, so it has no transient",
+  "old": "        Ok(Self { class: Class::Sa1, gain, adaptation, tau_adapt, cell, band: None, adapted: 0.0, spikes: 0 })",
+  "new": "        Ok(Self { class: Class::Sa1, gain, adaptation, tau_adapt, cell, band: None, adapted: adaptation, spikes: 0 })"
+ },
+ {
+  "label": "the adaptation advances one time constant per sample rather than one sample",
+  "old": "                let a = 1.0 - (-1.0 / (fs * self.tau_adapt)).exp();",
+  "new": "                let a = 1.0 - (-1.0 / self.tau_adapt).exp();"
+ },
+ {
+  "label": "the adapted fraction is replaced by its increment rather than accumulating it",
+  "old": "                self.adapted += (target - self.adapted) * a;",
+  "new": "                self.adapted = (target - self.adapted) * a;"
+ },
+ {
+  "label": "the sa1 steady rate uses the adaptation currently in force rather than the complete one",
+  "old": "            Class::Sa1 => self.gain * c.depth * (1.0 - self.adaptation),",
+  "new": "            Class::Sa1 => self.gain * c.depth * (1.0 - self.adapted),"
+ },
+ {
+  "label": "the pacinian reports a steady rate from raw acceleration, which its band-pass rejects",
+  "old": "            Class::Pc => 0.0,",
+  "new": "            Class::Pc => self.gain * c.acceleration.abs(),"
+ },
+ {
+  "label": "the steady rate is the interval rather than its reciprocal",
+  "old": "        self.cell.isi(i).map(|t| 1.0 / t)",
+  "new": "        self.cell.isi(i)"
+ },
+ {
+  "label": "an afferent reset leaves the adaptation in force",
+  "old": "        self.adapted = 0.0;",
+  "new": "        self.adapted *= 1.0;"
+ },
+ {
+  "label": "the cell is stepped with the sample rate as its time step",
+  "old": "        let fired = self.cell.step(1.0 / fs, i);",
+  "new": "        let fired = self.cell.step(fs, i);"
+ },
+ {
+  "label": "a NaN acceleration slips past the finiteness guard",
+  "old": "        if !c.acceleration.is_finite() {",
+  "new": "        if c.acceleration.is_infinite() {"
+ },
+ {
+  "label": "the afferents are spaced over the line as if there were one more of them",
+  "old": "        let positions: Vec<f64> = (0..n).map(|k| if n == 1 { 0.5 * length } else { length * k as f64 / (n - 1) as f64 }).collect();",
+  "new": "        let positions: Vec<f64> = (0..n).map(|k| if n == 1 { 0.5 * length } else { length * k as f64 / n as f64 }).collect();"
+ },
+ {
+  "label": "a receptive field of zero width is accepted",
+  "old": "        positive(\"sigma\", sigma)?;",
+  "new": "        let _ = positive(\"sigma\", sigma);"
+ },
+ {
+  "label": "the spacing skips an afferent, so it reports twice the true pitch",
+  "old": "        if self.positions.len() < 2 { 0.0 } else { self.positions[1] - self.positions[0] }",
+  "new": "        if self.positions.len() < 2 { 0.0 } else { self.positions[2] - self.positions[0] }"
+ },
+ {
+  "label": "a three-afferent line reports no spacing at all",
+  "old": "        if self.positions.len() < 2 { 0.0 } else { self.positions[1] - self.positions[0] }",
+  "new": "        if self.positions.len() < 3 { 0.0 } else { self.positions[1] - self.positions[0] }"
+ },
+ {
+  "label": "the receptive field is centred on the mirror image of the contact",
+  "old": "            let d = self.positions[k] - x_c;",
+  "new": "            let d = self.positions[k] + x_c;"
+ },
+ {
+  "label": "the receptive field divides by the width rather than its square",
+  "old": "            let w = (-d * d / (2.0 * self.sigma * self.sigma)).exp();",
+  "new": "            let w = (-d * d / (2.0 * self.sigma)).exp();"
+ },
+ {
+  "label": "the receptive field does not attenuate the velocity a distant afferent sees",
+  "old": "            let local = Contact { depth: c.depth * w, velocity: c.velocity * w, acceleration: c.acceleration * w };",
+  "new": "            let local = Contact { depth: c.depth * w, velocity: c.velocity, acceleration: c.acceleration * w };"
+ },
+ {
+  "label": "the receptive field does not attenuate the acceleration a distant afferent sees",
+  "old": "            let local = Contact { depth: c.depth * w, velocity: c.velocity * w, acceleration: c.acceleration * w };",
+  "new": "            let local = Contact { depth: c.depth * w, velocity: c.velocity * w, acceleration: c.acceleration };"
+ },
+ {
+  "label": "a NaN contact position slips past the finiteness guard",
+  "old": "        if !x_c.is_finite() {",
+  "new": "        if x_c.is_infinite() {"
+ },
+ {
+  "label": "the centroid is normalised by the largest spike count rather than the total",
+  "old": "        let total: u64 = self.afferents.iter().map(|a| a.spikes).sum();",
+  "new": "        let total: u64 = self.afferents.iter().map(|a| a.spikes).max().unwrap_or(0);"
+ },
+ {
+  "label": "the centroid pairs each spike count with the afferent at the other end of the line",
+  "old": "Some(self.positions.iter().zip(&self.afferents).map(|(x, a)| x * a.spikes as f64).sum::<f64>() / total as f64)",
+  "new": "Some(self.positions.iter().rev().zip(&self.afferents).map(|(x, a)| x * a.spikes as f64).sum::<f64>() / total as f64)"
+ },
+ {
+  "label": "the fingertip's spike total counts only its first afferent",
+  "old": "        self.afferents.iter().map(|a| a.spikes).sum()",
+  "new": "        self.afferents.first().map_or(0, |a| a.spikes)"
+ },
+ {
+  "label": "a fingertip reset leaves every afferent as it was",
+  "old": "        for a in &mut self.afferents {\n            a.reset();\n        }",
+  "new": "        for a in &mut self.afferents {\n            let _ = a;\n        }"
+ },
+ {
+  "label": "the trace is cut short by one pad",
+  "old": "    let total = 2.0 * pad_s + 2.0 * ramp_s + hold_s;",
+  "new": "    let total = pad_s + 2.0 * ramp_s + hold_s;"
+ },
+ {
+  "label": "the ramp does not subtract the leading pad, so it arrives at depth early",
+  "old": "                depth * (t - pad_s) / ramp_s",
+  "new": "                depth * t / ramp_s"
+ },
+ {
+  "label": "the release ramp rises instead of falling",
+  "old": "                depth * (1.0 - (t - pad_s - ramp_s - hold_s) / ramp_s)",
+  "new": "                depth * ((t - pad_s - ramp_s - hold_s) / ramp_s)"
+ },
+ {
+  "label": "the raised cosine is fed metres rather than the ramp fraction",
+  "old": "            let f = d / depth;",
+  "new": "            let f = d;"
+ },
+ {
+  "label": "the raised cosine is not halved, so the smooth stimulus reaches twice the depth asked for",
+  "old": "            depth * 0.5 * (1.0 - (core::f64::consts::PI * f).cos())",
+  "new": "            depth * (1.0 - (core::f64::consts::PI * f).cos())"
+ },
+ {
+  "label": "the raised cosine is inverted, so the stimulus holds at zero and pads at depth",
+  "old": "            depth * 0.5 * (1.0 - (core::f64::consts::PI * f).cos())",
+  "new": "            depth * 0.5 * (1.0 + (core::f64::consts::PI * f).cos())"
  }
 ]

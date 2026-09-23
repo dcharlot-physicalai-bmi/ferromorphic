@@ -452,6 +452,26 @@ impl BranchedNeuron {
     }
 }
 
+/// The two bounds the XOR proof puts on `w_1 + w_2`, in units of `−b`: the lower bound that
+/// adding the two middle constraints gives, and the strict upper bound the fourth one gives.
+///
+/// Returned rather than kept private because the VERDICT cannot see the lower bound's factor of
+/// two. The verdict asks whether the half-open interval between the bounds is non-empty, and
+/// `[2B, B)` and `[B, B)` are both empty for every `B > 0` — so a proof that dropped the factor
+/// still answers "no", and an encoding whose comment promises that a change to the reasoning
+/// changes the answer has to hand the reasoning out for that promise to be checkable. The
+/// bounds themselves carry the factor; [`point_neuron_can_xor`] carries only its consequence.
+#[must_use]
+pub fn xor_sum_bounds() -> (f64, f64) {
+    // The four constraints: b < 0, w1 + b ≥ 0, w2 + b ≥ 0, w1 + w2 + b < 0. Adding the middle two
+    // gives w1 + w2 + 2b ≥ 0, so w1 + w2 ≥ −2b — TWICE the bound either middle constraint gives
+    // on its own, which is the step of the proof this pair of numbers exists to record.
+    let minus_b_lower = f64::MIN_POSITIVE; // −b > 0
+    let sum_lower = 2.0 * minus_b_lower; // w1 + w2 ≥ −2b
+    let sum_upper = minus_b_lower; // w1 + w2 < −b
+    (sum_lower, sum_upper)
+}
+
 /// Whether ANY linear threshold unit `[w·x + b ≥ 0]` over two binary inputs computes XOR.
 ///
 /// A linear threshold unit's output on the four corners of the square is determined by the signs
@@ -459,22 +479,22 @@ impl BranchedNeuron {
 /// the middle two non-negative, i.e. `b < 0`, `w_1 ≥ −b`, `w_2 ≥ −b`, `w_1 + w_2 < −b` — and the
 /// last contradicts the sum of the middle two, since `−b > 0`. The function returns that verdict
 /// by checking the four inequalities for consistency the way the proof does, so it is a
-/// statement about every unit and not about a grid of them.
+/// statement about every unit and not about a grid of them. The bounds it reasons over are
+/// [`xor_sum_bounds`], which is where the factor of two lives.
 #[must_use]
 pub fn point_neuron_can_xor() -> bool {
-    // The four constraints: b < 0, w1 + b ≥ 0, w2 + b ≥ 0, w1 + w2 + b < 0. Adding the middle two
-    // gives w1 + w2 + 2b ≥ 0, so w1 + w2 + b ≥ −b > 0, contradicting the last. No solution.
-    // Encoded as arithmetic on the bounds rather than as a literal `false`, so a change to the
-    // reasoning changes the answer.
-    let minus_b_lower = f64::MIN_POSITIVE; // −b > 0
-    let sum_lower = 2.0 * minus_b_lower; // w1 + w2 ≥ −2b
-    let sum_upper = minus_b_lower; // w1 + w2 < −b
+    // `w1 + w2` would have to lie in the half-open interval the two bounds cut out, and there is
+    // no such number: the lower bound is twice the upper and both are strictly positive.
+    let (sum_lower, sum_upper) = xor_sum_bounds();
     sum_lower < sum_upper
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{BranchedNeuron, DendriteError, DendriticLearner, RateFunction, TwoCompartment, point_neuron_can_xor};
+    use super::{
+        BranchedNeuron, DendriteError, DendriticLearner, RateFunction, TwoCompartment,
+        point_neuron_can_xor, xor_sum_bounds,
+    };
 
     /// The steady state is the conductance-weighted mean of the reversals, exactly, and the
     /// stepped soma reaches it with the time constant `C / Σg`.
@@ -683,5 +703,226 @@ mod tests {
             let moved = learner.w[i] - before[i];
             assert!((moved / (gain * psp[i]) - 1.0).abs() < 1e-9, "weight {i} moved {moved}, the rule says {}", gain * psp[i]);
         }
+    }
+
+    /// A non-finite entry of any array is refused at ITS OWN index. The length half of
+    /// `finite_slice` and the finiteness half are independent, and every bad-array probe in this
+    /// module is a WRONG LENGTH — the only non-finite fixtures are scalars, which go through a
+    /// different guard — so a scan that could never find anything, under any of the five names
+    /// the function is called with, was read by nothing.
+    #[test]
+    fn a_non_finite_entry_of_an_array_is_refused_at_its_own_index() {
+        let soma = TwoCompartment::round_defaults();
+        let phi = RateFunction::new(100.0, -50e-3, 5e-3).unwrap();
+        let cell = DendriticLearner::new(soma, phi, vec![1.0, 2.0, 3.0], 1.0).unwrap();
+        for (slot, bad) in [(0usize, f64::NAN), (1, f64::INFINITY), (2, f64::NEG_INFINITY)] {
+            let mut psp = vec![1e-3; 3];
+            psp[slot] = bad;
+            match cell.dendrite(&psp) {
+                Err(DendriteError::NonFinite { what, index }) => assert_eq!((what, index), ("psp", slot)),
+                other => panic!("a psp of {bad} at slot {slot} was accepted: {other:?}"),
+            }
+        }
+        // The same scan under each of its other four names.
+        assert!(matches!(
+            DendriticLearner::new(soma, phi, vec![1.0, f64::NAN], 1.0),
+            Err(DendriteError::NonFinite { what: "weights", index: 1 })
+        ));
+        assert!(matches!(
+            BranchedNeuron::new(vec![vec![1.0, f64::NAN]], vec![0.0], 1.0, 0.0),
+            Err(DendriteError::NonFinite { what: "branch weights", index: 1 })
+        ));
+        assert!(matches!(
+            BranchedNeuron::new(vec![vec![1.0], vec![1.0]], vec![0.0, f64::INFINITY], 1.0, 0.0),
+            Err(DendriteError::NonFinite { what: "branch biases", index: 1 })
+        ));
+        let branched = BranchedNeuron::new(vec![vec![1.0, 1.0]], vec![0.0], 1.0, 0.0).unwrap();
+        assert!(matches!(
+            branched.branch_outputs(&[1.0, f64::NAN]),
+            Err(DendriteError::NonFinite { what: "input", index: 1 })
+        ));
+    }
+
+    /// The round defaults are the seven constants the constructor's doc prints, and they START AT
+    /// REST — `V = E_L`. Every existing use of them measures a change from wherever the soma
+    /// happened to be, or compares two runs that both begin there, so the resting potential the
+    /// cell is handed was never read as a value.
+    #[test]
+    fn the_round_defaults_are_the_documented_constants_and_start_at_rest() {
+        let d = TwoCompartment::round_defaults();
+        assert_eq!(
+            (d.c, d.g_l, d.e_l, d.g_d, d.e_e, d.e_i, d.v),
+            (1e-9, 50e-9, -70e-3, 50e-9, 0.0, -75e-3, -70e-3)
+        );
+        assert_eq!(d.v, d.e_l, "the defaults start at rest");
+        d.validate().unwrap();
+    }
+
+    /// Validation reads the somatic potential, and a coupling of ZERO is a legal soma. The
+    /// potential is the seventh of seven checks and the only one no existing fixture perturbs;
+    /// and `g_d` is the one conductance that may be zero — [`DendriticLearner::dendrite_for_target`]
+    /// exists to answer `None` for exactly that cell, which it could never be handed if
+    /// validation refused it.
+    #[test]
+    fn validation_reads_the_somatic_potential_and_admits_a_coupling_of_zero() {
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY] {
+            let soma = TwoCompartment { v: bad, ..TwoCompartment::round_defaults() };
+            assert!(matches!(soma.validate(), Err(DendriteError::NonFinite { what: "v", .. })), "v = {bad}");
+        }
+        let uncoupled = TwoCompartment { g_d: 0.0, ..TwoCompartment::round_defaults() };
+        assert_eq!(uncoupled.validate(), Ok(()), "a dendrite coupled through nothing is still a soma");
+        let phi = RateFunction::new(100.0, -50e-3, 5e-3).unwrap();
+        let learner = DendriticLearner::new(uncoupled, phi, vec![1.0], 1.0).unwrap();
+        assert_eq!(learner.dendrite_for_target(-60e-3), None);
+        let negative = TwoCompartment { g_d: -1e-9, ..TwoCompartment::round_defaults() };
+        assert!(matches!(negative.validate(), Err(DendriteError::OutOfRange { what: "g_d", .. })));
+    }
+
+    /// A rate function of zero transition width is refused. At `v_scale = 0` the exponent is a
+    /// division by zero and `φ` becomes a step function whose slope is `0/0` — the one shape the
+    /// learning rule cannot descend. The existing probe of the constructor is a zero MAXIMUM
+    /// RATE, which the same guard rejects either way.
+    #[test]
+    fn a_rate_function_of_zero_or_negative_transition_width_is_refused() {
+        assert!(matches!(RateFunction::new(100.0, -50e-3, 0.0), Err(DendriteError::OutOfRange { what: "v_scale", .. })));
+        assert!(matches!(RateFunction::new(100.0, -50e-3, -1e-3), Err(DendriteError::OutOfRange { what: "v_scale", .. })));
+        assert!(matches!(RateFunction::new(100.0, -50e-3, f64::NAN), Err(DendriteError::NonFinite { what: "v_scale", .. })));
+        assert!(matches!(RateFunction::new(100.0, -50e-3, f64::INFINITY), Err(DendriteError::NonFinite { what: "v_scale", .. })));
+    }
+
+    /// A learner is refused if its soma does not validate. The constructor's other three
+    /// refusals — no inputs, a non-positive `eta`, a non-finite weight — are all probed, and each
+    /// of them fires on its own, so the soma's check could have its result discarded and every
+    /// existing assertion would still hold.
+    #[test]
+    fn a_learner_is_refused_if_its_soma_does_not_validate() {
+        let phi = RateFunction::new(100.0, -50e-3, 5e-3).unwrap();
+        let no_capacitance = TwoCompartment { c: 0.0, ..TwoCompartment::round_defaults() };
+        assert!(matches!(
+            DendriticLearner::new(no_capacitance, phi, vec![1.0], 1.0),
+            Err(DendriteError::OutOfRange { what: "c", .. })
+        ));
+        let no_leak = TwoCompartment { g_l: 0.0, ..TwoCompartment::round_defaults() };
+        assert!(matches!(
+            DendriticLearner::new(no_leak, phi, vec![1.0], 1.0),
+            Err(DendriteError::OutOfRange { what: "g_l", .. })
+        ));
+        let inverted = TwoCompartment { e_i: 10e-3, ..TwoCompartment::round_defaults() };
+        assert!(matches!(DendriticLearner::new(inverted, phi, vec![1.0], 1.0), Err(DendriteError::OutOfRange { .. })));
+        let adrift = TwoCompartment { v: f64::NAN, ..TwoCompartment::round_defaults() };
+        assert!(matches!(
+            DendriticLearner::new(adrift, phi, vec![1.0], 1.0),
+            Err(DendriteError::NonFinite { what: "v", .. })
+        ));
+    }
+
+    /// The dendrite hangs off the REST potential, not off the soma. In the round defaults
+    /// `E_L` and `V` are the same number — the cell starts at rest — so every existing reading of
+    /// `dendrite` is taken on a cell where the two are indistinguishable; this one holds the soma
+    /// 50 mV above its rest first. It matters because the dendrite is the soma's INPUT: a
+    /// dendrite measured from the soma's own potential is a positive feedback loop.
+    #[test]
+    fn the_dendrite_hangs_off_the_rest_potential_and_not_off_the_soma() {
+        let soma = TwoCompartment::round_defaults();
+        let phi = RateFunction::new(100.0, -50e-3, 5e-3).unwrap();
+        let mut cell = DendriticLearner::new(soma, phi, vec![1.0, 2.0], 1.0).unwrap();
+        cell.soma.v = -20e-3;
+        assert_eq!(cell.dendrite(&[1e-3, 2e-3]).unwrap(), -70e-3 + (1.0 * 1e-3 + 2.0 * 2e-3));
+        // With no drive at all the dendrite sits at rest, wherever the soma has got to.
+        assert_eq!(cell.dendrite(&[0.0, 0.0]).unwrap(), cell.soma.e_l);
+        cell.soma.v = 0.0;
+        assert_eq!(cell.dendrite(&[0.0, 0.0]).unwrap(), cell.soma.e_l);
+    }
+
+    /// The step reports the soma it LEAVES, and the rule reads that same potential. The existing
+    /// step test reconstructs the rule's gain from the value `step` returned, so a step that
+    /// returned the potential it started from is self-consistent with the weights it then wrote
+    /// and passes; this one compares the returned value with the cell's own field afterwards,
+    /// and recomputes the gain from the field rather than from the return.
+    #[test]
+    fn the_step_reports_the_soma_it_leaves_and_the_rule_reads_that_same_potential() {
+        let soma = TwoCompartment { g_d: 25e-9, ..TwoCompartment::round_defaults() };
+        let phi = RateFunction::new(100.0, -55e-3, 5e-3).unwrap();
+        let mut cell = DendriticLearner::new(soma, phi, vec![1e-3, -2e-3], 1e-2).unwrap();
+        cell.soma.v = -20e-3;
+        let psp = [2.0, 5.0];
+        let (dt, started_at) = (1e-3, cell.soma.v);
+        let w_before = cell.w.clone();
+        let (v, v_star) = cell.step(dt, &psp, 0.0, 0.0).unwrap();
+        assert_ne!(v, started_at, "the step did not move the soma, so it would match either reading");
+        assert_eq!(v, cell.soma.v, "the step reported the soma it started from, not the one it left");
+        // Δw_i = η · dt · (φ(V) − φ(V*)) · φ′(V*) · psp_i, with V read off the cell afterwards:
+        // the same four multiplications in the same order, so the comparison is exact.
+        let gain = 1e-2 * dt * (phi.rate(cell.soma.v) - phi.rate(v_star)) * phi.slope(v_star);
+        assert!(gain.abs() > 1e-12, "the step taught nothing, so it would match any rule: {gain}");
+        assert_eq!(cell.w[0], w_before[0] + gain * psp[0]);
+        assert_eq!(cell.w[1], w_before[1] + gain * psp[1]);
+    }
+
+    /// A branched neuron needs at least one input, one bias PER BRANCH, and an input vector as
+    /// wide as the branches are. Two of those three checks compare a length with itself under
+    /// the mutation and so can never fire, and the third is a guard the suite never probes: its
+    /// branch fixtures all have inputs, matched biases, and inputs of the right width, and a
+    /// mismatch that gets through does not panic — `zip` simply stops at the shorter side and
+    /// returns a shorter answer.
+    #[test]
+    fn a_branched_neuron_needs_an_input_a_bias_per_branch_and_the_width_it_was_built_with() {
+        assert!(matches!(BranchedNeuron::new(vec![vec![]], vec![0.0], 1.0, 0.0), Err(DendriteError::Empty { what: "inputs" })));
+        assert!(matches!(
+            BranchedNeuron::new(vec![vec![], vec![]], vec![0.0, 0.0], 1.0, 0.0),
+            Err(DendriteError::Empty { what: "inputs" })
+        ));
+        match BranchedNeuron::new(vec![vec![1.0], vec![1.0]], vec![0.0], 1.0, 0.0) {
+            Err(DendriteError::Dimension { what, got, want }) => assert_eq!((what, got, want), ("branch biases", 1, 2)),
+            other => panic!("two branches were built with one bias: {other:?}"),
+        }
+        match BranchedNeuron::new(vec![vec![1.0]], vec![0.0, 0.0, 0.0], 1.0, 0.0) {
+            Err(DendriteError::Dimension { what, got, want }) => assert_eq!((what, got, want), ("branch biases", 3, 1)),
+            other => panic!("one branch was built with three biases: {other:?}"),
+        }
+        let cell = BranchedNeuron::new(vec![vec![1.0, -1.0], vec![-1.0, 1.0]], vec![-0.5, -0.5], 0.05, 0.5).unwrap();
+        match cell.branch_outputs(&[1.0]) {
+            Err(DendriteError::Dimension { what, got, want }) => assert_eq!((what, got, want), ("input", 1, 2)),
+            other => panic!("a two-input neuron read a one-element input: {other:?}"),
+        }
+        assert!(matches!(
+            cell.fires(&[1.0, 0.0, 1.0]),
+            Err(DendriteError::Dimension { what: "input", got: 3, want: 2 })
+        ));
+    }
+
+    /// The soma fires on the SUM of its branches, and at the threshold itself rather than past
+    /// it. The XOR fixture's branches are driven to within `e^{−10}` of 0 and 1, where the sum
+    /// and the largest branch are the same number to three decimal places and the threshold of
+    /// ½ is nowhere near either — so neither the summation nor the inclusiveness of the
+    /// comparison was tested. Two branches at zero net drive are each EXACTLY ½ and sum to
+    /// exactly 1, which puts both questions on an exact `f64`.
+    #[test]
+    fn the_soma_sums_its_branches_and_fires_at_the_threshold_itself() {
+        let poised = BranchedNeuron::new(vec![vec![1.0], vec![1.0]], vec![0.0, 0.0], 0.05, 1.0).unwrap();
+        assert_eq!(poised.branch_outputs(&[0.0]).unwrap(), vec![0.5, 0.5]);
+        assert!(poised.fires(&[0.0]).unwrap(), "a sum exactly at the threshold fires");
+        // A threshold no single branch reaches, and the two together do.
+        let together = BranchedNeuron::new(vec![vec![1.0], vec![1.0]], vec![0.0, 0.0], 0.05, 0.9).unwrap();
+        assert!(together.fires(&[0.0]).unwrap(), "two branches at a half each did not reach 0.9");
+        // One place past the sum is one place too far.
+        let unreachable = BranchedNeuron::new(vec![vec![1.0], vec![1.0]], vec![0.0, 0.0], 0.05, 1.0 + f64::EPSILON).unwrap();
+        assert!(!unreachable.fires(&[0.0]).unwrap());
+    }
+
+    /// The XOR proof carries the factor of two that adding the two middle constraints gives.
+    /// The verdict cannot: the question it asks is whether the half-open interval between the
+    /// bounds holds a number, and `[2B, B)` and `[B, B)` are both empty for every `B > 0`, so
+    /// dropping the factor leaves `point_neuron_can_xor` answering "no" for a reason the proof
+    /// does not give. That is why [`xor_sum_bounds`] hands the bounds out — this test reads the
+    /// step of the reasoning, and the one below it reads only the conclusion.
+    #[test]
+    fn the_xor_proof_carries_the_factor_of_two_that_adding_the_middle_constraints_gives() {
+        assert!(!point_neuron_can_xor());
+        let (sum_lower, sum_upper) = xor_sum_bounds();
+        assert_eq!(sum_upper, f64::MIN_POSITIVE, "w1 + w2 < −b");
+        assert_eq!(sum_lower, 2.0 * f64::MIN_POSITIVE, "w1 ≥ −b and w2 ≥ −b add to w1 + w2 ≥ −2b");
+        assert_eq!(sum_lower / sum_upper, 2.0);
+        assert!(sum_lower > sum_upper, "the lower bound is ABOVE the upper, which is the contradiction");
     }
 }

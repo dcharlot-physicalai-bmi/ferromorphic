@@ -1089,4 +1089,262 @@ mod tests {
         assert_eq!(wrap_pi(0.5), 0.5);
         assert!((wrap_pi(-0.5) + 0.5).abs() < 1e-15);
     }
+
+    /// The ceiling on one `run` is the hundred million its constant documents, and a run of
+    /// EXACTLY that many steps is started rather than refused.
+    ///
+    /// Why the suite could not see either half: its only ceiling check spells the bound
+    /// `MAX_STEPS + 1`, so a constant a tenth the size moves the test along with it and the
+    /// refusal still fires; and nothing asked what happens AT the ceiling, where `steps >=
+    /// MAX_STEPS` refuses a run the documentation admits. The run at the ceiling is asked for
+    /// with a `dt` that cannot be taken, so the answer costs one rejected step rather than 1e8
+    /// taken ones: a refusal names `steps`, an admission names `dt`.
+    #[test]
+    fn the_step_ceiling_is_the_hundred_million_it_documents_and_a_run_of_that_many_is_admitted() {
+        const { assert!(MAX_STEPS == 100_000_000) };
+        let mut k = Kuramoto::new(vec![1.0], 0.0, vec![0.0]).unwrap();
+        assert!(matches!(k.run(0.0, MAX_STEPS), Err(OscillatorError::OutOfRange { what: "dt", .. })));
+        assert!(matches!(k.run(1e-3, MAX_STEPS + 1), Err(OscillatorError::OutOfRange { what: "steps", .. })));
+    }
+
+    /// A non-finite entry is reported at the position it occupies, not always at position zero.
+    ///
+    /// Why the suite could not see it: every refusal check matches with `..` and never reads the
+    /// index, and each one passes a ONE-element array, where position zero is the right answer
+    /// whatever the code does.
+    #[test]
+    fn a_non_finite_entry_is_reported_at_the_position_it_occupies() {
+        assert_eq!(
+            Kuramoto::new(vec![1.0, 2.0, f64::NAN], 1.0, vec![0.0; 3]),
+            Err(OscillatorError::NonFinite { what: "omega", index: 2 })
+        );
+        assert_eq!(
+            Kuramoto::new(vec![1.0; 3], 1.0, vec![0.0, f64::INFINITY, 0.0]),
+            Err(OscillatorError::NonFinite { what: "theta", index: 1 })
+        );
+        assert_eq!(
+            CpgChain::new(1.0, 1.0, 0.1, vec![0.0, 0.0, f64::NEG_INFINITY]),
+            Err(OscillatorError::NonFinite { what: "theta", index: 2 })
+        );
+    }
+
+    /// An infinity is refused everywhere the positivity guard stands: a step, a chain weight, an
+    /// amplitude rate, a half-width and a coupling gain.
+    ///
+    /// Why the suite could not see it: `bad_arguments_are_refused` probes each of those sites with
+    /// zero or with a negative number, and `v > 0.0` alone still rejects both. Only an infinity
+    /// separates the guard from its finiteness clause, and an accepted infinite `dt` turns a state
+    /// into NaN while returning `Ok`.
+    #[test]
+    fn an_infinite_step_rate_or_coupling_is_refused() {
+        let mut k = Kuramoto::new(vec![1.0], 1.0, vec![0.25]).unwrap();
+        assert!(matches!(k.step(f64::INFINITY), Err(OscillatorError::OutOfRange { what: "dt", .. })));
+        assert_eq!(k.theta, vec![0.25], "a refused step must leave the state where it was");
+        assert!(matches!(
+            CpgChain::new(1.0, f64::INFINITY, 0.1, vec![0.0, 0.0]),
+            Err(OscillatorError::OutOfRange { what: "w", .. })
+        ));
+        assert!(matches!(Amplitude::new(f64::INFINITY, 1.0), Err(OscillatorError::OutOfRange { what: "a", .. })));
+        assert!(matches!(
+            lorentzian_quantiles(4, 0.0, f64::INFINITY),
+            Err(OscillatorError::OutOfRange { what: "gamma", .. })
+        ));
+        assert!(matches!(Oim::max_cut(2, &[], f64::INFINITY, 1.0), Err(OscillatorError::OutOfRange { what: "k", .. })));
+        let mut amp = Amplitude::new(1.0, 0.0).unwrap();
+        assert!(matches!(amp.step(f64::INFINITY, 1.0), Err(OscillatorError::OutOfRange { what: "dt", .. })));
+    }
+
+    /// The lock range is the CLOSED interval `|Δω| ≤ K` about zero detuning — both signs of it —
+    /// and a zero coupling is outside it rather than an `asin(0/0)`.
+    ///
+    /// Why the suite could not see it: its out-of-range probes are `locked_phase(1.0001, 1.0)` and
+    /// `locked_phase(0.5, 0.0)`. A one-sided `Δω > K` still refuses the first (its detuning is
+    /// positive) and still refuses the second (`0.5 > 0.0`), so neither reads the absolute value;
+    /// and a guard that admits `K = 0` is only visible at the one detuning that is not itself
+    /// outside a zero range, `Δω = 0`, where `0/0` reaches `asin` as a NaN.
+    #[test]
+    fn the_lock_range_is_closed_and_symmetric_and_a_zero_coupling_is_outside_it() {
+        assert_eq!(locked_phase(-1.5, 1.0), None);
+        assert_eq!(locked_phase(1.5, 1.0), None);
+        assert_eq!(locked_phase(0.0, 0.0), None);
+        assert_eq!(locked_phase(-0.0, 0.0), None);
+        assert_eq!(locked_phase(-0.6, 1.0), Some((-0.6f64).asin()));
+        assert_eq!(locked_phase(0.6, 1.0), Some(0.6f64.asin()));
+    }
+
+    /// A phase array LONGER than the frequencies is a dimension error, not an accepted population.
+    ///
+    /// Why the suite could not see it: its only dimension probe is an empty phase array against one
+    /// frequency, which a `theta.len() < omega.len()` test refuses just as well. Accepted, the
+    /// extra phases would be carried in the state and summed into every mean field while no
+    /// velocity was ever written for them.
+    #[test]
+    fn a_phase_array_longer_than_the_frequencies_is_refused() {
+        assert_eq!(
+            Kuramoto::new(vec![1.0], 1.0, vec![0.0, 0.0]),
+            Err(OscillatorError::Dimension { what: "theta", got: 2, want: 1 })
+        );
+    }
+
+    /// Full coherence is INSIDE the Ott–Antonsen domain: `r0 = 1` is answered, not refused.
+    ///
+    /// Why the suite could not see it: its domain probes are `r0 = 1.5` (outside either way) and
+    /// starts of 0.05, 0.3, 0.5 and 0.9, all strictly below one. The endpoint the documented range
+    /// `[0, 1]` includes is the only value a half-open range would drop.
+    #[test]
+    fn full_coherence_is_an_admissible_start_for_the_ott_antonsen_solution() {
+        let (k, gamma) = (3.0, 0.5);
+        assert_eq!(ott_antonsen_r(1.0, k, gamma, 0.0), Some(1.0));
+        let later = ott_antonsen_r(1.0, k, gamma, 200.0).unwrap();
+        assert!((later - (1.0 - 2.0 * gamma / k).sqrt()).abs() < 1e-12, "a fully coherent start settled at {later}");
+        assert_eq!(ott_antonsen_r(1.000_000_1, k, gamma, 0.0), None);
+    }
+
+    /// An incoherent start stays at zero however long the run, rather than becoming a NaN once the
+    /// logistic exponential underflows.
+    ///
+    /// Why the suite could not see it: its `r0 = 0` probe is at `t = 5`, where `e^{−2t}` is still
+    /// 4.5e−5, so the infinity from `cap/u0` merely swamps it and the answer is right by accident.
+    /// The `0 · ∞` needs `e^{−rate·t}` to reach EXACTLY zero, which at this rate takes `t ≳ 355`.
+    #[test]
+    fn an_incoherent_start_stays_incoherent_however_long_the_run() {
+        assert_eq!((-2.0f64 * 400.0).exp(), 0.0, "this test only bites if the exponential underflows");
+        assert_eq!(ott_antonsen_r(0.0, 3.0, 0.5, 400.0), Some(0.0));
+    }
+
+    /// The chain reports one lag error per neighbouring PAIR, each wrapped into the half-open turn
+    /// `(−π, π]`.
+    ///
+    /// Why the suite could not see it: the locked-wave test reads the errors only through
+    /// `max |e|` after the chain has converged, where every error is within 1e−9 of zero. A window
+    /// short by one pair still reports those zeros, and a wrap that never happens is invisible
+    /// because nothing near zero needs wrapping. This fixture is a chain that is NOT locked, with
+    /// raw differences of 5.6 and −12.5 rad.
+    #[test]
+    fn every_neighbouring_pair_reports_a_lag_error_wrapped_into_one_turn() {
+        let lag = 0.4;
+        let chain = CpgChain::new(1.0, 1.0, lag, vec![0.5, -5.5, -11.5, 0.6, 3.0]).unwrap();
+        let errs = chain.lag_errors();
+        assert_eq!(errs.len(), chain.theta.len() - 1);
+        for e in &errs {
+            assert!(*e > -PI && *e <= PI, "a lag error escaped the turn: {e}");
+        }
+        let raw = 0.5 - (-5.5) - lag;
+        assert!(raw > PI, "the fixture must need wrapping: {raw}");
+        assert_eq!(errs[0], raw - TAU);
+    }
+
+    /// A new machine starts with every phase at zero — the equilibrium its own constructor
+    /// documents and tells the caller to randomise away from.
+    ///
+    /// Why the suite could not see it: every fixture calls `randomise` before reading anything, and
+    /// all-π is an equilibrium of the same flow with the same energy as all-zero: the edge terms
+    /// read `cos(π − π)` and the injection `cos 2π`. Only the phases themselves, and the spins they
+    /// read as, tell the two starts apart.
+    #[test]
+    fn a_new_machine_starts_at_phase_zero() {
+        let oim = Oim::max_cut(4, &ring(4), 1.0, 0.5).unwrap();
+        assert_eq!(oim.theta, vec![0.0; 4]);
+        assert_eq!(oim.spins(), vec![1; 4]);
+        assert_eq!(oim.cut(), 0.0);
+    }
+
+    /// `randomise` draws from the WHOLE circle, not from half of it.
+    ///
+    /// Why the suite could not see it: a machine randomised on `[0, π)` still relaxes to the same
+    /// cuts — the second harmonic pulls every phase to `0` or `π` from either half — so the
+    /// max-cut and descent tests are blind to it. What changes is the SUPPORT of the draw, which
+    /// nothing looked at.
+    #[test]
+    fn randomise_draws_from_the_whole_circle() {
+        let mut oim = Oim::max_cut(64, &[], 1.0, 0.0).unwrap();
+        oim.randomise(&mut Rng::new(4));
+        assert!(oim.theta.iter().all(|t| (0.0..TAU).contains(t)), "a phase left the turn: {:?}", oim.theta);
+        let above = oim.theta.iter().filter(|t| **t > PI).count();
+        // 64 fair draws: the count above π has mean 32 and standard deviation 4, so this window is
+        // three standard deviations either side and the seed is fixed. Measured at this seed: 38 of 64.
+        assert!((20..=44).contains(&above), "{above} of 64 phases fell above π");
+    }
+
+    /// The energy reads the entry at row `i`, column `j` — the upper triangle its own formula
+    /// `Σ_{i<j} w_ij` names — and not the transpose.
+    ///
+    /// Why the suite could not see it: every fixture reaches `energy` through `Oim::max_cut`, which
+    /// writes `w[u][v]` and `w[v][u]` together, and a symmetric matrix IS its own transpose. The
+    /// `w` field is public, so an asymmetric matrix is reachable from outside the module without
+    /// touching the constructor, and it is the only state in which the two readings differ.
+    #[test]
+    fn the_energy_reads_the_upper_triangle_of_the_weights_and_not_its_transpose() {
+        let mut oim = Oim::max_cut(2, &[(0, 1, 1.0)], 1.0, 0.0).unwrap();
+        oim.w = vec![0.0, 2.0, 0.5, 0.0];
+        oim.theta = vec![0.0, PI];
+        // One pair, i < j: E = K w_01 cos(θ0 − θ1) = 1 · 2 · (−1), with no injection at K_s = 0.
+        assert_eq!(oim.energy(), -2.0);
+    }
+
+    /// The Gershgorin row sum covers every column of its row, the last one included.
+    ///
+    /// Why the suite could not see it: its only fixture is a ring, where the last column of row `i`
+    /// is empty for every `i` but `0` and `n − 1`, and row `n − 1` carries the same mass in
+    /// columns that are not last. Dropping the last column therefore leaves the MAXIMUM row sum
+    /// untouched. A star at vertex 0 puts the largest row's mass in that column.
+    #[test]
+    fn the_gershgorin_row_sum_includes_the_last_column() {
+        let oim = Oim::max_cut(3, &[(0, 1, 3.0), (0, 2, 3.0)], 1.0, 0.0).unwrap();
+        // Row 0 sums to 6 and rows 1 and 2 to 3, so L = 2K·6 + 2K_s = 12; without w[0][2] every
+        // row would sum to 3 and the step would double.
+        assert_eq!(oim.stable_dt(), 1.0 / 12.0);
+    }
+
+    /// An uncoupled machine is given a FINITE stable step, and a step of it is a step.
+    ///
+    /// Why the suite could not see it: the only machine it measures `stable_dt` on is a coupled
+    /// ring with `K_s = 1`, whose Lipschitz bound is 6. The floor under the divisor is reached only
+    /// when a machine has no edges AND no injection, where `1/0` is an infinity that turns the
+    /// first step into `∞ · 0 = NaN`.
+    #[test]
+    fn an_uncoupled_machine_is_given_a_finite_stable_step() {
+        let mut oim = Oim::max_cut(3, &[], 1.0, 0.0).unwrap();
+        let dt = oim.stable_dt();
+        assert!(dt.is_finite(), "an uncoupled machine was handed dt = {dt}");
+        assert_eq!(dt, 1.0 / f64::MIN_POSITIVE);
+        oim.theta = vec![0.25, 0.5, 0.75];
+        oim.step(dt).unwrap();
+        assert_eq!(oim.theta, vec![0.25, 0.5, 0.75], "a machine with no forces moved");
+    }
+
+    /// Binarisation reports the LEAST binary oscillator: the smallest `|cos θ|` in the machine.
+    ///
+    /// Why the suite could not see it: it reads `binarisation` only on states where every phase is
+    /// already binary (`= 1`) or every phase is nearly so (`> 0.99`), and on those the smallest and
+    /// the largest `|cos θ|` agree to within the tolerance. A mixed machine separates them.
+    #[test]
+    fn binarisation_reports_the_least_binary_oscillator() {
+        let mut oim = Oim::max_cut(3, &ring(3), 1.0, 0.5).unwrap();
+        oim.theta = vec![0.0, 1.0, PI];
+        assert_eq!(oim.binarisation(), 1.0f64.cos());
+        assert!(oim.binarisation() < 1.0, "a mixed machine read as fully binary");
+    }
+
+    /// A run that only descended reports the fall it saw, not zero.
+    ///
+    /// Why the suite could not see it: the descent test asserts `worst <= 16ε` and the overshoot
+    /// test asserts `rough > 1e-3`, and a monitor that starts its maximum at zero satisfies both —
+    /// zero is below the first bound and the second run really does rise. What is lost is the
+    /// SIGN of a run that never rose, which is the sentence the return value's documentation
+    /// makes. One step of a descending run is the whole answer, with no maximum to hide it.
+    #[test]
+    fn a_run_that_only_descended_reports_a_negative_worst_rise() {
+        let mut oim = Oim::max_cut(6, &ring(6), 1.0, 0.5).unwrap();
+        oim.randomise(&mut Rng::new(12));
+        let dt = oim.stable_dt();
+        let mut probe = oim.clone();
+        let before = probe.energy();
+        let fall = probe.step(dt).unwrap() - before;
+        assert!(fall < -1e-6, "the fixture did not descend: {fall}");
+        assert_eq!(oim.relax(dt, 1).unwrap(), fall);
+        assert_eq!(oim.theta, probe.theta);
+        let worst = oim.relax(dt, 3).unwrap();
+        assert!(worst < 0.0, "three descending steps reported a worst rise of {worst}");
+    }
 }
