@@ -1,0 +1,307 @@
+[
+ {
+  "label": "the magic message drops its bytes",
+  "old": "write!(f, \"not a .npy file: it does not start with \\\\x93NUMPY\")",
+  "new": "write!(f, \"not a .npy file\")"
+ },
+ {
+  "label": "the version message swaps its numbers",
+  "old": "write!(f, \".npy format version {major}.{minor} is not one this reader knows\")",
+  "new": "write!(f, \".npy format version {minor}.{major} is not one this reader knows\")"
+ },
+ {
+  "label": "the truncation message swaps need and have",
+  "old": "write!(f, \"the file ends inside the {what}: {need} bytes needed, {have} present\")",
+  "new": "write!(f, \"the file ends inside the {what}: {have} bytes needed, {need} present\")"
+ },
+ {
+  "label": "the header message drops the offset",
+  "old": "write!(f, \"the header is not the format's dictionary at byte {offset}: {what}\")",
+  "new": "write!(f, \"the header is not the format's dictionary: {what}\")"
+ },
+ {
+  "label": "a structured item size counts one field",
+  "old": "Self::Fields(f) => f.iter().map(|(_, s)| s.size).sum(),",
+  "new": "Self::Fields(f) => f.first().map_or(0, |(_, s)| s.size),"
+ },
+ {
+  "label": "the exact limit is 2^52",
+  "old": "const EXACT: u64 = 1 << 53;",
+  "new": "const EXACT: u64 = 1 << 52;"
+ },
+ {
+  "label": "a one-character descr is read",
+  "old": "    if bytes.len() < 2 {\n        return Err(unsupported());\n    }\n",
+  "new": "    if bytes.len() < 1 {\n        return Err(unsupported());\n    }\n"
+ },
+ {
+  "label": "native byte order is accepted",
+  "old": "        b'<' | b'|' => false,",
+  "new": "        b'<' | b'|' | b'=' => false,"
+ },
+ {
+  "label": "a big-endian marker reads little-endian",
+  "old": "        b'>' => true,",
+  "new": "        b'>' => false,"
+ },
+ {
+  "label": "a missing byte order is accepted",
+  "old": "        _ => return Err(unsupported()),\n    };\n    let size",
+  "new": "        _ => false,\n    };\n    let size"
+ },
+ {
+  "label": "a two-byte bool is accepted",
+  "old": "(b'b', 1) => Kind::Bool,",
+  "new": "(b'b', _) => Kind::Bool,"
+ },
+ {
+  "label": "a three-byte integer is accepted",
+  "old": "(b'i', 1 | 2 | 4 | 8) => Kind::Int,",
+  "new": "(b'i', _) => Kind::Int,"
+ },
+ {
+  "label": "unsigned reads as signed",
+  "old": "(b'u', 1 | 2 | 4 | 8) => Kind::Uint,",
+  "new": "(b'u', 1 | 2 | 4 | 8) => Kind::Int,"
+ },
+ {
+  "label": "half precision is accepted as float",
+  "old": "(b'f', 4 | 8) => Kind::Float,",
+  "new": "(b'f', 2 | 4 | 8) => Kind::Float,"
+ },
+ {
+  "label": "the header space skip also skips newlines",
+  "old": "while self.at < self.s.len() && self.s[self.at] == b' ' {",
+  "new": "while self.at < self.s.len() && (self.s[self.at] == b' ' || self.s[self.at] == b'\\n') {"
+ },
+ {
+  "label": "a double-quoted string is refused",
+  "old": "Some(&q @ (b'\\'' | b'\"')) => q,",
+  "new": "Some(&q @ b'\\'') => q,"
+ },
+ {
+  "label": "an escape in a string is accepted",
+  "old": "        if self.s[start..end].contains(&b'\\\\') {\n            return Err(self.fail(\"an escape in a string\"));\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "a string keeps its closing quote",
+  "old": "        self.at = end + 1;\n        // The text",
+  "new": "        self.at = end;\n        // The text"
+ },
+ {
+  "label": "a word is matched without being consumed",
+  "old": "            self.at += w.len();\n            true",
+  "new": "            true"
+ },
+ {
+  "label": "a scalar descr in a list position is refused",
+  "old": "    if t.peek() != Some(b'[') {\n        return Ok(Dtype::Scalar(scalar(&t.string()?)?));\n    }",
+  "new": "    if t.peek() != Some(b'[') {\n        return Err(t.fail(\"a list was expected\"));\n    }"
+ },
+ {
+  "label": "a field's name and type need no comma",
+  "old": "        t.eat(b',', \"a ',' between a field's name and its type was expected\")?;\n",
+  "new": "        let _ = t.eat(b',', \"\");\n"
+ },
+ {
+  "label": "a nested field is read as a string",
+  "old": "        let descr = if t.peek() == Some(b'[') { return Err(NpyError::Unsupported { descr: format!(\"nested field {name:?}\") }) } else { t.string()? };",
+  "new": "        let descr = t.string()?;"
+ },
+ {
+  "label": "a sub-array field is accepted",
+  "old": "        if t.peek() == Some(b',') {\n            return Err(NpyError::Unsupported { descr: format!(\"sub-array field {name:?}\") });\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "a repeated field name is accepted",
+  "old": "        if fields.iter().any(|(n, _)| *n == name) {\n            return Err(t.fail(\"a field name that appears twice\"));\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "fields need no separator",
+  "old": "            _ => return Err(t.fail(\"a ',' or ']' after a field was expected\")),",
+  "new": "            _ => {}"
+ },
+ {
+  "label": "an empty field list is accepted",
+  "old": "    if fields.is_empty() {\n        return Err(t.fail(\"a structured dtype with no fields\"));\n    }\n",
+  "new": ""
+ },
+ {
+  "label": "a list shape is accepted",
+  "old": "t.eat(b'(', \"a shape tuple was expected\")?;",
+  "new": "let _ = t.eat(b'(', \"\") .or_else(|_| t.eat(b'[', \"\"));"
+ },
+ {
+  "label": "an oversized dimension is truncated",
+  "old": ".and_then(|x| x.parse().ok()).ok_or_else(|| t.fail(\"a dimension too large\"))?;",
+  "new": ".and_then(|x| x.parse::<u128>().ok()).map(|v| v as usize).ok_or_else(|| t.fail(\"a dimension too large\"))?;"
+ },
+ {
+  "label": "dimensions need no separator",
+  "old": "                    _ => return Err(t.fail(\"a ',' or ')' after a dimension was expected\")),",
+  "new": "                    _ => {}"
+ },
+ {
+  "label": "a negative dimension is skipped",
+  "old": "            _ => return Err(t.fail(\"a dimension must be a non-negative integer\")),",
+  "new": "            _ => t.at += 1,"
+ },
+ {
+  "label": "the preamble is not checked for length",
+  "old": "    need(\"preamble\", 8)?;\n",
+  "new": ""
+ },
+ {
+  "label": "version 1.1 is accepted",
+  "old": "        (1, 0) => (8, 2),",
+  "new": "        (1, _) => (8, 2),"
+ },
+ {
+  "label": "version 2 has a two-byte header length",
+  "old": "        (2 | 3, 0) => (8, 4),",
+  "new": "        (2, 0) => (8, 2),\n        (3, 0) => (8, 4),"
+ },
+ {
+  "label": "version 3 is refused",
+  "old": "        (2 | 3, 0) => (8, 4),",
+  "new": "        (2, 0) => (8, 4),"
+ },
+ {
+  "label": "the header length is read big-endian",
+  "old": "header_len |= usize::from(b) << (8 * k);",
+  "new": "header_len |= usize::from(b) << (8 * (len_size - 1 - k));"
+ },
+ {
+  "label": "the header is not checked for length",
+  "old": "    need(\"header\", start + header_len)?;\n",
+  "new": ""
+ },
+ {
+  "label": "a version 3 header is read as Latin-1",
+  "old": "    let decoded: String = if major < 3 {",
+  "new": "    let decoded: String = if major <= 3 {"
+ },
+ {
+  "label": "a Latin-1 header is read as UTF-8",
+  "old": "    let decoded: String = if major < 3 {",
+  "new": "    let decoded: String = if major < 1 {"
+ },
+ {
+  "label": "the header need not open with a brace",
+  "old": "    t.eat(b'{', \"the header must open with '{'\")?;\n",
+  "new": ""
+ },
+ {
+  "label": "a key needs no colon",
+  "old": "        t.eat(b':', \"a ':' after a key was expected\")?;\n",
+  "new": ""
+ },
+ {
+  "label": "fortran_order True reads as False",
+  "old": "                let v = if t.word(\"True\") {\n                    true",
+  "new": "                let v = if t.word(\"True\") {\n                    false"
+ },
+ {
+  "label": "fortran_order accepts anything",
+  "old": "                    return Err(t.fail(\"fortran_order must be True or False\"));",
+  "new": "                    false"
+ },
+ {
+  "label": "an unknown key is skipped",
+  "old": "            _ => return Err(NpyError::Header { offset: key_at, what: \"a key the format does not have\" }),",
+  "new": "            _ => false,"
+ },
+ {
+  "label": "a repeated key is accepted",
+  "old": "        if seen {\n            return Err(NpyError::Header { offset: key_at, what: \"a key that appears twice\" });\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "values need no separator",
+  "old": "            _ => return Err(t.fail(\"a ',' or '}' after a value was expected\")),",
+  "new": "            _ => {}"
+ },
+ {
+  "label": "text after the dictionary is accepted",
+  "old": "    if t.s[t.at..].iter().any(|&c| c != b' ' && c != b'\\n') {\n        return Err(t.fail(\"text after the dictionary\"));\n    }\n",
+  "new": ""
+ },
+ {
+  "label": "a missing key defaults",
+  "old": "    let (Some(dtype), Some(fortran_order), Some(shape)) = (descr, fortran, shape) else {\n        return Err(NpyError::Header { offset: t.at, what: \"descr, fortran_order and shape are all required\" });\n    };",
+  "new": "    let (Some(dtype), fortran_order, shape) = (descr, fortran.unwrap_or(false), shape.unwrap_or_default()) else {\n        return Err(NpyError::Header { offset: t.at, what: \"descr, fortran_order and shape are all required\" });\n    };"
+ },
+ {
+  "label": "an overflowing shape wraps",
+  "old": "let count = shape.iter().try_fold(1usize, |n, &d| n.checked_mul(d));",
+  "new": "let count = Some(shape.iter().fold(1usize, |n, &d| n.wrapping_mul(d)));"
+ },
+ {
+  "label": "extra data is accepted",
+  "old": "if bytes.len() - data_at != size {",
+  "new": "if bytes.len() - data_at < size {"
+ },
+ {
+  "label": "big-endian bytes are not reversed",
+  "old": "        for (k, &x) in raw.iter().rev().enumerate() {",
+  "new": "        for (k, &x) in raw.iter().enumerate() {"
+ },
+ {
+  "label": "a bool reads its raw byte",
+  "old": "(Kind::Bool, _) => f64::from(u8::from(bits != 0)),",
+  "new": "(Kind::Bool, _) => bits as f64,"
+ },
+ {
+  "label": "a float32 is read as the bits of a float64",
+  "old": "(Kind::Float, 4) => f64::from(f32::from_bits(bits as u32)),",
+  "new": "(Kind::Float, 4) => f64::from_bits(bits),"
+ },
+ {
+  "label": "an unsigned 2^53 + 1 is rounded",
+  "old": "            if bits > EXACT {\n                return Err(NpyError::Inexact { index });\n            }\n            bits as f64",
+  "new": "            bits as f64"
+ },
+ {
+  "label": "an unsigned 2^53 is refused",
+  "old": "if bits > EXACT {",
+  "new": "if bits >= EXACT {"
+ },
+ {
+  "label": "a signed integer is not sign-extended",
+  "old": "let v = ((bits << shift) as i64) >> shift;",
+  "new": "let v = bits as i64;"
+ },
+ {
+  "label": "a signed 2^53 + 1 is rounded",
+  "old": "            if v.unsigned_abs() > EXACT {\n                return Err(NpyError::Inexact { index });\n            }\n            v as f64",
+  "new": "            v as f64"
+ },
+ {
+  "label": "values reports the index as zero",
+  "old": "Dtype::Scalar(s) => self.data.chunks_exact(s.size).enumerate().map(|(i, c)| value(*s, c, i)).collect(),",
+  "new": "Dtype::Scalar(s) => self.data.chunks_exact(s.size).map(|c| value(*s, c, 0)).collect(),"
+ },
+ {
+  "label": "a field is read from offset zero",
+  "old": "found = Some((offset, *s));",
+  "new": "found = Some((0, *s));"
+ },
+ {
+  "label": "field offsets do not advance",
+  "old": "            offset += s.size;\n",
+  "new": ""
+ },
+ {
+  "label": "a field is read in chunks of its own size",
+  "old": "self.data.chunks_exact(item).enumerate()",
+  "new": "self.data.chunks_exact(s.size).enumerate()"
+ },
+ {
+  "label": "a scalar array reads as having fields",
+  "old": "        let Dtype::Fields(fields) = &self.dtype else { return Err(missing()) };",
+  "new": "        let fields = &match &self.dtype { Dtype::Fields(f) => f.clone(), Dtype::Scalar(s) => vec![(name.to_owned(), *s)] };"
+ }
+]

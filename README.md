@@ -9,7 +9,7 @@ hardware constraint models, analog device non-idealities, NIR, event-camera deco
 metrics, teaching tasks — and a joules ledger that charges for the memory traffic a synaptic
 operation needs.
 
-**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 76 modules, 2,667 tests.**
+**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 81 modules, 2,703 tests.**
 
 Run it in a browser without installing anything:
 **[energy.physicalai-bmi.org/neuromorphic](https://energy.physicalai-bmi.org/neuromorphic)** — the
@@ -37,7 +37,9 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 | `exponential` | EIF, `AdEx` with the Naud firing-pattern taxonomy, QIF, theta |
 | `synapse` | delta / exponential / alpha / bi-exponential kernels, CUBA vs COBA, AMPA / GABA / NMDA with the magnesium block, Tsodyks-Markram short-term plasticity |
 | `plasticity` | pair and triplet STDP, Hebbian, Oja, BCM, reward-modulated three-factor, homeostatic scaling |
+| `istdp` | inhibitory plasticity that balances excitation (Vogels et al. 2011): the drift `η ν_pre (2ν_post τ − α)` measured on independent trains, and a neuron that learns its inhibition and settles ABOVE the target rate — 6.5 Hz for 5 Hz with twenty inputs, 5.6 Hz with a hundred — because a synapse is not independent of the neuron it inhibits |
 | `surrogate` | surrogate gradients (`SuperSpike`, arctan, triangular, boxcar, straight-through) and a working BPTT path |
+| `plif` | the parametric LIF of Fang et al. as SpikingJelly writes it: a learned leak `1/τ = sigmoid(w)`, hard and soft reset, input decay on or off, and a reverse-mode gradient shown exact against finite differences — then gradient descent recovering `τ = 5` from `τ = 2` |
 | `convert` | ANN-to-SNN: threshold balancing, percentile normalisation, reset-by-subtraction vs reset-to-zero |
 | `reservoir` | liquid state machines and echo state networks, with a pure-Rust ridge solve and power iteration |
 | `encode`, `coding` | rate, latency, delta; population, rank-order, phase, burst, BSA/HSA, temporal contrast — and their decoders |
@@ -45,10 +47,12 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 | `hardware` | constraint models for Loihi, Loihi 2, `TrueNorth`, `NorthPole`, Akida, `SpiNNaker`, Xylo, Speck, ODIN, DYNAP and more — ten graded figures per part, each with its provenance string |
 | `nir` | the Neuromorphic Intermediate Representation graph, validation, and a bridge to this crate's networks |
 | `json` | a strict RFC 8259 reader: numbers back to the bit, `NaN` and repeated keys refused, every refusal naming its byte — so published model files are read as published |
+| `npy` | NumPy's `.npy` files as NumPy writes them: scalar and structured dtypes, both byte orders, versions 1 to 3 including the Latin-1 header NumPy actually writes, a 64-bit integer f64 cannot hold refused rather than rounded — and NeuroBench's Mackey–Glass file read to the bit |
 | `aer` | AEDAT 2.0, 3.1 and 4.0, Prophesee EVT2/EVT3 and N-MNIST decoders, total and panic-free, with rollover-correct timestamps; the DVS128 Gesture label reader that cuts a recording into its gestures |
 | `metrics` | `NeuroBench` complexity metrics: activation sparsity, effective MACs and ACs, footprint |
 | `ledger`, `crossover` | joules with the fetch term, and the published SNN-vs-ANN thresholds as a runnable check |
 | `tasks` | deterministic teaching problems: temporal XOR, coincidence detection, delayed match-to-sample, synthetic event streams |
+| `chaos` | Mackey–Glass and Lorenz at a measured fourth order: fixed points, the Hopf delay 4.708 and `ρ_H = 470/19` in closed form, the tangent flow checked as the step map's derivative, the Lyapunov spectrum against Sprott's — and NeuroBench's Mackey–Glass series reproduced from the equation for its first 401 samples, where NeuroBench's own class, whose file check is `exists(...) is not None`, never uses its equation at all |
 | `spikeconv` | spiking convolutional networks — the architecture almost all deployed spiking vision runs — with tdBN, `SEW` residual blocks and pooling |
 | `attention` | spiking attention and spiking transformers, with an honest count of what is actually spiking |
 | `eprop` | local learning rules: training forward in time without storing the past |
@@ -56,6 +60,7 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 | `meanfield` | mean-field theory: what a spiking network does in aggregate, in closed form |
 | `bayes` | spikes as samples: Bayesian inference by firing |
 | `vision` | event-based vision: the algorithms that consume what an event camera emits |
+| `voxel` | event tensors: Zhu et al.'s voxel grid, every event landing whole, and time-binned frames that keep the recording's last event — both reproduced value for value against tonic 1.6.0, which scales the voxel grid to `[0, B]` and so drops the last event, counts every OFF event as +1 under its own DVS Gesture dtype, and drops the tail of its time-binned frames while counting in `int16` (40,000 events on one pixel read −25,537) |
 | `cochlea` | the silicon cochlea: gammatone bank, Meddis hair cell, gain control, onset and offset channels, every stage against its closed form |
 | `olfaction` | the olfactory bulb's external plexiform layer, learning an odour from one presentation |
 | `fusion` | multimodal fusion in spikes: the clock offset and drift between event streams, with an error bar calibrated against the scatter it describes |
@@ -277,7 +282,7 @@ rather than assumed.
 - **A sub-threshold current returns `None`, not a large number.** "Fires rarely" and "does not fire"
   are different statements and a rate-coded readout cannot recover the difference later.
 
-2,667 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
+2,703 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
 `#![forbid(unsafe_code)]`, and `cargo build --target wasm32-unknown-unknown` compiles the library
 unchanged. Three of the four `examples/` are verification gates that exit non-zero when a check fails. Two of them run
 a closed form against the simulator — the LIF's analytic inter-spike interval, and the STDP pair
@@ -328,14 +333,15 @@ be reproduced cannot be checked against anything, including itself.
 
 ## Status
 
-**Today:** seventy-six modules, 2,667 tests, and **8,070 recorded mutations — one list per
+**Today:** eighty-one modules, 2,703 tests, and **8,311 recorded mutations — one list per
 module**, every one applicable to today's source by `python3 tools/mutate.py`.
 `python3 tools/readme_numbers.py` recomputes those figures from the repository and refuses if this
 paragraph disagrees with it, because the last time they were typed by hand the test count was 423
 low and nothing noticed. **0.20.0** was the release in which every recorded mutation was run
-against the released tree — 71 modules of 71, all 7,638 of its recorded entries. The five modules
-added since — `intspike`, `planar`, `json`, `glif` and `synchrony` — each had its full list run
-clean against the tree it was added in.
+against the released tree — 71 modules of 71, all 7,638 of its recorded entries. The ten modules
+added since — `intspike`, `planar`, `json`, `glif` and `synchrony` in 0.21.0; `voxel`, `npy`,
+`chaos`, `plif` and `istdp` in 0.22.0 — each had its full list run clean against the tree it was
+added in.
 
 **The list being complete is not the same as the list being adequate, and 0.20.0 is what measuring
 that cost.** Every module had a recorded list at 0.19.0 and every list ran clean. Thirty of them

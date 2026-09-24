@@ -1,0 +1,187 @@
+[
+ {
+  "label": "a voxel outside the bins is read",
+  "old": "(b < self.bins).then(|| self.values[b * self.geom.pixels() + pixel])",
+  "new": "(b <= self.bins).then(|| self.values[(b * self.geom.pixels() + pixel).min(self.values.len() - 1)])"
+ },
+ {
+  "label": "a voxel is read from the wrong bin plane",
+  "old": "self.values[b * self.geom.pixels() + pixel]",
+  "new": "self.values[b * self.geom.pixels()]"
+ },
+ {
+  "label": "the voxel sum is of magnitudes",
+  "old": "self.values.iter().sum()\n    }\n}\n\nfn sign",
+  "new": "self.values.iter().map(|v| v.abs()).sum()\n    }\n}\n\nfn sign"
+ },
+ {
+  "label": "an OFF event counts as ON",
+  "old": "        Polarity::Off => -1.0,",
+  "new": "        Polarity::Off => 1.0,"
+ },
+ {
+  "label": "one time bin is accepted",
+  "old": "if bins < 2 {",
+  "new": "if bins < 1 {"
+ },
+ {
+  "label": "no events is an empty grid",
+  "old": "        return Err(VisionError::TooFew { what: \"events\", have: 0, need: 1 });\n    };\n    require_time_ordered(events)?;\n    let span = last.t_s - first.t_s;\n    if !(span > 0.0) {\n        return Err(VisionError::Degenerate { what: \"event span, which",
+  "new": "        return Ok(VoxelGrid { geom, bins, values: vec![0.0; bins * geom.pixels()] });\n    };\n    require_time_ordered(events)?;\n    let span = last.t_s - first.t_s;\n    if !(span > 0.0) {\n        return Err(VisionError::Degenerate { what: \"event span, which"
+ },
+ {
+  "label": "the voxel stream is not checked for order",
+  "old": "    require_time_ordered(events)?;\n    let span = last.t_s - first.t_s;\n    if !(span > 0.0) {\n        return Err(VisionError::Degenerate { what: \"event span, which",
+  "new": "    let span = last.t_s - first.t_s;\n    if !(span > 0.0) {\n        return Err(VisionError::Degenerate { what: \"event span, which"
+ },
+ {
+  "label": "a zero span is divided by",
+  "old": "    if !(span > 0.0) {\n        return Err(VisionError::Degenerate { what: \"event span, which equation (1) divides by\" });\n    }\n",
+  "new": ""
+ },
+ {
+  "label": "time is scaled to [0, B] as tonic scales it",
+  "old": "let top = (bins - 1) as f64;",
+  "new": "let top = bins as f64;"
+ },
+ {
+  "label": "the last event is not clamped",
+  "old": "let t = (top * (e.t_s - first.t_s) / span).min(top);",
+  "new": "let t = top * (e.t_s - first.t_s) / span;"
+ },
+ {
+  "label": "time is measured from zero, not the first event",
+  "old": "let t = (top * (e.t_s - first.t_s) / span).min(top);",
+  "new": "let t = (top * e.t_s / span).min(top);"
+ },
+ {
+  "label": "an event lands whole in its lower bin",
+  "old": "        values[lower * plane + pixel] += p * (1.0 - delta);",
+  "new": "        values[lower * plane + pixel] += p;"
+ },
+ {
+  "label": "the upper share is dropped",
+  "old": "        if delta > 0.0 {\n            values[(lower + 1) * plane + pixel] += p * delta;\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "the shares are swapped",
+  "old": "        values[lower * plane + pixel] += p * (1.0 - delta);\n        if delta > 0.0 {\n            values[(lower + 1) * plane + pixel] += p * delta;",
+  "new": "        values[lower * plane + pixel] += p * delta;\n        if delta > 0.0 {\n            values[(lower + 1) * plane + pixel] += p * (1.0 - delta);"
+ },
+ {
+  "label": "the voxel pixel is not checked",
+  "old": "        let pixel = geom.require(e.x, e.y)?;\n        // For the last event",
+  "new": "        let pixel = geom.index(e.x, e.y).unwrap_or(0);\n        // For the last event"
+ },
+ {
+  "label": "a frame outside the frames is read",
+  "old": "(k < self.frames).then(|| self.counts[(k * 2 + plane) * self.geom.pixels() + pixel])",
+  "new": "(k <= self.frames).then(|| self.counts[((k * 2 + plane) * self.geom.pixels() + pixel).min(self.counts.len() - 1)])"
+ },
+ {
+  "label": "the frame reader takes ON as plane 0",
+  "old": "let plane = usize::from(polarity == Polarity::On);\n        (k < self.frames)",
+  "new": "let plane = usize::from(polarity == Polarity::Off);\n        (k < self.frames)"
+ },
+ {
+  "label": "zero frames are accepted by time_frames",
+  "old": "    if n == 0 {\n        return Err(VisionError::TooFew { what: \"frames\", have: 0, need: 1 });\n    }\n    if !start.is_finite() {",
+  "new": "    if !start.is_finite() {"
+ },
+ {
+  "label": "a non-finite start is accepted",
+  "old": "    if !start.is_finite() {\n        return Err(VisionError::NonFinite { what: \"start\", value: start });\n    }\n",
+  "new": ""
+ },
+ {
+  "label": "an infinite window is accepted",
+  "old": "    if !window.is_finite() {\n        return Err(VisionError::NonFinite { what: \"window\", value: window });\n    }\n",
+  "new": ""
+ },
+ {
+  "label": "a zero window is accepted",
+  "old": "    if !(window > 0.0) {\n        return Err(VisionError::NonPositive { what: \"window\", value: window });\n    }\n",
+  "new": ""
+ },
+ {
+  "label": "the frames end one window early",
+  "old": "let end = start + n as f64 * window;",
+  "new": "let end = start + (n - 1) as f64 * window;"
+ },
+ {
+  "label": "an event before the first frame is counted",
+  "old": "(t >= start && t < end).then(",
+  "new": "(t < end).then("
+ },
+ {
+  "label": "the last frame is closed",
+  "old": "(t >= start && t < end).then(",
+  "new": "(t >= start && t <= end).then("
+ },
+ {
+  "label": "frames trust the division",
+  "old": "    let mut k = (((t - start) / window) as usize).min(n - 1);\n    while k > 0 && edge(k) > t {\n        k -= 1;\n    }\n    while k + 1 < n && edge(k + 1) <= t {\n        k += 1;\n    }\n    k",
+  "new": "    (((t - start) / window) as usize).min(n - 1)"
+ },
+ {
+  "label": "the downward correction is skipped",
+  "old": "    while k > 0 && edge(k) > t {\n        k -= 1;\n    }\n",
+  "new": ""
+ },
+ {
+  "label": "the upward correction is skipped",
+  "old": "    while k + 1 < n && edge(k + 1) <= t {\n        k += 1;\n    }\n",
+  "new": ""
+ },
+ {
+  "label": "an event on an edge goes to the lower frame",
+  "old": "while k + 1 < n && edge(k + 1) <= t {",
+  "new": "while k + 1 < n && edge(k + 1) < t {"
+ },
+ {
+  "label": "zero frames are accepted by spanning_frames",
+  "old": "    if n == 0 {\n        return Err(VisionError::TooFew { what: \"frames\", have: 0, need: 1 });\n    }\n    let (Some(first), Some(last))",
+  "new": "    let (Some(first), Some(last))"
+ },
+ {
+  "label": "spanning frames of no events are empty",
+  "old": "        return Err(VisionError::TooFew { what: \"events\", have: 0, need: 1 });\n    };\n    require_time_ordered(events)?;\n    let span = last.t_s - first.t_s;\n    if !(span > 0.0) {\n        return Err(VisionError::Degenerate { what: \"event span the",
+  "new": "        return frames_by(geom, events, n, |_| None);\n    };\n    require_time_ordered(events)?;\n    let span = last.t_s - first.t_s;\n    if !(span > 0.0) {\n        return Err(VisionError::Degenerate { what: \"event span the"
+ },
+ {
+  "label": "the spanning stream is not checked for order first",
+  "old": "    require_time_ordered(events)?;\n    let span = last.t_s - first.t_s;\n    if !(span > 0.0) {\n        return Err(VisionError::Degenerate { what: \"event span the",
+  "new": "    let span = last.t_s - first.t_s;\n    if !(span > 0.0) {\n        return Err(VisionError::Degenerate { what: \"event span the"
+ },
+ {
+  "label": "a zero span is spread over the frames",
+  "old": "    if !(span > 0.0) {\n        return Err(VisionError::Degenerate { what: \"event span the frames divide\" });\n    }\n",
+  "new": ""
+ },
+ {
+  "label": "the spanning window is the whole span",
+  "old": "let window = span / n as f64;",
+  "new": "let window = span;"
+ },
+ {
+  "label": "the frames' stream is not checked for order",
+  "old": "fn frames_by(geom: Geometry, events: &[PixelEvent], n: usize, which: impl Fn(f64) -> Option<usize>) -> Result<TimeFrames, VisionError> {\n    require_time_ordered(events)?;",
+  "new": "fn frames_by(geom: Geometry, events: &[PixelEvent], n: usize, which: impl Fn(f64) -> Option<usize>) -> Result<TimeFrames, VisionError> {"
+ },
+ {
+  "label": "the frames' pixel is not checked",
+  "old": "        let pixel = geom.require(e.x, e.y)?;\n        match which(e.t_s) {",
+  "new": "        let pixel = geom.index(e.x, e.y).unwrap_or(0);\n        match which(e.t_s) {"
+ },
+ {
+  "label": "frames file ON events as plane 0",
+  "old": "Some(k) => counts[(k * 2 + usize::from(e.polarity == Polarity::On)) * plane + pixel] += 1,",
+  "new": "Some(k) => counts[(k * 2 + usize::from(e.polarity == Polarity::Off)) * plane + pixel] += 1,"
+ },
+ {
+  "label": "events outside the frames are not counted",
+  "old": "            None => outside += 1,",
+  "new": "            None => {}"
+ }
+]

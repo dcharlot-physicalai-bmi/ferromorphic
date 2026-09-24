@@ -1,0 +1,362 @@
+[
+ {
+  "label": "the not-positive message names the value as the parameter",
+  "old": "write!(f, \"{what} = {value} must be finite and positive\")",
+  "new": "write!(f, \"{value} = {what} must be finite and positive\")"
+ },
+ {
+  "label": "the non-finite message drops the value",
+  "old": "write!(f, \"{what} = {value} is not finite\")",
+  "new": "write!(f, \"{what} is not finite\")"
+ },
+ {
+  "label": "the misaligned message swaps step and delay",
+  "old": "write!(f, \"the step {h} does not divide the delay {tau}\")",
+  "new": "write!(f, \"the step {tau} does not divide the delay {h}\")"
+ },
+ {
+  "label": "the too-long message drops the limit",
+  "old": "write!(f, \"{steps} steps is more than {MAX_STEPS}\")",
+  "new": "write!(f, \"{steps} steps is too many\")"
+ },
+ {
+  "label": "MAX_STEPS is ten times larger",
+  "old": "pub const MAX_STEPS: usize = 10_000_000;",
+  "new": "pub const MAX_STEPS: usize = 100_000_000;"
+ },
+ {
+  "label": "the positivity guard admits infinity",
+  "old": "if value.is_finite() && value > 0.0 { Ok(value) } else { Err(ChaosError::NotPositive",
+  "new": "if value > 0.0 { Ok(value) } else { Err(ChaosError::NotPositive"
+ },
+ {
+  "label": "the positivity guard admits zero",
+  "old": "if value.is_finite() && value > 0.0 { Ok(value) } else { Err(ChaosError::NotPositive",
+  "new": "if value.is_finite() && value >= 0.0 { Ok(value) } else { Err(ChaosError::NotPositive"
+ },
+ {
+  "label": "the finiteness guard admits infinity",
+  "old": "if value.is_finite() { Ok(value) } else { Err(ChaosError::NonFinite",
+  "new": "if !value.is_nan() { Ok(value) } else { Err(ChaosError::NonFinite"
+ },
+ {
+  "label": "the Hermite interpolant drops the start slope",
+  "old": "(s3 - 2.0 * s2 + s) * h * d0 + ",
+  "new": ""
+ },
+ {
+  "label": "the Hermite interpolant drops the end slope",
+  "old": " + (s3 - s2) * h * d1",
+  "new": ""
+ },
+ {
+  "label": "the Hermite interpolant is linear",
+  "old": "(2.0 * s3 - 3.0 * s2 + 1.0) * x0 + (s3 - 2.0 * s2 + s) * h * d0 + (3.0 * s2 - 2.0 * s3) * x1 + (s3 - s2) * h * d1",
+  "new": "(1.0 - s) * x0 + s * x1"
+ },
+ {
+  "label": "a negative time is read",
+  "old": "        if !(t >= 0.0) {\n            return None;\n        }\n        let u",
+  "new": "        let u"
+ },
+ {
+  "label": "the last grid point is not readable",
+  "old": "return (k + 1 == self.x.len() && u == k as f64).then(|| self.x[k]);",
+  "new": "return None;"
+ },
+ {
+  "label": "a time past the grid reads the last value",
+  "old": "return (k + 1 == self.x.len() && u == k as f64).then(|| self.x[k]);",
+  "new": "return self.x.last().copied();"
+ },
+ {
+  "label": "NeuroBench's gamma is transcribed as 0.2",
+  "old": "pub const NEUROBENCH: Self = Self { beta: 0.2, gamma: 0.1, n: 10.0, tau: 17.0 };",
+  "new": "pub const NEUROBENCH: Self = Self { beta: 0.2, gamma: 0.2, n: 10.0, tau: 17.0 };"
+ },
+ {
+  "label": "NeuroBench's delay is transcribed as 30",
+  "old": "pub const NEUROBENCH: Self = Self { beta: 0.2, gamma: 0.1, n: 10.0, tau: 17.0 };",
+  "new": "pub const NEUROBENCH: Self = Self { beta: 0.2, gamma: 0.1, n: 10.0, tau: 30.0 };"
+ },
+ {
+  "label": "NeuroBench's history is rounded",
+  "old": "pub const NEUROBENCH_PAST: f64 = 0.7206597;",
+  "new": "pub const NEUROBENCH_PAST: f64 = 0.72066;"
+ },
+ {
+  "label": "the field decays the delayed value",
+  "old": "self.beta * delayed / (1.0 + delayed.powf(self.n)) - self.gamma * x",
+  "new": "self.beta * delayed / (1.0 + delayed.powf(self.n)) - self.gamma * delayed"
+ },
+ {
+  "label": "the Hill term drops the delayed numerator",
+  "old": "self.beta * delayed / (1.0 + delayed.powf(self.n))",
+  "new": "self.beta / (1.0 + delayed.powf(self.n))"
+ },
+ {
+  "label": "the Hill term uses the present value",
+  "old": "self.beta * delayed / (1.0 + delayed.powf(self.n))",
+  "new": "self.beta * delayed / (1.0 + x.powf(self.n))"
+ },
+ {
+  "label": "a fixed point exists at beta = gamma",
+  "old": "(self.beta > self.gamma).then(",
+  "new": "(self.beta >= self.gamma).then("
+ },
+ {
+  "label": "the fixed point drops the root",
+  "old": "(self.beta / self.gamma - 1.0).powf(1.0 / self.n)",
+  "new": "(self.beta / self.gamma - 1.0)"
+ },
+ {
+  "label": "the slope's numerator drops n",
+  "old": "Some(self.beta * (1.0 + (1.0 - self.n) * p) / ((1.0 + p) * (1.0 + p)))",
+  "new": "Some(self.beta * (1.0 - p) / ((1.0 + p) * (1.0 + p)))"
+ },
+ {
+  "label": "the slope's denominator is not squared",
+  "old": "Some(self.beta * (1.0 + (1.0 - self.n) * p) / ((1.0 + p) * (1.0 + p)))",
+  "new": "Some(self.beta * (1.0 + (1.0 - self.n) * p) / (1.0 + p))"
+ },
+ {
+  "label": "the Hopf delay exists for any negative slope",
+  "old": "(a < -self.gamma).then(",
+  "new": "(a < 0.0).then("
+ },
+ {
+  "label": "the Hopf delay uses arcsin",
+  "old": "(self.gamma / a).acos()",
+  "new": "(self.gamma / a).asin()"
+ },
+ {
+  "label": "the Hopf frequency adds the squares",
+  "old": "(a * a - self.gamma * self.gamma).sqrt()",
+  "new": "(a * a + self.gamma * self.gamma).sqrt()"
+ },
+ {
+  "label": "beta is not checked",
+  "old": "        positive(\"beta\", self.beta)?;\n",
+  "new": ""
+ },
+ {
+  "label": "gamma is not checked",
+  "old": "        finite(\"gamma\", self.gamma)?;\n",
+  "new": ""
+ },
+ {
+  "label": "gamma must be positive",
+  "old": "finite(\"gamma\", self.gamma)?;",
+  "new": "positive(\"gamma\", self.gamma)?;"
+ },
+ {
+  "label": "n is not checked",
+  "old": "        positive(\"n\", self.n)?;\n",
+  "new": ""
+ },
+ {
+  "label": "tau is not checked",
+  "old": "let tau = positive(\"tau\", self.tau)?;",
+  "new": "let tau = self.tau;"
+ },
+ {
+  "label": "h is not checked",
+  "old": "let h = positive(\"h\", h)?;\n        let t_end",
+  "new": "let h = h;\n        let t_end"
+ },
+ {
+  "label": "t_end is not checked",
+  "old": "let t_end = positive(\"t_end\", t_end)?;",
+  "new": "let t_end = t_end;"
+ },
+ {
+  "label": "the history is not checked",
+  "old": "        finite(\"past\", past)?;\n        let m",
+  "new": "        let m"
+ },
+ {
+  "label": "a misaligned step is accepted",
+  "old": "        if !((m * h - tau).abs() <= 1e-9 * tau) {",
+  "new": "        if !(m >= 1.0) {"
+ },
+ {
+  "label": "the step count is not bounded",
+  "old": "        if steps > MAX_STEPS as f64 {\n            return Err(ChaosError::TooLong { steps });\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "the solve stops a step short",
+  "old": "let steps = (t_end / h).ceil();",
+  "new": "let steps = (t_end / h).floor() - 1.0;"
+ },
+ {
+  "label": "the stored start slope is zero",
+  "old": "dx.push(self.field(past, past));",
+  "new": "dx.push(0.0);"
+ },
+ {
+  "label": "the midpoint delay is the grid value",
+  "old": "let (d0, dh) = if k < m { (past, past) } else { (x[k - m], delayed(&x, &dx, k, 0.5)) };",
+  "new": "let (d0, dh) = if k < m { (past, past) } else { (x[k - m], x[k - m]) };"
+ },
+ {
+  "label": "the delay is one step short",
+  "old": "let (d0, dh) = if k < m { (past, past) } else { (x[k - m], delayed(&x, &dx, k, 0.5)) };",
+  "new": "let (d0, dh) = if k < m { (past, past) } else { (x[k + 1 - m], delayed(&x, &dx, k, 0.5)) };"
+ },
+ {
+  "label": "the RK4 stage two uses the full step",
+  "old": "let k2 = self.field(x[k] + 0.5 * h * k1, dh);",
+  "new": "let k2 = self.field(x[k] + h * k1, dh);"
+ },
+ {
+  "label": "the RK4 stage four uses half a step",
+  "old": "let k4 = self.field(x[k] + h * k3, d1);",
+  "new": "let k4 = self.field(x[k] + 0.5 * h * k3, d1);"
+ },
+ {
+  "label": "the RK4 weights drop the doubling",
+  "old": "let next = x[k] + h / 6.0 * (k1 + 2.0 * k2 + 2.0 * k3 + k4);",
+  "new": "let next = x[k] + h / 6.0 * (k1 + k2 + 2.0 * k3 + k4);"
+ },
+ {
+  "label": "the stored slope uses the present delay",
+  "old": "dx.push(self.field(next, d_next));",
+  "new": "dx.push(self.field(next, next + 0.0 * d_next));"
+ },
+ {
+  "label": "Lorenz's rho is transcribed as 24",
+  "old": "pub const LORENZ_1963: Self = Self { sigma: 10.0, rho: 28.0, beta: 8.0 / 3.0 };",
+  "new": "pub const LORENZ_1963: Self = Self { sigma: 10.0, rho: 24.0, beta: 8.0 / 3.0 };"
+ },
+ {
+  "label": "Lorenz's y equation drops the damping",
+  "old": "x * (self.rho - z) - y, x * y - self.beta * z]",
+  "new": "x * (self.rho - z), x * y - self.beta * z]"
+ },
+ {
+  "label": "Lorenz's z equation adds the product",
+  "old": "[self.sigma * (y - x), x * (self.rho - z) - y, x * y - self.beta * z]",
+  "new": "[self.sigma * (y - x), x * (self.rho - z) - y, x * y + self.beta * z]"
+ },
+ {
+  "label": "the Jacobian's dy/dz loses its sign",
+  "old": "[self.rho - z, -1.0, -x]",
+  "new": "[self.rho - z, -1.0, x]"
+ },
+ {
+  "label": "the Jacobian's dz/dx uses x",
+  "old": "[y, x, -self.beta]",
+  "new": "[x, x, -self.beta]"
+ },
+ {
+  "label": "the outer fixed points exist at rho = 1",
+  "old": "if self.rho > 1.0 {",
+  "new": "if self.rho >= 1.0 {"
+ },
+ {
+  "label": "the outer fixed points drop beta",
+  "old": "let r = (self.beta * (self.rho - 1.0)).sqrt();",
+  "new": "let r = (self.rho - 1.0).sqrt();"
+ },
+ {
+  "label": "the second outer fixed point is the first",
+  "old": "out.push([-r, -r, self.rho - 1.0]);",
+  "new": "out.push([r, r, self.rho - 1.0]);"
+ },
+ {
+  "label": "the divergence drops the one",
+  "old": "-(self.sigma + 1.0 + self.beta)",
+  "new": "-(self.sigma + self.beta)"
+ },
+ {
+  "label": "the Hopf rho exists at sigma = beta + 1",
+  "old": "(d > 0.0).then(|| self.sigma * (self.sigma + self.beta + 3.0) / d)",
+  "new": "(d >= 0.0).then(|| self.sigma * (self.sigma + self.beta + 3.0) / d)"
+ },
+ {
+  "label": "the Hopf rho drops the three",
+  "old": "self.sigma * (self.sigma + self.beta + 3.0) / d",
+  "new": "self.sigma * (self.sigma + self.beta) / d"
+ },
+ {
+  "label": "the Lorenz step's second stage uses the full step",
+  "old": "let k2 = self.field(add(p, k1, 0.5 * h));",
+  "new": "let k2 = self.field(add(p, k1, h));"
+ },
+ {
+  "label": "the Lorenz step drops the fourth slope",
+  "old": "        let k4 = self.field(add(p, k3, h));\n        core::array::from_fn(|i| p[i] + h / 6.0 * (k1[i] + 2.0 * k2[i] + 2.0 * k3[i] + k4[i]))",
+  "new": "        let k4 = self.field(add(p, k3, h));\n        core::array::from_fn(|i| p[i] + h / 6.0 * (k1[i] + 2.0 * k2[i] + 2.0 * k3[i] + k1[i] + 0.0 * k4[i]))"
+ },
+ {
+  "label": "the Lyapunov step is not checked",
+  "old": "let h = positive(\"h\", h)?;\n        positive(\"steps\"",
+  "new": "let h = h;\n        positive(\"steps\""
+ },
+ {
+  "label": "zero steps is accepted",
+  "old": "        positive(\"steps\", steps as f64)?;\n",
+  "new": ""
+ },
+ {
+  "label": "zero renormalisation interval is accepted",
+  "old": "        positive(\"every\", every as f64)?;\n",
+  "new": ""
+ },
+ {
+  "label": "the Lyapunov step count is not bounded",
+  "old": "        if steps > MAX_STEPS {\n            return Err(ChaosError::TooLong { steps: steps as f64 });\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "the Lyapunov start is not checked",
+  "old": "        for &c in &start {\n            finite(\"start\", c)?;\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "the tangents take the Jacobian at the start of the step",
+  "old": "let t2 = tangent(p2, add(*v, t1, 0.5 * h));",
+  "new": "let t2 = tangent(p, add(*v, t1, 0.5 * h));"
+ },
+ {
+  "label": "the tangent's last stage uses the midpoint state",
+  "old": "let t4 = tangent(p4, add(*v, t3, h));",
+  "new": "let t4 = tangent(p3, add(*v, t3, h));"
+ },
+ {
+  "label": "the tangents are advanced by Euler",
+  "old": "*v = core::array::from_fn(|i| v[i] + h / 6.0 * (t1[i] + 2.0 * t2[i] + 2.0 * t3[i] + t4[i]));",
+  "new": "*v = core::array::from_fn(|i| v[i] + h * t1[i]);"
+ },
+ {
+  "label": "the trajectory is advanced by Euler",
+  "old": "        }\n        core::array::from_fn(|i| p[i] + h / 6.0 * (k1[i] + 2.0 * k2[i] + 2.0 * k3[i] + k4[i]))",
+  "new": "        }\n        core::array::from_fn(|i| p[i] + h * k1[i] + 0.0 * (k2[i] + k3[i] + k4[i]))"
+ },
+ {
+  "label": "the final block is not renormalised",
+  "old": "if done % every == 0 || done == steps {",
+  "new": "if done % every == 0 {"
+ },
+ {
+  "label": "Gram-Schmidt does not remove earlier directions",
+  "old": "                        for i in 0..3 {\n                            q[a][i] -= dot * q[b][i];\n                        }",
+  "new": "                        let _ = dot;"
+ },
+ {
+  "label": "the growth is not logged",
+  "old": "sums[a] += norm.ln();",
+  "new": "sums[a] += norm;"
+ },
+ {
+  "label": "the vectors are not normalised",
+  "old": "                    for i in 0..3 {\n                        q[a][i] /= norm;\n                    }",
+  "new": "                    let _ = norm;"
+ },
+ {
+  "label": "the exponents are divided by the step count",
+  "old": "let t = steps as f64 * h;",
+  "new": "let t = steps as f64;"
+ }
+]

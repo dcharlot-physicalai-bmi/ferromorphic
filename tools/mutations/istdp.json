@@ -1,0 +1,107 @@
+[
+ {
+  "label": "the not-positive message names the value as the parameter",
+  "old": "write!(f, \"{what} = {value} must be finite and positive\")",
+  "new": "write!(f, \"{value} = {what} must be finite and positive\")"
+ },
+ {
+  "label": "the non-finite message drops the value",
+  "old": "write!(f, \"{what} = {value} is not finite\")",
+  "new": "write!(f, \"{what} is not finite\")"
+ },
+ {
+  "label": "the positivity guard admits infinity",
+  "old": "if value.is_finite() && value > 0.0 { Ok(value) }",
+  "new": "if value > 0.0 { Ok(value) }"
+ },
+ {
+  "label": "the positivity guard admits zero",
+  "old": "if value.is_finite() && value > 0.0 { Ok(value) }",
+  "new": "if value.is_finite() && value >= 0.0 { Ok(value) }"
+ },
+ {
+  "label": "the paper's trace time constant is 10 ms",
+  "old": "Self::new(eta, 0.020, 5.0)",
+  "new": "Self::new(eta, 0.010, 5.0)"
+ },
+ {
+  "label": "the paper's target is 10 Hz",
+  "old": "Self::new(eta, 0.020, 5.0)",
+  "new": "Self::new(eta, 0.020, 10.0)"
+ },
+ {
+  "label": "eta is not checked",
+  "old": "Ok(Self { eta: positive(\"eta\", eta)?, tau:",
+  "new": "Ok(Self { eta, tau:"
+ },
+ {
+  "label": "tau is not checked",
+  "old": "tau: positive(\"tau\", tau)?, rho0:",
+  "new": "tau, rho0:"
+ },
+ {
+  "label": "rho0 is not checked",
+  "old": "rho0: positive(\"rho0\", rho0)? })",
+  "new": "rho0 })"
+ },
+ {
+  "label": "alpha drops the factor of two",
+  "old": "        2.0 * self.rho0 * self.tau\n",
+  "new": "        self.rho0 * self.tau\n"
+ },
+ {
+  "label": "the presynaptic update adds alpha",
+  "old": "(w + self.eta * (x_post - self.alpha())).max(0.0)",
+  "new": "(w + self.eta * (x_post + self.alpha())).max(0.0)"
+ },
+ {
+  "label": "the presynaptic update is not floored",
+  "old": "(w + self.eta * (x_post - self.alpha())).max(0.0)",
+  "new": "w + self.eta * (x_post - self.alpha())"
+ },
+ {
+  "label": "the postsynaptic update subtracts",
+  "old": "        w + self.eta * x_pre\n",
+  "new": "        w - self.eta * x_pre\n"
+ },
+ {
+  "label": "the postsynaptic update ignores eta",
+  "old": "        w + self.eta * x_pre\n",
+  "new": "        w + x_pre\n"
+ },
+ {
+  "label": "a non-finite rate is accepted",
+  "old": "            if !value.is_finite() {\n                return Err(IstdpError::NonFinite { what, value });\n            }\n",
+  "new": ""
+ },
+ {
+  "label": "the drift drops the postsynaptic factor of two",
+  "old": "Ok(self.eta * nu_pre * (2.0 * nu_post * self.tau - self.alpha()))",
+  "new": "Ok(self.eta * nu_pre * (nu_post * self.tau - self.alpha()))"
+ },
+ {
+  "label": "the drift ignores the presynaptic rate",
+  "old": "Ok(self.eta * nu_pre * (2.0 * nu_post * self.tau - self.alpha()))",
+  "new": "Ok(self.eta * (2.0 * nu_post * self.tau - self.alpha()))"
+ },
+ {
+  "label": "the fixed rate is alpha over tau",
+  "old": "self.alpha() / (2.0 * self.tau)",
+  "new": "self.alpha() / self.tau"
+ },
+ {
+  "label": "the trace's tau is not checked",
+  "old": "Ok(Self { value: 0.0, tau: positive(\"tau\", tau)? })",
+  "new": "Ok(Self { value: 0.0, tau })"
+ },
+ {
+  "label": "the trace decays linearly",
+  "old": "self.value *= (-dt / self.tau).exp();",
+  "new": "self.value *= 1.0 - dt / self.tau;"
+ },
+ {
+  "label": "a spike sets the trace to one",
+  "old": "self.value += 1.0;",
+  "new": "self.value = 1.0;"
+ }
+]

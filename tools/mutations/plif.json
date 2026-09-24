@@ -1,0 +1,252 @@
+[
+ {
+  "label": "the tau message drops the value",
+  "old": "write!(f, \"a time constant of {tau} steps is not above one, which 1/sigmoid(w) always is\")",
+  "new": "write!(f, \"a time constant is not above one\")"
+ },
+ {
+  "label": "the non-finite message drops the value",
+  "old": "write!(f, \"{what} = {value} is not finite\")",
+  "new": "write!(f, \"{what} is not finite\")"
+ },
+ {
+  "label": "the steps message swaps its numbers",
+  "old": "write!(f, \"{got} inputs are not a whole number of steps of {n} neurons\")",
+  "new": "write!(f, \"{n} inputs are not a whole number of steps of {got} neurons\")"
+ },
+ {
+  "label": "the length message swaps got and want",
+  "old": "write!(f, \"{what} has {got} entries where {want} are needed\")",
+  "new": "write!(f, \"{what} has {want} entries where {got} are needed\")"
+ },
+ {
+  "label": "the finiteness guard admits infinity",
+  "old": "if value.is_finite() { Ok(value) }",
+  "new": "if !value.is_nan() { Ok(value) }"
+ },
+ {
+  "label": "a tau of one is accepted",
+  "old": "if !(tau.is_finite() && tau > 1.0) {",
+  "new": "if !(tau.is_finite() && tau >= 1.0) {"
+ },
+ {
+  "label": "an infinite tau is accepted",
+  "old": "if !(tau.is_finite() && tau > 1.0) {",
+  "new": "if !(tau > 1.0) {"
+ },
+ {
+  "label": "w is ln(tau - 1)",
+  "old": "Ok(Self { w: -(tau - 1.0).ln(),",
+  "new": "Ok(Self { w: (tau - 1.0).ln(),"
+ },
+ {
+  "label": "w is -ln(tau)",
+  "old": "Ok(Self { w: -(tau - 1.0).ln(),",
+  "new": "Ok(Self { w: -tau.ln(),"
+ },
+ {
+  "label": "the default threshold is two",
+  "old": "v_threshold: 1.0, reset: Reset::Hard { v_reset: 0.0 }, decay_input: true, detach_reset: false })",
+  "new": "v_threshold: 2.0, reset: Reset::Hard { v_reset: 0.0 }, decay_input: true, detach_reset: false })"
+ },
+ {
+  "label": "the default reset is soft",
+  "old": "v_threshold: 1.0, reset: Reset::Hard { v_reset: 0.0 }, decay_input: true, detach_reset: false })",
+  "new": "v_threshold: 1.0, reset: Reset::Soft, decay_input: true, detach_reset: false })"
+ },
+ {
+  "label": "the default does not decay the input",
+  "old": "v_threshold: 1.0, reset: Reset::Hard { v_reset: 0.0 }, decay_input: true, detach_reset: false })",
+  "new": "v_threshold: 1.0, reset: Reset::Hard { v_reset: 0.0 }, decay_input: false, detach_reset: false })"
+ },
+ {
+  "label": "the leak is tanh rather than sigmoid",
+  "old": "SigmoidDeriv::logistic(self.w)\n    }",
+  "new": "self.w.tanh()\n    }"
+ },
+ {
+  "label": "tau is the leak",
+  "old": "        1.0 / self.leak()\n",
+  "new": "        self.leak()\n"
+ },
+ {
+  "label": "a soft reset charges towards v_reset's last value",
+  "old": "            Reset::Soft => 0.0,\n        }\n    }",
+  "new": "            Reset::Soft => 1.0,\n        }\n    }"
+ },
+ {
+  "label": "w is not checked",
+  "old": "        finite(\"w\", self.w)?;\n",
+  "new": ""
+ },
+ {
+  "label": "the threshold is not checked",
+  "old": "        finite(\"v_threshold\", self.v_threshold)?;\n",
+  "new": ""
+ },
+ {
+  "label": "v_reset is not checked",
+  "old": "        finite(\"v_reset\", self.v_reset())?;\n",
+  "new": ""
+ },
+ {
+  "label": "forward does not check the parameters",
+  "old": "        self.check()?;\n        let n = v0.len();",
+  "new": "        let n = v0.len();"
+ },
+ {
+  "label": "an empty population runs",
+  "old": "        if n == 0 {\n            return Err(PlifError::Length { what: \"v0\", got: 0, want: 1 });\n        }\n",
+  "new": "        if n == 0 {\n            return Ok(PlifTrace { n, v0: vec![], h: vec![], s: vec![], v: vec![] });\n        }\n"
+ },
+ {
+  "label": "a ragged input is truncated",
+  "old": "        if !x.len().is_multiple_of(n) {\n            return Err(PlifError::Steps { got: x.len(), n });\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "inputs are not checked",
+  "old": "        for &value in x {\n            finite(\"x\", value)?;\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "the start is not checked",
+  "old": "        for &value in v0 {\n            finite(\"v0\", value)?;\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "the decayed input is not leaked",
+  "old": "let h = if self.decay_input { v[i] + k * (xi - (v[i] - vr)) } else {",
+  "new": "let h = if self.decay_input { v[i] + xi - k * (v[i] - vr) } else {"
+ },
+ {
+  "label": "the membrane leaks towards zero rather than v_reset",
+  "old": "let h = if self.decay_input { v[i] + k * (xi - (v[i] - vr)) } else {",
+  "new": "let h = if self.decay_input { v[i] + k * (xi - v[i]) } else {"
+ },
+ {
+  "label": "the undecayed input is leaked",
+  "old": "} else { v[i] - k * (v[i] - vr) + xi };",
+  "new": "} else { v[i] - k * (v[i] - vr) + k * xi };"
+ },
+ {
+  "label": "the smooth spike is the step",
+  "old": "                    SpikeFn::Smooth => sur.antiderivative(h - th),",
+  "new": "                    SpikeFn::Smooth => sur.forward(h - th),"
+ },
+ {
+  "label": "the spike compares H with zero",
+  "old": "                    SpikeFn::Heaviside => sur.forward(h - th),",
+  "new": "                    SpikeFn::Heaviside => sur.forward(h),"
+ },
+ {
+  "label": "a hard reset keeps the charge",
+  "old": "                    Reset::Hard { v_reset } => h * (1.0 - s) + v_reset * s,\n                    Reset::Soft => h - th * s,\n                };\n                trace",
+  "new": "                    Reset::Hard { v_reset } => h + v_reset * s,\n                    Reset::Soft => h - th * s,\n                };\n                trace"
+ },
+ {
+  "label": "a soft reset subtracts one",
+  "old": "                    Reset::Soft => h - th * s,\n                };\n                trace",
+  "new": "                    Reset::Soft => h - s,\n                };\n                trace"
+ },
+ {
+  "label": "the trace records the pre-reset potential",
+  "old": "                trace.v.push(v[i]);",
+  "new": "                trace.v.push(h);"
+ },
+ {
+  "label": "backward accepts a short x",
+  "old": "        for (what, got) in [(\"x\", x.len()), (\"dl_ds\", dl_ds.len()), (\"dl_dh\", dl_dh.len())] {",
+  "new": "        for (what, got) in [(\"dl_ds\", dl_ds.len()), (\"dl_dh\", dl_dh.len())] {"
+ },
+ {
+  "label": "backward accepts a short spike gradient",
+  "old": "        for (what, got) in [(\"x\", x.len()), (\"dl_ds\", dl_ds.len()), (\"dl_dh\", dl_dh.len())] {",
+  "new": "        for (what, got) in [(\"x\", x.len()), (\"dl_dh\", dl_dh.len())] {"
+ },
+ {
+  "label": "a non-finite loss gradient is accepted",
+  "old": "        for &g in dl_ds.iter().chain(dl_dh) {\n            finite(\"a loss gradient\", g)?;\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "dk/dw is k",
+  "old": "let dk_dw = k * (1.0 - k);",
+  "new": "let dk_dw = k;"
+ },
+ {
+  "label": "detach is inverted",
+  "old": "let reset_path = if self.detach_reset { 0.0 } else { 1.0 };",
+  "new": "let reset_path = if self.detach_reset { 1.0 } else { 0.0 };"
+ },
+ {
+  "label": "the hard reset path drops (1 - S)",
+  "old": "Reset::Hard { v_reset } => (1.0 - s) + reset_path * (v_reset - h) * g,",
+  "new": "Reset::Hard { v_reset } => 1.0 + reset_path * (v_reset - h) * g,"
+ },
+ {
+  "label": "the hard reset path uses H - v_reset",
+  "old": "Reset::Hard { v_reset } => (1.0 - s) + reset_path * (v_reset - h) * g,",
+  "new": "Reset::Hard { v_reset } => (1.0 - s) + reset_path * (h - v_reset) * g,"
+ },
+ {
+  "label": "the soft reset path drops the threshold",
+  "old": "Reset::Soft => 1.0 - reset_path * th * g,",
+  "new": "Reset::Soft => 1.0 - reset_path * g,"
+ },
+ {
+  "label": "the spike gradient ignores the surrogate",
+  "old": "let dh = dl_dh[at] + dl_ds[at] * g + dv[i] * dv_dh;",
+  "new": "let dh = dl_dh[at] + dl_ds[at] + dv[i] * dv_dh;"
+ },
+ {
+  "label": "the future does not reach H",
+  "old": "let dh = dl_dh[at] + dl_ds[at] * g + dv[i] * dv_dh;",
+  "new": "let dh = dl_dh[at] + dl_ds[at] * g;"
+ },
+ {
+  "label": "the first step leaks from zero",
+  "old": "let v_prev = if t == 0 { trace.v0[i] } else { trace.v[at - n] };",
+  "new": "let v_prev = if t == 0 { 0.0 } else { trace.v[at - n] };"
+ },
+ {
+  "label": "the previous potential is this step's",
+  "old": "let v_prev = if t == 0 { trace.v0[i] } else { trace.v[at - n] };",
+  "new": "let v_prev = if t == 0 { trace.v0[i] } else { trace.v[at] };"
+ },
+ {
+  "label": "dH/dk ignores v_reset",
+  "old": "let (dh_dk, dh_dx) = if self.decay_input { (x[at] - (v_prev - vr), k) } else { (-(v_prev - vr), 1.0) };",
+  "new": "let (dh_dk, dh_dx) = if self.decay_input { (x[at] - v_prev, k) } else { (-(v_prev - vr), 1.0) };"
+ },
+ {
+  "label": "dH/dX is one with the input decayed",
+  "old": "let (dh_dk, dh_dx) = if self.decay_input { (x[at] - (v_prev - vr), k) } else { (-(v_prev - vr), 1.0) };",
+  "new": "let (dh_dk, dh_dx) = if self.decay_input { (x[at] - (v_prev - vr), 1.0) } else { (-(v_prev - vr), 1.0) };"
+ },
+ {
+  "label": "the undecayed dH/dk counts the input",
+  "old": "let (dh_dk, dh_dx) = if self.decay_input { (x[at] - (v_prev - vr), k) } else { (-(v_prev - vr), 1.0) };",
+  "new": "let (dh_dk, dh_dx) = if self.decay_input { (x[at] - (v_prev - vr), k) } else { (x[at] - (v_prev - vr), 1.0) };"
+ },
+ {
+  "label": "the undecayed dH/dX is k",
+  "old": "let (dh_dk, dh_dx) = if self.decay_input { (x[at] - (v_prev - vr), k) } else { (-(v_prev - vr), 1.0) };",
+  "new": "let (dh_dk, dh_dx) = if self.decay_input { (x[at] - (v_prev - vr), k) } else { (-(v_prev - vr), k) };"
+ },
+ {
+  "label": "dw overwrites rather than accumulates",
+  "old": "grad.w += dh * dh_dk * dk_dw;",
+  "new": "grad.w = dh * dh_dk * dk_dw;"
+ },
+ {
+  "label": "the gradient to the past skips the leak",
+  "old": "dv[i] = dh * (1.0 - k);",
+  "new": "dv[i] = dh;"
+ },
+ {
+  "label": "the start's gradient is zero",
+  "old": "        grad.v0 = dv;\n",
+  "new": ""
+ }
+]
