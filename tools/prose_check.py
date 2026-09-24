@@ -61,12 +61,17 @@ def blocks(path):
 
 
 def cells(line):
-    """Cells of a Markdown table row, ignoring pipes inside code spans and escaped pipes."""
-    n, code, prev = 0, False, ""
+    """Cell delimiters in a Markdown table row, under GitHub-flavoured Markdown's rule.
+
+    GFM splits a row at EVERY unescaped `|`, including one inside a code span — the spec says a pipe
+    in cell content must be escaped "including inside other inline spans". The first version of
+    this check skipped pipes in code spans, which is the rule a reader expects and not the one the
+    renderer applies, so it passed a row containing `mean(|x|)/k` that GitHub would have split in
+    three.
+    """
+    n, prev = 0, ""
     for ch in line:
-        if ch == "`":
-            code = not code
-        elif ch == "|" and not code and prev != "\\":
+        if ch == "|" and prev != "\\":
             n += 1
         prev = ch
     return n

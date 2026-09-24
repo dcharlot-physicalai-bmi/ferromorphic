@@ -9,7 +9,7 @@ hardware constraint models, analog device non-idealities, NIR, event-camera deco
 metrics, teaching tasks — and a joules ledger that charges for the memory traffic a synaptic
 operation needs.
 
-**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 71 modules, 2,597 tests.**
+**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 72 modules, 2,612 tests.**
 
 Run it in a browser without installing anything:
 **[energy.physicalai-bmi.org/neuromorphic](https://energy.physicalai-bmi.org/neuromorphic)** — the
@@ -95,6 +95,7 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 | `forwardforward` | Hinton's forward-forward algorithm: layer-local goodness on positive and negative data, the length normalisation that hides a layer's goodness from the next, labels written into the input |
 | `force` | FORCE learning: recursive least squares — shown identical to ridge regression at every step — taming a chaotic rate network into holding a sine on its own, with the measured limit where it stops working |
 | `biosignal` | the ECGSYN synthetic electrocardiogram with its published constants, a level-crossing encoder, a spiking R-peak detector and rhythm monitor that flags an ectopic beat, and the EMG envelope read straight off an event rate |
+| `intspike` | integer and multi-bit spikes, from `SpikingBrain` (CASIA, 2025): the adaptive threshold `mean(\|x\|)/k`, integer spike counts, and binary, ternary and two's-complement bitwise spike trains, each shown to lose nothing; an accumulate-only product written with additions and shifts and shown equal to the dense integer product; and the paper's arithmetic-only energy model reproduced, its two headline ratios shown to disagree, and the weight-read energy — 1.508 pJ against INT8 — past which a fetch-per-spike dataflow loses to a dense layer |
 | `sim`, `net`, `spike`, `rng` | the simulator, clocked and event-driven, with optional exact spike timing (several spikes a tick, counts independent of the tick); sparse connectivity, spike trains, seeded PCG32 |
 
 ## Use it
@@ -272,7 +273,7 @@ rather than assumed.
 - **A sub-threshold current returns `None`, not a large number.** "Fires rarely" and "does not fire"
   are different statements and a rate-coded readout cannot recover the difference later.
 
-2,597 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
+2,612 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
 `#![forbid(unsafe_code)]`, and `cargo build --target wasm32-unknown-unknown` compiles the library
 unchanged. All three `examples/` are verification gates that exit non-zero when a check fails. Two of them run
 a closed form against the simulator — the LIF's analytic inter-spike interval, and the STDP pair
@@ -321,11 +322,12 @@ be reproduced cannot be checked against anything, including itself.
 
 ## Status
 
-**0.20.0.** Seventy-one modules, 2,597 tests, and **7,638 recorded mutations — one list per
-module**, every one applicable to today's source by `python3 tools/mutate.py`, and every one of
-them run against this tree. `python3 tools/readme_numbers.py` recomputes those four figures from
-the repository and refuses if this paragraph disagrees with it, because the last time they were
-typed by hand the test count was 423 low and nothing noticed.
+**Today:** seventy-two modules, 2,612 tests, and **7,719 recorded mutations — one list per
+module**, every one applicable to today's source by `python3 tools/mutate.py`.
+`python3 tools/readme_numbers.py` recomputes those figures from the repository and refuses if this
+paragraph disagrees with it, because the last time they were typed by hand the test count was 423
+low and nothing noticed. **0.20.0** was the release in which every recorded mutation was run
+against the released tree — 71 modules of 71, all 7,638 of its recorded entries.
 
 **The list being complete is not the same as the list being adequate, and 0.20.0 is what measuring
 that cost.** Every module had a recorded list at 0.19.0 and every list ran clean. Thirty of them

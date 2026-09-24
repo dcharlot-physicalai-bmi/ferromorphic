@@ -129,6 +129,7 @@ pub mod grid;
 pub mod hardware;
 pub mod hh;
 pub mod hopfield;
+pub mod intspike;
 pub mod ledger;
 pub mod localise;
 pub mod mapping;

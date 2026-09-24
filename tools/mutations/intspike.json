@@ -1,0 +1,409 @@
+[
+ {
+  "label": "the threshold is the SUM of magnitudes rather than their mean",
+  "old": "let mean = x.iter().map(|v| v.abs()).sum::<f64>() / x.len() as f64;",
+  "new": "let mean = x.iter().map(|v| v.abs()).sum::<f64>();"
+ },
+ {
+  "label": "the threshold uses signed values, so opposite activations cancel",
+  "old": "let mean = x.iter().map(|v| v.abs()).sum::<f64>() / x.len() as f64;",
+  "new": "let mean = x.iter().sum::<f64>() / x.len() as f64;"
+ },
+ {
+  "label": "the rate k multiplies the threshold instead of dividing it",
+  "old": "    Ok(mean / k)",
+  "new": "    Ok(mean * k)"
+ },
+ {
+  "label": "a NaN rate slips through the positivity guard",
+  "old": "if !(k > 0.0) || !k.is_finite() {",
+  "new": "if k <= 0.0 || !k.is_finite() {",
+  "equivalent": "`!(k > 0.0)` and `k <= 0.0` differ for exactly one class of input, NaN — every ordered comparison with NaN is false, so the first form is true there and the second false. But the guard is `!(k > 0.0) || !k.is_finite()`, and `is_finite` is false for NaN, so the second clause refuses NaN on both sides and the disjunction is identical for every f64. BUILT AND RUN, not argued: both predicates compiled side by side and compared over 16 special values (both zeros, both infinities, MIN_POSITIVE, the smallest subnormals, MAX, MIN, quiet and signalling NaNs with payloads) and 20,000,000 xorshift64 bit patterns covering every exponent class: 0 disagreements."
+ },
+ {
+  "label": "an infinite rate is accepted",
+  "old": "if !(k > 0.0) || !k.is_finite() {",
+  "new": "if !(k > 0.0) {"
+ },
+ {
+  "label": "an empty input is not refused",
+  "old": "    if x.is_empty() {\n        return Err(IntSpikeError::Empty);\n    }",
+  "new": "    if false {\n        return Err(IntSpikeError::Empty);\n    }"
+ },
+ {
+  "label": "an infinite activation passes the finiteness check",
+  "old": "find(|(_, v)| !v.is_finite())",
+  "new": "find(|(_, v)| v.is_nan())"
+ },
+ {
+  "label": "counts round half away from zero instead of to even",
+  "old": "counts.push(ratio.round_ties_even() as i64);",
+  "new": "counts.push(ratio.round() as i64);"
+ },
+ {
+  "label": "counts are floored instead of rounded",
+  "old": "counts.push(ratio.round_ties_even() as i64);",
+  "new": "counts.push(ratio.floor() as i64);"
+ },
+ {
+  "label": "counts are truncated towards zero instead of rounded",
+  "old": "counts.push(ratio.round_ties_even() as i64);",
+  "new": "counts.push(ratio.trunc() as i64);"
+ },
+ {
+  "label": "an all-zero input is divided by its zero threshold",
+  "old": "    if threshold == 0.0 {\n        return Ok(Encoded { threshold, counts: vec![0; x.len()] });\n    }",
+  "new": "    if false {\n        return Ok(Encoded { threshold, counts: vec![0; x.len()] });\n    }"
+ },
+ {
+  "label": "a ratio past 2^53 is rounded anyway",
+  "old": "if !(ratio.abs() <= MAX_RATIO) {",
+  "new": "if false {"
+ },
+ {
+  "label": "the exactness limit is 2^52",
+  "old": "pub const MAX_RATIO: f64 = 9_007_199_254_740_992.0;",
+  "new": "pub const MAX_RATIO: f64 = 4_503_599_627_370_496.0;"
+ },
+ {
+  "label": "a one-bit bitwise code is accepted",
+  "old": "&& !(2..=32).contains(&bits)",
+  "new": "&& !(1..=32).contains(&bits)"
+ },
+ {
+  "label": "a 33-bit bitwise code is accepted",
+  "old": "&& !(2..=32).contains(&bits)",
+  "new": "&& !(2..=33).contains(&bits)"
+ },
+ {
+  "label": "the bitwise range loses its most negative code",
+  "old": "Self::Bitwise { bits } => (-(1i64 << (bits - 1)), (1i64 << (bits - 1)) - 1),",
+  "new": "Self::Bitwise { bits } => (-(1i64 << (bits - 1)) + 1, (1i64 << (bits - 1)) - 1),"
+ },
+ {
+  "label": "the bitwise range claims one code past its top",
+  "old": "Self::Bitwise { bits } => (-(1i64 << (bits - 1)), (1i64 << (bits - 1)) - 1),",
+  "new": "Self::Bitwise { bits } => (-(1i64 << (bits - 1)), 1i64 << (bits - 1)),"
+ },
+ {
+  "label": "binary claims the negative counts",
+  "old": "            Self::Binary => (0, cap),",
+  "new": "            Self::Binary => (-cap, cap),"
+ },
+ {
+  "label": "ternary loses its negative half",
+  "old": "            Self::Ternary => (-cap, cap),",
+  "new": "            Self::Ternary => (0, cap),"
+ },
+ {
+  "label": "binary refuses a count of zero",
+  "old": "            Self::Binary if count < 0 => Err(IntSpikeError::Unsigned { count }),",
+  "new": "            Self::Binary if count <= 0 => Err(IntSpikeError::Unsigned { count }),"
+ },
+ {
+  "label": "binary accepts a negative count",
+  "old": "            Self::Binary if count < 0 => Err(IntSpikeError::Unsigned { count }),",
+  "new": "            Self::Binary if false => Err(IntSpikeError::Unsigned { count }),"
+ },
+ {
+  "label": "a bitwise count below the range is accepted",
+  "old": "Self::Bitwise { bits } if count < lo || count > hi =>",
+  "new": "Self::Bitwise { bits } if count > hi =>"
+ },
+ {
+  "label": "a bitwise count above the range is accepted",
+  "old": "Self::Bitwise { bits } if count < lo || count > hi =>",
+  "new": "Self::Bitwise { bits } if count < lo =>"
+ },
+ {
+  "label": "a train of exactly the step cap is refused",
+  "old": "if count.unsigned_abs() > hi.unsigned_abs() =>",
+  "new": "if count.unsigned_abs() >= hi.unsigned_abs() =>"
+ },
+ {
+  "label": "the step cap is 2^16",
+  "old": "pub const MAX_STEPS: usize = 1 << 20;",
+  "new": "pub const MAX_STEPS: usize = 1 << 16;"
+ },
+ {
+  "label": "a bitwise train is one step short of its width",
+  "old": "            Self::Bitwise { bits } => bits as usize,\n        })\n    }\n\n    /// The number of NON-ZERO",
+  "new": "            Self::Bitwise { bits } => bits as usize - 1,\n        })\n    }\n\n    /// The number of NON-ZERO"
+ },
+ {
+  "label": "the bitwise spike count counts zeros",
+  "old": "Self::Bitwise { bits } => (twos_complement(count, bits)).count_ones() as usize,",
+  "new": "Self::Bitwise { bits } => (bits - (twos_complement(count, bits)).count_ones()) as usize,"
+ },
+ {
+  "label": "the bitwise spike count is the width, as if every bit fired",
+  "old": "Self::Bitwise { bits } => (twos_complement(count, bits)).count_ones() as usize,",
+  "new": "Self::Bitwise { bits } => bits as usize,"
+ },
+ {
+  "label": "the top bit of a bitwise code weighs positive",
+  "old": "Self::Bitwise { bits } if t + 1 == bits as usize => -(1i64 << t),",
+  "new": "Self::Bitwise { bits } if t + 1 == bits as usize => 1i64 << t,"
+ },
+ {
+  "label": "the sign lands on the bit below the top",
+  "old": "Self::Bitwise { bits } if t + 1 == bits as usize => -(1i64 << t),",
+  "new": "Self::Bitwise { bits } if t + 2 == bits as usize => -(1i64 << t),"
+ },
+ {
+  "label": "bitwise weights are doubled",
+  "old": "            Self::Bitwise { .. } => 1i64 << t,",
+  "new": "            Self::Bitwise { .. } => 1i64 << (t + 1),"
+ },
+ {
+  "label": "ternary spends a zero count as a train of minus ones",
+  "old": "Self::Ternary => vec![if count < 0 { -1 } else { 1 }; n],",
+  "new": "Self::Ternary => vec![if count <= 0 { -1 } else { 1 }; n],",
+  "equivalent": "The element value `if count < 0 { -1 } else { 1 }` is repeated `n = |count|` times, and the two forms differ only at `count == 0`, where `n == 0` and `vec![x; 0]` is empty whatever `x` is. No element of the train ever carries the value the mutation changes. BUILT AND RUN: both expansions compiled side by side and compared for every count in -100000..=100000: 0 disagreements."
+ },
+ {
+  "label": "ternary spends a negative count as positive spikes",
+  "old": "Self::Ternary => vec![if count < 0 { -1 } else { 1 }; n],",
+  "new": "Self::Ternary => vec![1; n],"
+ },
+ {
+  "label": "bitwise reads two bits at a time",
+  "old": "(0..n).map(|t| ((code >> t) & 1) as i8).collect()",
+  "new": "(0..n).map(|t| ((code >> t) & 3) as i8).collect()"
+ },
+ {
+  "label": "bitwise emits the bits most significant first",
+  "old": "(0..n).map(|t| ((code >> t) & 1) as i8).collect()",
+  "new": "(0..n).map(|t| ((code >> (n - 1 - t)) & 1) as i8).collect()"
+ },
+ {
+  "label": "the two's complement mask keeps one bit too many",
+  "old": "(count as u64) & ((1u64 << bits) - 1)",
+  "new": "(count as u64) & ((1u64 << (bits + 1)) - 1)"
+ },
+ {
+  "label": "ternary reconstruction refuses a minus one",
+  "old": "let lowest: i8 = if self == Self::Ternary { -1 } else { 0 };",
+  "new": "let lowest: i8 = 0;"
+ },
+ {
+  "label": "binary reconstruction accepts a minus one",
+  "old": "let lowest: i8 = if self == Self::Ternary { -1 } else { 0 };",
+  "new": "let lowest: i8 = -1;"
+ },
+ {
+  "label": "a spike of two is accepted",
+  "old": "            if s < lowest || s > 1 {",
+  "new": "            if s < lowest || s > 2 {"
+ },
+ {
+  "label": "reconstruction keeps only the last step",
+  "old": "            total += i64::from(s) * self.step_weight(t)?;",
+  "new": "            total = i64::from(s) * self.step_weight(t)?;"
+ },
+ {
+  "label": "a bitwise train of the wrong length is read anyway",
+  "old": "            && train.len() != bits as usize\n        {\n            return Err(IntSpikeError::Dimension { what: \"bitwise train\"",
+  "new": "            && false\n        {\n            return Err(IntSpikeError::Dimension { what: \"bitwise train\""
+ },
+ {
+  "label": "decode drops the threshold",
+  "old": "self.counts.iter().map(|&c| self.threshold * c as f64).collect()",
+  "new": "self.counts.iter().map(|&c| c as f64).collect()"
+ },
+ {
+  "label": "the reconstruction error reports the smallest deviation",
+  "old": ".map(|(a, b)| (a - b).abs()).fold(0.0, f64::max))",
+  "new": ".map(|(a, b)| (a - b).abs()).fold(f64::INFINITY, f64::min))"
+ },
+ {
+  "label": "the reconstruction error is taken against a shorter array without complaint",
+  "old": "        if x.len() != self.counts.len() {\n            return Err(IntSpikeError::Dimension { what: \"activations\"",
+  "new": "        if x.len() > self.counts.len() {\n            return Err(IntSpikeError::Dimension { what: \"activations\""
+ },
+ {
+  "label": "a layer's steps are the sum of its trains rather than the longest",
+  "old": "self.counts.iter().try_fold(0, |m, &c| Ok(m.max(coding.steps(c)?)))",
+  "new": "self.counts.iter().try_fold(0, |m, &c| Ok(m + coding.steps(c)?))"
+ },
+ {
+  "label": "a layer's spike total keeps only the last activation",
+  "old": "self.counts.iter().try_fold(0u64, |s, &c| Ok(s + coding.spikes(c)? as u64))",
+  "new": "self.counts.iter().try_fold(0u64, |_, &c| Ok(coding.spikes(c)? as u64))"
+ },
+ {
+  "label": "the input count is checked against the rows",
+  "old": "    if inputs != cols {",
+  "new": "    if inputs != rows {"
+ },
+ {
+  "label": "the dense product keeps only the last column",
+  "old": "            y[r] = y[r].checked_add(term).ok_or(IntSpikeError::Overflow)?;",
+  "new": "            y[r] = term;"
+ },
+ {
+  "label": "the dense product reads the weights column-major",
+  "old": "let term = i64::from(w[r * cols + i]).checked_mul(counts[i])",
+  "new": "let term = i64::from(w[i * rows + r]).checked_mul(counts[i])"
+ },
+ {
+  "label": "a negative spike is added rather than subtracted",
+  "old": "let subtract = (s < 0) != negative_weight;",
+  "new": "let subtract = negative_weight;"
+ },
+ {
+  "label": "the top bit's negative weight is ignored",
+  "old": "let subtract = (s < 0) != negative_weight;",
+  "new": "let subtract = s < 0;"
+ },
+ {
+  "label": "bitwise spikes are not shifted",
+  "old": "let shift = if matches!(coding, Coding::Bitwise { .. }) { t as u32 } else { 0 };",
+  "new": "let shift = 0;"
+ },
+ {
+  "label": "an addition is counted once per spike rather than once per output row",
+  "old": "            ops.additions += rows64;",
+  "new": "            ops.additions += 1;"
+ },
+ {
+  "label": "the lowest bit is counted as a shift",
+  "old": "            if shift > 0 {\n                ops.shifts += rows64;",
+  "new": "            if matches!(coding, Coding::Bitwise { .. }) {\n                ops.shifts += rows64;"
+ },
+ {
+  "label": "a column held for an input is never counted",
+  "old": "        if active {\n            ops.reads_held += 1;",
+  "new": "        if false {\n            ops.reads_held += 1;"
+ },
+ {
+  "label": "zero spikes are accumulated and counted as work",
+  "old": "            if s == 0 {\n                continue;\n            }\n            active = true;",
+  "new": "            active = true;"
+ },
+ {
+  "label": "a train outside the alphabet is accumulated anyway",
+  "old": "        coding.reconstruct(train)?;\n        let mut active = false;",
+  "new": "        let mut active = false;"
+ },
+ {
+  "label": "the accumulator is overwritten by each spike",
+  "old": "y[r] = if subtract { y[r].checked_sub(v) } else { y[r].checked_add(v) }",
+  "new": "y[r] = if subtract { Some(-v) } else { Some(v) }"
+ },
+ {
+  "label": "scale drops the threshold",
+  "old": "accumulated.iter().map(|&a| threshold * a as f64).collect()",
+  "new": "accumulated.iter().map(|&a| a as f64).collect()"
+ },
+ {
+  "label": "a spike costs one addition regardless of how many fire",
+  "old": "        spikes_per_activation * self.int8_add_pj\n",
+  "new": "        self.int8_add_pj\n"
+ },
+ {
+  "label": "the reduction reports the spike share rather than the saving",
+  "old": "        1.0 - self.spike_pj(spikes_per_activation) / baseline_mac_pj",
+  "new": "        self.spike_pj(spikes_per_activation) / baseline_mac_pj"
+ },
+ {
+  "label": "the dense layer's weight read is free",
+  "old": "(baseline_mac_pj + fetch_pj, self.spike_pj(spikes_per_activation) + reads * fetch_pj)",
+  "new": "(baseline_mac_pj, self.spike_pj(spikes_per_activation) + reads * fetch_pj)"
+ },
+ {
+  "label": "a held column is read once per spike after all",
+  "old": "            Dataflow::HoldPerInput => active_fraction,\n        };\n        (baseline_mac_pj",
+  "new": "            Dataflow::HoldPerInput => spikes_per_activation,\n        };\n        (baseline_mac_pj"
+ },
+ {
+  "label": "the break-even divides by the reads rather than the extra reads",
+  "old": "if reads > 1.0 && spare > 0.0 { Some(spare / (reads - 1.0)) } else { None }",
+  "new": "if reads > 1.0 && spare > 0.0 { Some(spare / reads) } else { None }"
+ },
+ {
+  "label": "a break-even is claimed when the spiking side reads no more than the dense one",
+  "old": "if reads > 1.0 && spare > 0.0 { Some(spare / (reads - 1.0)) } else { None }",
+  "new": "if reads >= 0.0 && spare > 0.0 { Some(spare / (reads - 1.0)) } else { None }"
+ },
+ {
+  "label": "a break-even is claimed with no spare arithmetic to trade",
+  "old": "if reads > 1.0 && spare > 0.0 { Some(spare / (reads - 1.0)) } else { None }",
+  "new": "if reads > 1.0 { Some(spare / (reads - 1.0)) } else { None }"
+ },
+ {
+  "label": "the FP16 MAC is transcribed a decade low",
+  "old": "    fp16_mac_pj: 1.5,",
+  "new": "    fp16_mac_pj: 0.15,"
+ },
+ {
+  "label": "the INT8 MAC is transcribed as 0.2 pJ",
+  "old": "    int8_mac_pj: 0.23,",
+  "new": "    int8_mac_pj: 0.2,"
+ },
+ {
+  "label": "the INT8 addition is transcribed a decade high",
+  "old": "    int8_add_pj: 0.03,",
+  "new": "    int8_add_pj: 0.3,"
+ },
+ {
+  "label": "the arithmetic-only model is graded as a measurement",
+  "old": "    evidence: Evidence::Derived,\n};",
+  "new": "    evidence: Evidence::Measured,\n};"
+ },
+ {
+  "label": "the spike statistic is transcribed as 1.3",
+  "old": "pub const SPIKINGBRAIN_SPIKES_PER_CHANNEL: f64 = 1.13;",
+  "new": "pub const SPIKINGBRAIN_SPIKES_PER_CHANNEL: f64 = 1.3;"
+ },
+ {
+  "label": "the silent fraction is transcribed as 1.84%",
+  "old": "pub const SPIKINGBRAIN_SILENT_FRACTION: f64 = 0.184;",
+  "new": "pub const SPIKINGBRAIN_SILENT_FRACTION: f64 = 0.0184;"
+ },
+ {
+  "label": "the stated spike energy is 0.0345 pJ",
+  "old": "pub const SPIKINGBRAIN_SPIKE_PJ: f64 = 0.034;",
+  "new": "pub const SPIKINGBRAIN_SPIKE_PJ: f64 = 0.0345;"
+ },
+ {
+  "label": "the FP16 ratio is transcribed as the one the stated energy implies",
+  "old": "pub const SPIKINGBRAIN_RATIO_VS_FP16: f64 = 43.48;",
+  "new": "pub const SPIKINGBRAIN_RATIO_VS_FP16: f64 = 44.12;"
+ },
+ {
+  "label": "the INT8 ratio is transcribed as 6.67",
+  "old": "pub const SPIKINGBRAIN_RATIO_VS_INT8: f64 = 6.76;",
+  "new": "pub const SPIKINGBRAIN_RATIO_VS_INT8: f64 = 6.67;"
+ },
+ {
+  "label": "the out-of-range message swaps the count and the width",
+  "old": "write!(f, \"{count} does not fit a {bits}-bit two's complement code\")",
+  "new": "write!(f, \"{bits} does not fit a {count}-bit two's complement code\")"
+ },
+ {
+  "label": "the dimension message swaps the length found and the length required",
+  "old": "write!(f, \"{what} has length {got}, expected {want}\")",
+  "new": "write!(f, \"{what} has length {want}, expected {got}\")"
+ },
+ {
+  "label": "the bad-bits message states a range the guard does not enforce",
+  "old": "write!(f, \"{bits} bits: a bitwise coding needs 2 to 32\")",
+  "new": "write!(f, \"{bits} bits: a bitwise coding needs 1 to 64\")"
+ },
+ {
+  "label": "the non-finite message names the value as the index",
+  "old": "write!(f, \"activation {index} is {value}, which is not finite\")",
+  "new": "write!(f, \"activation {value} is {index}, which is not finite\")"
+ },
+ {
+  "label": "the bad-spike message names the value as the position",
+  "old": "write!(f, \"spike {index} is {value}, outside this coding's alphabet\")",
+  "new": "write!(f, \"spike {value} is {index}, outside this coding's alphabet\")"
+ },
+ {
+  "label": "the unsigned message drops the count",
+  "old": "write!(f, \"binary coding cannot represent the negative count {count}\")",
+  "new": "write!(f, \"binary coding cannot represent a negative count\")"
+ }
+]
