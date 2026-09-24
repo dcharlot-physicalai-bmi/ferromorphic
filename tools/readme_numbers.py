@@ -17,6 +17,8 @@ suite reports too; a figure this script cannot derive from the repository is not
 import glob, io, json, os, re, sys
 
 REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Everything after this heading is the audit history, which quotes each release's own counts.
+HISTORY = "## Every module has been audited, and the audit found things"
 
 
 def figures():
@@ -46,10 +48,24 @@ def main():
     if f["lists"] != f["modules"]:
         bad.append(f"{f['lists']} recorded lists for {f['modules']} modules — the README's "
                    f"'at least one list per module' is not true of the repository")
-    for name, value in (("tests", f["tests"]), ("mutations", f["mutations"])):
-        pretty = f"{value:,}"
-        if pretty not in readme:
-            bad.append(f"the README does not state the current {name} count ({pretty})")
+    # "Somewhere in the file" is not enough, and the first version of this check proved it: it
+    # passed while the headline on line 12 and a sentence in the verification section still said
+    # 2,252 tests, because the Status paragraph stated 2,597. So the rule is EVERY count in the
+    # README's current-state part must equal the repository's. The audit history below it quotes
+    # the counts of its own releases on purpose, and is exempt.
+    head, sep, _ = readme.partition(HISTORY)
+    if not sep:
+        bad.append(f"the heading {HISTORY!r} that separates current state from history is gone, so "
+                   f"this check can no longer tell a stale count from a historical one")
+    for name, value, pattern in (
+        ("tests", f["tests"], r"\b(\d[\d,]*) (?:unit )?tests\b"),
+        ("mutations", f["mutations"], r"\b(\d[\d,]*) (?:recorded )?mutations\b"),
+    ):
+        seen = [int(m.replace(",", "")) for m in re.findall(pattern, head)]
+        if value not in seen:
+            bad.append(f"the README's current-state part never states the {name} count ({value:,})")
+        for n in sorted(set(seen) - {value}):
+            bad.append(f"the README's current-state part says {n:,} {name}; the repository has {value:,}")
     for line in bad:
         print(f"readme_numbers: {line}")
     print(f"readme_numbers: {f['modules']} modules, {f['tests']:,} tests, {f['mutations']:,} "

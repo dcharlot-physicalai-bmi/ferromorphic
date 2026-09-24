@@ -9,7 +9,7 @@ hardware constraint models, analog device non-idealities, NIR, event-camera deco
 metrics, teaching tasks — and a joules ledger that charges for the memory traffic a synaptic
 operation needs.
 
-**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 71 modules, 2,252 tests.**
+**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 71 modules, 2,597 tests.**
 
 Run it in a browser without installing anything:
 **[energy.physicalai-bmi.org/neuromorphic](https://energy.physicalai-bmi.org/neuromorphic)** — the
@@ -40,8 +40,7 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 | `reservoir` | liquid state machines and echo state networks, with a pure-Rust ridge solve and power iteration |
 | `encode`, `coding` | rate, latency, delta; population, rank-order, phase, burst, BSA/HSA, temporal contrast — and their decoders |
 | `topology` | Erdős-Rényi, Watts-Strogatz, Barabási-Albert, distance-dependent, layered, winner-take-all, Dale's law |
-| `hardware` | constraint models for Loihi, Loihi 2, `TrueNorth`, `NorthPole`, Akida, `SpiNNaker`, Xylo, Speck, ODIN, DYNAP and more — | `hardware` | constraint models for Loihi, Loihi 2, `TrueNorth`, `NorthPole`, Akida, `SpiNNaker`,
-Xylo, Speck, ODIN, DYNAP and more — ten graded figures per part, each with its provenance string | |
+| `hardware` | constraint models for Loihi, Loihi 2, `TrueNorth`, `NorthPole`, Akida, `SpiNNaker`, Xylo, Speck, ODIN, DYNAP and more — ten graded figures per part, each with its provenance string |
 | `nir` | the Neuromorphic Intermediate Representation graph, validation, and a bridge to this crate's networks |
 | `aer` | AEDAT 2.0, 3.1 and 4.0, Prophesee EVT2/EVT3 and N-MNIST decoders, total and panic-free, with rollover-correct timestamps; the DVS128 Gesture label reader that cuts a recording into its gestures |
 | `metrics` | `NeuroBench` complexity metrics: activation sparsity, effective MACs and ACs, footprint |
@@ -79,13 +78,7 @@ Xylo, Speck, ODIN, DYNAP and more — ten graded figures per part, each with its
 | `localise` | sound localisation by coincidence: the Jeffress delay-line array against the path-difference geometry, the half-spacing quantisation bound, the aliasing frequency and the coincidence probability under spike jitter |
 | `cerebellum` | the cerebellum as a machine: an adaptive filter that converges on the Wiener solution at `1 − βλ` an epoch and stops when its error is decorrelated from every input, and Albus's CMAC with its triangular generalisation |
 | `grid` | grid cells: the hexagonal firing map, path integration that is exact in phase space, the modular code — 9009 positions from 40 cells — decoded by the Chinese remainder theorem, and its error correction: two spare modules survive any corruption of any one, exhaustively |
-| `proprio` | proprioception: the power-law muscle spindle and the fusimotor gains that retune it (dynamic `γ_d`, static `γ_s`, and the synaptic gain of the reflex arc), an intrafusal fibre with its gamma drive, spike-driven fusimotor activation, the tendon organ and its two-rate overshoot, a rate-to-spike encoder that emits exactly the integral of its rate, and | `proprio` | proprioception: the power-law muscle spindle and the fusimotor gains that retune it
-(dynamic `γ_d`, static `γ_s`, and the synaptic gain of the reflex arc), an intrafusal fibre with its
-gamma drive, spike-driven fusimotor activation, the tendon organ and its two-rate overshoot, a
-rate-to-spike encoder that emits exactly the integral of its rate, and a stretch reflex whose
-stiffness is `g γ_s k_L` and which breaks into clonus when `g γ_s k_L / b` crosses the delayed
-loop's own ceiling — Levin and May's discrete boundary `(2/h)·sin(π/(2(2m+1)))`, which converges on
-the continuous `π/2τ` | |
+| `proprio` | proprioception: the power-law muscle spindle and the fusimotor gains that retune it (dynamic `γ_d`, static `γ_s`, and the synaptic gain of the reflex arc), an intrafusal fibre with its gamma drive, spike-driven fusimotor activation, the tendon organ and its two-rate overshoot, a rate-to-spike encoder that emits exactly the integral of its rate, and a stretch reflex whose stiffness is `g γ_s k_L` and which breaks into clonus when `g γ_s k_L / b` crosses the delayed loop's own ceiling — Levin and May's discrete boundary `(2/h)·sin(π/(2(2m+1)))`, which converges on the continuous `π/2τ` |
 | `delays` | delays as a resource: the spatiotemporal pattern a set of synaptic delays is matched to, a delay-learning rule that contracts every arrival's deviation by exactly `1 − η`, the `(D+1)ⁿ − Dⁿ` patterns a neuron can stand for, and the buffer bits that costs |
 | `distance` | how different two spike trains are: the Victor–Purpura edit distance and the van Rossum distance (closed form against its own quadrature), vector strength against the jitter's characteristic function, the Fano factor of a clock, `f(1 − f)/(m + f)`, and the parameter-free ISI- and SPIKE-distances, integrated exactly and refereed by the quadrature of their definitions |
 | `field` | the Amari neural field of dynamic field theory: the kernel integral `W`, the narrow unstable bump below which activity dies and the wide stable one it settles at, both as roots of `W(a) + h = 0` and both found in the simulated field — on a line, and on a sheet, where the rim integral is `πσ²[1 − e^{−R²/σ²} I₀(R²/σ²)]` |
@@ -279,7 +272,7 @@ rather than assumed.
 - **A sub-threshold current returns `None`, not a large number.** "Fires rarely" and "does not fire"
   are different statements and a rate-coded readout cannot recover the difference later.
 
-2,252 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
+2,597 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
 `#![forbid(unsafe_code)]`, and `cargo build --target wasm32-unknown-unknown` compiles the library
 unchanged. All three `examples/` are verification gates that exit non-zero when a check fails. Two of them run
 a closed form against the simulator — the LIF's analytic inter-spike interval, and the STDP pair
@@ -328,7 +321,7 @@ be reproduced cannot be checked against anything, including itself.
 
 ## Status
 
-**0.20.0.** Seventy-one modules, 2,588 tests, and **7,638 recorded mutations — one list per
+**0.20.0.** Seventy-one modules, 2,597 tests, and **7,638 recorded mutations — one list per
 module**, every one applicable to today's source by `python3 tools/mutate.py`, and every one of
 them run against this tree. `python3 tools/readme_numbers.py` recomputes those four figures from
 the repository and refuses if this paragraph disagrees with it, because the last time they were
@@ -341,7 +334,7 @@ were then DEEPENED — 1,809 new mutations aimed at what the existing entries di
 mutations, all caught; deepened to 112 it gave 35 survivors. `hardware` had 140; its 78 new ones
 gave 40. **A list that passes tells you about the list.**
 
-All 562 are now closed — 336 new tests, and the rule throughout was that a repair is not kept until
+All 562 are now closed — 345 new tests, and the rule throughout was that a repair is not kept until
 the mutation it exists to catch has been re-run and comes back `caught`. A passing test proves
 nothing about a hole.
 
@@ -1190,9 +1183,9 @@ instead of reading it.
   unit mapping is stated in the source so a reader comparing against the paper knows what was done.
 - **Two device tables is not a survey.** Per-operation energies for current commercial parts are
   quoted in units — TOPS/W, "1000× more efficient" — that do not reduce to a joule-per-operation
-  figure anyone can put in a table. That shortness is a finding about the field and, in part, a gap in the reading: `ODIN`'s 12.7 pJ/SOP
-is a silicon measurement that would reduce to a table entry, and it is priced nowhere here because
-this crate has not read Frenkel et al., 2019 itself.
+  figure anyone can put in a table. That shortness is a finding about the field and, in part, a gap
+  in the reading: `ODIN`'s 12.7 pJ/SOP is a silicon measurement that would reduce to a table entry,
+  and it is priced nowhere here because this crate has not read Frenkel et al., 2019 itself.
 
 ## Licence
 

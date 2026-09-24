@@ -20,7 +20,9 @@ carrying the same `# Errors` line are not a finding:
   - the same sentence twice, or two sentences over 90% alike (the doubling that also changed a
     number, which an equality test reads as two distinct claims);
   - a sentence whose opening words recur after a colon inside it (a restated stem);
-  - a doubled list marker (`- -`, `* *`) at the start of a line.
+  - a doubled list marker (`- -`, `* *`) at the start of a line;
+  - a Markdown table row that spills onto a second line or has the wrong number of cells, which
+    ends the table where it is rendered.
 
 It is deliberately narrow. A check that fires on prose people wrote on purpose gets switched off.
 
@@ -58,6 +60,42 @@ def blocks(path):
     return out
 
 
+def cells(line):
+    """Cells of a Markdown table row, ignoring pipes inside code spans and escaped pipes."""
+    n, code, prev = 0, False, ""
+    for ch in line:
+        if ch == "`":
+            code = not code
+        elif ch == "|" and not code and prev != "\\":
+            n += 1
+        prev = ch
+    return n
+
+
+def broken_tables(path):
+    """Every line of a Markdown table must be ONE row with the header's cell count.
+
+    Unlike a doubled sentence this is structural, so it can be checked exactly: a table is a
+    header line, a separator line, and then rows until a blank line, and a row that spills onto a
+    second line ends the table right there when it is rendered. This README shipped two such rows
+    in its module table, and every module listed after them printed as loose text on crates.io.
+    """
+    lines = io.open(path, encoding="utf-8").read().split("\n")
+    out = []
+    for i in range(len(lines) - 1):
+        head, sep = lines[i], lines[i + 1]
+        if not (head.startswith("|") and sep.startswith("|") and set(sep.replace("|", "").strip()) <= set("-: ")):
+            continue
+        want = cells(head)
+        k = i + 2
+        while k < len(lines) and lines[k].strip():
+            row = lines[k]
+            if not row.startswith("|") or cells(row) != want:
+                out.append((f"a table row broken across lines or with the wrong cell count (line {k + 1})", row[:90]))
+            k += 1
+    return out
+
+
 def findings(path):
     out = []
     for raw in blocks(path):
@@ -86,6 +124,8 @@ def findings(path):
             # and neither of the checks above can see it: the sentence is unique, and its stem is
             # not restated. This repository shipped "gives a median of 42.8%, a maximum of 94.7%
             # and gives a median of 42.8%, a maximum of 94.7% and a floor of 1.7%" past both.
+    if path.endswith(".md"):
+        out += broken_tables(path)
     for n, line in enumerate(io.open(path, encoding="utf-8"), 1):
         if re.match(r"^\s*(- -[^-]|\* \*[^*])", line):
             out.append((f"a doubled list marker on line {n}", line.strip()))

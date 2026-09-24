@@ -4930,4 +4930,207 @@ mod tests {
         assert!(!text.contains("exceed it"), "a delay under the floor does not exceed it: {text}");
     }
 
+
+    /// The satisfied-constraint lines and the core line say what was measured, the right way up.
+    ///
+    /// Three survivors of the class this module shares with most of the crate — **nothing read the
+    /// report**. Every fixture asserts `fit.headroom` and `fit.cores` as data, and none renders
+    /// them, so a utilisation printed as a bare fraction over a per-cent sign ("(0.0%)" for eight
+    /// neurons of 1,024), a line reading "1024 of 8", or a core count called "exactly" when it is
+    /// only a lower bound were all fluent and invisible. The last matters most: `exact` is a
+    /// PROOF that the lower bound is attained, and a report that says "exactly" without one is a
+    /// guarantee nobody made.
+    #[test]
+    fn the_satisfied_lines_and_the_core_line_report_what_was_measured() {
+        // Eight neurons, four inputs each, on DYNAP-SE: well inside every stated limit.
+        let small = fits(&uniform_net(8, 4, 1), &DYNAP_SE);
+        let report = small.to_string();
+        // 8 of 1,024 is 0.78125%, printed to one place.
+        assert!(report.contains("neurons per chip: 8 of 1024 (0.8%)"), "{report}");
+        // Any npc neurons at fan-in 4 carry 4 * 256 = 1,024 synapses, inside 16,384: the neuron
+        // bound is attained, so the count is exact.
+        assert!(report.contains("cores  exactly 1"), "{report}");
+
+        // Fan-in 100 on Xylo (1,000 neurons and 64,000 synapses per core): 100 * 1,000 = 100,000
+        // exceeds the synapse store, so the bound is NOT proved tight and must say so.
+        let dense = fits(&uniform_net(200, 100, 1), &XYLO_AUDIO_2);
+        let report = dense.to_string();
+        assert!(report.contains("cores  at least 1"), "{report}");
+        assert!(!report.contains("cores  exactly"), "{report}");
+    }
+
+    /// The fan-in headroom is the DEEPEST neuron's in-degree, not the network's total.
+    ///
+    /// Fan-in is a per-neuron wall — a core's crossbar row has so many inputs — so the number to
+    /// hold against the cap is the largest in-degree. The network's total in-degree is its synapse
+    /// count, a different constraint with its own line. Every fixture that reached this branch
+    /// asserted only that no wall bound, which a sum passes whenever the cap is large enough.
+    #[test]
+    fn the_fan_in_headroom_is_the_deepest_neuron_not_the_total() {
+        let fit = fits(&uniform_net(8, 4, 1), &DYNAP_SE);
+        let fan_in = fit
+            .headroom
+            .iter()
+            .find(|h| h.constraint == "maximum fan-in per neuron")
+            .expect("DYNAP-SE states a fan-in cap and this network is inside it");
+        assert_eq!((fan_in.used, fan_in.cap), (4, 64), "the total in-degree here is 32");
+    }
+
+    /// The delay offenders reported are the WORST on each side, and the counts are all of them.
+    ///
+    /// Three survivors, all invisible for the same reason: `SpiNNaker` — the only part with a
+    /// located delay range — has a floor of ONE tick, so the only short delay a network can have
+    /// is zero and "the most severe short delay" had exactly one candidate. And every long-delay
+    /// fixture had one offender, or offenders scanned worst-first. This part is `SpiNNaker` with
+    /// the floor raised to five, a hand-built fixture whose shorts are 1 and 3 and whose longs are
+    /// 20 and 40, each placed so that the worst is NOT the first the scan meets.
+    #[test]
+    fn the_delay_offenders_are_the_worst_on_each_side_and_all_are_counted() {
+        let part = Part {
+            delay_ticks: Spec::known(
+                DelayRange { min_ticks: 5, max_ticks: 16 },
+                "test fixture: SpiNNaker with its delay floor raised to 5 ticks",
+                Evidence::Derived,
+            ),
+            ..SPINNAKER
+        };
+        // Scanned in presynaptic order 0..5: short 3, long 20, short 1, long 40, then a legal 10.
+        let mut b = NetBuilder::new(6);
+        for (pre, delay) in [(0, 3), (1, 20), (2, 1), (3, 40), (4, 10)] {
+            b.connect(pre, 5, 1e-3, delay).unwrap();
+        }
+        let fit = fits(&b.build(), &part);
+        let long = fit.binds.iter().find_map(|b| match *b {
+            Bind::DelayTooLong { delay, offenders, .. } => Some((delay, offenders)),
+            _ => None,
+        });
+        let short = fit.binds.iter().find_map(|b| match *b {
+            Bind::DelayTooShort { delay, offenders, .. } => Some((delay, offenders)),
+            _ => None,
+        });
+        assert_eq!(long, Some((40, 2)), "the worst long delay, and both of them counted");
+        assert_eq!(short, Some((1, 2)), "the worst short delay, and both of them counted");
+    }
+
+    /// The chip's cores are compared against the BINDING bound, which is not always the neurons'.
+    ///
+    /// `lower_bound` is the larger of the neuron bound and the synapse bound; the chip check used
+    /// to be indistinguishable from one that read the neuron bound alone, because on every part
+    /// whose synapse-per-core ratio equals its fan-in cap the synapse bound can never exceed the
+    /// neuron bound without a fan-in wall binding first. Xylo states no fan-in cap and holds 64
+    /// synapses per neuron-slot, so 900 neurons at fan-in 100 need 90,000 synapses — two cores by
+    /// synapses, one by neurons — on a part with one core.
+    #[test]
+    fn the_chip_is_checked_against_the_binding_core_bound() {
+        let fit = fits(&uniform_net(900, 100, 1), &XYLO_AUDIO_2);
+        let cores = core_count(&uniform_net(900, 100, 1), &XYLO_AUDIO_2).unwrap();
+        assert_eq!((cores.by_neurons, cores.by_synapses, cores.lower_bound), (1, Some(2), 2));
+        assert!(
+            fit.binds.iter().any(|b| matches!(*b, Bind::Cores { needed: 2, cap: 1 })),
+            "the synapse bound binds: {fit}"
+        );
+    }
+
+    /// A part that states a neuron capacity and no synapse capacity still has a core count.
+    ///
+    /// Its count is the neuron bound, with no synapse bound, no packing and no exactness claim —
+    /// less than a full answer, and more than none. Every part in the table that states one states
+    /// both, so the branch was unreachable from the table and a refusal there changed nothing.
+    #[test]
+    fn a_part_with_no_stated_synapse_capacity_still_counts_its_cores() {
+        let part = Part {
+            synapses_per_core: Spec::unlocated("test fixture: Xylo with its synapse store withheld"),
+            ..XYLO_AUDIO_2
+        };
+        let c = core_count(&uniform_net(2500, 4, 1), &part).expect("the neuron bound is still known");
+        assert_eq!((c.by_neurons, c.by_synapses, c.lower_bound), (3, None, 3));
+        assert_eq!((c.greedy, c.exact), (None, false));
+    }
+
+    /// A neuron whose fan-in EXACTLY fills a core's synapse store can still be placed.
+    ///
+    /// First-fit-decreasing refuses a neuron only when its in-degree EXCEEDS the store. At
+    /// equality it takes a core to itself — which is a packing, and a `None` there would tell a
+    /// caller that no assignment exists and the network must be restructured, which is false.
+    /// Nothing reached the boundary: every fixture's in-degrees were far below any store.
+    #[test]
+    fn a_neuron_that_exactly_fills_a_synapse_store_is_packed() {
+        let part = Part {
+            neurons_per_core: Spec::known(4, "test fixture", Evidence::Derived),
+            synapses_per_core: Spec::known(8, "test fixture", Evidence::Derived),
+            ..XYLO_AUDIO_2
+        };
+        let net = uniform_net(9, 8, 1);
+        assert!(net.in_degrees().iter().all(|&d| d == 8), "every neuron exactly fills a store");
+        let c = core_count(&net, &part).unwrap();
+        // One neuron per core, because two would need sixteen synapses.
+        assert_eq!(c.greedy, Some(9));
+    }
+
+    /// The quantiser's two refusals say what the guard enforces and what the failure costs.
+    ///
+    /// `BadBits` claimed a range; the guard is `2..=31`, and a message offering "1 to 32" would
+    /// send a caller to two widths the constructor refuses. `NoScale`'s second clause is the one
+    /// that matters — a step that UNDERFLOWED to zero reports a near-perfect round trip for weights
+    /// it has destroyed — and nothing rendered either message.
+    #[test]
+    fn the_quantiser_refusals_state_the_guard_and_the_cost() {
+        let bad = Quantiser::symmetric(1, 1.0).unwrap_err();
+        assert!(bad.to_string().contains("needs 2 to 31"), "{bad}");
+        // And the stated range is the enforced one, at both ends.
+        assert!(Quantiser::symmetric(2, 1.0).is_ok() && Quantiser::symmetric(31, 1.0).is_ok());
+        assert!(Quantiser::symmetric(32, 1.0).is_err());
+        let text = HardwareError::NoScale.to_string();
+        assert!(text.contains("underflowed to zero"), "{text}");
+        assert!(text.contains("weights it has destroyed"), "{text}");
+    }
+
+    /// Stochastic rounding is unbiased for NEGATIVE weights too, because it floors rather than
+    /// truncates.
+    ///
+    /// `floor` and `trunc` agree on every non-negative number, and the existing unbiasedness test
+    /// used positive weights only. For −2.3, `floor` gives −3 with fraction 0.7, so the code is −2
+    /// seven times in ten and −3 three times: mean exactly −2.3. `trunc` gives −2 with fraction
+    /// −0.3, which no uniform draw is below — every code is −2, a bias of 0.3 of a step, towards
+    /// zero, on every negative weight in the network.
+    ///
+    /// The bound is statistical: over 10,000 draws the standard error of the mean code is
+    /// `sqrt(0.21 / 10_000) = 4.6e-3`, so 0.05 is about eleven standard errors, and the truncated
+    /// mean misses it by six times over.
+    #[test]
+    fn stochastic_rounding_of_a_negative_weight_is_unbiased() {
+        let q = Quantiser::symmetric(8, 127.0).unwrap();
+        assert_eq!(q.step, 1.0, "127 / 127, exactly");
+        let w = vec![-2.3; 10_000];
+        let mut rng = Rng::new(41);
+        let out = q.quantise_stochastic(&w, &mut rng).unwrap();
+        let mean = out.codes.iter().map(|&c| f64::from(c)).sum::<f64>() / w.len() as f64;
+        assert!((mean + 2.3).abs() < 0.05, "mean code {mean}, and truncation gives −2.0");
+        assert!(out.codes.contains(&-3), "some weights must round away from zero");
+        assert!(out.codes.iter().all(|&c| c == -2 || c == -3));
+    }
+
+    /// Clamping is symmetric, counts every clamped weight, and the certificate includes its bound.
+    ///
+    /// Three survivors. A symmetric quantiser's codes run `−max_code ..= max_code`; the two's
+    /// complement code below that exists in the register and is deliberately unused, so a weight
+    /// far below full scale clamps to `−max_code`, not one past it. `clipped` is a COUNT, and every
+    /// fixture that clipped anything clipped exactly one weight. And the half-least-significant-bit
+    /// certificate is `<=`: round-to-nearest of a weight sitting exactly halfway between two codes
+    /// errs by exactly half a step and has met the bound, not missed it — reachable exactly because
+    /// the step here is 1.0 and 2.5 is representable.
+    #[test]
+    fn clamping_is_symmetric_counted_and_the_half_lsb_bound_is_inclusive() {
+        let q = Quantiser::symmetric(4, 7.0).unwrap();
+        assert_eq!((q.max_code, q.step), (7, 1.0));
+        let out = q.quantise_nearest(&[-100.0, 100.0, 50.0, 0.0]).unwrap();
+        assert_eq!(out.codes, vec![-7, 7, 7, 0], "clamped to ±max_code, never −max_code − 1");
+        assert_eq!(out.clipped, 3, "three weights were clamped");
+
+        let tie = q.quantise_nearest(&[2.5]).unwrap();
+        assert_eq!(tie.codes, vec![3], "ties go away from zero");
+        assert_eq!(tie.max_abs_error, tie.half_lsb(), "exactly half a step, attained");
+        assert!(tie.within_half_lsb(0.0), "attaining the bound is within it");
+    }
+
 }
