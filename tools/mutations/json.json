@@ -1,0 +1,272 @@
+[
+ {
+  "label": "get finds the LAST member of a duplicated name",
+  "old": "members.iter().find(|(k, _)| k == key)",
+  "new": "members.iter().rev().find(|(k, _)| k == key)"
+ },
+ {
+  "label": "get matches a key by prefix",
+  "old": "find(|(k, _)| k == key)",
+  "new": "find(|(k, _)| k.starts_with(key))"
+ },
+ {
+  "label": "as_f64 reads a bool as a number",
+  "old": "            Self::Number(x) => Some(*x),\n            _ => None,",
+  "new": "            Self::Number(x) => Some(*x),\n            Self::Bool(b) => Some(f64::from(u8::from(*b))),\n            _ => None,"
+ },
+ {
+  "label": "as_str reads null as the empty string",
+  "old": "            Self::String(s) => Some(s),\n            _ => None,",
+  "new": "            Self::String(s) => Some(s),\n            Self::Null => Some(\"\"),\n            _ => None,"
+ },
+ {
+  "label": "as_array reads an object's values",
+  "old": "            Self::Array(items) => Some(items),\n            _ => None,",
+  "new": "            Self::Array(items) => Some(items),\n            Self::Object(_) => Some(&[]),\n            _ => None,"
+ },
+ {
+  "label": "trailing text is accepted",
+  "old": "    if r.at < r.b.len() {\n        return Err(r.fail(\"trailing text after the value\"));\n    }",
+  "new": ""
+ },
+ {
+  "label": "trailing whitespace is refused",
+  "old": "    let v = r.value(0)?;\n    r.space();\n",
+  "new": "    let v = r.value(0)?;\n"
+ },
+ {
+  "label": "leading whitespace is refused",
+  "old": "    r.space();\n    let v = r.value(0)?;",
+  "new": "    let v = r.value(0)?;"
+ },
+ {
+  "label": "a form feed counts as whitespace",
+  "old": "while let Some(b' ' | b'\\t' | b'\\n' | b'\\r') = self.peek()",
+  "new": "while let Some(b' ' | b'\\t' | b'\\n' | b'\\r' | b'\\x0c') = self.peek()"
+ },
+ {
+  "label": "a carriage return is not whitespace",
+  "old": "while let Some(b' ' | b'\\t' | b'\\n' | b'\\r') = self.peek()",
+  "new": "while let Some(b' ' | b'\\t' | b'\\n') = self.peek()"
+ },
+ {
+  "label": "a literal is matched on its first letter only",
+  "old": "if self.b[self.at..].starts_with(word.as_bytes()) {\n            self.at += word.len();",
+  "new": "if self.b[self.at..].starts_with(&word.as_bytes()[..1]) {\n            self.at += word.len();"
+ },
+ {
+  "label": "a literal consumes one byte too few",
+  "old": "            self.at += word.len();",
+  "new": "            self.at += word.len() - 1;"
+ },
+ {
+  "label": "null reads as false",
+  "old": "Some(b'n') => self.literal(\"null\", Json::Null),",
+  "new": "Some(b'n') => self.literal(\"null\", Json::Bool(false)),"
+ },
+ {
+  "label": "true reads as false",
+  "old": "Some(b't') => self.literal(\"true\", Json::Bool(true)),",
+  "new": "Some(b't') => self.literal(\"true\", Json::Bool(false)),"
+ },
+ {
+  "label": "the depth limit is off by one",
+  "old": "if depth == MAX_DEPTH =>",
+  "new": "if depth > MAX_DEPTH =>"
+ },
+ {
+  "label": "an array does not deepen the nesting",
+  "old": "Some(b'[') => self.array(depth + 1),",
+  "new": "Some(b'[') => self.array(depth),"
+ },
+ {
+  "label": "an object does not deepen the nesting",
+  "old": "Some(b'{') => self.object(depth + 1),",
+  "new": "Some(b'{') => self.object(depth),"
+ },
+ {
+  "label": "a plus sign starts a number",
+  "old": "Some(b'-' | b'0'..=b'9') => self.number(),",
+  "new": "Some(b'-' | b'+' | b'0'..=b'9') => self.number(),"
+ },
+ {
+  "label": "a leading zero may be followed by digits",
+  "old": "            Some(b'0') => self.at += 1,",
+  "new": "            Some(b'0') => {\n                self.digits();\n            }"
+ },
+ {
+  "label": "a fraction may be empty",
+  "old": "            if self.digits() == 0 {\n                return Err(self.fail(\"a decimal point with no digits after it\"));\n            }",
+  "new": "            self.digits();"
+ },
+ {
+  "label": "an exponent's sign is not read",
+  "old": "            if let Some(b'+' | b'-') = self.peek() {\n                self.at += 1;\n            }\n",
+  "new": ""
+ },
+ {
+  "label": "an exponent may be empty",
+  "old": "            if self.digits() == 0 {\n                return Err(self.fail(\"an exponent with no digits\"));\n            }",
+  "new": "            self.digits();"
+ },
+ {
+  "label": "a capital E does not start an exponent",
+  "old": "if let Some(b'e' | b'E') = self.peek() {",
+  "new": "if let Some(b'e') = self.peek() {"
+ },
+ {
+  "label": "an overflowing number is accepted as infinity",
+  "old": "if x.is_finite() { Ok(Json::Number(x)) }",
+  "new": "if !x.is_nan() { Ok(Json::Number(x)) }"
+ },
+ {
+  "label": "an overflow is reported where the number ends",
+  "old": "Err(JsonError { offset: start, what: \"a number too large for f64\" })",
+  "new": "Err(self.fail(\"a number too large for f64\"))"
+ },
+ {
+  "label": "hex digits are read in base ten",
+  "old": "            v = v * 16 + d;",
+  "new": "            v = v * 10 + d;"
+ },
+ {
+  "label": "lower-case hex letters are worth one less",
+  "old": "Some(c @ b'a'..=b'f') => u32::from(c - b'a') + 10,",
+  "new": "Some(c @ b'a'..=b'f') => u32::from(c - b'a') + 9,"
+ },
+ {
+  "label": "upper-case hex letters are refused",
+  "old": "                Some(c @ b'A'..=b'F') => u32::from(c - b'A') + 10,\n",
+  "new": ""
+ },
+ {
+  "label": "a \\u escape reads three digits",
+  "old": "        for _ in 0..4 {",
+  "new": "        for _ in 0..3 {"
+ },
+ {
+  "label": "a raw control character is copied into the string",
+  "old": "if c == b'\"' || c == b'\\\\' || c < 0x20 {",
+  "new": "if c == b'\"' || c == b'\\\\' {"
+ },
+ {
+  "label": "a raw space is treated as a control character",
+  "old": "if c == b'\"' || c == b'\\\\' || c < 0x20 {",
+  "new": "if c == b'\"' || c == b'\\\\' || c <= 0x20 {"
+ },
+ {
+  "label": "an escaped quote closes the string",
+  "old": "                        b'\"' => out.push('\"'),",
+  "new": "                        b'\"' => return Ok(out),"
+ },
+ {
+  "label": "an escaped slash is refused",
+  "old": "                        b'/' => out.push('/'),\n",
+  "new": ""
+ },
+ {
+  "label": "backspace unescapes as form feed",
+  "old": "b'b' => out.push('\\u{8}'),",
+  "new": "b'b' => out.push('\\u{c}'),"
+ },
+ {
+  "label": "n unescapes as a carriage return",
+  "old": "b'n' => out.push('\\n'),",
+  "new": "b'n' => out.push('\\r'),"
+ },
+ {
+  "label": "t unescapes as a space",
+  "old": "b't' => out.push('\\t'),",
+  "new": "b't' => out.push(' '),"
+ },
+ {
+  "label": "the high-surrogate range includes the low",
+  "old": "let code = if (0xD800..0xDC00).contains(&hi) {",
+  "new": "let code = if (0xD800..0xE000).contains(&hi) {"
+ },
+ {
+  "label": "a high surrogate may stand alone",
+  "old": "                                if !self.b[self.at..].starts_with(b\"\\\\u\") {\n                                    return Err(self.fail(\"a high surrogate with no low surrogate after it\"));\n                                }\n",
+  "new": ""
+ },
+ {
+  "label": "the low surrogate's range is not checked",
+  "old": "                                if !(0xDC00..0xE000).contains(&lo) {\n                                    return Err(self.fail(\"a high surrogate followed by something else\"));\n                                }\n",
+  "new": ""
+ },
+ {
+  "label": "a surrogate pair drops its offset",
+  "old": "0x10000 + ((hi - 0xD800) << 10) + (lo - 0xDC00)",
+  "new": "((hi - 0xD800) << 10) + (lo - 0xDC00)"
+ },
+ {
+  "label": "a surrogate pair shifts by nine",
+  "old": "0x10000 + ((hi - 0xD800) << 10) + (lo - 0xDC00)",
+  "new": "0x10000 + ((hi - 0xD800) << 9) + (lo - 0xDC00)"
+ },
+ {
+  "label": "a lone low surrogate becomes the replacement character",
+  "old": "                            } else if (0xDC00..0xE000).contains(&hi) {\n                                return Err(self.fail(\"a low surrogate with no high surrogate before it\"));\n                            } else {",
+  "new": "                            } else {"
+ },
+ {
+  "label": "an unknown escape is copied through",
+  "old": "                        _ => return Err(self.fail(\"an escape the RFC does not list\")),",
+  "new": "                        other => out.push(char::from(other)),"
+ },
+ {
+  "label": "an empty array needs no closing bracket check",
+  "old": "        if self.peek() == Some(b']') {\n            self.at += 1;\n            return Ok(Json::Array(items));\n        }\n        loop {",
+  "new": "        loop {"
+ },
+ {
+  "label": "a trailing comma closes an array",
+  "old": "                Some(b',') => self.at += 1,\n                Some(b']') => {\n                    self.at += 1;\n                    return Ok(Json::Array(items));",
+  "new": "                Some(b',') => {\n                    self.at += 1;\n                    self.space();\n                    if self.peek() == Some(b']') {\n                        self.at += 1;\n                        return Ok(Json::Array(items));\n                    }\n                }\n                Some(b']') => {\n                    self.at += 1;\n                    return Ok(Json::Array(items));"
+ },
+ {
+  "label": "array elements need no separator",
+  "old": "                _ => return Err(self.fail(\"an array element followed by neither ',' nor ']'\")),",
+  "new": "                _ => {}"
+ },
+ {
+  "label": "an empty object is refused",
+  "old": "        if self.peek() == Some(b'}') {\n            self.at += 1;\n            return Ok(Json::Object(members));\n        }\n        loop {",
+  "new": "        loop {"
+ },
+ {
+  "label": "an unquoted key is read as a value",
+  "old": "            if self.peek() != Some(b'\"') {\n                return Err(self.fail(\"an object key that is not a string\"));\n            }\n",
+  "new": ""
+ },
+ {
+  "label": "a duplicated key keeps both members",
+  "old": "            if members.iter().any(|(k, _)| *k == key) {\n                return Err(JsonError { offset: key_at, what: \"a key that appears twice in one object\" });\n            }\n",
+  "new": ""
+ },
+ {
+  "label": "a duplicated key is reported where it ends",
+  "old": "return Err(JsonError { offset: key_at, what: \"a key that appears twice in one object\" });",
+  "new": "return Err(self.fail(\"a key that appears twice in one object\"));"
+ },
+ {
+  "label": "a key needs no colon",
+  "old": "            if self.peek() != Some(b':') {\n                return Err(self.fail(\"an object key with no ':' after it\"));\n            }\n            self.at += 1;",
+  "new": "            if self.peek() == Some(b':') {\n                self.at += 1;\n            }"
+ },
+ {
+  "label": "object members need no separator",
+  "old": "                _ => return Err(self.fail(\"an object member followed by neither ',' nor '}'\")),",
+  "new": "                _ => {}"
+ },
+ {
+  "label": "the error message drops the offset",
+  "old": "write!(f, \"not JSON at byte {}: {}\", self.offset, self.what)",
+  "new": "write!(f, \"not JSON: {}\", self.what)"
+ },
+ {
+  "label": "MAX_DEPTH is 64",
+  "old": "pub const MAX_DEPTH: usize = 128;",
+  "new": "pub const MAX_DEPTH: usize = 64;"
+ }
+]

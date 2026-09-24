@@ -1,0 +1,533 @@
+[
+ {
+  "label": "the Runge-Kutta midpoint slopes use the full step",
+  "old": "let (k2x, k2y) = f(x + 0.5 * h * k1x, y + 0.5 * h * k1y);",
+  "new": "let (k2x, k2y) = f(x + h * k1x, y + h * k1y);"
+ },
+ {
+  "label": "the Runge-Kutta weights drop the doubling of the middle slopes",
+  "old": "(x + h / 6.0 * (k1x + 2.0 * k2x + 2.0 * k3x + k4x),",
+  "new": "(x + h / 6.0 * (k1x + k2x + k3x + k4x),"
+ },
+ {
+  "label": "the Runge-Kutta y update reuses the x slopes",
+  "old": "y + h / 6.0 * (k1y + 2.0 * k2y + 2.0 * k3y + k4y))",
+  "new": "y + h / 6.0 * (k1x + 2.0 * k2x + 2.0 * k3x + k4x))"
+ },
+ {
+  "label": "the trace adds an off-diagonal entry",
+  "old": "        self.jacobian[0][0] + self.jacobian[1][1]\n",
+  "new": "        self.jacobian[0][0] + self.jacobian[0][1]\n"
+ },
+ {
+  "label": "the determinant adds the cross term",
+  "old": "self.jacobian[0][0] * self.jacobian[1][1] - self.jacobian[0][1] * self.jacobian[1][0]",
+  "new": "self.jacobian[0][0] * self.jacobian[1][1] + self.jacobian[0][1] * self.jacobian[1][0]"
+ },
+ {
+  "label": "stability ignores the determinant",
+  "old": "        self.trace() < 0.0 && self.determinant() > 0.0\n",
+  "new": "        self.trace() < 0.0\n"
+ },
+ {
+  "label": "stability ignores the trace",
+  "old": "        self.trace() < 0.0 && self.determinant() > 0.0\n",
+  "new": "        self.determinant() > 0.0\n"
+ },
+ {
+  "label": "the eigenvalue discriminant uses the whole trace squared",
+  "old": "let disc = t * t / 4.0 - d;",
+  "new": "let disc = t * t - d;"
+ },
+ {
+  "label": "complex eigenvalues lose their real part",
+  "old": "            [(t / 2.0, w), (t / 2.0, -w)]",
+  "new": "            [(0.0, w), (0.0, -w)]"
+ },
+ {
+  "label": "real eigenvalues come back in ascending order",
+  "old": "            [(t / 2.0 + r, 0.0), (t / 2.0 - r, 0.0)]",
+  "new": "            [(t / 2.0 - r, 0.0), (t / 2.0 + r, 0.0)]"
+ },
+ {
+  "label": "FitzHugh's a is transcribed as 0.07",
+  "old": "pub const FITZHUGH_1961: Self = Self { a: 0.7, b: 0.8, c: 3.0 };",
+  "new": "pub const FITZHUGH_1961: Self = Self { a: 0.07, b: 0.8, c: 3.0 };"
+ },
+ {
+  "label": "FitzHugh's b is transcribed as 0.9",
+  "old": "pub const FITZHUGH_1961: Self = Self { a: 0.7, b: 0.8, c: 3.0 };",
+  "new": "pub const FITZHUGH_1961: Self = Self { a: 0.7, b: 0.9, c: 3.0 };"
+ },
+ {
+  "label": "FitzHugh's c is transcribed as 2",
+  "old": "pub const FITZHUGH_1961: Self = Self { a: 0.7, b: 0.8, c: 3.0 };",
+  "new": "pub const FITZHUGH_1961: Self = Self { a: 0.7, b: 0.8, c: 2.0 };"
+ },
+ {
+  "label": "the lower bound on a is not enforced",
+  "old": "            && 1.0 - 2.0 * b / 3.0 < a\n",
+  "new": "            && true\n"
+ },
+ {
+  "label": "a = 1 is admitted",
+  "old": "            && a < 1.0\n",
+  "new": "            && a <= 1.0\n"
+ },
+ {
+  "label": "b = 1 is admitted",
+  "old": "            && b < 1.0\n",
+  "new": "            && b <= 1.0\n"
+ },
+ {
+  "label": "b < c^2 is not enforced",
+  "old": "            && b < c * c;",
+  "new": "            && b < c * c * c * c;"
+ },
+ {
+  "label": "a NaN parameter is admitted",
+  "old": "        let ok = a.is_finite()\n",
+  "new": "        let ok = true\n",
+  "equivalent": "For a non-finite `a` the chain after `a.is_finite()` refuses anyway: NaN fails every ordered comparison, so `1 − 2b/3 < a` is false; `+∞` fails `a < 1`; `−∞` fails `1 − 2b/3 < a`, whose left side is finite because `b.is_finite()` has already passed. The clause is kept because it states the contract the error names, not because it decides anything. BUILT AND RUN, not argued: both predicates compiled side by side (rustc -O) and compared over the 8,000 triples of 20 special values (both zeros, both infinities, quiet and signalling NaNs with payloads, MIN_POSITIVE, the smallest subnormals of both signs, MAX, MIN, the boundaries) and 30,000,000 xorshift64 draws — `a` a raw bit pattern, `b` and `c` mostly inside the region the other conditions admit — each also re-run with `a` = NaN, +∞ and −∞: 120,008,000 triples, 0 disagreements."
+ },
+ {
+  "label": "the fast equation drops the stimulus",
+  "old": "(self.c * (y + x - x * x * x / 3.0 + z),",
+  "new": "(self.c * (y + x - x * x * x / 3.0),"
+ },
+ {
+  "label": "the cubic loses its one-third",
+  "old": "(self.c * (y + x - x * x * x / 3.0 + z),",
+  "new": "(self.c * (y + x - x * x * x + z),"
+ },
+ {
+  "label": "the slow equation is not divided by c",
+  "old": "-(x - self.a + self.b * y) / self.c)",
+  "new": "-(x - self.a + self.b * y))"
+ },
+ {
+  "label": "the slow equation's sign is flipped",
+  "old": "-(x - self.a + self.b * y) / self.c)",
+  "new": "(x - self.a + self.b * y) / self.c)"
+ },
+ {
+  "label": "Cardano's p drops its factor of three",
+  "old": "let p = 3.0 * (1.0 / self.b - 1.0);",
+  "new": "let p = 1.0 / self.b - 1.0;"
+ },
+ {
+  "label": "Cardano's q drops the stimulus",
+  "old": "let q = -3.0 * (self.a / self.b + z);",
+  "new": "let q = -3.0 * (self.a / self.b);"
+ },
+ {
+  "label": "the discriminant uses p squared",
+  "old": "let delta = q * q / 4.0 + p * p * p / 27.0;",
+  "new": "let delta = q * q / 4.0 + p * p / 27.0;"
+ },
+ {
+  "label": "the second cube root takes the same sign as the first",
+  "old": "let x = (-q / 2.0 + s).cbrt() + (-q / 2.0 - s).cbrt();",
+  "new": "let x = (-q / 2.0 + s).cbrt() + (-q / 2.0 + s).cbrt();"
+ },
+ {
+  "label": "the singular point's y is read off the wrong nullcline",
+  "old": "        (x, (self.a - x) / self.b)\n",
+  "new": "        (x, -x + x * x * x / 3.0)\n"
+ },
+ {
+  "label": "the linearisation drops the square",
+  "old": "Linearisation { jacobian: [[(1.0 - x1 * x1) * c, c], [-1.0 / c, -self.b / c]] }",
+  "new": "Linearisation { jacobian: [[(1.0 - x1) * c, c], [-1.0 / c, -self.b / c]] }"
+ },
+ {
+  "label": "the linearisation's b term is not divided by c",
+  "old": "Linearisation { jacobian: [[(1.0 - x1 * x1) * c, c], [-1.0 / c, -self.b / c]] }",
+  "new": "Linearisation { jacobian: [[(1.0 - x1 * x1) * c, c], [-1.0 / c, -self.b]] }"
+ },
+ {
+  "label": "condition (7) is dropped",
+  "old": "self.b / self.c - g * self.c > 0.0 && 1.0 - g * self.b > 0.0",
+  "new": "1.0 - g * self.b > 0.0"
+ },
+ {
+  "label": "condition (8) is dropped",
+  "old": "self.b / self.c - g * self.c > 0.0 && 1.0 - g * self.b > 0.0",
+  "new": "self.b / self.c - g * self.c > 0.0"
+ },
+ {
+  "label": "the half-width is not square-rooted",
+  "old": "        (1.0 - self.b / (self.c * self.c)).sqrt()\n",
+  "new": "        1.0 - self.b / (self.c * self.c)\n"
+ },
+ {
+  "label": "the half-width divides by c instead of c squared",
+  "old": "        (1.0 - self.b / (self.c * self.c)).sqrt()\n",
+  "new": "        (1.0 - self.b / self.c).sqrt()\n"
+ },
+ {
+  "label": "the stimulus map drops a/b",
+  "old": "x1 * x1 * x1 / 3.0 + (1.0 / self.b - 1.0) * x1 - self.a / self.b",
+  "new": "x1 * x1 * x1 / 3.0 + (1.0 / self.b - 1.0) * x1"
+ },
+ {
+  "label": "the window's ends are swapped",
+  "old": "(self.stimulus_at(-w), self.stimulus_at(w))",
+  "new": "(self.stimulus_at(w), self.stimulus_at(-w))"
+ },
+ {
+  "label": "a zero step is accepted",
+  "old": "        positive(\"h\", h)?;\n        finite(\"x\", x)?;",
+  "new": "        finite(\"x\", x)?;"
+ },
+ {
+  "label": "an infinite stimulus is accepted by the BVP step",
+  "old": "        finite(\"z\", z)?;\n",
+  "new": ""
+ },
+ {
+  "label": "the positivity guard admits an infinite step",
+  "old": "if value.is_finite() && value > 0.0 { Ok(value) }",
+  "new": "if value > 0.0 { Ok(value) }"
+ },
+ {
+  "label": "the sigmoid offset uses minus a theta",
+  "old": "1.0 / (1.0 + (self.a * self.theta).exp())",
+  "new": "1.0 / (1.0 + (-self.a * self.theta).exp())"
+ },
+ {
+  "label": "the sigmoid is not shifted down",
+  "old": "1.0 / (1.0 + (-self.a * (x - self.theta)).exp()) - self.offset()",
+  "new": "1.0 / (1.0 + (-self.a * (x - self.theta)).exp())"
+ },
+ {
+  "label": "the sigmoid slope drops a",
+  "old": "        self.a * s * (1.0 - s)\n",
+  "new": "        s * (1.0 - s)\n"
+ },
+ {
+  "label": "the ceiling is one",
+  "old": "        1.0 - self.offset()\n",
+  "new": "        1.0\n"
+ },
+ {
+  "label": "the inverse drops the offset",
+  "old": "let u = y + self.offset();",
+  "new": "let u = y;"
+ },
+ {
+  "label": "the inverse accepts u = 1",
+  "old": "if u > 0.0 && u < 1.0 {",
+  "new": "if u > 0.0 && u <= 1.0 {"
+ },
+ {
+  "label": "the inverse does not divide by a",
+  "old": "Some(self.theta - (1.0 / u - 1.0).ln() / self.a)",
+  "new": "Some(self.theta - (1.0 / u - 1.0).ln())"
+ },
+ {
+  "label": "the inverse adds the logarithm",
+  "old": "Some(self.theta - (1.0 / u - 1.0).ln() / self.a)",
+  "new": "Some(self.theta + (1.0 / u - 1.0).ln() / self.a)"
+ },
+ {
+  "label": "Fig. 4's c4 is transcribed as 1",
+  "old": "        c4: 11.0,\n",
+  "new": "        c4: 1.0,\n"
+ },
+ {
+  "label": "Fig. 4's excitatory threshold is transcribed as 2.3",
+  "old": "        se: Sigmoid { a: 1.2, theta: 2.8 },\n",
+  "new": "        se: Sigmoid { a: 1.2, theta: 2.3 },\n"
+ },
+ {
+  "label": "Fig. 7's c3 is transcribed as 2.2",
+  "old": "        c3: 22.0,\n",
+  "new": "        c3: 2.2,\n"
+ },
+ {
+  "label": "Fig. 7's inhibitory slope is transcribed as 0.6",
+  "old": "        si: Sigmoid { a: 6.0, theta: 4.3 },\n",
+  "new": "        si: Sigmoid { a: 0.6, theta: 4.3 },\n"
+ },
+ {
+  "label": "Fig. 11's c2 is transcribed as 1.2",
+  "old": "        c1: 16.0,\n        c2: 12.0,",
+  "new": "        c1: 16.0,\n        c2: 1.2,"
+ },
+ {
+  "label": "Fig. 11's excitatory slope is transcribed as 3.1",
+  "old": "        se: Sigmoid { a: 1.3, theta: 4.0 },\n",
+  "new": "        se: Sigmoid { a: 3.1, theta: 4.0 },\n"
+ },
+ {
+  "label": "Fig. 11's stimulus is transcribed as 0.25",
+  "old": "pub const FIG11_P: f64 = 1.25;",
+  "new": "pub const FIG11_P: f64 = 0.25;"
+ },
+ {
+  "label": "Fig. 6's inhibitory slope is transcribed as 0.5",
+  "old": "        si: Sigmoid { a: 5.0, theta: 3.7 },\n",
+  "new": "        si: Sigmoid { a: 0.5, theta: 3.7 },\n"
+ },
+ {
+  "label": "the excitatory field drops the refractory factor",
+  "old": "let de = (-e + (ke - self.re * e) * self.se.eval(self.c1 * e - self.c2 * i + p)) / self.tau_e;",
+  "new": "let de = (-e + ke * self.se.eval(self.c1 * e - self.c2 * i + p)) / self.tau_e;"
+ },
+ {
+  "label": "inhibition excites the excitatory population",
+  "old": "let de = (-e + (ke - self.re * e) * self.se.eval(self.c1 * e - self.c2 * i + p)) / self.tau_e;",
+  "new": "let de = (-e + (ke - self.re * e) * self.se.eval(self.c1 * e + self.c2 * i + p)) / self.tau_e;"
+ },
+ {
+  "label": "the inhibitory field ignores Q",
+  "old": "let di = (-i + (ki - self.ri * i) * self.si.eval(self.c3 * e - self.c4 * i + q)) / self.tau_i;",
+  "new": "let di = (-i + (ki - self.ri * i) * self.si.eval(self.c3 * e - self.c4 * i)) / self.tau_i;"
+ },
+ {
+  "label": "the inhibitory field uses the excitatory time constant",
+  "old": "let di = (-i + (ki - self.ri * i) * self.si.eval(self.c3 * e - self.c4 * i + q)) / self.tau_i;",
+  "new": "let di = (-i + (ki - self.ri * i) * self.si.eval(self.c3 * e - self.c4 * i + q)) / self.tau_e;"
+ },
+ {
+  "label": "the Jacobian's EE entry drops the refractory derivative",
+  "old": "[(-1.0 - self.re * su + ae * dsu * self.c1) / self.tau_e,",
+  "new": "[(-1.0 + ae * dsu * self.c1) / self.tau_e,"
+ },
+ {
+  "label": "the Jacobian's EI entry loses its minus sign",
+  "old": "(-ae * dsu * self.c2) / self.tau_e],",
+  "new": "(ae * dsu * self.c2) / self.tau_e],"
+ },
+ {
+  "label": "the Jacobian's IE entry uses c4",
+  "old": "[(ai * dsv * self.c3) / self.tau_i,",
+  "new": "[(ai * dsv * self.c4) / self.tau_i,"
+ },
+ {
+  "label": "the Jacobian's II entry adds the self-inhibition",
+  "old": "(-1.0 - self.ri * sv - ai * dsv * self.c4) / self.tau_i]",
+  "new": "(-1.0 - self.ri * sv + ai * dsv * self.c4) / self.tau_i]"
+ },
+ {
+  "label": "the E isocline divides by c1",
+  "old": "Some((self.c1 * e - inv + p) / self.c2)",
+  "new": "Some((self.c1 * e - inv + p) / self.c1)"
+ },
+ {
+  "label": "the E isocline adds the inverse",
+  "old": "Some((self.c1 * e - inv + p) / self.c2)",
+  "new": "Some((self.c1 * e + inv + p) / self.c2)"
+ },
+ {
+  "label": "the I isocline adds Q",
+  "old": "Some((self.c4 * i + inv - q) / self.c3)",
+  "new": "Some((self.c4 * i + inv + q) / self.c3)"
+ },
+ {
+  "label": "the E isocline is cut at its pole",
+  "old": "let inv = self.se.inverse(e / (self.se.ceiling() - self.re * e))?;",
+  "new": "if !(self.se.ceiling() - self.re * e > 0.0) { return None; }\n        let inv = self.se.inverse(e / (self.se.ceiling() - self.re * e))?;"
+ },
+ {
+  "label": "the I isocline is cut at its pole",
+  "old": "let inv = self.si.inverse(i / (self.si.ceiling() - self.ri * i))?;",
+  "new": "if !(self.si.ceiling() - self.ri * i > 0.0) { return None; }\n        let inv = self.si.inverse(i / (self.si.ceiling() - self.ri * i))?;"
+ },
+ {
+  "label": "the scan's upper end is the ceiling rather than its image",
+  "old": "Ok((-s0 * k / (1.0 - self.re * s0), k * k / (1.0 + self.re * k)))",
+  "new": "Ok((-s0 * k / (1.0 - self.re * s0), k))"
+ },
+ {
+  "label": "the scan starts at zero and misses negative steady states",
+  "old": "Ok((-s0 * k / (1.0 - self.re * s0),",
+  "new": "Ok((0.0,"
+ },
+ {
+  "label": "the along-isocline velocity ignores the refractory factor",
+  "old": "Some(-i + (ki - self.ri * i) * self.si.eval(self.c3 * e - self.c4 * i + q))",
+  "new": "Some(-i + ki * self.si.eval(self.c3 * e - self.c4 * i + q))"
+ },
+ {
+  "label": "a sign change is not detected across zero",
+  "old": "            if (g0 < 0.0) != (g < 0.0) {\n",
+  "new": "            if (g0 < 0.0) == (g < 0.0) {\n"
+ },
+ {
+  "label": "the bisection keeps the wrong half",
+  "old": "                    if (gm < 0.0) == (ga < 0.0) {\n                        a = m;",
+  "new": "                    if (gm < 0.0) != (ga < 0.0) {\n                        a = m;"
+ },
+ {
+  "label": "the bisection runs only ten halvings",
+  "old": "                for _ in 0..200 {\n                    let m = 0.5 * (a + b);",
+  "new": "                for _ in 0..10 {\n                    let m = 0.5 * (a + b);"
+ },
+ {
+  "label": "one sample is accepted",
+  "old": "        if samples < 2 {",
+  "new": "        if samples < 1 {"
+ },
+ {
+  "label": "the BVP step does not check a",
+  "old": "        finite(\"a\", self.a)?;\n",
+  "new": ""
+ },
+ {
+  "label": "the BVP step does not check b",
+  "old": "        finite(\"b\", self.b)?;\n",
+  "new": ""
+ },
+ {
+  "label": "the BVP step lets c be zero",
+  "old": "positive(\"c\", self.c)?;",
+  "new": "finite(\"c\", self.c)?;"
+ },
+ {
+  "label": "the check skips c1",
+  "old": "            (\"c1\", self.c1),\n",
+  "new": ""
+ },
+ {
+  "label": "the check skips c2",
+  "old": "            (\"c2\", self.c2),\n",
+  "new": ""
+ },
+ {
+  "label": "the check skips c3",
+  "old": "            (\"c3\", self.c3),\n",
+  "new": ""
+ },
+ {
+  "label": "the check skips c4",
+  "old": "            (\"c4\", self.c4),\n",
+  "new": ""
+ },
+ {
+  "label": "the check skips a_e",
+  "old": "            (\"a_e\", self.se.a),\n",
+  "new": ""
+ },
+ {
+  "label": "the check skips a_i",
+  "old": "            (\"a_i\", self.si.a),\n",
+  "new": ""
+ },
+ {
+  "label": "the check skips tau_e",
+  "old": "            (\"tau_e\", self.tau_e),\n",
+  "new": ""
+ },
+ {
+  "label": "the check skips tau_i",
+  "old": "            (\"tau_i\", self.tau_i),\n",
+  "new": ""
+ },
+ {
+  "label": "the check skips theta_e",
+  "old": "(\"theta_e\", self.se.theta), ",
+  "new": ""
+ },
+ {
+  "label": "the check skips theta_i",
+  "old": "(\"theta_i\", self.si.theta), ",
+  "new": ""
+ },
+ {
+  "label": "the check skips r_e",
+  "old": "(\"r_e\", self.re), ",
+  "new": ""
+ },
+ {
+  "label": "the check skips r_i",
+  "old": ", (\"r_i\", self.ri)]",
+  "new": "]"
+ },
+ {
+  "label": "the couplings need only be finite",
+  "old": "            positive(what, value)?;",
+  "new": "            finite(what, value)?;"
+ },
+ {
+  "label": "the thresholds must be positive",
+  "old": "            finite(what, value)?;\n        }\n        Ok(())",
+  "new": "            positive(what, value)?;\n        }\n        Ok(())"
+ },
+ {
+  "label": "the scan does not check the parameters",
+  "old": "        self.check()?;\n        finite(\"P\", p)?;\n        finite(\"Q\", q)?;\n        if samples",
+  "new": "        finite(\"P\", p)?;\n        finite(\"Q\", q)?;\n        if samples"
+ },
+ {
+  "label": "the Wilson-Cowan step does not check the parameters",
+  "old": "        self.check()?;\n        positive(\"h\", h)?;\n        finite(\"E\", e)?;",
+  "new": "        positive(\"h\", h)?;\n        finite(\"E\", e)?;"
+ },
+ {
+  "label": "the domain admits an isocline unbounded above",
+  "old": "if 1.0 + self.re * k > 0.0 && 1.0 - self.re * s0 > 0.0 {",
+  "new": "if 1.0 - self.re * s0 > 0.0 {"
+ },
+ {
+  "label": "the domain admits an isocline unbounded below",
+  "old": "if 1.0 + self.re * k > 0.0 && 1.0 - self.re * s0 > 0.0 {",
+  "new": "if 1.0 + self.re * k > 0.0 {"
+ },
+ {
+  "label": "the domain admits r_e at exactly 1/s0",
+  "old": "if 1.0 + self.re * k > 0.0 && 1.0 - self.re * s0 > 0.0 {",
+  "new": "if 1.0 + self.re * k > 0.0 && 1.0 - self.re * s0 >= 0.0 {"
+ },
+ {
+  "label": "the domain admits r_e at exactly -1/k",
+  "old": "if 1.0 + self.re * k > 0.0 && 1.0 - self.re * s0 > 0.0 {",
+  "new": "if 1.0 + self.re * k >= 0.0 && 1.0 - self.re * s0 > 0.0 {"
+ },
+ {
+  "label": "the unbounded refusal swaps its bounds",
+  "old": "low: -1.0 / k, high: 1.0 / s0",
+  "new": "low: 1.0 / s0, high: -1.0 / k"
+ },
+ {
+  "label": "the unbounded refusal's lower bound loses its sign",
+  "old": "low: -1.0 / k,",
+  "new": "low: 1.0 / k,"
+ },
+ {
+  "label": "condition (17) uses 9 times a_e",
+  "old": "        self.c1 > 9.0 / self.se.a\n",
+  "new": "        self.c1 > 9.0 * self.se.a\n"
+ },
+ {
+  "label": "condition (18) drops its precondition a_e c1 > 9",
+  "old": "ae * self.c1 > 9.0 && ae * self.c2 / (ae * self.c1 - 9.0) > (ai * self.c4 + 9.0) / (ai * self.c3)",
+  "new": "ae * self.c2 / (ae * self.c1 - 9.0) > (ai * self.c4 + 9.0) / (ai * self.c3)"
+ },
+ {
+  "label": "condition (18)'s right side uses c1",
+  "old": "ae * self.c1 > 9.0 && ae * self.c2 / (ae * self.c1 - 9.0) > (ai * self.c4 + 9.0) / (ai * self.c3)",
+  "new": "ae * self.c1 > 9.0 && ae * self.c2 / (ae * self.c1 - 9.0) > (ai * self.c4 + 9.0) / (ai * self.c1)"
+ },
+ {
+  "label": "condition (20) drops the 18",
+  "old": "        self.c1 * self.se.a > self.c4 * self.si.a + 18.0\n",
+  "new": "        self.c1 * self.se.a > self.c4 * self.si.a\n"
+ },
+ {
+  "label": "condition (22) is inverted",
+  "old": "        (self.se.a * self.c1 - 9.0) / (self.se.a * self.c2) < 1.0\n",
+  "new": "        (self.se.a * self.c1 - 9.0) / (self.se.a * self.c2) > 1.0\n"
+ },
+ {
+  "label": "the BVP-condition message names b as a",
+  "old": "write!(\n                f,\n                \"a = {a}, b = {b}, c = {c} break",
+  "new": "write!(\n                f,\n                \"a = {b}, b = {a}, c = {c} break"
+ },
+ {
+  "label": "the non-positive message names the value as the parameter",
+  "old": "write!(f, \"{what} = {value} must be finite and positive\")",
+  "new": "write!(f, \"{value} = {what} must be finite and positive\")"
+ }
+]

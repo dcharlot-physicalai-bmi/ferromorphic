@@ -1,13 +1,13 @@
 #!/bin/zsh
-# The six gates a release must pass. `tools/gates.sh [LOG]`; the log defaults to target/gates.log.
+# The nine gates a release must pass. `tools/gates.sh [LOG]`; the log defaults to target/gates.log.
 #
 # ⛔ Read the EXIT lines, never the tail. Every gate appends `EXIT <name> <code>` and this script
 # refuses unless EVERY code is 0. That is not a formality: a release was once committed with the
 # rustdoc gate RED, because the gates and the commit had been chained so the commit ran whatever
 # the gates said. A gate whose result nothing reads is not a gate.
 #
-# The sixth gate is prose. The other five all check code, and the commit that corrected 43 false
-# claims in the README doubled five of its paragraphs and shipped them to crates.io with all five
+# One gate is prose. The other eight check code, and the commit that corrected 43 false claims in
+# the README doubled five of its paragraphs and shipped them to crates.io with every code gate
 # green -- `readme = "README.md"` is served verbatim, and nothing was reading it.
 set -u
 REPO="${0:A:h:h}"

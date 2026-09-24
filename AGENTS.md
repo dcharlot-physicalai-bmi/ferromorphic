@@ -72,11 +72,11 @@ deterministic for a fixed seed.
 `-D warnings` over all targets, the wasm build, the three examples, `tools/prose_check.py`,
 `tools/readme_numbers.py` (which recomputes the README's headline counts from the repository and
 refuses if the file disagrees — the last time those were typed by hand the test count was 423 low),
-and rustdoc with `-D warnings`. The script refuses unless it sees all eight, because a gate runner that
+and rustdoc with `-D warnings`. The script refuses unless it sees all nine, because a gate runner that
 reads the tail cannot tell a truncated run from a clean one — and a release here was once committed
 with the rustdoc gate red, the gates and the commit having been chained so the commit ran regardless.
 
-The prose gate is there because the other seven check code. `readme = "README.md"` means crates.io
+The prose gate is there because the other eight check code. `readme = "README.md"` means crates.io
 serves that file verbatim, and the commit that corrected 43 false claims in it doubled five of its
 paragraphs and shipped them with everything else green.
 

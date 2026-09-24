@@ -9,7 +9,7 @@ hardware constraint models, analog device non-idealities, NIR, event-camera deco
 metrics, teaching tasks — and a joules ledger that charges for the memory traffic a synaptic
 operation needs.
 
-**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 72 modules, 2,612 tests.**
+**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 76 modules, 2,667 tests.**
 
 Run it in a browser without installing anything:
 **[energy.physicalai-bmi.org/neuromorphic](https://energy.physicalai-bmi.org/neuromorphic)** — the
@@ -32,6 +32,8 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 |---|---|
 | `neuron` | LIF, integrate-and-fire, adaptive LIF, Izhikevich; and exact spike timing — counts and TIMES that do not depend on the tick — for the LIF and the adaptive LIF, whose adapted interval is the root of a self-consistency equation |
 | `hh` | Hodgkin-Huxley, full four-variable squid axon, with the ionic currents exposed |
+| `glif` | the Allen Institute's GLIF models, levels 1 to 5, read from the Cell Types Database's own `neuron_config.json` and run as the `AllenSDK` runs them — all 3,753 models it serves, 43,950 spikes, every one on the same step as the `AllenSDK`'s unmodified code; the exact membrane and threshold solutions beside the forward Euler every fit used; and two defects in the reference, measured: its interpolated spike voltage is one step past the crossing (17 to 100 µV above the threshold it should equal), and its voltage-adapting threshold divides by zero where its decay rate meets the membrane's |
+| `planar` | the phase plane: `FitzHugh`'s 1961 BVP model with its singular point by Cardano, his stability conditions shown to be the matrix's own verdict, and the stimulus window of repetitive firing; Wilson and Cowan's 1972 population with each figure's steady states counted and classified — and its limit-cycle figure shown to FAIL the paper's own sufficient condition |
 | `exponential` | EIF, `AdEx` with the Naud firing-pattern taxonomy, QIF, theta |
 | `synapse` | delta / exponential / alpha / bi-exponential kernels, CUBA vs COBA, AMPA / GABA / NMDA with the magnesium block, Tsodyks-Markram short-term plasticity |
 | `plasticity` | pair and triplet STDP, Hebbian, Oja, BCM, reward-modulated three-factor, homeostatic scaling |
@@ -42,6 +44,7 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 | `topology` | Erdős-Rényi, Watts-Strogatz, Barabási-Albert, distance-dependent, layered, winner-take-all, Dale's law |
 | `hardware` | constraint models for Loihi, Loihi 2, `TrueNorth`, `NorthPole`, Akida, `SpiNNaker`, Xylo, Speck, ODIN, DYNAP and more — ten graded figures per part, each with its provenance string |
 | `nir` | the Neuromorphic Intermediate Representation graph, validation, and a bridge to this crate's networks |
+| `json` | a strict RFC 8259 reader: numbers back to the bit, `NaN` and repeated keys refused, every refusal naming its byte — so published model files are read as published |
 | `aer` | AEDAT 2.0, 3.1 and 4.0, Prophesee EVT2/EVT3 and N-MNIST decoders, total and panic-free, with rollover-correct timestamps; the DVS128 Gesture label reader that cuts a recording into its gestures |
 | `metrics` | `NeuroBench` complexity metrics: activation sparsity, effective MACs and ACs, footprint |
 | `ledger`, `crossover` | joules with the fetch term, and the published SNN-vs-ANN thresholds as a runnable check |
@@ -81,6 +84,7 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 | `proprio` | proprioception: the power-law muscle spindle and the fusimotor gains that retune it (dynamic `γ_d`, static `γ_s`, and the synaptic gain of the reflex arc), an intrafusal fibre with its gamma drive, spike-driven fusimotor activation, the tendon organ and its two-rate overshoot, a rate-to-spike encoder that emits exactly the integral of its rate, and a stretch reflex whose stiffness is `g γ_s k_L` and which breaks into clonus when `g γ_s k_L / b` crosses the delayed loop's own ceiling — Levin and May's discrete boundary `(2/h)·sin(π/(2(2m+1)))`, which converges on the continuous `π/2τ` |
 | `delays` | delays as a resource: the spatiotemporal pattern a set of synaptic delays is matched to, a delay-learning rule that contracts every arrival's deviation by exactly `1 − η`, the `(D+1)ⁿ − Dⁿ` patterns a neuron can stand for, and the buffer bits that costs |
 | `distance` | how different two spike trains are: the Victor–Purpura edit distance and the van Rossum distance (closed form against its own quadrature), vector strength against the jitter's characteristic function, the Fano factor of a clock, `f(1 − f)/(m + f)`, and the parameter-free ISI- and SPIKE-distances, integrated exactly and refereed by the quadrature of their definitions |
+| `synchrony` | which spikes coincide and which train leads: SPIKE-synchronization and the synfire indicator, equal to PySpike's to the bit; the PSTH and cross-correlogram with every spike placed by its bin's computed edges, and the correlogram's triangle expectation for independent trains; the Schreiber correlation in closed form; and three things PySpike does that this does not — a PSTH that changes the bin width it was given (0.3 s at 0.1 s: two bins of 150 ms), a `max_tau` that bounds only the edges of the window, and a synfire indicator that counts two silent trains as one perfectly ordered spike |
 | `field` | the Amari neural field of dynamic field theory: the kernel integral `W`, the narrow unstable bump below which activity dies and the wide stable one it settles at, both as roots of `W(a) + h = 0` and both found in the simulated field — on a line, and on a sheet, where the rim integral is `πσ²[1 − e^{−R²/σ²} I₀(R²/σ²)]` |
 | `resonance` | noise as a resource: the noise level at which a threshold unit best tells two sub-threshold values apart, `σ*² = (b² − a²)/(2 ln(b/a))`; the exact information in a noisy population's count, including suprathreshold resonance — 63 units carrying more than one bit only when noise is added; dither that makes a step linear |
 | `ttfs` | learning with spike TIMES: two neuron models whose first-spike time is a closed form (Mostafa's non-leaky integrator; the leaky cell with `τ_m = 2τ_s`), its exact gradient by the implicit function theorem, backpropagation through spike times checked against finite differences, and XOR learned with one spike per neuron |
@@ -273,13 +277,15 @@ rather than assumed.
 - **A sub-threshold current returns `None`, not a large number.** "Fires rarely" and "does not fire"
   are different statements and a rate-coded readout cannot recover the difference later.
 
-2,612 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
+2,667 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
 `#![forbid(unsafe_code)]`, and `cargo build --target wasm32-unknown-unknown` compiles the library
-unchanged. All three `examples/` are verification gates that exit non-zero when a check fails. Two of them run
+unchanged. Three of the four `examples/` are verification gates that exit non-zero when a check fails. Two of them run
 a closed form against the simulator — the LIF's analytic inter-spike interval, and the STDP pair
 rule `Δw = ±A·exp(∓Δt/τ)`. The third checks that the two simulation modes produce the identical
 spike train, that the event-driven run touches no idle neuron, that the idle fraction depends on the
-workload, and that `Sim::new` refuses an event-driven `Izhikevich`.
+workload, and that `Sim::new` refuses an event-driven `Izhikevich`. The fourth, `glif_allen`, runs
+Allen Cell Types Database GLIF models from their served files, and `tools/glif_sweep.py` compares it
+with the `AllenSDK` on every model the database serves.
 
 ## What the encoders cost, on the page
 
@@ -322,12 +328,14 @@ be reproduced cannot be checked against anything, including itself.
 
 ## Status
 
-**Today:** seventy-two modules, 2,612 tests, and **7,719 recorded mutations — one list per
+**Today:** seventy-six modules, 2,667 tests, and **8,070 recorded mutations — one list per
 module**, every one applicable to today's source by `python3 tools/mutate.py`.
 `python3 tools/readme_numbers.py` recomputes those figures from the repository and refuses if this
 paragraph disagrees with it, because the last time they were typed by hand the test count was 423
 low and nothing noticed. **0.20.0** was the release in which every recorded mutation was run
-against the released tree — 71 modules of 71, all 7,638 of its recorded entries.
+against the released tree — 71 modules of 71, all 7,638 of its recorded entries. The five modules
+added since — `intspike`, `planar`, `json`, `glif` and `synchrony` — each had its full list run
+clean against the tree it was added in.
 
 **The list being complete is not the same as the list being adequate, and 0.20.0 is what measuring
 that cost.** Every module had a recorded list at 0.19.0 and every list ran clean. Thirty of them

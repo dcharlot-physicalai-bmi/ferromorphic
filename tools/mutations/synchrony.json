@@ -1,0 +1,382 @@
+[
+ {
+  "label": "the window message drops its end",
+  "old": "write!(f, \"[{start}, {end}] is not a window of positive length\")",
+  "new": "write!(f, \"[{start}] is not a window of positive length\")"
+ },
+ {
+  "label": "the non-finite message drops the train",
+  "old": "write!(f, \"train {train}, spike {index} is {value}\")",
+  "new": "write!(f, \"spike {index} is {value}\")"
+ },
+ {
+  "label": "the not-increasing message names the index as the train",
+  "old": "write!(f, \"train {train}, spike {index} is not after the spike before it\")",
+  "new": "write!(f, \"train {index}, spike {train} is not after the spike before it\")"
+ },
+ {
+  "label": "the outside message drops the time",
+  "old": "write!(f, \"train {train}, spike {index} at {value} is outside the window\")",
+  "new": "write!(f, \"train {train}, spike {index} is outside the window\")"
+ },
+ {
+  "label": "the too-few message drops the count",
+  "old": "write!(f, \"a population measure needs two trains or more, not {got}\")",
+  "new": "write!(f, \"a population measure needs two trains or more\")"
+ },
+ {
+  "label": "the not-positive message names the value as the parameter",
+  "old": "write!(f, \"{what} = {value} must be finite and positive\")",
+  "new": "write!(f, \"{value} = {what} must be finite and positive\")"
+ },
+ {
+  "label": "the positivity guard admits infinity",
+  "old": "if value.is_finite() && value > 0.0 { Ok(value) }",
+  "new": "if value > 0.0 { Ok(value) }"
+ },
+ {
+  "label": "the positivity guard admits zero",
+  "old": "if value.is_finite() && value > 0.0 { Ok(value) }",
+  "new": "if value.is_finite() && value >= 0.0 { Ok(value) }"
+ },
+ {
+  "label": "an infinite window end is admitted",
+  "old": "if start.is_finite() && end.is_finite() && end > start {",
+  "new": "if start.is_finite() && end > start {"
+ },
+ {
+  "label": "a window of zero length is admitted",
+  "old": "if start.is_finite() && end.is_finite() && end > start {",
+  "new": "if start.is_finite() && end.is_finite() && end >= start {"
+ },
+ {
+  "label": "a non-finite spike is admitted",
+  "old": "        if !x.is_finite() {\n            return Err(SyncError::NonFinite",
+  "new": "        if false {\n            return Err(SyncError::NonFinite"
+ },
+ {
+  "label": "a repeated spike is admitted",
+  "old": "if i > 0 && !(x > t[i - 1]) {",
+  "new": "if i > 0 && x < t[i - 1] {"
+ },
+ {
+  "label": "a spike before the window is admitted",
+  "old": "if x < start || x > end {",
+  "new": "if x > end {"
+ },
+ {
+  "label": "a spike after the window is admitted",
+  "old": "if x < start || x > end {",
+  "new": "if x < start {"
+ },
+ {
+  "label": "a missing neighbour before counts as zero",
+  "old": "let before = if k > 0 { t[k] - t[k - 1] } else { length };",
+  "new": "let before = if k > 0 { t[k] - t[k - 1] } else { 0.0 };"
+ },
+ {
+  "label": "a missing neighbour after counts as half the window",
+  "old": "let after = if k + 1 < t.len() { t[k + 1] - t[k] } else { length };",
+  "new": "let after = if k + 1 < t.len() { t[k + 1] - t[k] } else { length / 2.0 };"
+ },
+ {
+  "label": "the window uses the longer interval around a spike",
+  "old": "        before.min(after)\n    };",
+  "new": "        before.max(after)\n    };"
+ },
+ {
+  "label": "the window ignores the other train's intervals",
+  "old": "around(a, i).min(around(b, j)) / 2.0",
+  "new": "around(a, i) / 2.0"
+ },
+ {
+  "label": "the window is the whole interval, not half",
+  "old": "around(a, i).min(around(b, j)) / 2.0",
+  "new": "around(a, i).min(around(b, j))"
+ },
+ {
+  "label": "only the following spike is a candidate",
+  "old": "[before, after].into_iter().flatten()",
+  "new": "[after].into_iter().flatten()"
+ },
+ {
+  "label": "only the preceding spike is a candidate",
+  "old": "[before, after].into_iter().flatten()",
+  "new": "[before].into_iter().flatten()"
+ },
+ {
+  "label": "a coincidence may sit on the window's edge",
+  "old": "(a[i] - b[j]).abs() < tau(a, i, b, j, length).min(cap)",
+  "new": "(a[i] - b[j]).abs() <= tau(a, i, b, j, length).min(cap)"
+ },
+ {
+  "label": "the cap is ignored",
+  "old": "tau(a, i, b, j, length).min(cap)",
+  "new": "tau(a, i, b, j, length)"
+ },
+ {
+  "label": "the second train's coincidences are not counted",
+  "old": "let cb = (0..b.len()).filter(|&j| partner(b, j, a, length, cap).is_some()).count();",
+  "new": "let cb = 0;"
+ },
+ {
+  "label": "the second train's coincidences are counted against itself",
+  "old": "let cb = (0..b.len()).filter(|&j| partner(b, j, a, length, cap).is_some()).count();",
+  "new": "let cb = (0..b.len()).filter(|&j| partner(b, j, b, length, cap).is_some()).count();"
+ },
+ {
+  "label": "max_tau is not checked",
+  "old": "    positive(\"max_tau\", max_tau)?;\n",
+  "new": ""
+ },
+ {
+  "label": "spike_sync_within ignores max_tau",
+  "old": "population(&[a, b], start, end, max_tau)",
+  "new": "population(&[a, b], start, end, f64::INFINITY)"
+ },
+ {
+  "label": "a single train is a population",
+  "old": "    if trains.len() < 2 {\n        return Err(SyncError::TooFewTrains { got: trains.len() });\n    }\n    for (k, t) in trains.iter().enumerate() {\n        inside(k, t, start, end)?;\n    }\n    let (mut hits",
+  "new": "    for (k, t) in trains.iter().enumerate() {\n        inside(k, t, start, end)?;\n    }\n    let (mut hits"
+ },
+ {
+  "label": "the population's trains are not checked",
+  "old": "    for (k, t) in trains.iter().enumerate() {\n        inside(k, t, start, end)?;\n    }\n    let (mut hits",
+  "new": "    let (mut hits"
+ },
+ {
+  "label": "a pair is counted with itself",
+  "old": "        for b in &trains[m + 1..] {\n            let (ca, cb) = coincidences(a, b, length, cap);",
+  "new": "        for b in &trains[m..] {\n            let (ca, cb) = coincidences(a, b, length, cap);"
+ },
+ {
+  "label": "the population divides by one train's spikes per pair",
+  "old": "            spikes += a.len() + b.len();\n        }\n    }\n    if spikes == 0 {\n        return Err(SyncError::NoSpikes);\n    }\n    Ok(hits as f64",
+  "new": "            spikes += a.len();\n        }\n    }\n    if spikes == 0 {\n        return Err(SyncError::NoSpikes);\n    }\n    Ok(hits as f64"
+ },
+ {
+  "label": "no spikes is perfect synchrony",
+  "old": "    if spikes == 0 {\n        return Err(SyncError::NoSpikes);\n    }\n    Ok(hits as f64 / spikes as f64)",
+  "new": "    if spikes == 0 {\n        return Ok(1.0);\n    }\n    Ok(hits as f64 / spikes as f64)"
+ },
+ {
+  "label": "spike_order does not check its window",
+  "old": "    let length = window(start, end)?;\n    inside(0, a, start, end)?;",
+  "new": "    let length = end - start;\n    inside(0, a, start, end)?;"
+ },
+ {
+  "label": "spike_order does not check the second train",
+  "old": "    inside(1, b, start, end)?;\n    Ok((order(a, b, length), order(b, a, length)))",
+  "new": "    Ok((order(a, b, length), order(b, a, length)))"
+ },
+ {
+  "label": "spike_order returns the first train's order twice",
+  "old": "Ok((order(a, b, length), order(b, a, length)))",
+  "new": "Ok((order(a, b, length), order(a, b, length)))"
+ },
+ {
+  "label": "a leading spike is marked as following",
+  "old": "            Some(j) if x[i] < y[j] => 1,",
+  "new": "            Some(j) if x[i] < y[j] => -1,"
+ },
+ {
+  "label": "a tie counts as leading",
+  "old": "            Some(j) if x[i] > y[j] => -1,\n            _ => 0,",
+  "new": "            Some(j) if x[i] > y[j] => -1,\n            Some(_) => 1,\n            _ => 0,"
+ },
+ {
+  "label": "the synfire window is not checked",
+  "old": "    let length = window(start, end)?;\n    if trains.len() < 2 {\n        return Err(SyncError::TooFewTrains { got: trains.len() });\n    }\n    for (k, t) in trains.iter().enumerate() {\n        inside(k, t, start, end)?;\n    }\n    let (mut net",
+  "new": "    let length = end - start;\n    if trains.len() < 2 {\n        return Err(SyncError::TooFewTrains { got: trains.len() });\n    }\n    for (k, t) in trains.iter().enumerate() {\n        inside(k, t, start, end)?;\n    }\n    let (mut net"
+ },
+ {
+  "label": "the synfire indicator takes one train",
+  "old": "    if trains.len() < 2 {\n        return Err(SyncError::TooFewTrains { got: trains.len() });\n    }\n    for (k, t) in trains.iter().enumerate() {\n        inside(k, t, start, end)?;\n    }\n    let (mut net",
+  "new": "    for (k, t) in trains.iter().enumerate() {\n        inside(k, t, start, end)?;\n    }\n    let (mut net"
+ },
+ {
+  "label": "the synfire trains are not checked",
+  "old": "    for (k, t) in trains.iter().enumerate() {\n        inside(k, t, start, end)?;\n    }\n    let (mut net",
+  "new": "    let (mut net"
+ },
+ {
+  "label": "the synfire sum is not doubled",
+  "old": "net += 2 * order(a, b, length)",
+  "new": "net += order(a, b, length)"
+ },
+ {
+  "label": "the synfire sum takes the later train's view",
+  "old": "net += 2 * order(a, b, length)",
+  "new": "net += 2 * order(b, a, length)"
+ },
+ {
+  "label": "the synfire indicator divides by one train's spikes",
+  "old": "            spikes += a.len() + b.len();\n        }\n    }\n    if spikes == 0 {\n        return Err(SyncError::NoSpikes);\n    }\n    Ok(net as f64",
+  "new": "            spikes += b.len();\n        }\n    }\n    if spikes == 0 {\n        return Err(SyncError::NoSpikes);\n    }\n    Ok(net as f64"
+ },
+ {
+  "label": "a silent population is perfectly ordered",
+  "old": "    if spikes == 0 {\n        return Err(SyncError::NoSpikes);\n    }\n    Ok(net as f64 / spikes as f64)",
+  "new": "    if spikes == 0 {\n        return Ok(1.0);\n    }\n    Ok(net as f64 / spikes as f64)"
+ },
+ {
+  "label": "the PSTH bin is not checked",
+  "old": "    positive(\"bin\", bin)?;\n    if n_bins == 0 {\n        return Err(SyncError::NoBins);\n    }\n    if trials.is_empty()",
+  "new": "    if n_bins == 0 {\n        return Err(SyncError::NoBins);\n    }\n    if trials.is_empty()"
+ },
+ {
+  "label": "a PSTH with no trials divides by zero",
+  "old": "    if trials.is_empty() {\n        return Err(SyncError::TooFewTrains { got: 0 });\n    }\n",
+  "new": ""
+ },
+ {
+  "label": "a non-finite PSTH start is admitted",
+  "old": "    if !start.is_finite() {\n        return Err(SyncError::Window { start, end: start });\n    }\n",
+  "new": ""
+ },
+ {
+  "label": "the PSTH trains are not checked",
+  "old": "        train(k, t)?;\n        for &x in *t {",
+  "new": "        for &x in *t {"
+ },
+ {
+  "label": "the PSTH counts a spike before the first bin",
+  "old": "if x < start || x >= edge(n_bins) {",
+  "new": "if x >= edge(n_bins) {"
+ },
+ {
+  "label": "the PSTH's last bin includes the end",
+  "old": "if x < start || x >= edge(n_bins) {",
+  "new": "if x < start || x > edge(n_bins) {"
+ },
+ {
+  "label": "the PSTH trusts the division",
+  "old": "            while b > 0 && edge(b) > x {\n                b -= 1;\n            }\n            while b + 1 < n_bins && edge(b + 1) <= x {\n                b += 1;\n            }\n            counts[b] += 1;",
+  "new": "            counts[b] += 1;"
+ },
+ {
+  "label": "the PSTH's upward correction is skipped",
+  "old": "            while b + 1 < n_bins && edge(b + 1) <= x {\n                b += 1;\n            }\n            counts[b] += 1;",
+  "new": "            counts[b] += 1;"
+ },
+ {
+  "label": "a spike on an edge goes to the lower bin",
+  "old": "            while b + 1 < n_bins && edge(b + 1) <= x {\n                b += 1;\n            }\n            counts[b] += 1;",
+  "new": "            while b + 1 < n_bins && edge(b + 1) < x {\n                b += 1;\n            }\n            counts[b] += 1;"
+ },
+ {
+  "label": "the PSTH does not count what falls outside",
+  "old": "                outside += 1;\n                continue;",
+  "new": "                continue;"
+ },
+ {
+  "label": "the PSTH rate ignores the number of trials",
+  "old": "let per = trials.len() as f64 * bin;",
+  "new": "let per = bin;"
+ },
+ {
+  "label": "the PSTH returns counts, not rates",
+  "old": "let per = trials.len() as f64 * bin;",
+  "new": "let per = trials.len() as f64;"
+ },
+ {
+  "label": "the correlogram bin is not checked",
+  "old": "    positive(\"bin\", bin)?;\n    if n_bins == 0 {\n        return Err(SyncError::NoBins);\n    }\n    if !lo.is_finite()",
+  "new": "    if n_bins == 0 {\n        return Err(SyncError::NoBins);\n    }\n    if !lo.is_finite()"
+ },
+ {
+  "label": "a correlogram may have no bins",
+  "old": "    if n_bins == 0 {\n        return Err(SyncError::NoBins);\n    }\n    if !lo.is_finite()",
+  "new": "    if !lo.is_finite()"
+ },
+ {
+  "label": "a non-finite correlogram start is admitted",
+  "old": "    if !lo.is_finite() {\n        return Err(SyncError::Window { start: lo, end: lo });\n    }\n",
+  "new": ""
+ },
+ {
+  "label": "the correlogram's second train is not checked",
+  "old": "    train(0, a)?;\n    train(1, b)?;\n    let edge = |k: usize| lo + k as f64 * bin;",
+  "new": "    train(0, a)?;\n    let edge = |k: usize| lo + k as f64 * bin;"
+ },
+ {
+  "label": "the correlogram measures a minus b",
+  "old": "let first = b.partition_point(|&y| y - x < lo);",
+  "new": "let first = b.partition_point(|&y| x - y < lo);"
+ },
+ {
+  "label": "the correlogram counts past its last bin",
+  "old": "            if lag >= hi {\n                break;\n            }",
+  "new": "            if lag > hi {\n                break;\n            }"
+ },
+ {
+  "label": "the correlogram trusts the division",
+  "old": "            while k > 0 && edge(k) > lag {\n                k -= 1;\n            }\n            while k + 1 < n_bins && edge(k + 1) <= lag {\n                k += 1;\n            }\n            counts[k] += 1;",
+  "new": "            counts[k] += 1;"
+ },
+ {
+  "label": "the expectation's duration is not checked",
+  "old": "let t = positive(\"duration\", duration)?;",
+  "new": "let t = duration;"
+ },
+ {
+  "label": "an inverted lag range is admitted",
+  "old": "if !(lo.is_finite() && hi.is_finite() && lo <= hi) {",
+  "new": "if !(lo.is_finite() && hi.is_finite()) {"
+ },
+ {
+  "label": "the triangle is not clamped to the window",
+  "old": "let s = s.clamp(-t, t);",
+  "new": "let s = s;"
+ },
+ {
+  "label": "the triangle is flat",
+  "old": "t * s - s * s.abs() / 2.0",
+  "new": "t * s"
+ },
+ {
+  "label": "the triangle drops its sign below zero",
+  "old": "t * s - s * s.abs() / 2.0",
+  "new": "t * s - s * s / 2.0"
+ },
+ {
+  "label": "the expectation is not divided by T squared",
+  "old": "Ok(n_a as f64 * n_b as f64 * (area(hi) - area(lo)) / (t * t))",
+  "new": "Ok(n_a as f64 * n_b as f64 * (area(hi) - area(lo)) / t)"
+ },
+ {
+  "label": "sigma is not checked",
+  "old": "    positive(\"sigma\", sigma)?;\n    train(0, a)?;",
+  "new": "    train(0, a)?;"
+ },
+ {
+  "label": "the Schreiber trains are not checked",
+  "old": "    train(0, a)?;\n    train(1, b)?;\n    if a.is_empty()",
+  "new": "    if a.is_empty()"
+ },
+ {
+  "label": "an empty second train is admitted",
+  "old": "if a.is_empty() || b.is_empty() {",
+  "new": "if a.is_empty() {"
+ },
+ {
+  "label": "the Gaussian overlap uses 2 sigma squared",
+  "old": "(-(p - q) * (p - q) / (4.0 * sigma * sigma)).exp()",
+  "new": "(-(p - q) * (p - q) / (2.0 * sigma * sigma)).exp()"
+ },
+ {
+  "label": "the Schreiber norm uses one self-term",
+  "old": "Ok(overlap(a, b) / (overlap(a, a) * overlap(b, b)).sqrt())",
+  "new": "Ok(overlap(a, b) / overlap(a, a))"
+ },
+ {
+  "label": "the reliability takes one trial",
+  "old": "    if trials.len() < 2 {\n        return Err(SyncError::TooFewTrains { got: trials.len() });\n    }\n    let mut sum = 0.0;",
+  "new": "    let mut sum = 0.0;"
+ },
+ {
+  "label": "the reliability divides by the trial count",
+  "old": "Ok(sum / pairs as f64)",
+  "new": "Ok(sum / trials.len() as f64)"
+ }
+]

@@ -1,0 +1,577 @@
+[
+ {
+  "label": "the Missing message drops the key",
+  "old": "write!(f, \"the config has no usable {key}\")",
+  "new": "write!(f, \"the config has no usable key\")"
+ },
+ {
+  "label": "the Unknown message names the slot as the method",
+  "old": "write!(f, \"{method} {name:?} is not a method the AllenSDK registers\")",
+  "new": "write!(f, \"{name:?} {method} is not a method the AllenSDK registers\")"
+ },
+ {
+  "label": "the NotPositive message names the value as the parameter",
+  "old": "write!(f, \"{what} = {value} must be finite and positive\")",
+  "new": "write!(f, \"{value} = {what} must be finite and positive\")"
+ },
+ {
+  "label": "the NonFinite message drops the value",
+  "old": "write!(f, \"{what} = {value} is not finite\")",
+  "new": "write!(f, \"{what} is not finite\")"
+ },
+ {
+  "label": "the positivity guard admits infinity",
+  "old": "if value.is_finite() && value > 0.0 { Ok(value) }",
+  "new": "if value > 0.0 { Ok(value) }"
+ },
+ {
+  "label": "the positivity guard admits zero",
+  "old": "if value.is_finite() && value > 0.0 { Ok(value) }",
+  "new": "if value.is_finite() && value >= 0.0 { Ok(value) }"
+ },
+ {
+  "label": "the finiteness guard admits infinity",
+  "old": "if value.is_finite() { Ok(value) } else { Err(GlifError::NonFinite { what, value }) }",
+  "new": "if !value.is_nan() { Ok(value) } else { Err(GlifError::NonFinite { what, value }) }"
+ },
+ {
+  "label": "phi1 at zero is zero",
+  "old": "if x == 0.0 { 1.0 } else",
+  "new": "if x == 0.0 { 0.0 } else"
+ },
+ {
+  "label": "phi1 uses exp minus one without expm1",
+  "old": "-(-x).exp_m1() / x",
+  "new": "(1.0 - (-x).exp()) / x"
+ },
+ {
+  "label": "phi1 drops its sign",
+  "old": "-(-x).exp_m1() / x",
+  "new": "(-x).exp_m1() / x"
+ },
+ {
+  "label": "the membrane rate is C/g",
+  "old": "let k = g / c;\n    let beta",
+  "new": "let k = c / g;\n    let beta"
+ },
+ {
+  "label": "beta drops the leak reversal",
+  "old": "let beta = (i + g * e_l) / g;",
+  "new": "let beta = i / g;"
+ },
+ {
+  "label": "the threshold's own decay is dropped",
+  "old": "th0 * (-b_v * t).exp() + a_v * (beta - e_l)",
+  "new": "th0 + a_v * (beta - e_l)"
+ },
+ {
+  "label": "the steady drive ignores E_L",
+  "old": "a_v * (beta - e_l) * t * phi1(b_v * t)",
+  "new": "a_v * beta * t * phi1(b_v * t)"
+ },
+ {
+  "label": "the steady drive's phi1 uses the membrane rate",
+  "old": "a_v * (beta - e_l) * t * phi1(b_v * t)",
+  "new": "a_v * (beta - e_l) * t * phi1(g / c * t)"
+ },
+ {
+  "label": "the transient drops the membrane's decay",
+  "old": " * t * (-k * t).exp() * phi1((b_v - k) * t)",
+  "new": " * t * phi1((b_v - k) * t)"
+ },
+ {
+  "label": "the transient's rate difference is reversed",
+  "old": "phi1((b_v - k) * t)",
+  "new": "phi1((k - b_v) * t)"
+ },
+ {
+  "label": "the transient is measured from E_L",
+  "old": "a_v * (v0 - beta) * t",
+  "new": "a_v * (v0 - e_l) * t"
+ },
+ {
+  "label": "a missing coefficient counts as zero",
+  "old": "                None => Ok(1.0),\n                Some(v) => num(v, key),",
+  "new": "                None => Ok(0.0),\n                Some(v) => num(v, key),"
+ },
+ {
+  "label": "a negative spike cut is accepted",
+  "old": "if !(cut >= 0.0 && cut.fract() == 0.0) {",
+  "new": "if !(cut.fract() == 0.0) {"
+ },
+ {
+  "label": "a fractional spike cut is accepted",
+  "old": "if !(cut >= 0.0 && cut.fract() == 0.0) {",
+  "new": "if !(cut >= 0.0) {"
+ },
+ {
+  "label": "any voltage dynamics name is accepted",
+  "old": "        if v_name != \"linear_forward_euler\" {\n            return Err(unknown(\"voltage_dynamics_method\", v_name));\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "an unknown after-spike dynamics is accepted",
+  "old": "        if !matches!(asc_dyn, \"exp\" | \"none\") {\n            return Err(unknown(\"AScurrent_dynamics_method\", asc_dyn));\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "an unknown after-spike reset is accepted",
+  "old": "        if !matches!(asc_reset, \"sum\" | \"none\") {\n            return Err(unknown(\"AScurrent_reset_method\", asc_reset));\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "a non-zero initial current is accepted without currents",
+  "old": "                if init_asc.iter().any(|&i| i != 0.0) {",
+  "new": "                if init_asc.iter().all(|&i| i != 0.0) {"
+ },
+ {
+  "label": "the asc amplitude coefficient is ignored",
+  "old": "amp: amps[j] * amp_coeffs[j]",
+  "new": "amp: amps[j]"
+ },
+ {
+  "label": "the asc taus are read from the amplitudes",
+  "old": "let taus = numbers(cfg.get(\"asc_tau_array\"), \"asc_tau_array\")?;",
+  "new": "let taus = numbers(cfg.get(\"asc_amp_array\"), \"asc_tau_array\")?;"
+ },
+ {
+  "label": "the r array's length is not checked",
+  "old": "if taus.len() != amps.len() || rs.len() != amps.len() || amp_coeffs.len() != amps.len() {",
+  "new": "if taus.len() != amps.len() || amp_coeffs.len() != amps.len() {"
+ },
+ {
+  "label": "the tau array's length is not checked",
+  "old": "if taus.len() != amps.len() || rs.len() != amps.len() || amp_coeffs.len() != amps.len() {",
+  "new": "if rs.len() != amps.len() || amp_coeffs.len() != amps.len() {"
+ },
+ {
+  "label": "the coefficient array's length is not checked",
+  "old": "if taus.len() != amps.len() || rs.len() != amps.len() || amp_coeffs.len() != amps.len() {",
+  "new": "if taus.len() != amps.len() || rs.len() != amps.len() {"
+ },
+ {
+  "label": "an unpaired after-spike method falls back to none",
+  "old": "            _ => return Err(GlifError::Mismatch { what: \"after-spike current dynamics and reset methods that no GLIF level pairs\" }),",
+  "new": "            _ => Vec::new(),"
+ },
+ {
+  "label": "the reset's a and b are swapped",
+  "old": "a: member(vr_params, \"a\", \"voltage_reset_method.params.a\")?,\n                b: member(vr_params, \"b\", \"voltage_reset_method.params.b\")?,",
+  "new": "a: member(vr_params, \"b\", \"voltage_reset_method.params.a\")?,\n                b: member(vr_params, \"a\", \"voltage_reset_method.params.b\")?,"
+ },
+ {
+  "label": "an unknown voltage reset falls back to zero",
+  "old": "            _ => return Err(unknown(\"voltage_reset_method\", vr_name)),",
+  "new": "            _ => VoltageReset::Zero,"
+ },
+ {
+  "label": "an unknown threshold dynamics is accepted",
+  "old": "        if !matches!(th_dyn, \"inf\" | \"spike_component\" | \"three_components_exact\") {\n            return Err(unknown(\"threshold_dynamics_method\", th_dyn));\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "an unknown threshold reset is accepted",
+  "old": "        if !matches!(th_reset, \"inf\" | \"three_components\") {\n            return Err(unknown(\"threshold_reset_method\", th_reset));\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "a differing b_spike is accepted",
+  "old": "if a_dyn.to_bits() != a.to_bits() || b_dyn.to_bits() != b.to_bits() {",
+  "new": "if a_dyn.to_bits() != a.to_bits() {"
+ },
+ {
+  "label": "a differing a_spike is accepted",
+  "old": "if a_dyn.to_bits() != a.to_bits() || b_dyn.to_bits() != b.to_bits() {",
+  "new": "if b_dyn.to_bits() != b.to_bits() {"
+ },
+ {
+  "label": "the voltage coupling's coefficient is ignored",
+  "old": "a_v * coeff(\"a\", \"coeffs.a\")?",
+  "new": "a_v"
+ },
+ {
+  "label": "the voltage decay takes the coupling's coefficient",
+  "old": "b_v * coeff(\"b\", \"coeffs.b\")?",
+  "new": "b_v * coeff(\"a\", \"coeffs.b\")?"
+ },
+ {
+  "label": "an unpaired threshold falls back to fixed",
+  "old": "            _ => return Err(GlifError::Mismatch { what: \"threshold dynamics and reset methods that no GLIF level pairs\" }),",
+  "new": "            _ => Threshold::Fixed,"
+ },
+ {
+  "label": "spike_component takes the voltage pair too",
+  "old": "                let [a_spike, b_spike, _, _] = adaptive()?;\n                Threshold::Spike { a_spike, b_spike }",
+  "new": "                let [a_spike, b_spike, a_voltage, b_voltage] = adaptive()?;\n                Threshold::SpikeAndVoltage { a_spike, b_spike, a_voltage, b_voltage }"
+ },
+ {
+  "label": "the capacitance coefficient divides",
+  "old": "c: member(&cfg, \"C\", \"C\")? * coeff(\"C\", \"coeffs.C\")?,",
+  "new": "c: member(&cfg, \"C\", \"C\")? / coeff(\"C\", \"coeffs.C\")?,"
+ },
+ {
+  "label": "the conductance is R rather than 1/R",
+  "old": "g: 1.0 / r_input * coeff(\"G\", \"coeffs.G\")?,",
+  "new": "g: r_input * coeff(\"G\", \"coeffs.G\")?,"
+ },
+ {
+  "label": "the conductance coefficient is ignored",
+  "old": "g: 1.0 / r_input * coeff(\"G\", \"coeffs.G\")?,",
+  "new": "g: 1.0 / r_input,"
+ },
+ {
+  "label": "th_inf's coefficient is ignored",
+  "old": "th_inf: member(&cfg, \"th_inf\", \"th_inf\")? * coeff(\"th_inf\", \"coeffs.th_inf\")?,",
+  "new": "th_inf: member(&cfg, \"th_inf\", \"th_inf\")?,"
+ },
+ {
+  "label": "the initial threshold is scaled too",
+  "old": "init_threshold: member(&cfg, \"init_threshold\", \"init_threshold\")?,",
+  "new": "init_threshold: member(&cfg, \"init_threshold\", \"init_threshold\")? * coeff(\"th_inf\", \"coeffs.th_inf\")?,"
+ },
+ {
+  "label": "El is read from El_reference",
+  "old": "e_l: member(&cfg, \"El\", \"El\")?,",
+  "new": "e_l: member(&cfg, \"El_reference\", \"El\")?,"
+ },
+ {
+  "label": "a loaded model is not checked",
+  "old": "        model.check()?;\n        Ok(model)",
+  "new": "        Ok(model)"
+ },
+ {
+  "label": "level 2 is read as level 4",
+  "old": "(Threshold::Spike { .. }, VoltageReset::Scaled { .. }, false) => Some(2),",
+  "new": "(Threshold::Spike { .. }, VoltageReset::Scaled { .. }, false) => Some(4),"
+ },
+ {
+  "label": "a voltage threshold without currents is level 5",
+  "old": "(Threshold::SpikeAndVoltage { .. }, VoltageReset::Scaled { .. }, true) => Some(5),",
+  "new": "(Threshold::SpikeAndVoltage { .. }, VoltageReset::Scaled { .. }, _) => Some(5),"
+ },
+ {
+  "label": "any other combination is level 1",
+  "old": "            _ => None,\n        }\n    }\n\n    /// Every parameter finite",
+  "new": "            _ => Some(1),\n        }\n    }\n\n    /// Every parameter finite"
+ },
+ {
+  "label": "dt is not checked",
+  "old": "        positive(\"dt\", self.dt)?;\n",
+  "new": ""
+ },
+ {
+  "label": "C is not checked",
+  "old": "        positive(\"C\", self.c)?;\n",
+  "new": ""
+ },
+ {
+  "label": "g is not checked",
+  "old": "        positive(\"g\", self.g)?;\n",
+  "new": ""
+ },
+ {
+  "label": "El is not checked",
+  "old": "            (\"El\", self.e_l),\n",
+  "new": ""
+ },
+ {
+  "label": "El_reference is not checked",
+  "old": "            (\"El_reference\", self.e_l_reference),\n",
+  "new": ""
+ },
+ {
+  "label": "th_inf is not checked",
+  "old": "            (\"th_inf\", self.th_inf),\n",
+  "new": ""
+ },
+ {
+  "label": "init_voltage is not checked",
+  "old": "            (\"init_voltage\", self.init_voltage),\n",
+  "new": ""
+ },
+ {
+  "label": "init_threshold is not checked",
+  "old": "            (\"init_threshold\", self.init_threshold),\n",
+  "new": ""
+ },
+ {
+  "label": "an asc tau is only checked finite",
+  "old": "positive(\"asc tau\", a.tau)?;",
+  "new": "finite(\"asc tau\", a.tau)?;"
+ },
+ {
+  "label": "an asc amplitude is not checked",
+  "old": "            finite(\"asc amp\", a.amp)?;\n",
+  "new": ""
+ },
+ {
+  "label": "an asc r is not checked",
+  "old": "            finite(\"asc r\", a.r)?;\n",
+  "new": ""
+ },
+ {
+  "label": "the initial currents' length is not checked",
+  "old": "        if self.init_asc.len() != self.asc.len() {\n            return Err(GlifError::Mismatch { what: \"init_AScurrents and the after-spike currents differ in length\" });\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "an initial current is not checked",
+  "old": "        for &i in &self.init_asc {\n            finite(\"init_AScurrents\", i)?;\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "the reset's a is not checked",
+  "old": "            finite(\"reset a\", a)?;\n",
+  "new": ""
+ },
+ {
+  "label": "the reset's b is not checked",
+  "old": "            finite(\"reset b\", b)?;\n",
+  "new": ""
+ },
+ {
+  "label": "the spike-only threshold is not checked",
+  "old": "            Threshold::Spike { a_spike, b_spike } => {\n                finite(\"a_spike\", a_spike)?;\n                finite(\"b_spike\", b_spike)?;\n            }",
+  "new": "            Threshold::Spike { .. } => {}"
+ },
+ {
+  "label": "the full threshold's b_spike is not checked",
+  "old": "                finite(\"a_spike\", a_spike)?;\n                finite(\"b_spike\", b_spike)?;\n                finite(\"a_voltage\", a_voltage)?;",
+  "new": "                finite(\"a_spike\", a_spike)?;\n                finite(\"a_voltage\", a_voltage)?;"
+ },
+ {
+  "label": "the full threshold's a_voltage is not checked",
+  "old": "                finite(\"a_voltage\", a_voltage)?;\n",
+  "new": ""
+ },
+ {
+  "label": "the full threshold's b_voltage is not checked",
+  "old": "                finite(\"b_voltage\", b_voltage)?;\n",
+  "new": ""
+ },
+ {
+  "label": "a run does not check the model",
+  "old": "        self.check()?;\n        for &i in stim {",
+  "new": "        for &i in stim {"
+ },
+ {
+  "label": "a non-finite stimulus is accepted",
+  "old": "        for &i in stim {\n            finite(\"stimulus\", i)?;\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "the currents decay at their time constant rather than its reciprocal",
+  "old": "i * (-(1.0 / a.tau) * dt).exp()).collect();",
+  "new": "i * (-a.tau * dt).exp()).collect();"
+ },
+ {
+  "label": "the currents do not decay",
+  "old": "i * (-(1.0 / a.tau) * dt).exp()).collect();",
+  "new": "i).collect();"
+ },
+ {
+  "label": "Euler ignores the after-spike currents",
+  "old": "v0 + (inj + asc_sum - self.g * (v0 - self.e_l)) * dt / self.c",
+  "new": "v0 + (inj - self.g * (v0 - self.e_l)) * dt / self.c"
+ },
+ {
+  "label": "Euler leaks toward zero rather than E_L",
+  "old": "v0 + (inj + asc_sum - self.g * (v0 - self.e_l)) * dt / self.c",
+  "new": "v0 + (inj + asc_sum - self.g * v0) * dt / self.c"
+ },
+ {
+  "label": "Euler multiplies by C",
+  "old": "v0 + (inj + asc_sum - self.g * (v0 - self.e_l)) * dt / self.c",
+  "new": "v0 + (inj + asc_sum - self.g * (v0 - self.e_l)) * dt * self.c"
+ },
+ {
+  "label": "the exact integrator ignores the after-spike currents",
+  "old": "let beta = self.e_l + (inj + asc_sum) / self.g;",
+  "new": "let beta = self.e_l + inj / self.g;"
+ },
+ {
+  "label": "the exact integrator decays at C/g",
+  "old": "beta + (v0 - beta) * (-self.g / self.c * dt).exp()",
+  "new": "beta + (v0 - beta) * (-self.c / self.g * dt).exp()"
+ },
+ {
+  "label": "the spike component does not decay",
+  "old": "Threshold::Spike { b_spike, .. } => (th_spike * (-b_spike * dt).exp(), 0.0),",
+  "new": "Threshold::Spike { .. } => (th_spike, 0.0),"
+ },
+ {
+  "label": "the full threshold's spike component does not decay",
+  "old": "                    th_spike * (-b_spike * dt).exp(),\n                    threshold_voltage_component",
+  "new": "                    th_spike,\n                    threshold_voltage_component"
+ },
+ {
+  "label": "the voltage component reads the new voltage",
+  "old": "threshold_voltage_component(th_volt, v0, inj + asc_sum,",
+  "new": "threshold_voltage_component(th_volt, v1, inj + asc_sum,"
+ },
+ {
+  "label": "the voltage component ignores the after-spike currents",
+  "old": "threshold_voltage_component(th_volt, v0, inj + asc_sum,",
+  "new": "threshold_voltage_component(th_volt, v0, inj,"
+ },
+ {
+  "label": "the spike-only threshold omits th_inf",
+  "old": "Threshold::Spike { .. } => spike1 + self.th_inf,",
+  "new": "Threshold::Spike { .. } => spike1,"
+ },
+ {
+  "label": "the full threshold omits the voltage component",
+  "old": "Threshold::SpikeAndVoltage { .. } => volt1 + spike1 + self.th_inf,",
+  "new": "Threshold::SpikeAndVoltage { .. } => spike1 + self.th_inf,"
+ },
+ {
+  "label": "the components are not carried to the next step",
+  "old": "            (th_spike, th_volt) = (spike1, volt1);\n",
+  "new": ""
+ },
+ {
+  "label": "a spike needs only to reach the threshold",
+  "old": "            if v1 > th1 {",
+  "new": "            if v1 >= th1 {"
+ },
+ {
+  "label": "the crossing is measured from the end of the step",
+  "old": "let x = dt * (th0 - v0) / ((v1 - v0) - (th1 - th0));",
+  "new": "let x = dt * (th1 - v1) / ((v1 - v0) - (th1 - th0));"
+ },
+ {
+  "label": "the crossing ignores the threshold's motion",
+  "old": "let x = dt * (th0 - v0) / ((v1 - v0) - (th1 - th0));",
+  "new": "let x = dt * (th0 - v0) / (v1 - v0);"
+ },
+ {
+  "label": "the spike time is one step late",
+  "old": "time: t as f64 * dt + x,",
+  "new": "time: (t + 1) as f64 * dt + x,"
+ },
+ {
+  "label": "the crossing voltage is the AllenSDK's",
+  "old": "voltage: v0 + (v1 - v0) * x / dt,",
+  "new": "voltage: v0 + (v1 - v0) * (x + dt) / dt,"
+ },
+ {
+  "label": "the crossing threshold is the end of the step",
+  "old": "threshold: th0 + (th1 - th0) * x / dt,",
+  "new": "threshold: th1,"
+ },
+ {
+  "label": "a reset current drops its amplitude",
+  "old": "a.amp + i * a.r * (-((1.0 / a.tau) * dt * cut)).exp()",
+  "new": "i * a.r * (-((1.0 / a.tau) * dt * cut)).exp()"
+ },
+ {
+  "label": "a reset current ignores r",
+  "old": "a.amp + i * a.r * (-((1.0 / a.tau) * dt * cut)).exp()",
+  "new": "a.amp + i * (-((1.0 / a.tau) * dt * cut)).exp()"
+ },
+ {
+  "label": "a reset current does not decay through the cut",
+  "old": "a.amp + i * a.r * (-((1.0 / a.tau) * dt * cut)).exp()",
+  "new": "a.amp + i * a.r"
+ },
+ {
+  "label": "a reset current starts from the value before the step",
+  "old": "                asc0 = asc1\n                    .iter()",
+  "new": "                asc0 = asc0\n                    .iter()"
+ },
+ {
+  "label": "the zero reset is to E_L's reference",
+  "old": "VoltageReset::Zero => 0.0,\n                    VoltageReset::Scaled",
+  "new": "VoltageReset::Zero => self.e_l_reference,\n                    VoltageReset::Scaled"
+ },
+ {
+  "label": "the scaled reset reads the voltage before the step",
+  "old": "VoltageReset::Scaled { a, b } => a * v1 + b,",
+  "new": "VoltageReset::Scaled { a, b } => a * v0 + b,"
+ },
+ {
+  "label": "the scaled reset drops its offset",
+  "old": "VoltageReset::Scaled { a, b } => a * v1 + b,",
+  "new": "VoltageReset::Scaled { a, .. } => a * v1,"
+ },
+ {
+  "label": "the spike component does not decay through the cut",
+  "old": "th_spike = th_spike * (-b_spike * (cut * dt)).exp() + a_spike;",
+  "new": "th_spike += a_spike;"
+ },
+ {
+  "label": "the spike component does not jump",
+  "old": "th_spike = th_spike * (-b_spike * (cut * dt)).exp() + a_spike;",
+  "new": "th_spike *= (-b_spike * (cut * dt)).exp();"
+ },
+ {
+  "label": "the reset threshold drops the voltage component",
+  "old": "                        th_spike + th_volt + self.th_inf",
+  "new": "                        th_spike + self.th_inf"
+ },
+ {
+  "label": "a run starts from th_inf rather than the configured threshold",
+  "old": "let (mut v0, mut th0) = (self.init_voltage, self.init_threshold);",
+  "new": "let (mut v0, mut th0) = (self.init_voltage, self.th_inf);"
+ },
+ {
+  "label": "the spike component starts at th_inf",
+  "old": "let (mut th_spike, mut th_volt) = (0.0_f64, 0.0_f64);",
+  "new": "let (mut th_spike, mut th_volt) = (self.th_inf, 0.0_f64);"
+ },
+ {
+  "label": "the reset state is not written",
+  "old": "                if resumes < n {\n                    record(&mut out, resumes, v0, th0, &asc0);\n                }\n",
+  "new": ""
+ },
+ {
+  "label": "the cut is one step short",
+  "old": "let resumes = t.saturating_add(self.spike_cut);",
+  "new": "let resumes = t.saturating_add(self.spike_cut).saturating_sub(1);"
+ },
+ {
+  "label": "the run resumes on the reset sample",
+  "old": "t = resumes.saturating_add(1);",
+  "new": "t = resumes.max(t + 1);"
+ },
+ {
+  "label": "a bad reset does not stop the run",
+  "old": "                if v0 > th0 {\n                    out.bad_reset = Some(spiked);",
+  "new": "                if false {\n                    out.bad_reset = Some(spiked);"
+ },
+ {
+  "label": "a reset at the threshold is a bad reset",
+  "old": "                if v0 > th0 {\n                    out.bad_reset = Some(spiked);",
+  "new": "                if v0 >= th0 {\n                    out.bad_reset = Some(spiked);"
+ },
+ {
+  "label": "a bad reset is reported at the reset sample",
+  "old": "out.bad_reset = Some(spiked);",
+  "new": "out.bad_reset = Some(resumes);"
+ },
+ {
+  "label": "a bad reset writes four copies",
+  "old": "for s in t..n.min(t.saturating_add(5)) {",
+  "new": "for s in t..n.min(t.saturating_add(4)) {"
+ },
+ {
+  "label": "a quiet step records the currents from before it",
+  "old": "record(&mut out, t, v1, th1, &asc1);",
+  "new": "record(&mut out, t, v1, th1, &asc0);"
+ },
+ {
+  "label": "a quiet step does not advance the voltage",
+  "old": "(v0, th0, asc0) = (v1, th1, asc1);",
+  "new": "(th0, asc0) = (th1, asc1);"
+ },
+ {
+  "label": "a quiet step does not advance the threshold",
+  "old": "(v0, th0, asc0) = (v1, th1, asc1);",
+  "new": "(v0, asc0) = (v1, asc1);"
+ },
+ {
+  "label": "the currents' traces are not recorded",
+  "old": "    for (trace, &i) in out.asc.iter_mut().zip(asc) {\n        trace[t] = i;\n    }\n",
+  "new": ""
+ }
+]
