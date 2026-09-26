@@ -628,7 +628,21 @@ pub struct HodgkinHuxley {
     /// the network's time base.
     pub substeps: u32,
     /// The level, mV, whose upward crossing is reported as a spike by
-    /// [`crate::neuron::Neuron::step`]. Default 0 mV, the convention used by `NEURON` and `Brian`.
+    /// [`crate::neuron::Neuron::step`]. Default 0 mV, a common choice partway up the upstroke.
+    ///
+    /// **It is not a package default, and this doc used to say it was.** An earlier version read
+    /// "Default 0 mV, the convention used by `NEURON` and `Brian`". Neither package defaults to 0 mV.
+    /// `NEURON`'s `NetCon` reference (`docs/progref/modelspec/programmatic/network/netcon.rst`,
+    /// neuronsimulator/nrn) says "If the optional threshold, delay, and weight arguments are not
+    /// specified, their default values are 10, 1, and 0 respectively", so its detector sits at
+    /// 10 mV, and its `APCount` mechanism (`src/nrnoc/apcount.mod`) declares `thresh = -20 (mV)`.
+    /// `Brian2` has no default at all: `NeuronGroup` takes `threshold=None` and the user states the
+    /// condition, which its `examples/COBAHH.py` writes as `v>-20*mV`. The default here is unchanged
+    /// and only the attribution was wrong. Which of these levels a caller picks barely matters, for
+    /// the reason the next paragraph gives: the test
+    /// `the_detection_level_is_a_convention_the_upstroke_makes_almost_irrelevant` sweeps the level
+    /// from -20 mV to +20 mV, a range that holds both packages' levels, and the reported spike time
+    /// moves by under 0.16 ms across it.
     ///
     /// **This is a reporting device, not part of the model.** The model has no threshold; something
     /// has to decide when to tell the network a spike happened, and a fixed level partway up a
@@ -1427,9 +1441,17 @@ impl Neuron for HodgkinHuxley {
 /// The two-variable reduction of Hodgkin-Huxley, after Rinzel.
 ///
 /// **Source:** J. Rinzel, "Excitation dynamics: insights from simplified membrane models",
-/// *Federation Proceedings* 44:2944-2946, 1985. The same reduction is reproduced in Keener and
-/// Sneyd, *Mathematical Physiology*, Springer, and in Izhikevich, *Dynamical Systems in
-/// Neuroscience*, MIT Press 2007.
+/// *Federation Proceedings* 44(15):2944-2946 (December 1985), PMID 2415401. The same reduction is
+/// reproduced in J. Keener and J. Sneyd, *Mathematical Physiology*, Springer (Interdisciplinary
+/// Applied Mathematics), and in Izhikevich, *Dynamical Systems in Neuroscience*, MIT Press 2007.
+///
+/// The Keener and Sneyd citation used to stop at "Springer", which does not say which book: there
+/// are three editions. `Crossref` lists the first edition of 1998 (doi:10.1007/b98841), the
+/// two-volume second edition of 2009 — *Mathematical Physiology I: Cellular Physiology*,
+/// doi:10.1007/978-0-387-75847-3, and *II: Systems Physiology*, doi:10.1007/978-0-387-79388-7 —
+/// and an edition of 2025 (doi:10.1007/978-3-031-83217-8). A membrane model belongs to the cellular
+/// volume, so the second-edition reference is Volume I. This review did not check which chapter or
+/// page of which edition gives the reduction.
 ///
 /// # The two observations it rests on
 ///
@@ -1443,8 +1465,13 @@ impl Neuron for HodgkinHuxley {
 ///    [`ReducedHh::h_slope`] rather than baked in.
 ///
 /// ⚠ **This implementation did not verify 0.89 and 1.1 against the 1985 Federation Proceedings
-/// abstract**, which is a two-page conference abstract; they are the values reproduced in the
-/// secondary literature. What this module does instead is *measure the approximation*: the test
+/// paper**; they are the values reproduced in the secondary literature. An earlier version of this
+/// doc excused that by calling the source "a two-page conference abstract". It is neither: it runs
+/// to three pages, 2944-2946, and `PubMed` (PMID 2415401) indexes it as a journal article with an
+/// abstract of its own, which says "Here we strike such a balance by describing a two-variable
+/// simplification of the Hodgkin-Huxley (HH) model". A short paper that states the reduction is
+/// exactly where the coefficients should be checked, and they have not been. What this module does
+/// instead is *measure the approximation*: the test
 /// `the_h_from_n_approximation_is_good_but_is_not_an_identity` runs the full model through a spike
 /// and reports the largest residual `|h - (0.89 - 1.1n)|` along it, and asserts both that it is
 /// small and that it is not zero. If the coefficients are wrong, that residual is the quantity that
@@ -1467,8 +1494,11 @@ impl Neuron for HodgkinHuxley {
 /// - **Dimension.** A two-dimensional autonomous system cannot be chaotic; by the
 ///   Poincaré-Bendixson theorem its bounded trajectories can only approach fixed points or closed
 ///   orbits. The four-dimensional model under periodic stimulation can be, and is reported to be
-///   (Aihara and Matsumoto, *J. Theor. Biol.* 109:249-269, 1984). Any such behaviour is structurally
-///   invisible here.
+///   (K. Aihara, G. Matsumoto and Y. Ikegaya, "Periodic and non-periodic responses of a
+///   periodically forced Hodgkin-Huxley oscillator", *J. Theor. Biol.* 109(2):249-269 (1984),
+///   doi:10.1016/S0022-5193(84)80005-3). Any such behaviour is structurally invisible here. An
+///   earlier version of this citation read "Aihara and Matsumoto", dropping the third of the
+///   paper's three authors.
 ///
 /// # What the reduction buys
 ///

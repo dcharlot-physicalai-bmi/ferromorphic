@@ -16,11 +16,19 @@
 //! between them is where this crate's [`crate::ledger`] lives.
 //!
 //! `NeuroBench` is the field's attempt to standardise those proxies, and it is a big one: Yik et
-//! al., *`NeuroBench`: A Framework for Benchmarking Neuromorphic Computing Algorithms and Systems*,
-//! Nature Communications 16:1545 (2025), with roughly a hundred co-authors across academia and
-//! industry. Its **algorithm track** defines the metrics in this module. They are all computable
-//! from a model description and a recorded run, which is why they can live in a zero-dependency
-//! library rather than in a lab.
+//! al., *The neurobench framework for benchmarking neuromorphic computing algorithms and
+//! systems*, Nature Communications 16:1545 (2025), doi:10.1038/s41467-025-56739-4, with roughly a
+//! hundred co-authors across academia and industry. Its **algorithm track** defines the metrics in
+//! this module. They are all computable from a model description and a recorded run, which is why
+//! they can live in a zero-dependency library rather than in a lab.
+//!
+//! A correction to that citation. This paragraph used to pair the Nature Communications volume and
+//! article number with the title *`NeuroBench`: A Framework for Benchmarking Neuromorphic
+//! Computing Algorithms and Systems*. That is the title of the preprint, `arXiv`:2304.04640, and
+//! not of the version of record. The publisher's page for the DOI carries `citation_title` "The
+//! neurobench framework for benchmarking neuromorphic computing algorithms and systems", and the
+//! Crossref record for the same DOI gives that title too. The volume (16), article number (1545)
+//! and year (2025) were right and are unchanged. Nothing in the code depended on the title.
 //!
 //! # ⚠ The distinction that gets misreported
 //!

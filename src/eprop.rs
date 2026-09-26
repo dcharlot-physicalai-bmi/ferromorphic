@@ -68,11 +68,15 @@
 //! nothing else.
 //!
 //! Read the second row next, because it is the one this implementation did not expect. Dropping the
-//! reset term — the form in which the e-prop literature writes the eligibility trace for a leaky
+//! reset term — the form in which the paper's Methods write the eligibility trace for a leaky
 //! integrate-and-fire unit — makes the gradient of the *same feedforward layer*, where every other
 //! term is exact, **4.1 times too long and 37 degrees off**, for a relative L2 error of 3.38. It is
 //! not a small correction, and the length is the larger half of it: a rule that pointed the right
-//! way at the wrong scale would still descend, and this one overshoots.
+//! way at the wrong scale would still descend, and this one overshoots. The omission is the
+//! authors' stated choice, not an oversight: the paper's Supplementary Note 1 derives the trace
+//! with the reset, reports no improvement from it on two of the paper's tasks, and leaves it out
+//! of Methods for readability. [`Jacobian::Leak`] quotes the note, and [`Jacobian::Full`] carries
+//! its membrane term.
 //!
 //! ## ...and the number that explains all four rows
 //!
@@ -136,7 +140,9 @@
 //! - [`Force`] (Sussillo & Abbott, Neuron 63:544–557, 2009; applied to spiking networks by Nicola &
 //!   Clopath, Nature Communications 8:2208, 2017) trains a linear readout online by recursive least
 //!   squares. Its state is an `n × n` inverse correlation matrix, which is the opposite trade to
-//!   e-prop's: nothing is approximated, and the memory is quadratic in the population.
+//!   e-prop's: nothing is approximated, and the memory is quadratic in the population. That
+//!   exactness belongs to Sussillo & Abbott's weight step, which is the one implemented here;
+//!   Nicola & Clopath's default step drops a denominator and does not have it (see [`Force`]).
 //!
 //! # Units
 //!
@@ -440,10 +446,32 @@ impl Eligibility {
 pub enum Jacobian {
     /// The two leaks only: `alpha` on the synaptic current, `beta` on the membrane.
     ///
-    /// This is the shape of the eligibility trace as the e-prop literature writes it for a leaky
+    /// This is the shape of the eligibility trace as the paper's Methods write it for a leaky
     /// integrate-and-fire unit — a decaying presynaptic trace multiplied by the pseudo-derivative,
-    /// with no term for the reset. This implementation did not establish from the paper whether that
-    /// omission is derived or adopted; what it can state is its size, and it is **not small**:
+    /// with no term for the reset.
+    ///
+    /// **The omission is adopted, not derived, and the paper says so.** This doc used to say that
+    /// this implementation "did not establish from the paper whether that omission is derived or
+    /// adopted". The answer is in the paper's Supplementary Information: Bellec, Scherr,
+    /// Subramoney, Hajek, Salaj, Legenstein & Maass, *A solution to the learning dilemma for
+    /// recurrent networks of spiking neurons*, Nature Communications 11:3625 (2020), PMC7367848,
+    /// file `41467_2020_17236_MOESM1_ESM.pdf` (MD5 `4fb921a61e126b2a36ba4516d0883931`, the digest
+    /// Europe PMC lists for it), Supplementary Note 1, *Eligibility traces for LSNNs with membrane
+    /// potential reset*, p. 13. The Methods send the reader there: "for a derivation of the
+    /// eligibility traces taking the reset into account we refer to Supplementary Note 1". It opens:
+    /// "The eligibility traces derived in the methods do not take the reset term into account. We
+    /// derive here the eligibility traces that can correct for this." It then derives the
+    /// reset-aware derivative, which is [`Jacobian::Full`]'s membrane term, and gives two reasons
+    /// for not using it. One is measured: "we did not observe an improvement when using this more
+    /// complex model on the phoneme recognition and the task where temporal credit assignment is
+    /// difficult". The other is presentation: with the reset, the recursion no longer splits into
+    /// two separable equations, "Hence, we preferred to ignore the reset in Methods to provide more
+    /// interpretable Equations for eligibility traces."
+    ///
+    /// Their observation and the number below measure different things — task performance after
+    /// training there, the angle and length of one gradient here — and this crate has not rerun
+    /// their tasks, so neither contradicts the other. What this implementation can state is the
+    /// omission's size, and it is **not small**:
     /// `dropping_the_reset_term_changes_the_feedforward_gradient` measures a relative L2 error of
     /// 3.38 against BPTT on a feedforward layer where every other term is exact, with the gradient
     /// coming out 4.1 times too long. That figure is proportional to the surrogate's peak; see the
@@ -463,8 +491,31 @@ pub enum Jacobian {
     /// eligibility recursion already visits them, and the two extra multiplies per slot are the
     /// whole cost. With this variant and `recurrent = false`, the e-prop gradient is the BPTT
     /// gradient exactly; with recurrence it cuts the relative error from 1.97 to 0.23 on the
-    /// module doc's reference layer. This implementation did not locate this variant offered as an
-    /// option in any published e-prop implementation it read.
+    /// module doc's reference layer.
+    ///
+    /// **The reset term is published; it is not original to this module.** This doc used to say
+    /// "This implementation did not locate this variant offered as an option in any published e-prop
+    /// implementation it read." Bellec et al. derive it in their Supplementary Note 1 (cited in full
+    /// at [`Jacobian::Leak`]): "When taking into account the reset, the partial derivative
+    /// `∂h^{t+1}_j/∂h^t_j` becomes `α − v_thr ψ^t_j` instead of `α`". The paper's `α` is the
+    /// membrane decay and its `v_thr` the threshold, so that is this variant's membrane entry,
+    /// `beta - theta * psi`, in the paper's notation. The authors add that "e-prop can be
+    /// implemented as such", and they report running it.
+    ///
+    /// What this module adds to the note is narrower:
+    ///
+    /// - the self-connection term `V[j][j] * psi`, which the note does not carry and which does not
+    ///   arise in the authors' networks, because their released code masks the recurrent diagonal
+    ///   (`recurrent_disconnect_mask = np.diag(np.ones(n_rec, dtype=bool))`);
+    /// - the reset's threshold scaling checked away from `theta = 1`, below;
+    /// - the exactness against BPTT measured rather than argued: 3.5e-16 on a feedforward layer and
+    ///   1.9e-16 on a single self-connected unit.
+    ///
+    /// What this review did not locate is the variant offered as a switch in the authors' released
+    /// code, `IGITUGraz/eligibility_propagation`. In its
+    /// `Figure_2_TIMIT/alif_eligibility_propagation.py` the reset `I_reset = z * thr * dt` is formed
+    /// from `state.z`, so the membrane's derivative `dnew_v_ds` carries the decay alone, and the
+    /// tutorial's `models.py` stops the gradient on `z` before the reset.
     ///
     /// The `theta` that scales the reset is load-bearing, and it was invisible to this module's own
     /// tests until it was swept: every layer built from [`crate::surrogate::LifLayerSpec::default`]
@@ -483,8 +534,8 @@ pub struct EpropConfig {
 }
 
 impl Default for EpropConfig {
-    /// [`Jacobian::Leak`] and [`SpikeFn::Heaviside`]: the literature's eligibility trace, on a
-    /// network that emits real binary spikes.
+    /// [`Jacobian::Leak`] and [`SpikeFn::Heaviside`]: the eligibility trace of the paper's Methods,
+    /// on a network that emits real binary spikes.
     fn default() -> Self {
         Self { jacobian: Jacobian::Leak, spike_fn: SpikeFn::Heaviside }
     }
@@ -1625,12 +1676,15 @@ impl SpikeProp {
 /// `FORCE` learning: a linear readout trained online by recursive least squares.
 ///
 /// Sussillo & Abbott, *Generating coherent patterns of activity from chaotic neural networks*,
-/// Neuron 63:544–557 (2009), applied to networks of spiking neurons by Nicola & Clopath,
-/// *Supervised learning in spiking neural networks with `FORCE` training*, Nature Communications
-/// 8:2208 (2017).
+/// Neuron 63:544–557 (2009), PMC2756108, applied to networks of spiking neurons by Nicola &
+/// Clopath, *Supervised learning in spiking neural networks with `FORCE` training*, Nature
+/// Communications 8:2208 (2017), PMC5738356.
 ///
-/// `FORCE` is the opposite trade to e-prop. Nothing is approximated: after `k` updates the weights
-/// are **exactly** the ridge-regression solution over all `k` samples seen so far,
+/// The weight step is Sussillo & Abbott's Eq. 4, `w(t) = w(t − Δt) − e₋(t) P(t) r(t)`, whose gain is
+/// `P` *after* this sample's update (their Eq. 5): `P_k r_k = P_{k-1} r_k / (1 + r_kT P_{k-1} r_k)`.
+/// With that step `FORCE` is the opposite trade to e-prop. Nothing is approximated: after `k`
+/// updates the weights are **exactly** the ridge-regression solution over all `k` samples seen so
+/// far,
 ///
 /// ```text
 /// w_k = ( ridge I + sum_j r_j r_jT )^-1  sum_j d_j r_j
@@ -1646,6 +1700,27 @@ impl SpikeProp {
 /// than plain least squares is that the corrections are applied *while the network runs*, and are
 /// large enough from the first step that the output never departs far from the target — the error
 /// stays small, so the network is never trained on a trajectory it will not visit again.
+///
+/// # Whose `FORCE` this is
+///
+/// This doc used to call `FORCE` exact without naming whose weight step that holds for, directly
+/// after citing Nicola & Clopath's spiking application. It holds for Sussillo & Abbott's step and
+/// not for Nicola & Clopath's default. Their Methods print the step as Eq. 14,
+/// `φ(t) = φ(t − Δt) − e(t)P(t)r(t)`, which reads like Sussillo & Abbott's, and then say: "Note
+/// that in the original implementation of ref. 1, Eq. (14) contains the term
+/// 1 + r(t)^T P(t − Δt)r(t) in the denominator. This term adds a slight increase in accuracy and
+/// stability, but does not change the overall order of convergence of RLS. For comparison
+/// purposes, this modification was applied to Supplementary Fig. 8. All other implementations
+/// used Eqs. 14, 15." Their released code (`ModelDB` 190565) steps the readout by
+/// `BPhi = BPhi - (cd*err')` with `cd = Pinv*r` formed before `Pinv` is updated, so the gain is
+/// `P_{k-1} r_k`: larger than Sussillo & Abbott's by the factor `1 + r_kT P_{k-1} r_k`. Their `P`
+/// update, Eq. 15, keeps that denominator, so their `P` is still the exact inverse; their `w` is
+/// not the ridge solution. On the fixture of `force_matches_the_closed_form_ridge_solution` their
+/// step leaves `w` a relative 1.24 from the ridge solution (largest coordinate error against
+/// largest coordinate) while its `P` agrees with the inverse to 5.5e-16, and its very first step is
+/// 4.40 times this one's. `nicola_and_clopaths_default_weight_step_is_not_the_ridge_solution` runs
+/// the two side by side. [`Force::update`] is Sussillo & Abbott's step, and the closed form above
+/// is a property of that step rather than of `FORCE` as every paper ran it.
 ///
 /// # What this implementation does not do
 ///
@@ -1742,7 +1817,9 @@ impl Force {
     ///
     /// The a-priori error is what `FORCE` reports as its learning curve, and it is also what makes
     /// the closed form above hold: the update uses `w` from before the step and `P` from after it,
-    /// which are related by `P_k r_k = P_{k-1} r_k / (1 + r_kT P_{k-1} r_k)`.
+    /// which are related by `P_k r_k = P_{k-1} r_k / (1 + r_kT P_{k-1} r_k)`. That gain is Sussillo
+    /// & Abbott's. Nicola & Clopath's default steps by `P_{k-1} r_k`, without the denominator, and
+    /// does not reach the closed form; [`Force`] quotes them.
     ///
     /// # Errors
     ///
@@ -2470,8 +2547,9 @@ mod tests {
     }
 
 
-    /// The documented default is [`Jacobian::Leak`] — the eligibility trace as the e-prop
-    /// literature writes it — and not the [`Jacobian::Full`] variant this module adds.
+    /// The documented default is [`Jacobian::Leak`] — the eligibility trace as the paper's Methods
+    /// write it — and not [`Jacobian::Full`], whose reset term the authors derive in their
+    /// Supplementary Note 1 and set aside, and whose self-connection term this module adds.
     ///
     /// Nothing in the suite could see which one it was. Every test that takes
     /// `EpropConfig::default()` either hands the same config to *both* sides of
@@ -3320,9 +3398,121 @@ mod tests {
         assert!(w_worst / w_scale < 1e-9, "w differed from the batch solution by {w_worst}");
     }
 
+    /// The claim in [`Force`]'s "Whose `FORCE` this is": the closed form belongs to Sussillo &
+    /// Abbott's weight step, and Nicola & Clopath's default step does not reach it.
+    ///
+    /// Their step is written out here as their released code has it — `cd = Pinv*r` taken before
+    /// `Pinv` moves, then `BPhi -= cd*err'` and `Pinv -= cd*cd'/(1 + r'*cd)` — and run beside
+    /// [`Force`] on the samples of `force_matches_the_closed_form_ridge_solution`. Three things are
+    /// pinned. Their first step is `1 + q` times this crate's on every coordinate, with
+    /// `q = rT P(0) r` and `1 + q = 4.40` on this fixture. Their `P` is still the inverse of the
+    /// ridge-regularised correlation matrix, measured to 5.5e-16, because the `P` update is the same
+    /// one. And their `w` is not the ridge solution: 1.2425 from it, relative, against 1.0e-15 for
+    /// [`Force`] on the same forty samples. The last is what the mutation that swaps
+    /// [`Force::update`]'s gain for theirs trips in `force_matches_the_closed_form_ridge_solution`.
+    #[test]
+    fn nicola_and_clopaths_default_weight_step_is_not_the_ridge_solution() {
+        let n = 6;
+        let ridge = 0.5;
+        let samples = 40;
+        let mut rng = Rng::new(31);
+        let mut f = Force::new(n, ridge).expect("valid");
+        // Their recursion, from the same start: `P(0) = I / ridge` and `w(0) = 0`.
+        let mut p_nc = vec![0.0; n * n];
+        for i in 0..n {
+            p_nc[i * n + i] = 1.0 / ridge;
+        }
+        let mut w_nc = vec![0.0; n];
+        let mut a = vec![0.0; n * n];
+        for i in 0..n {
+            a[i * n + i] = ridge;
+        }
+        let mut b = vec![0.0; n];
+        let mut first_gain = None;
+        for k in 0..samples {
+            let r: Vec<f64> = (0..n).map(|_| 2.0 * rng.next_f64() - 1.0).collect();
+            let d = 2.0 * rng.next_f64() - 1.0;
+            let w_before = f.w.clone();
+            f.update(&r, d).expect("well conditioned");
+            let cd: Vec<f64> =
+                (0..n).map(|i| (0..n).map(|j| p_nc[i * n + j] * r[j]).sum()).collect();
+            let q: f64 = (0..n).map(|i| r[i] * cd[i]).sum();
+            let err: f64 = (0..n).map(|i| w_nc[i] * r[i]).sum::<f64>() - d;
+            for i in 0..n {
+                if k == 0 {
+                    // Both start from zero, so each side's first step is its weight after it.
+                    let theirs = -cd[i] * err;
+                    let ours = f.w[i] - w_before[i];
+                    assert!(ours.abs() > 1e-3, "coordinate {i}: this crate's first step was ~0");
+                    let ratio = theirs / ours;
+                    assert!(
+                        (ratio - (1.0 + q)).abs() < 1e-12 * (1.0 + q),
+                        "coordinate {i}: their first step is {ratio} times ours, not 1 + q = {}",
+                        1.0 + q
+                    );
+                }
+                w_nc[i] -= cd[i] * err;
+            }
+            if k == 0 {
+                first_gain = Some(1.0 + q);
+            }
+            for i in 0..n {
+                for j in 0..n {
+                    p_nc[i * n + j] -= cd[i] * cd[j] / (1.0 + q);
+                }
+            }
+            for i in 0..n {
+                for j in 0..n {
+                    a[i * n + j] += r[i] * r[j];
+                }
+                b[i] += d * r[i];
+            }
+        }
+        let gain = first_gain.expect("ran at least one sample");
+        assert!((gain - 4.3997).abs() < 1e-4, "the first step's factor was {gain}, measured 4.3997");
+        let chol = cholesky(&a, n, 1e-14).expect("positive definite");
+
+        // Their `P` is the same exact inverse as this crate's.
+        let mut scale = 0.0f64;
+        let mut worst = 0.0f64;
+        for j in 0..n {
+            let mut e = vec![0.0; n];
+            e[j] = 1.0;
+            let col = chol.solve(&e).expect("valid");
+            for i in 0..n {
+                scale = scale.max(col[i].abs());
+                worst = worst.max((col[i] - p_nc[i * n + j]).abs());
+            }
+        }
+        assert!(scale > 1e-3, "the inverse was numerically zero, so this compared nothing");
+        assert!(worst / scale < 1e-9, "their P differed from A^-1 by {worst} against {scale}");
+
+        // Their `w` is not the ridge solution; this crate's is.
+        let want = chol.solve(&b).expect("valid");
+        let mut w_scale = 0.0f64;
+        let mut theirs = 0.0f64;
+        let mut ours = 0.0f64;
+        for i in 0..n {
+            w_scale = w_scale.max(want[i].abs());
+            theirs = theirs.max((want[i] - w_nc[i]).abs());
+            ours = ours.max((want[i] - f.w[i]).abs());
+        }
+        assert!(w_scale > 1e-3, "the ridge solution was zero, so this compared nothing");
+        assert!(ours / w_scale < 1e-9, "Force left the ridge solution by {}", ours / w_scale);
+        assert!(
+            (theirs / w_scale - 1.2425).abs() < 1e-3,
+            "their step left the ridge solution by {} (measured 1.2425)",
+            theirs / w_scale
+        );
+    }
+
     /// `FORCE` on filtered spike trains, the Nicola & Clopath setting: the basis is a bank of
     /// exponentially filtered periodic spike sources and the target is a linear combination of them,
     /// so the generating weights are known exactly and can be recovered rather than merely fitted.
+    ///
+    /// The setting is theirs and the update is not. [`Force::update`] is Sussillo & Abbott's weight
+    /// step; Nicola & Clopath's default drops its `1 + rT P r` denominator, and
+    /// `nicola_and_clopaths_default_weight_step_is_not_the_ridge_solution` measures what that costs.
     #[test]
     fn force_recovers_the_weights_that_generated_its_target() {
         let n = 12;

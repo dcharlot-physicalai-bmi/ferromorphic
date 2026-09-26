@@ -11,7 +11,7 @@
 //! Communications 7:13276, 2016) found the transpose is not needed: replace `W_{l+1}ᵀ` with a
 //! FIXED RANDOM matrix `B_{l+1}` and the network still learns, because the forward weights come
 //! to align with the feedback they are given — **feedback alignment**. Nøkland (*Direct feedback
-//! alignment provides learning in deep neural networks*, `NeurIPS` 2016) removed the backward chain
+//! alignment provides learning in deep neural networks*, `NIPS` 2016) removed the backward chain
 //! altogether: every hidden layer receives the OUTPUT error through its own fixed random matrix,
 //! `δ_l = (D_l e) ⊙ f′(a_l)` — **direct feedback alignment** — so no layer waits for the one
 //! above it.

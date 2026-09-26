@@ -20,29 +20,29 @@
   "new": "    a"
  },
  {
-  "label": "a table is complete without a fetch price",
-  "old": "            && priced(self.e_syn_fetch)\n",
+  "label": "a table with one unpriced term calls itself complete",
+  "old": "        self.unpriced().is_empty()",
+  "new": "        self.unpriced().len() < 2"
+ },
+ {
+  "label": "completeness is the opposite of an empty unpriced list",
+  "old": "        self.unpriced().is_empty()",
+  "new": "        !self.unpriced().is_empty()"
+ },
+ {
+  "label": "the unpriced list omits a NaN synaptic operation",
+  "old": "        if !self.e_syn_op.is_finite() {\n            v.push(\"synaptic operation\");\n        }",
   "new": ""
  },
  {
-  "label": "a table is complete without a readout price",
-  "old": "            && priced(self.e_read)",
-  "new": "            && true"
- },
- {
-  "label": "a table with a NaN synapse price calls itself complete",
-  "old": "        self.e_syn_op.is_finite()\n            && self.e_neuron_update.is_finite()",
-  "new": "        true\n            && self.e_neuron_update.is_finite()"
- },
- {
   "label": "the unpriced list omits the synapse fetch",
-  "old": "        if !priced(self.e_syn_fetch) {\n            v.push(\"synapse memory fetch\");\n        }",
+  "old": "        if !priced(self.separate(self.e_syn_fetch)) {\n            v.push(\"synapse memory fetch\");\n        }",
   "new": ""
  },
  {
   "label": "the unpriced list names a term that IS priced",
-  "old": "        if !priced(self.e_syn_fetch) {",
-  "new": "        if priced(self.e_syn_fetch) {"
+  "old": "        if !priced(self.separate(self.e_syn_fetch)) {",
+  "new": "        if priced(self.separate(self.e_syn_fetch)) {"
  },
  {
   "label": "the unstated table prices a synaptic operation",
@@ -61,13 +61,13 @@
  },
  {
   "label": "TrueNorth's grade is raised to metered",
-  "old": "             readout terms were not separately published and are not guessed here.\",\n    evidence: Evidence::Measured,",
-  "new": "             readout terms were not separately published and are not guessed here.\",\n    evidence: Evidence::Metered,"
+  "old": "             part at that point and to nothing else.\",\n    evidence: Evidence::Measured,",
+  "new": "             part at that point and to nothing else.\",\n    evidence: Evidence::Metered,"
  },
  {
   "label": "Loihi's pre-silicon figure is graded as measured",
-  "old": "             throughout 2024-2026. The fetch, routing and readout terms were not published at all.\",\n    evidence: Evidence::Simulated,",
-  "new": "             throughout 2024-2026. The fetch, routing and readout terms were not published at all.\",\n    evidence: Evidence::Measured,"
+  "old": "             fetch or host-readout row.\",\n    evidence: Evidence::Simulated,",
+  "new": "             fetch or host-readout row.\",\n    evidence: Evidence::Measured,"
  },
  {
   "label": "Loihi's per-operation energy is transcribed wrongly",
@@ -178,11 +178,91 @@
   "label": "finite accepts a NaN",
   "old": "    if x.is_finite() { Some(x) } else { None }",
   "new": "    Some(x)",
-  "equivalent": "belt-and-braces with the guard inside `charge`. `finite` exists to turn a bare `f64` price into the same `Option` shape the other prices already have, and `charge` then accepts a price only under `Some(e) if e.is_finite()` — so a `finite` that passed a NaN through would hand `charge` a `Some(NaN)` that it rejects for the same reason, naming the term unpriced and refusing the total exactly as before."
+  "equivalent": "belt-and-braces with the guards downstream of it. `finite` turns a bare `f64` price into the `Option` shape the other prices already have, and it has two consumers. `charge` accepts a price only under `Some(e) if e.is_finite()`, and `unpriced` reads it through `priced`, which is `matches!(x, Some(e) if e.is_finite())` — so a `finite` that passed a NaN or an infinity through hands each of them a `Some` it rejects for the same reason, naming the term unpriced and refusing the total exactly as before. `separate` sits between them and, under `Scope::AllIn`, returns `None` whatever it is given. FIXTURE (built and run 2026-09-25, a standalone crate compiling four copies of the module's non-test code side by side: unmutated, this mutant, and two controls): every output compared by `Debug` — `unpriced`, `is_complete`, `bill` (every field), `joules`, `joules_synops_only`, `understatement` — plus the bill's `Display`, for every table x ledger pair. Tables take e_syn_op and e_neuron_update from {NaN, +inf, -inf, 0, 2e-12, 5e-12}, the three optional prices from {None, Some(NaN), Some(+inf), Some(-inf), Some(0), Some(3e-12), Some(7e-12)}, both scopes and two grades (49,392 tables); ledgers take each of the six counts from {0, 3} (64 ledgers). Result: 22,127,616 comparisons, 0 disagreements. The same fixture against two non-equivalent controls, `finite` returning `None` and `finite` doubling a finite price, reports 3,578,376 and 1,239,408 disagreements, so it is able to fail."
  },
  {
   "label": "a price-shaped NaN counts as priced",
   "old": "    matches!(x, Some(e) if e.is_finite())",
   "new": "    x.is_some()"
+ },
+ {
+  "label": "TrueNorth's all-in figure is read as one operation",
+  "old": "    evidence: Evidence::Measured,\n    scope: Scope::AllIn,",
+  "new": "    evidence: Evidence::Measured,\n    scope: Scope::PerTerm,"
+ },
+ {
+  "label": "Loihi's per-operation figure is read as all-in",
+  "old": "    evidence: Evidence::Simulated,\n    scope: Scope::PerTerm,",
+  "new": "    evidence: Evidence::Simulated,\n    scope: Scope::AllIn,"
+ },
+ {
+  "label": "the unstated table claims an all-in figure",
+  "old": "        evidence: Evidence::Unstated,\n        scope: Scope::PerTerm,",
+  "new": "        evidence: Evidence::Unstated,\n        scope: Scope::AllIn,"
+ },
+ {
+  "label": "an all-in table's contained terms are priced from its fields anyway",
+  "old": "            Scope::AllIn => None,",
+  "new": "            Scope::AllIn => price,"
+ },
+ {
+  "label": "a per-term table loses every separately priced term",
+  "old": "            Scope::PerTerm => price,",
+  "new": "            Scope::PerTerm => None,"
+ },
+ {
+  "label": "a bill charges a fetch on top of an all-in figure",
+  "old": "p.separate(p.e_syn_fetch)",
+  "new": "p.e_syn_fetch"
+ },
+ {
+  "label": "a bill charges neuron updates on top of an all-in figure",
+  "old": "p.separate(finite(p.e_neuron_update))",
+  "new": "finite(p.e_neuron_update)"
+ },
+ {
+  "label": "a bill charges spike emission on top of an all-in figure",
+  "old": "p.separate(p.e_spike_out)",
+  "new": "p.e_spike_out"
+ },
+ {
+  "label": "the unpriced list drops a fetch an all-in figure contains",
+  "old": "self.separate(self.e_syn_fetch)",
+  "new": "self.e_syn_fetch"
+ },
+ {
+  "label": "the unpriced list drops a neuron update an all-in figure contains",
+  "old": "self.separate(finite(self.e_neuron_update))",
+  "new": "finite(self.e_neuron_update)"
+ },
+ {
+  "label": "the unpriced list drops a spike emission an all-in figure contains",
+  "old": "self.separate(self.e_spike_out)",
+  "new": "self.e_spike_out"
+ },
+ {
+  "label": "the Loihi source line forgets Table 2's within-tile spike energy",
+  "old": "within-tile spike at 1.7 pJ, a tile hop",
+  "new": "within-tile spike at an unstated energy, a tile hop"
+ },
+ {
+  "label": "the TrueNorth source line drops its operating voltage",
+  "old": "cores on average, 0.775 V — so on-core",
+  "new": "cores on average — so on-core"
+ },
+ {
+  "label": "the unpriced list omits a neuron update",
+  "old": "        if !priced(self.separate(finite(self.e_neuron_update))) {\n            v.push(\"neuron update\");\n        }",
+  "new": ""
+ },
+ {
+  "label": "the unpriced list omits a spike emission",
+  "old": "        if !priced(self.separate(self.e_spike_out)) {\n            v.push(\"spike emission\");\n        }",
+  "new": ""
+ },
+ {
+  "label": "the unpriced list omits a state readout",
+  "old": "        if !priced(self.e_read) {\n            v.push(\"state readout\");\n        }",
+  "new": ""
  }
 ]

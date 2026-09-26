@@ -5,14 +5,18 @@
 //! # Mackey–Glass
 //!
 //! Mackey and Glass, *Oscillation and chaos in physiological control systems*, Science
-//! 197:287–289, 1977:
+//! 197:287–289, 1977, Eq. 4b — the white-cell model, `dP/dt = β₀θⁿP_τ/(θⁿ + P_τⁿ) − γP` — written
+//! in `x = P/θ`, which removes `θ` exactly:
 //!
 //! ```text
 //! dx/dt = β x(t − τ)/(1 + x(t − τ)ⁿ) − γ x(t)
 //! ```
 //!
-//! With `β = 0.2`, `γ = 0.1`, `n = 10` it is the standard chaotic benchmark at `τ = 17`
-//! ([`MackeyGlass::NEUROBENCH`]). What is exact about it:
+//! The paper's parameters are the ones used here, `β₀ = 0.2` and `γ = 0.1` per day and `n = 10`
+//! (Fig. 2 caption). Its figures show two delays: `τ = 6` days, "a low-amplitude oscillation with a
+//! period of 20 days" (Fig. 2b), and `τ = 20`, "an aperiodic pattern" (Fig. 2c). The benchmark's
+//! `τ = 17` ([`MackeyGlass::NEUROBENCH`]) is not in the paper; it comes from later work on the
+//! equation's attractors. What is exact about it:
 //!
 //! - the positive fixed point `x* = (β/γ − 1)^{1/n}` — 1 for these parameters;
 //! - the slope of the delayed term there, `a = β(1 + (1 − n)x*ⁿ)/(1 + x*ⁿ)²` — −0.4;
@@ -421,6 +425,36 @@ mod tests {
         };
         assert!(late(4.4) < 1e-6, "τ = 4.4 < τ_c: {}", late(4.4));
         assert!(late(5.0) > 0.05, "τ = 5.0 > τ_c: {}", late(5.0));
+    }
+
+    /// The one number Mackey and Glass print for Eq. 4b: at `τ = 6` days the solution "has a
+    /// low-amplitude oscillation with a period of 20 days" (Fig. 2b, from the paper's initial
+    /// condition `P = 0.10`). Measured here as the spacing of upward crossings of the fixed point
+    /// after `t = 200`: 20.0765 days at `h = 0.01` and at `h = 0.005` (the two agree to 1e-6), so
+    /// the paper's "20" is this period rounded. And at `τ = 20` the crossings are irregular — the
+    /// aperiodic Fig. 2c — with spacings from under 12 days to over 70.
+    #[test]
+    fn mackey_and_glass_print_a_twenty_day_period_at_a_six_day_delay() {
+        let crossings = |tau: f64| {
+            let h = 0.01;
+            let s = MackeyGlass { tau, ..MackeyGlass::NEUROBENCH }.solve(0.1, h, 600.0).unwrap();
+            let mut up = Vec::new();
+            for k in 1..s.x.len() {
+                let (a, b, t) = (s.x[k - 1], s.x[k], k as f64 * h);
+                if t > 200.0 && a < 1.0 && b >= 1.0 {
+                    up.push(t - h + h * (1.0 - a) / (b - a));
+                }
+            }
+            up.windows(2).map(|w| w[1] - w[0]).collect::<Vec<f64>>()
+        };
+        let six = crossings(6.0);
+        assert!(six.len() >= 15, "{six:?}");
+        for p in &six {
+            assert!((p - 20.0765).abs() < 1e-3, "τ = 6: period {p}");
+        }
+        let twenty = crossings(20.0);
+        let (lo, hi) = twenty.iter().fold((f64::MAX, 0.0_f64), |(a, b), &p| (a.min(p), b.max(p)));
+        assert!(twenty.len() >= 5 && lo < 15.0 && hi > 60.0, "τ = 20: {twenty:?}");
     }
 
     /// The solver is fourth order: halving the step divides the error at `t = 100` by sixteen.

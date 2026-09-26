@@ -4,8 +4,9 @@
 //! # What these are
 //!
 //! Teeter et al., *Generalized leaky integrate-and-fire models classify multiple neuron types*,
-//! Nature Communications 9:709 (2018), fitted five nested models to patch-clamp recordings of mouse
-//! and human cortical neurons, each adding one mechanism to the last:
+//! Nature Communications 9:709 (2018), doi:10.1038/s41467-017-02717-4, fitted five nested models to
+//! the patch-clamp recordings of 645 neurons from 16 transgenic lines, all in young adult (P45 to P70)
+//! C57BL/6J mouse primary visual cortex, each model adding one mechanism to the last:
 //!
 //! | level | name | adds |
 //! |---|---|---|
@@ -19,6 +20,15 @@
 //! 1,218 models at level 1, 439 at level 2, 1,218 at level 3, 439 at level 4 and 439 at level 5.
 //! [`Glif::from_neuron_config`] reads that file as served, through [`crate::json`], so a fitted
 //! parameter reaches the simulation without being retyped.
+//!
+//! ⚠ **Not every served model is a mouse neuron, and not every one is from the paper.** Asked for
+//! each model's `specimen(donor(organism))` on 2026-09-24, the API filed 174 of the 1,218 level-1
+//! models under *Homo sapiens*, and 465 of the 3,753 configs across the five levels (174, 39, 174,
+//! 39 and 39); the sweep below runs them with the rest. 0.21.0 and 0.22.0 of this page said the
+//! paper fitted "mouse and human cortical neurons". It fitted mouse only: its abstract counts "645
+//! recorded neurons from 16 transgenic lines", its Results say "All cell types recorded are from
+//! young adult (P45 to P70) C57BL/6J mouse primary visual cortex", and this review did not locate
+//! the word "human" anywhere in its full text, reference list included.
 //!
 //! # The reference is the `AllenSDK`'s own code
 //!

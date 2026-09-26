@@ -1404,7 +1404,8 @@ impl Cost {
 ///
 /// `r[i][j]` is the accuracy on task `j`'s test split after training has finished on task `i`. This
 /// is the matrix `R` of Lopez-Paz & Ranzato (`NeurIPS` 2017); every metric below is their
-/// definition, with their indices shifted to zero-based.
+/// definition, with their indices shifted to zero-based, except [`Results::forgetting_from_peak`],
+/// which is Chaudhry et al.'s (ECCV 2018) and says so on its doc.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Results {
     /// The accuracy matrix, `tasks` by `tasks`.
@@ -1487,11 +1488,79 @@ impl Results {
         self.r.last()?.get(j).copied()
     }
 
-    /// How much of task `j` was lost: `learned - retained`, positive when something was forgotten
-    /// (Chaudhry, Dokania, Ajanthan & Torr, ECCV 2018).
+    /// How much of task `j` was lost since it was learned: `learned - retained`, that is
+    /// `r[j][j] - r[last][j]`, positive when something was forgotten. It is the per-task term of
+    /// Lopez-Paz & Ranzato's backward transfer with the sign flipped (*Gradient Episodic Memory for
+    /// Continual Learning*, Advances in Neural Information Processing Systems 30, `NeurIPS` 2017,
+    /// `arXiv`:1706.08840), so its mean over `j < last` is exactly the negative of
+    /// [`Results::backward_transfer`]. For the last task it is `0`, by construction.
+    ///
+    /// ⚠ CORRECTED, against the paper. This doc used to attribute this measure to Chaudhry,
+    /// Dokania, Ajanthan & Torr (ECCV 2018). It is not theirs. Their Eq. (3) measures forgetting
+    /// from the **best** accuracy the task had before now,
+    /// `f_j^k = max_{l∈{1,…,k-1}} a_{l,j} - a_{k,j}`. They name the `a_{j,j}` form used here as
+    /// the one Lopez-Paz & Ranzato use (their reference 15) and argue against it, because it
+    /// "makes the measure agnostic to the IL process". Their example is one task whose accuracies
+    /// after steps 1 to 4 are 0.7, 0.8, 0.6 and 0.5: "forgetting measured based on Eq. (3) is
+    /// `f_1^4` = 0.3, whereas \[15\] would measure it as 0.2" (Sec. 3, p. 5 of
+    /// `arXiv`:1801.10112v3). Their measure is now [`Results::forgetting_from_peak`], a new method.
+    /// This one computes what it always computed; only its attribution has changed.
     #[must_use]
     pub fn forgetting(&self, j: usize) -> Option<f64> {
         Some(self.learned(j)? - self.retained(j)?)
+    }
+
+    /// Chaudhry et al.'s forgetting of task `j`: the best accuracy it had at any step from the one
+    /// that trained it to the one before the last, minus the accuracy it has now.
+    ///
+    /// Chaudhry, Dokania, Ajanthan & Torr, *Riemannian Walk for Incremental Learning:
+    /// Understanding Forgetting and Intransigence*, Computer Vision – ECCV 2018, Lecture Notes in
+    /// Computer Science pp. 556–572 (2018), doi:10.1007/978-3-030-01252-6_33,
+    /// `arXiv`:1801.10112, Eq. (3):
+    ///
+    /// ```text
+    /// f_j^k = max_{l ∈ {1, …, k-1}} a_{l,j} - a_{k,j},   for j < k
+    /// ```
+    ///
+    /// with `a_{l,j}` the accuracy on task `j` after training up to task `l`, which is this
+    /// module's `r[l][j]`. The maximum is what separates it from [`Results::forgetting`]: a task
+    /// that improved after it was learned (positive backward transfer) and then fell has lost
+    /// more than `learned - retained` says. On the paper's own example, accuracies of 0.7, 0.8,
+    /// 0.6 and 0.5 on one task, this gives 0.3 where [`Results::forgetting`] gives 0.2. A task
+    /// that is at its best at the end has negative forgetting, which the paper keeps: "`f_j^k` ∈
+    /// \[−1, 1\]".
+    ///
+    /// # The range starts at the row that trained task `j`
+    ///
+    /// The printed range is `l ∈ {1, …, k-1}`, but the paper defines `a_{k,j}` only for a task
+    /// already trained: "the accuracy … evaluated on the held-out test set of the j-th task
+    /// (j ≤ k) after training the network incrementally from tasks 1 to k" (Sec. 3, p. 5). This
+    /// module's matrix is square and also holds `r[l][j]` for `l < j`, the accuracy on a task not
+    /// yet trained, which is what [`Results::forward_transfer`] reads. Those entries are outside
+    /// Eq. (3)'s domain, so the maximum runs over rows `j..last` and never over them. A task that
+    /// scores well before it is trained has not thereby learned something it can later forget.
+    ///
+    /// `None` when `j` is not before the last task, because Eq. (3) is defined only for `j < k`:
+    /// the last task has had no later step in which to forget, which is not the same as having
+    /// forgotten nothing. Also `None` when a row in the range is too short to hold column `j`, as
+    /// [`Results::backward_transfer`] refuses a ragged matrix. A NaN anywhere in the range makes
+    /// the result NaN, as it does for every other metric here, rather than being passed over by
+    /// the maximum.
+    #[must_use]
+    pub fn forgetting_from_peak(&self, j: usize) -> Option<f64> {
+        let (last, earlier) = self.r.split_last()?;
+        // `get(j..)` is `None` past the end and empty AT the end, so both `j > last` and
+        // `j == last` stop at one of these two `?`.
+        let (trained, after) = earlier.get(j..)?.split_first()?;
+        let mut peak = *trained.get(j)?;
+        for row in after {
+            let a = *row.get(j)?;
+            // `f64::max` returns the non-NaN operand; a NaN accuracy has to reach the result.
+            if a.is_nan() || a > peak {
+                peak = a;
+            }
+        }
+        Some(peak - last.get(j)?)
     }
 }
 
@@ -1703,13 +1772,13 @@ fn sgd_step(
 /// A cascade synapse: one bit of weight, `depth` levels of metaplastic state.
 ///
 /// Fusi, Drew and Abbott, *Cascade Models of Synaptically Stored Memories*, Neuron 45:599–611
-/// (2005). The problem they set out is the one this whole module is about, stated for a single
-/// synapse: a binary synapse that is always plastic forgets exponentially, and one that is rarely
-/// plastic learns nothing. The cascade's answer is to give the synapse a **depth**. Its weight is
-/// still one bit — `+` or `−`, which is what a memristive or a single-bit `SRAM` synapse actually
-/// stores — but behind that bit sits a level `0..depth`. A stimulus of the opposite sign flips the
-/// bit with a probability that **falls geometrically with level**, and a stimulus of the same sign
-/// pushes the synapse one level deeper.
+/// (2005), doi:10.1016/j.neuron.2005.02.001. The problem they set out is the one this whole module
+/// is about, stated for a single synapse: a binary synapse that is always plastic forgets
+/// exponentially, and one that is rarely plastic learns nothing. The cascade's answer is to give
+/// the synapse a **depth**. Its weight is still one bit — `+` or `−`, which is what a memristive or
+/// a single-bit `SRAM` synapse actually stores — but behind that bit sits a level `0..depth`. A
+/// stimulus of the opposite sign flips the bit with a probability that **falls geometrically with
+/// level**, and a stimulus of the same sign pushes the synapse one level deeper.
 ///
 /// A fresh synapse is shallow and learns instantly. A synapse that has seen the same evidence
 /// repeatedly is deep and ignores contradiction. That is the whole model, and its whole claim is a
@@ -1724,13 +1793,42 @@ fn sgd_step(
 /// the 64 that one `f64` importance value costs. On hardware whose synapse is a single device, that
 /// is the difference between a mechanism you can build and one you cannot.
 ///
-/// # What is verified, and what is transcribed
+/// # What is the paper's, what departs from it, and what is verified
 ///
-/// The exact transition probabilities in the paper are stated for its own figures and this
-/// implementation uses a two-parameter geometric family, `flip_k = q0 * x^k` and
-/// `deepen_k = p0 * x^k`, with `x` the same ratio for both. **This is a simplification and is
-/// stated as one.** What is verified is not the paper's figure but the internal mathematics: the
-/// exact Markov chain in [`Cascade::signal_after`] reduces at `depth == 1` to `(1 - q0)^t` in closed
+/// The rates are a geometric family, `flip_k = q0 * x^k` and `deepen_k = p0 * x^k`, with `x` the
+/// same ratio for both, and it is **the paper's family**. This crate's level `k` is the paper's
+/// state `i = k + 1`. The paper arranges the plasticity probabilities "in a geometric sequence, so
+/// that qi = x^(i-1)", and gives the metaplastic ones as "pi± = x^i/(1 - x)" (p. 603). In this
+/// type's terms that is `q0 = 1` and `p0 = x / (1 - x)` for any `x`, and at the paper's `x = 1/2`
+/// it is [`Cascade::fusi_2005`] at every level above the deepest. In both, the deepest level has no
+/// deepening move, and a flip lands on the top level of the other polarity: "terminating all the
+/// plasticity transitions at the top (i = 1) level of the target cascade" (p. 603).
+///
+/// ⚠ CORRECTED, against the paper. This section used to say that the paper's exact transition
+/// probabilities "are stated for its own figures" and that this family "is a simplification and
+/// is stated as one". It is not a simplification. Every rate [`Cascade::fusi_2005`] sets is the
+/// paper's except one, **the flip rate of the deepest level**, and the paper itself gives that rate
+/// two ways:
+///
+/// - Its Model section compensates it: "To compensate for the boundary effects that occur for the
+///   last state in the cascade, we set qn = x^(n-1)/(1 - x), although this adjustment is
+///   convenient rather than essential" (p. 603). That is `2^-(n-2)` at `x = 1/2`. Its
+///   Experimental Procedures give the reason: the choices of `q_i`, `q_n` and `p_i` "then assure
+///   that all the occupancies F±i take equal values at equilibrium" (p. 610).
+/// - Its Results do not: the Figure 4 caption reads "decreasing qn = 2^(-n+1)" (p. 604), and the
+///   binary comparison sets "q = qn = 2^(-n+1) for n = 5, 10, and 15" (p. 605). That is `x^(n-1)`.
+///
+/// This type applies `q0 * x^k` at every level, the deepest included, so it takes the Results'
+/// value and not the compensated one. The consequence is measurable: on the paper's family the
+/// deepest level holds `1 / (1 - x)` times the equilibrium occupancy of each other level rather
+/// than an equal share, which is **twice** at `x = 1/2`. That is the `a_{d-1} = 2 * a_{d-2}` in
+/// [`Cascade::learning_probability`]'s derivation, and
+/// `fusi_2005_is_the_papers_family_up_to_the_deepest_flip` asserts it together with every rate.
+/// The compensated rate is not offered here: every number this module reports for the cascade,
+/// `2 / (depth + 1)` included, is computed on the uncompensated chain.
+///
+/// What is verified here is the internal mathematics rather than a figure of the paper: the exact
+/// Markov chain in [`Cascade::signal_after`] reduces at `depth == 1` to `(1 - q0)^t` in closed
 /// form, and the sampled ensemble in [`CascadeEnsemble`] reproduces the chain.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Cascade {
@@ -1928,10 +2026,21 @@ fn stationary_direct(g: &[f64], m: &[f64], n: usize) -> Option<Vec<f64>> {
 impl Cascade {
     /// The parameterisation this module uses for its figures: `q0 = p0 = 1.0`, `x = 0.5`.
     ///
-    /// The halving ratio is the paper's; the unit level-0 probabilities are this implementation's
-    /// choice, so that a fresh synapse is maximally plastic and depth is the only thing that slows
-    /// it down. **Whether these reproduce any particular figure in the paper has not been checked
-    /// here**, and the tests check the model's internal mathematics instead.
+    /// All three are the paper's. With level `k` as the paper's state `i = k + 1`, its
+    /// `q_i = x^(i-1)` gives `q_1 = x^0 = 1` and its `p_i = x^i / (1 - x)` gives `p_1 = 1` at
+    /// `x = 1/2`, and `1/2` is the paper's own choice, because it is where `p_1` reaches 1: "the
+    /// value of 1/2 for x is the largest value consistent with maintaining p1± ≤ 1, so choosing
+    /// this value gives the maximum range of transition probabilities" (Fusi, Drew & Abbott 2005,
+    /// p. 603). For a general `x` the paper's family is `q0 = 1`, `p0 = x / (1 - x)`.
+    ///
+    /// ⚠ CORRECTED, against the paper. This doc used to say that the halving ratio was the paper's
+    /// and that the unit level-0 probabilities were "this implementation's choice". They are not;
+    /// they are the paper's top level. The one place this constructor departs from the paper is the
+    /// deepest level's flip rate, which the paper itself states two ways: this takes the value of
+    /// its Results, `2^-(depth-1)`, not the compensated one of its Model section; see [`Cascade`].
+    /// **Whether these reproduce any particular figure in the paper has not been checked here**,
+    /// and the tests check the model's internal mathematics and its rates against the paper's
+    /// formulas instead.
     #[must_use]
     pub fn fusi_2005(depth: usize) -> Self {
         Self { depth, q0: 1.0, p0: 1.0, x: 0.5 }
@@ -2936,11 +3045,105 @@ mod tests {
         assert!((res.forward_transfer().unwrap() - 0.075).abs() < 1e-12);
         assert!((res.forgetting(0).unwrap() - 0.5).abs() < 1e-12);
         assert!((res.forgetting(2).unwrap() - 0.0).abs() < 1e-12);
+        // `forgetting` is the per-task term of Lopez-Paz & Ranzato's BWT with the sign flipped,
+        // so its mean over the earlier tasks is minus the BWT, bit for bit: negation is exact and
+        // both sums run in the same order.
+        let mean = (res.forgetting(0).unwrap() + res.forgetting(1).unwrap()) / 2.0;
+        assert_eq!(mean, -res.backward_transfer().unwrap());
+        // Chaudhry et al.'s Eq. (3). Both columns peak on the diagonal here, so the two forms
+        // agree on this matrix; the next test is where they do not.
+        assert!((res.forgetting_from_peak(0).unwrap() - 0.5).abs() < 1e-12);
+        assert!((res.forgetting_from_peak(1).unwrap() - 0.35).abs() < 1e-12);
+        assert_eq!(res.forgetting_from_peak(2), None);
         assert_eq!(res.learned(1), Some(0.8));
         assert_eq!(res.retained(1), Some(0.45));
         assert_eq!(res.tasks(), 3);
         assert_eq!(res.learned(3), None);
         assert_eq!(res.retained(3), None);
+    }
+
+    /// Chaudhry, Dokania, Ajanthan & Torr (ECCV 2018, `arXiv`:1801.10112), Eq. (3), on the
+    /// example in their Sec. 3: one task's accuracies after steps 1 to 4 are 0.7, 0.8, 0.6 and
+    /// 0.5. "Forgetting measured based on Eq. (3) is `f_1^4` = 0.3, whereas \[15\] would measure
+    /// it as 0.2", their reference 15 being Lopez-Paz & Ranzato. The paper prints both numbers, and
+    /// this is the pair of methods that computes them: [`Results::forgetting_from_peak`] and
+    /// [`Results::forgetting`].
+    ///
+    /// The dyadic fixtures are exact and pin the three things the example cannot. The maximum
+    /// includes the row that trained the task. It excludes the LAST row, so a task that ends at its
+    /// best has negative forgetting (the paper's "`f_j^k` ∈ \[−1, 1\]"). And it excludes every row
+    /// from BEFORE the task was trained, because the paper defines `a_{k,j}` only for `j ≤ k`
+    /// (p. 5): a column that scores highest before its task is trained has not learned something
+    /// it can then forget.
+    #[test]
+    fn forgetting_from_peak_is_chaudhrys_eq_3_on_the_papers_own_example() {
+        let paper = Results {
+            r: vec![
+                vec![0.7, 0.2, 0.2, 0.2],
+                vec![0.8, 0.9, 0.2, 0.2],
+                vec![0.6, 0.7, 0.9, 0.2],
+                vec![0.5, 0.6, 0.8, 0.9],
+            ],
+            baseline: vec![0.2; 4],
+            cost: Cost::default(),
+        };
+        assert!((paper.forgetting_from_peak(0).unwrap() - 0.3).abs() < 1e-12);
+        assert!((paper.forgetting(0).unwrap() - 0.2).abs() < 1e-12);
+        // Eq. (3) is defined for j < k only. The last task has had no later step to forget in,
+        // which `forgetting` reports as a zero and this reports as what it is.
+        assert_eq!(paper.forgetting(3), Some(0.0));
+        assert_eq!(paper.forgetting_from_peak(3), None);
+        assert_eq!(paper.forgetting_from_peak(4), None);
+
+        let dyadic = Results {
+            r: vec![
+                vec![0.75, 0.875, 0.25, 0.25],
+                vec![0.5, 0.5, 0.25, 0.25],
+                vec![0.25, 0.75, 0.5, 0.25],
+                vec![0.25, 0.25, 0.25, 0.75],
+            ],
+            baseline: vec![0.25; 4],
+            cost: Cost::default(),
+        };
+        // Column 0 peaks on the row that trained it: 0.75 - 0.25.
+        assert_eq!(dyadic.forgetting_from_peak(0), Some(0.5));
+        assert_eq!(dyadic.forgetting(0), Some(0.5));
+        // Column 1 was learned at 0.5, rose to 0.75, fell to 0.25: Eq. (3) sees the rise,
+        // `forgetting` does not. Its 0.875 at row 0, BEFORE task 1 was trained, is outside
+        // Eq. (3)'s domain and is not the peak; counting it would give 0.625.
+        assert_eq!(dyadic.forgetting_from_peak(1), Some(0.5));
+        assert_eq!(dyadic.forgetting(1), Some(0.25));
+        // Column 2's range is its training row alone.
+        assert_eq!(dyadic.forgetting_from_peak(2), Some(0.25));
+        assert_eq!(dyadic.forgetting_from_peak(3), None);
+        let improved = Results {
+            r: vec![vec![0.25, 0.25, 0.25], vec![0.5, 0.25, 0.25], vec![0.75, 0.25, 0.25]],
+            baseline: vec![0.25; 3],
+            cost: Cost::default(),
+        };
+        // Task 0 is at its best at the end: max(0.25, 0.5) - 0.75, negative forgetting.
+        assert_eq!(improved.forgetting_from_peak(0), Some(-0.25));
+
+        // A NaN accuracy in the range reaches the result, whether it sits on the training row or
+        // after it. `f64::max` would pass over it and report 0.25 in both.
+        let nan_after = Results {
+            r: vec![vec![0.5, 0.25], vec![f64::NAN, 0.5], vec![0.25, 0.25]],
+            baseline: vec![0.25; 2],
+            cost: Cost::default(),
+        };
+        assert!(nan_after.forgetting_from_peak(0).unwrap().is_nan());
+        let nan_trained = Results {
+            r: vec![vec![f64::NAN, 0.25], vec![0.5, 0.5], vec![0.25, 0.25]],
+            baseline: vec![0.25; 2],
+            cost: Cost::default(),
+        };
+        assert!(nan_trained.forgetting_from_peak(0).unwrap().is_nan());
+
+        // No earlier step at all, and no run at all.
+        let one = Results { r: vec![vec![1.0]], baseline: vec![0.25], cost: Cost::default() };
+        assert_eq!(one.forgetting_from_peak(0), None);
+        let empty = Results { r: Vec::new(), baseline: Vec::new(), cost: Cost::default() };
+        assert_eq!(empty.forgetting_from_peak(0), None);
     }
 
     // -----------------------------------------------------------------------------------------
@@ -3007,6 +3210,68 @@ mod tests {
             // commensurable.
             let s0 = Cascade::fusi_2005(depth).signal_after(0).unwrap();
             assert!((s0 - got).abs() < 1e-14, "depth {depth}: signal(0) {s0} vs lp {got}");
+        }
+    }
+
+    /// [`Cascade::fusi_2005`] against Fusi, Drew & Abbott's own formulas (Neuron 45:599–611,
+    /// 2005), computed here from the paper's expressions rather than read back from the type.
+    /// With level `k` as the paper's state `i = k + 1` and the paper's `x = 1/2`: `q_i = x^(i-1)`
+    /// and `p_i = x^i / (1 - x)` (p. 603) at every state but the last; no metaplastic move from the
+    /// last; and at the last, the flip rate of the paper's Results, `qn = 2^(-n+1)` (pp. 604–605),
+    /// which is NOT the boundary-compensated `qn = x^(n-1)/(1 - x)` of its Model section. Every
+    /// rate is a power of two or a power of two over `1 - x`, so every rate comparison is exact.
+    ///
+    /// The general-`x` family the type's doc names, `q0 = 1` and `p0 = x / (1 - x)`, is checked at
+    /// two more dyadic ratios. And the measurable consequence of the uncompensated boundary is
+    /// asserted: the paper's compensated chain occupies every state equally (p. 610), and this
+    /// one puts `1 / (1 - x)` times as much mass on its deepest level, exactly twice at `x = 1/2`.
+    #[test]
+    fn fusi_2005_is_the_papers_family_up_to_the_deepest_flip() {
+        for n in 1..=12usize {
+            let x: f64 = 0.5;
+            let c = Cascade::fusi_2005(n);
+            for i in 1..n {
+                let q_i = x.powi(i as i32 - 1);
+                let p_i = x.powi(i as i32) / (1.0 - x);
+                assert_eq!(c.flip_probability(i - 1), Some(q_i), "q_{i} at n = {n}");
+                assert_eq!(c.deepen_probability(i - 1), Some(p_i), "p_{i} at n = {n}");
+            }
+            // State n: the paper has no p_n, and its Results' q_n rather than its Model's.
+            assert_eq!(c.deepen_probability(n - 1), Some(0.0));
+            let results_qn = 2f64.powi(-(n as i32) + 1);
+            let compensated_qn = x.powi(n as i32 - 1) / (1.0 - x);
+            assert_eq!(c.flip_probability(n - 1), Some(results_qn), "n = {n}");
+            assert_ne!(c.flip_probability(n - 1), Some(compensated_qn), "n = {n}");
+
+            // Without the compensation the deepest level holds twice each other level's share.
+            // Before the one shared normalisation every level's mass is 0.5 and the deepest's is
+            // 1, and halving commutes with rounding, so the factor is exact.
+            let pi = c.stationary().unwrap();
+            for k in 0..n - 1 {
+                assert_eq!(pi[n - 1], 2.0 * pi[k], "n = {n}, level {k}");
+                assert_eq!(pi[2 * n - 1], 2.0 * pi[n + k], "n = {n}, level {k}, minus half");
+            }
+        }
+        for x in [0.25f64, 0.125] {
+            let c = Cascade { depth: 6, q0: 1.0, p0: x / (1.0 - x), x };
+            for i in 1..6usize {
+                assert_eq!(
+                    c.flip_probability(i - 1),
+                    Some(x.powi(i as i32 - 1)),
+                    "x = {x}, i = {i}"
+                );
+                assert_eq!(
+                    c.deepen_probability(i - 1),
+                    Some(x.powi(i as i32) / (1.0 - x)),
+                    "x = {x}, i = {i}"
+                );
+            }
+            // `p0 = x / (1 - x)` is not dyadic here, so the occupancy ratio is checked to roundoff.
+            let pi = c.stationary().unwrap();
+            for k in 0..5 {
+                let ratio = pi[5] / pi[k];
+                assert!((ratio - 1.0 / (1.0 - x)).abs() < 1e-12, "x = {x}, level {k}: {ratio}");
+            }
         }
     }
 
@@ -3681,6 +3946,35 @@ mod tests {
             cost: Cost::default(),
         };
         assert_eq!(short_baseline.forward_transfer(), None);
+        // A short row in the range Eq. (3) maximises over is refused, not skipped: skipping row 2
+        // would report 0.5 - 0.25 from the rows that happen to be long enough.
+        let short_row_in_range = Results {
+            r: vec![
+                vec![0.5, 0.25, 0.25, 0.25],
+                vec![0.5, 0.5, 0.25, 0.25],
+                vec![0.5],
+                vec![0.25, 0.25, 0.25, 0.25],
+            ],
+            baseline: vec![0.25; 4],
+            cost: Cost::default(),
+        };
+        assert_eq!(short_row_in_range.forgetting_from_peak(1), None);
+        assert_eq!(short_row_in_range.forgetting_from_peak(0), Some(0.25));
+        // So is a short training row. A short row BEFORE the range is not read, exactly as
+        // `backward_transfer` does not read it.
+        let short_training_row = Results {
+            r: vec![vec![0.5, 0.25], vec![0.5], vec![0.25, 0.25]],
+            baseline: vec![0.25, 0.25],
+            cost: Cost::default(),
+        };
+        assert_eq!(short_training_row.forgetting_from_peak(1), None);
+        let short_row_before_range = Results {
+            r: vec![vec![0.5], vec![0.5, 0.5], vec![0.25, 0.25]],
+            baseline: vec![0.25, 0.25],
+            cost: Cost::default(),
+        };
+        assert_eq!(short_row_before_range.forgetting_from_peak(1), Some(0.25));
+        assert_eq!(short_row_before_range.backward_transfer(), Some(-0.25));
     }
 
     /// Softmax on logits large enough to overflow `exp`. The max-subtraction has to be there, and
@@ -4245,8 +4539,9 @@ mod tests {
     }
 
     /// The two rates are scaled by their own level-0 probability: flipping by `q0`, deepening by
-    /// `p0`. Every cascade this suite asserts a probability on is [`Cascade::fusi_2005`], where
-    /// `q0 == p0 == 1.0` and the two are the same number at every level.
+    /// `p0`. Every other cascade this suite asserts a probability on is [`Cascade::fusi_2005`],
+    /// where `q0 == p0 == 1.0` and the two are the same number at every level, except the
+    /// general-`x` family in `fusi_2005_is_the_papers_family_up_to_the_deepest_flip`.
     #[test]
     fn the_flip_rate_is_scaled_by_q0_and_the_deepening_rate_by_p0() {
         let c = Cascade { depth: 3, q0: 0.25, p0: 0.75, x: 0.5 };

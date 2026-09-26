@@ -8,9 +8,21 @@
 //! made smaller, and there are exactly four levers anybody has found:
 //!
 //! 1. **Pruning** — set weights to zero and stop storing them. Han, Pool, Tran and Dally,
-//!    *Learning both Weights and Connections for Efficient Neural Networks*, NIPS 2015, is the
-//!    paper that made magnitude pruning standard; Frankle and Carbin, *The Lottery Ticket
-//!    Hypothesis*, ICLR 2019, is why people now prune and retrain rather than prune and ship.
+//!    *Learning both Weights and Connections for Efficient Neural Networks*, NIPS 2015
+//!    (arXiv:1506.02626v3), is the paper that made magnitude pruning standard, and retraining is
+//!    its own required third step: "The final step retrains the network to learn the final
+//!    weights for the remaining sparse connections. This step is critical. If the pruned
+//!    network is used without retraining, accuracy is significantly impacted." (Sec. 3). Frankle
+//!    and Carbin, *The Lottery Ticket Hypothesis: Finding Sparse, Trainable Neural Networks*,
+//!    ICLR 2019 (arXiv:1803.03635v5, the camera-ready), added a different step: reset every
+//!    surviving weight to its ORIGINAL initialisation and train the subnetwork in isolation. The
+//!    subnetworks that step finds, the *winning tickets*, "reach test accuracy comparable to the
+//!    original network in a similar number of iterations" (abstract). That paper is why people
+//!    rewind to the initial weights, not why they retrain. ⛔ This item used to say Frankle and
+//!    Carbin are "why people now prune and retrain rather than prune and ship". Their own
+//!    footnote 1 quotes Han et al. 2015 on retraining, and Sec. 1 names the reset as the step
+//!    that is theirs: "Unique to our work, each unpruned connection's value is then reset to its
+//!    initialization from original network before it was trained."
 //! 2. **Quantisation** — store each surviving weight in fewer bits. [`crate::hardware::Quantiser`]
 //!    already does the arithmetic and reports what it cost; this module reuses it rather than
 //!    reimplementing the round trip.
@@ -1393,9 +1405,14 @@ pub struct Distillation {
     pub temperature: f64,
     /// Weight on the soft term, `0.0..=1.0`; the hard term gets `1 - alpha`.
     ///
-    /// The paper reports that "considerably better results" came from a **low** weight on the
-    /// hard term, i.e. an `alpha` near 1. This crate does not endorse a value: the right one
-    /// depends on how good the teacher is, and nothing here measures that.
+    /// The paper (arXiv:1503.02531v1, Sec. 2) reports that "the best results were generally
+    /// obtained by using a condiderably \[sic\] lower weight on the second objective function",
+    /// the second objective being the cross-entropy with the correct labels: a **low** weight on
+    /// the hard term, i.e. an `alpha` near 1. ⛔ This doc used to put "considerably better
+    /// results" in quotation marks as the paper's words; this review did not locate that phrase,
+    /// nor the word "considerably", in its full text (v1 is the only version on arXiv). This
+    /// crate does not endorse a value: the right one depends on how good the teacher is, and
+    /// nothing here measures that.
     pub alpha: f64,
 }
 
@@ -2026,9 +2043,14 @@ mod tests {
     }
 
     /// ⛔ `quantise_for_part` had no test at all — the one public function in the module with
-    /// none. It takes its width from the part: Loihi states 9-bit weights (Davies et al. 2018,
-    /// Table 1: 1 to 9 bits), and a part whose width this review did not locate is a refusal that
-    /// names the part and the field.
+    /// none. It takes its width from the part: Loihi states "any weight precision between one
+    /// and nine bits, signed or unsigned" (Davies et al., *Loihi: A Neuromorphic Manycore
+    /// Processor with On-Chip Learning*, IEEE Micro 38(1):82-99 (2018), feature list, "Variable
+    /// synaptic formats"), so the widest is 9; Table 1 (learning-rule product terms, encoding 9)
+    /// lists the synaptic weight as 9b signed. ⛔ This doc used to cite "Table 1: 1 to 9 bits";
+    /// the one-to-nine range is in the feature bullet, and Table 1 supports only the 9-bit field.
+    /// A part whose width this review did not locate is a refusal that names the part and the
+    /// field.
     #[test]
     fn quantise_for_part_takes_the_width_from_the_part_or_refuses_by_name() {
         let w = [0.02, -0.9, 0.31, 1.0];

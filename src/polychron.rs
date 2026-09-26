@@ -19,7 +19,7 @@
 //! give each the firing time that makes its spike arrive at that target simultaneously, and run
 //! the network forward deterministically: a neuron fires when at least `threshold` spikes reach
 //! it within a coincidence window. Whatever fires is the group. A group is kept only when it
-//! reaches at least `min_length` neurons, so that "the anchors and nothing else" is not counted.
+//! reaches at least `min_size` neurons, so that "the anchors and nothing else" is not counted.
 //!
 //! # Why it is in a neuromorphic crate
 //!
@@ -49,9 +49,9 @@
 //!   The count is then combinatorics of the connectivity, `Σ_target C(fan_in, anchors)`, and it
 //!   barely moves when the delays are changed (3,736 spread, 3,556 narrow, 3,123 uniform).
 //! - **A measured result that went the other way from the expectation.** This module was written
-//!   expecting a spread of delays to produce LONGER cascades than uniform ones. It produces
-//!   shorter: at 120 neurons, four delays gave 167 groups of length four or more and a longest of
-//!   6, while a single delay gave 657 and a longest of 25. Identical delays make downstream
+//!   expecting a spread of delays to produce LARGER cascades than uniform ones. It produces
+//!   smaller: at 120 neurons, four delays gave 167 groups of four or more neurons and a largest of
+//!   6, while a single delay gave 657 and a largest of 25. Identical delays make downstream
 //!   coincidences EASY — everything arrives on the same grid — whereas scattered arrivals rarely
 //!   land inside a 0.1 ms window together. The test asserts the measured direction. This is a
 //!   property of counting neurons with a narrow window, not a claim about Izhikevich's network,
@@ -153,7 +153,11 @@ pub struct Group {
 }
 
 impl Group {
-    /// How many firings the group has — its length, in Izhikevich's sense.
+    /// How many firings the group has. Each neuron fires at most once, so this is the number of
+    /// neurons: the group's *size* in Izhikevich's sense (2006, Fig. 8, "the number of neurons
+    /// that form each group"). His *length* is the longest path through the group, which this
+    /// module does not compute. Earlier releases called this count the length; the paper's
+    /// example group has size 15 and length 5, so the two are not interchangeable.
     #[must_use]
     pub fn len(&self) -> usize {
         self.firings.len()
@@ -323,7 +327,7 @@ impl Network {
         Ok(Group { anchors: anchors.to_vec(), firings })
     }
 
-    /// Every polychronous group of `anchors` anchors that reaches at least `min_length` firings.
+    /// Every polychronous group of `anchors` anchors that reaches at least `min_size` firings.
     ///
     /// Anchor sets are taken from the neurons that share a target: for each neuron, each
     /// combination of `anchors` of its presynaptic neighbours, timed so their spikes coincide
@@ -331,13 +335,13 @@ impl Network {
     ///
     /// # Errors
     ///
-    /// [`PolyError::OutOfRange`] for fewer anchors than the threshold or a `min_length` of zero.
-    pub fn groups(&self, anchors: usize, min_length: usize) -> Result<Vec<Group>, PolyError> {
+    /// [`PolyError::OutOfRange`] for fewer anchors than the threshold or a `min_size` of zero.
+    pub fn groups(&self, anchors: usize, min_size: usize) -> Result<Vec<Group>, PolyError> {
         if anchors < self.threshold {
             return Err(PolyError::TooFewAnchors { got: anchors, threshold: self.threshold });
         }
-        if min_length == 0 {
-            return Err(PolyError::OutOfRange { what: "min_length", value: 0.0 });
+        if min_size == 0 {
+            return Err(PolyError::OutOfRange { what: "min_size", value: 0.0 });
         }
         // Who reaches each target.
         let mut into: Vec<Vec<usize>> = vec![Vec::new(); self.n];
@@ -359,7 +363,7 @@ impl Network {
                 let set: Vec<usize> = combination.iter().map(|&k| sources[k]).collect();
                 if let Ok(times) = self.anchor_times(&set, target)
                     && let Ok(group) = self.simulate(&set, &times)
-                    && group.len() >= min_length
+                    && group.len() >= min_size
                     && !found.iter().any(|g| g.firings == group.firings)
                 {
                     found.push(group);
@@ -479,14 +483,14 @@ mod tests {
         let mut seen: Vec<Vec<usize>> = groups.iter().map(Group::neurons).collect();
         seen.sort();
         assert_eq!(seen, vec![vec![0, 1, 2], vec![2, 3, 4]]);
-        // Asking for longer groups finds none: nothing in this network fires four neurons.
+        // Asking for larger groups finds none: nothing in this network fires four neurons.
         assert!(net.groups(2, 4).unwrap().is_empty());
-        // And asking for length one or more adds NOTHING, which is the point made in the module
+        // And asking for size one or more adds NOTHING, which is the point made in the module
         // documentation: with as many anchors as the threshold, the target always fires, so no
         // group is ever just its anchors.
         assert_eq!(net.groups(2, 1).unwrap().len(), groups.len());
         assert_eq!(net.groups(1, 1), Err(PolyError::TooFewAnchors { got: 1, threshold: 2 }));
-        assert_eq!(net.groups(2, 0), Err(PolyError::OutOfRange { what: "min_length", value: 0.0 }));
+        assert_eq!(net.groups(2, 0), Err(PolyError::OutOfRange { what: "min_size", value: 0.0 }));
     }
 
     #[test]
@@ -509,7 +513,7 @@ mod tests {
     }
 
     /// Groups of a 120-neuron random network at the given delays: how many, how many cascade
-    /// past the first target, and the longest.
+    /// past the first target, and the largest.
     fn census(delays: &[f64]) -> (usize, usize, usize) {
         let net = random(120, 8, delays, 2, 1e-4, 11).unwrap();
         let groups = net.groups(2, 3).unwrap();
@@ -543,7 +547,7 @@ mod tests {
         // the obvious guess: identical delays put every arrival on one grid, so coincidences
         // downstream are easy, while scattered arrivals rarely land in a 0.1 ms window together.
         assert!(uniform_long > 2 * spread_long, "cascades: uniform {uniform_long}, spread {spread_long}");
-        assert!(uniform_max > 3 * spread_max, "longest group: uniform {uniform_max}, spread {spread_max}");
+        assert!(uniform_max > 3 * spread_max, "largest group: uniform {uniform_max}, spread {spread_max}");
         assert!(narrow_long > spread_long && narrow_long < uniform_long, "narrow {narrow_long} should sit between {spread_long} and {uniform_long}");
         assert!(narrow_max > spread_max && narrow_max < uniform_max, "narrow {narrow_max} between {spread_max} and {uniform_max}");
     }
@@ -602,7 +606,7 @@ mod tests {
         assert_eq!(groups[0].anchors, vec![0, 1]);
         assert_eq!(net.delay(0, 2), Some(9e-3), "the first axon listed is the one `delay` reports");
         // Counting neuron 0 twice would offer {0, 0} as an anchor set as well — a "coincidence"
-        // of one neuron with itself, which fires nothing. It is visible at a minimum length of
+        // of one neuron with itself, which fires nothing. It is visible at a minimum size of
         // one, where a group of just its anchors is still counted.
         assert_eq!(net.groups(2, 1).unwrap().len(), 1, "{:?}", net.groups(2, 1).unwrap());
     }

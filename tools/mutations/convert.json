@@ -63,7 +63,7 @@
   "label": "the interval's floor of one tick is dropped",
   "old": "            Self::ToZero => 1.0 / (1.0 / z).ceil().max(1.0),",
   "new": "            Self::ToZero => 1.0 / (1.0 / z).ceil(),",
-  "equivalent": "the branch is reached only for a finite z > 0, because a non-finite z returned None and a z <= 0.0 returned Some(0.0) above it. For every finite z > 0 the quotient 1.0 / z is strictly positive — the smallest positive f64, 5e-324, gives 1/z = inf and the largest, 1.8e308, gives 5.6e-309, still greater than zero — so its ceiling is at least 1.0 and `.max(1.0)` returns its argument unchanged in every case the guard can see. The clamp is unreachable, so no input distinguishes the two forms."
+  "equivalent": "the branch is reached only for a finite z > 0, because a non-finite z returned None and a z <= 0.0 returned Some(0.0) above it. For every finite z > 0 the quotient 1.0 / z is strictly positive — the smallest positive f64, 5e-324, gives 1/z = inf and the largest, 1.8e308, gives 5.6e-309, still greater than zero — so its ceiling is at least 1.0 and `.max(1.0)` returns its argument unchanged in every case the guard can see. The clamp is unreachable, so no input distinguishes the two forms. BUILT AND RUN, not argued: both forms of `rate_limit`'s reset-to-zero arm compiled side by side (scratchpad fixture `eqfix`) and compared bit for bit over 40,008,210 inputs — 20,000,000 positive finite bit patterns drawn uniformly, 20,000,000 values uniform in 0..4, the 4,096 smallest and 4,096 largest positive finite f64, zero, both signs of infinity and NaN: 0 disagreements."
  },
  {
   "label": "a fresh neuron starts at threshold rather than at zero",
@@ -384,7 +384,7 @@
   "label": "the upper index is not clamped to the last order statistic",
   "old": "    let (li, hi_i) = (lo as usize, (hi as usize).min(n - 1));",
   "new": "    let (li, hi_i) = (lo as usize, hi as usize);",
-  "equivalent": "the guard above returns None unless 0 <= p <= 100, and n >= 2 here because n == 1 returned already, so rank = p/100 * (n - 1) lies in [0, n - 1]. At p = 100 the factor p/100.0 is exactly 1.0 and the product is exactly (n - 1) as f64, which is exact for any n a Vec can hold, so rank <= n - 1 with no rounding above it and hi = rank.ceil() <= n - 1 in every reachable case. The clamp can never bind, so no pool and no percentile distinguishes the two forms."
+  "equivalent": "the guard above returns None unless 0 <= p <= 100, and n >= 2 here because n == 1 returned already, so rank = p/100 * (n - 1) lies in [0, n - 1]. At p = 100 the factor p/100.0 is exactly 1.0 and the product is exactly (n - 1) as f64, which is exact for any n a Vec can hold, so rank <= n - 1 with no rounding above it and hi = rank.ceil() <= n - 1 in every reachable case. The clamp can never bind, so no pool and no percentile distinguishes the two forms. BUILT AND RUN, not argued: both forms of `percentile` compiled side by side (scratchpad fixture `eqfix`), the unclamped one under catch_unwind so an out-of-range index would count as a disagreement, over 768,324 (pool, p) cases — pools of 1 to 300 values with p on a 0.1 grid, at 0, 100, the f64 just below 100, 99.9 and random reals, plus pools of 999,983 to 2,000,001 values at p = 100 and just below it: 0 disagreements."
  },
  {
   "label": "the default tick is ten milliseconds",
@@ -745,7 +745,7 @@
   "label": "a fit through one point is allowed",
   "old": "        if xs.len() < 2 {\n            return None;\n        }",
   "new": "        if xs.len() < 1 {\n            return None;\n        }",
-  "equivalent": "the `den == 0.0` guard below still refuses both cases the length check exists for. With exactly one usable point mx = xs[0], so the single term (xs[0] - mx) * (xs[0] - mx) is 0.0 and den is 0.0. With no usable points the sums are 0.0 / 0.0 = NaN for mx and my, the loop body never runs, and den keeps its initial 0.0. Both return None, so the answer is unchanged for every curve; only the line that refuses it moves."
+  "equivalent": "the `den == 0.0` guard below still refuses both cases the length check exists for. With exactly one usable point mx = xs[0], so the single term (xs[0] - mx) * (xs[0] - mx) is 0.0 and den is 0.0. With no usable points the sums are 0.0 / 0.0 = NaN for mx and my, the loop body never runs, and den keeps its initial 0.0. Both return None, so the answer is unchanged for every curve; only the line that refuses it moves. BUILT AND RUN, not argued: both length guards compiled side by side (scratchpad fixture `eqfix`) and compared bit for bit over 2,000,000 random curves of 0 to 6 points, with zero ticks and zero, negative, NaN and infinite errors mixed in, of which 480,174 had no usable point and 470,873 exactly one: 0 disagreements."
  },
  {
   "label": "the fit regresses the ticks on the error instead of the error on the ticks",

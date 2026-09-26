@@ -1059,14 +1059,39 @@
   "new": "        if signal.len() < 1 {"
  },
  {
-  "label": "the statistical threshold averages signed differences",
-  "old": "        let d: Vec<f64> = signal.windows(2).map(|w| (w[1] - w[0]).abs()).collect();",
-  "new": "        let d: Vec<f64> = signal.windows(2).map(|w| w[1] - w[0]).collect();"
+  "label": "the statistical threshold takes absolute differences, the rule this function computed before it followed Algorithm 1",
+  "old": "        let mut d: Vec<f64> = signal.windows(2).map(|w| w[1] - w[0]).collect();",
+  "new": "        let mut d: Vec<f64> = signal.windows(2).map(|w| (w[1] - w[0]).abs()).collect();"
  },
  {
   "label": "the statistical threshold's spread term is a variance rather than a deviation",
   "old": "        let th = mean + factor * var.sqrt();",
   "new": "        let th = mean + factor * var;"
+ },
+ {
+  "label": "the last difference is not repeated, so there is one difference fewer than samples",
+  "old": "        d.push(last);\n",
+  "new": ""
+ },
+ {
+  "label": "the repeated difference is the first rather than the last",
+  "old": "        let last = d[d.len() - 1];",
+  "new": "        let last = d[0];"
+ },
+ {
+  "label": "the spread divides by N rather than by N - 1 as MATLAB's std does",
+  "old": "        let var = d.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / (n - 1.0);",
+  "new": "        let var = d.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / n;"
+ },
+ {
+  "label": "the mean of the differences divides by N - 1",
+  "old": "        let mean = d.iter().sum::<f64>() / n;",
+  "new": "        let mean = d.iter().sum::<f64>() / (n - 1.0);"
+ },
+ {
+  "label": "the spread is measured about zero rather than about the mean",
+  "old": "        let var = d.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / (n - 1.0);",
+  "new": "        let var = d.iter().map(|x| x * x).sum::<f64>() / (n - 1.0);"
  },
  {
   "label": "the statistical threshold subtracts its spread",
@@ -1079,9 +1104,9 @@
   "new": "        let th = factor * mean + var.sqrt();"
  },
  {
-  "label": "a constant signal is given a threshold of zero rather than a refusal",
-  "old": "        if !(th > 0.0) {\n            return Err(CodeError::NoEvidence { what: \"a usable threshold (the signal does not change)\" });\n        }",
-  "new": "        if th < 0.0 {\n            return Err(CodeError::NoEvidence { what: \"a usable threshold (the signal does not change)\" });\n        }"
+  "label": "a threshold of exactly zero is returned rather than refused",
+  "old": "        if !(th > 0.0) {\n            return Err(CodeError::NoEvidence {\n                what: \"a positive threshold (mean + factor * std of the signed differences is not above zero)\",\n            });\n        }",
+  "new": "        if th < 0.0 {\n            return Err(CodeError::NoEvidence {\n                what: \"a positive threshold (mean + factor * std of the signed differences is not above zero)\",\n            });\n        }"
  },
  {
   "label": "a non-finite sample reaches the threshold statistics",
@@ -1105,8 +1130,13 @@
  },
  {
   "label": "step-forward fires only strictly above its threshold",
-  "old": "                    // is exactly what a synthetic test signal does.\n                    if signal[t] - base >= self.threshold {",
-  "new": "                    // is exactly what a synthetic test signal does.\n                    if signal[t] - base > self.threshold {"
+  "old": "                    // threshold, which is exactly what a synthetic test signal does.\n                    if signal[t] - base >= self.threshold {",
+  "new": "                    // threshold, which is exactly what a synthetic test signal does.\n                    if signal[t] - base > self.threshold {"
+ },
+ {
+  "label": "step-forward fires only strictly below its negative threshold",
+  "old": "                    } else if signal[t] - base <= -self.threshold {\n                        base -= self.threshold;",
+  "new": "                    } else if signal[t] - base < -self.threshold {\n                        base -= self.threshold;"
  },
  {
   "label": "a falling step-forward event is reported as a rise",

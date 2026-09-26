@@ -44,6 +44,10 @@
 //!   well above it, most are not.
 //! - The dense memory with `n = 3` holds `P = N` patterns as fixed points, which the classical
 //!   network cannot, and its energy is non-increasing under its own update.
+//! - Degree two is the classical network only without the rectification: `−Σ_μ (ξ^μ · x)²`
+//!   equals `2N·E − PN` on every state tried. At `N = 100` with five patterns the rectified memory
+//!   puts a stored pattern and its anti-pattern more than `N²/2` apart in energy, and it leaves
+//!   the anti-pattern, which the classical network keeps as a fixed point.
 //! - The modern network's update decreases its energy, retrieves in one step, and holds
 //!   `P ≫ N` random patterns as fixed points at large `β` — and its update IS softmax attention.
 //!
@@ -331,16 +335,32 @@ impl Classical {
 // Dense associative memory
 // ---------------------------------------------------------------------------------------------
 
-/// Krotov and Hopfield's dense associative memory: energy `−Σ_μ F(ξ^μ · x)` with the rectified
-/// polynomial `F(z) = z^n` for `z > 0`, else `0`.
+/// Krotov and Hopfield's dense associative memory (Krotov and Hopfield, *Dense associative memory
+/// for pattern recognition*, `NeurIPS` 29:1172–1180 (2016), arXiv:1606.01164): energy
+/// `−Σ_μ F(ξ^μ · x)` with the rectified polynomial `F(z) = z^n` for `z > 0`, else `0`, which is
+/// the paper's Eq. 3.
 ///
 /// The update of neuron `i` compares the energy with `x_i = +1` against `x_i = −1` and takes the
-/// lower, which is the paper's rule (their Eq. 3) and is what makes the energy non-increasing.
+/// lower, which is the paper's rule (their Eq. 4) and is what makes the energy non-increasing.
+/// This doc used to cite Eq. 3 for the rule. In arXiv v2 and in the proceedings alike, Eq. 3 is
+/// the rectified `F` above, and the update is Eq. 4, a sign whose argument, in the paper's words,
+/// "is the difference of two energies".
 #[derive(Debug, Clone, PartialEq)]
 pub struct Dense {
     /// Neurons.
     pub n: usize,
-    /// Polynomial degree `n ≥ 2`. Two recovers the classical network up to a constant.
+    /// Polynomial degree `n ≥ 2`.
+    ///
+    /// With the rectified `F` used here, degree two is NOT the classical network. This doc used
+    /// to say "Two recovers the classical network up to a constant". The paper states that
+    /// reduction for the unrectified polynomial only (Sec. 2, after Eq. 3: "In the case of the
+    /// polynomial function with n = 2 the network reduces to the standard model of associative
+    /// memory"), and there it holds: `F(z) = z²` gives `−Σ_μ (ξ^μ · x)² = 2N·E − PN`, where `E` is
+    /// the energy of a [`Classical`] network with its `1/N` zero-diagonal weights, the same energy
+    /// up to a positive scale and a constant. Rectified, a pattern whose overlap with the state is
+    /// negative contributes nothing, so a stored `ξ` and its anti-pattern `−ξ`, which the classical
+    /// network cannot tell apart, have very different energies here. A test checks the identity,
+    /// the asymmetry, and that the anti-pattern is a fixed point of one network and not the other.
     pub degree: u32,
     /// Stored patterns, each of length `n`.
     pub patterns: Vec<Vec<f64>>,
@@ -752,8 +772,9 @@ mod tests {
         let e_anti = dense.energy(&anti).unwrap();
         assert!(e_anti <= 0.0, "the rectified energy of the anti-pattern is {e_anti}");
         assert!(dense.energy(&patterns[0]).unwrap() <= -(100.0f64.powi(3)), "the stored pattern's own term is −N³");
-        // Degree 2 is the classical energy up to the diagonal: the same fixed-point verdicts on a
-        // sparse store.
+        // Degree 2 with the rectified F is NOT the classical energy. This comment used to say it
+        // was, "up to the diagonal", and the five assertions under it were read as the proof. What
+        // they show is narrower: on a sparse store the stored patterns are fixed points of both.
         let mut quad = Dense::new(n, 2).unwrap();
         let mut cls = Classical::new(n).unwrap();
         for p in patterns.iter().take(5) {
@@ -763,6 +784,25 @@ mod tests {
         for p in patterns.iter().take(5) {
             assert!(quad.is_fixed_point(p).unwrap() && cls.is_fixed_point(p).unwrap());
         }
+        // The reduction Krotov and Hopfield state (Sec. 2, after Eq. 3) is for the UNRECTIFIED
+        // z²: Σ_μ (ξ^μ·x)² = −2N·E_classical + PN on every state, stored or not.
+        let mut states: Vec<Vec<f64>> = patterns.iter().take(5).cloned().collect();
+        states.extend((0..8).map(|_| random_pattern(n, &mut rng)));
+        for x in &states {
+            let sq: f64 = patterns.iter().take(5).map(|p| p.iter().zip(x).map(|(a, b)| a * b).sum::<f64>().powi(2)).sum();
+            let e = cls.energy(x).unwrap();
+            let want = -2.0 * n as f64 * e + 5.0 * n as f64;
+            assert!((sq - want).abs() < 1e-6, "Σ(ξ·x)² = {sq}, −2N·E + PN = {want}");
+        }
+        // Rectified, the anti-pattern is not the pattern's twin. Classical: E(−ξ) = E(ξ), exactly,
+        // and −ξ is a fixed point because ξ is. Dense degree 2: ξ's own term is −N² and −ξ's is 0.
+        let anti0: Vec<f64> = patterns[0].iter().map(|x| -x).collect();
+        assert_eq!(cls.energy(&anti0).unwrap(), cls.energy(&patterns[0]).unwrap());
+        assert!(cls.is_fixed_point(&anti0).unwrap());
+        let (e_own, e_anti) = (quad.energy(&patterns[0]).unwrap(), quad.energy(&anti0).unwrap());
+        assert!(e_own <= -(n as f64).powi(2), "the stored pattern's own term is −N², energy {e_own}");
+        assert!(e_anti > -0.5 * (n as f64).powi(2), "the anti-pattern's energy is {e_anti}");
+        assert!(!quad.is_fixed_point(&anti0).unwrap(), "the rectified degree-2 memory keeps −ξ");
     }
 
     // ---- modern ----

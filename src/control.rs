@@ -1098,13 +1098,31 @@ pub fn complete_elliptic_k(k: f64) -> Option<f64> {
 ///
 /// # What is **not** claimed
 ///
-/// This implementation did not locate a closed-form expression for the period that holds at
-/// arbitrary distance from the onset boundary; Matsuoka's own analysis (and the 2011 follow-up,
-/// *Analysis of a neural oscillator*, Biological Cybernetics 104:297–304) works in the regime
-/// where exactly one unit is active at a time and still leaves a transcendental crossing
-/// condition. Well inside the oscillating region [`Matsuoka::measure_period`] therefore measures,
-/// and [`Matsuoka::onset_period`] is an **underestimate** there, by a margin this module's tests
-/// tabulate rather than hide.
+/// This review did not locate an **exact** closed-form expression for the period that holds at
+/// arbitrary distance from the onset boundary. An **approximate** one is published, and this
+/// module implements it as [`Matsuoka::harmonic_period`]: K. Matsuoka, *Analysis of a neural
+/// oscillator*, Biological Cybernetics 104:297–304 (2011), doi:10.1007/s00422-011-0432-z, whose
+/// abstract says it "shows two closed-form relations that express the frequency and amplitude of
+/// the generated oscillation as functions of the parameters of the model. Although they are
+/// derived based on a rough linear approximation, they accord with the result obtained by a
+/// simulation considerably." The frequency relation equals [`Matsuoka::onset_period`] exactly at
+/// `w = 1 + tau_r/tau_a` and, from `eps = 0.01` to `eps = 0.833` in the sweep tabulated there,
+/// tracks the measured period far more closely — measured / `T_harm` is 1.0001 to 1.042 where
+/// measured / `T0` is 1.0025 to 1.123. It is still an approximation: at that setting it is
+/// slightly above the measurement right at onset, and once `w` passes `beta` it is the worse of
+/// the two closed forms, falling further behind as `w` approaches `1 + beta`.
+/// [`Matsuoka::measure_period`] therefore remains the measurement, and the margins by which
+/// either closed form misses it are tabulated rather than hidden. The amplitude relation is not
+/// implemented.
+///
+/// ⛔ **Correction.** This paragraph used to say that "Matsuoka's own analysis (and the 2011
+/// follow-up …) works in the regime where exactly one unit is active at a time and still leaves a
+/// transcendental crossing condition", and on that ground offered nothing away from onset. The
+/// 2011 abstract quoted above says the opposite: closed-form relations from a linear
+/// approximation. The 1985 paper is cited in this module for the model and for what its abstract
+/// states about sustained oscillation — "Some sufficient conditions for that are given to three
+/// types of neural networks" — and this review did not read its full text, so it does not
+/// characterise that paper's method.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Matsuoka {
     /// Membrane time constant `tau_r`, seconds. The fast variable's rise time.
@@ -1277,17 +1295,21 @@ impl Matsuoka {
     ///
     /// # How well it holds, measured
     ///
-    /// Exactly at onset, and increasingly optimistic above it. Measured at `tau_r = 40 ms`,
-    /// `tau_a = 240 ms`, `beta = 2.5`, with `w = w* + eps`:
+    /// Exactly at onset, and increasingly optimistic above it across this table. Measured at
+    /// `tau_r = 40 ms`, `tau_a = 240 ms`, `beta = 2.5`, with `w = w* + eps`:
     ///
-    /// | `eps` | measured / `T0` |
-    /// |-------|-----------------|
-    /// | 0.001 | 1.0000 |
-    /// | 0.01  | 1.0025 |
-    /// | 0.05  | 1.013  |
-    /// | 0.2   | 1.049  |
-    /// | 0.5   | 1.099  |
-    /// | 0.833 | 1.123  |
+    /// | `eps` | measured / `T0` | measured / `T_harm` |
+    /// |-------|-----------------|---------------------|
+    /// | 0.001 | 1.0000 | 0.9998 |
+    /// | 0.01  | 1.0025 | 1.0001 |
+    /// | 0.05  | 1.013  | 1.0012 |
+    /// | 0.2   | 1.049  | 1.0075 |
+    /// | 0.5   | 1.099  | 1.0214 |
+    /// | 0.833 | 1.123  | 1.0420 |
+    ///
+    /// The third column is [`Matsuoka::harmonic_period`], Matsuoka's 2011 approximation, added
+    /// when an audit found that the [`Matsuoka`] doc had misdescribed that paper; its doc says
+    /// where the approximation stops being the better of the two.
     ///
     /// The ratio at `eps = 0.002` stays below 1.001 across five very different
     /// `(tau_r, tau_a, beta)` settings, which is the test in this module. Well inside the
@@ -1305,6 +1327,62 @@ impl Matsuoka {
             return None;
         }
         Some(TAU * (self.tau_r * self.tau_a / det).sqrt())
+    }
+
+    /// **Matsuoka's 2011 approximate period**, seconds, for use away from the onset boundary:
+    ///
+    /// ```text
+    /// T_harm = 2π · tau_a · sqrt( tau_r·w / ((tau_r + tau_a)·beta − tau_r·w) )
+    /// ```
+    ///
+    /// # Where it comes from
+    ///
+    /// K. Matsuoka, *Analysis of a neural oscillator*, Biological Cybernetics 104:297–304 (2011),
+    /// doi:10.1007/s00422-011-0432-z, derives closed-form frequency and amplitude relations
+    /// "based on a rough linear approximation" (abstract). That full text is closed access and
+    /// this review did not read it, so the expression above is transcribed from the restatement
+    /// in K. Muramatsu and H. Kori, *Bifurcation analysis of a two-neuron central pattern
+    /// generator model for both oscillatory and convergent neuronal activities*, arXiv:2405.08409
+    /// (2024), section III B, whose model is this one with `tau_x = tau_r`, `tau_y = tau_a`,
+    /// `b = beta`, `a = w` and equal tonic drives. The restatement calls it an approximation
+    /// "of `x_i` by a pure sinusoidal wave and the system … by a harmonic oscillator", exact at the
+    /// onset boundary and "less accurate when `a` is sufficiently large". Only the frequency
+    /// relation is implemented; the amplitude relation is not.
+    ///
+    /// # What it is checked against
+    ///
+    /// - **Algebra, with no simulation.** Setting `T_harm = T0` and clearing the square roots
+    ///   leaves `tau_a·w² − (tau_a·(1 + beta) + tau_r)·w + (tau_r + tau_a)·beta = 0`, whose roots
+    ///   are `w = 1 + tau_r/tau_a` and `w = beta`. So the two closed forms are **equal at onset**
+    ///   — the restatement's "completely coincides … at the borderline" — and again at
+    ///   `w = beta`; `T_harm` is the larger strictly between the two roots and the smaller beyond
+    ///   them. The test checks both equalities to 1e-12 and both orderings at five settings,
+    ///   which is a check on the transcription independent of any measurement.
+    /// - **The measured period**, at `tau_r = 40 ms`, `tau_a = 240 ms`, `beta = 2.5`: the third
+    ///   column of the table on [`Matsuoka::onset_period`]. From `eps = 0.01` to `eps = 0.833` it
+    ///   is below the measurement and closes between 66% and 96% of the gap the onset form leaves
+    ///   (1.0012 against 1.013 at `eps = 0.05`, 1.042 against 1.123 at `eps = 0.833`). Closer to
+    ///   onset than that it is **above** the measurement — by 0.02% at `eps = 0.001` and 0.05% at
+    ///   `eps = 0.002` — because the measured period follows `T0` there and `T_harm` rises about
+    ///   twice as steeply with `w`. At `w = beta = 2.5` the two forms coincide, by the algebra
+    ///   above, and measured / either is 1.1084; beyond it the approximation falls apart — at
+    ///   `w = 3.25`, measured / `T_harm` is 1.8395 against 1.0759 for `T0`. That is the
+    ///   restatement's "less accurate when `a` is sufficiently large", measured.
+    ///   [`Matsuoka::measure_period`] remains the measurement.
+    ///
+    /// `None` where the expression has no meaning: `w <= 0` or `(tau_r + tau_a)·beta <= tau_r·w`,
+    /// where the radicand is not a positive number, and `w >= 1 + beta`, where — as
+    /// [`Matsuoka::onset_period`] says — the pair settles winner-take-all and there is no rhythm
+    /// to approximate. Like [`Matsuoka::onset_period`] it does not ask whether this parameter set
+    /// oscillates; [`Matsuoka::may_oscillate`] is that question.
+    #[must_use]
+    pub fn harmonic_period(&self) -> Option<f64> {
+        let num = self.tau_r * self.w;
+        let den = (self.tau_r + self.tau_a) * self.beta - num;
+        if !(num > 0.0 && den > 0.0 && self.w < 1.0 + self.beta) {
+            return None;
+        }
+        Some(TAU * self.tau_a * (num / den).sqrt())
     }
 
     /// Whether the symmetric equilibrium is unstable **in the antisymmetric mode**:
@@ -2604,6 +2682,109 @@ mod tests {
         // Above w = 1 + beta the antisymmetric eigenvalues are real and there is no frequency.
         let m = Matsuoka::new(40e-3, 240e-3, 1.0, 2.5, 1.0).unwrap();
         assert!(m.onset_period().is_none());
+    }
+
+    /// ⭐ Matsuoka's 2011 approximation, [`Matsuoka::harmonic_period`], checked twice over and
+    /// against nothing it produced itself.
+    ///
+    /// ⛔ This test exists because the [`Matsuoka`] doc said the 2011 paper "still leaves a
+    /// transcendental crossing condition". Its abstract says it gives "two closed-form relations"
+    /// for frequency and amplitude from "a rough linear approximation"; the frequency relation is
+    /// transcribed from the restatement in Muramatsu and Kori, arXiv:2405.08409 (2024), section
+    /// III B. First the ALGEBRA: equal to the onset form at `w = 1 + tau_r/tau_a` and at
+    /// `w = beta`, larger between, smaller beyond — which checks the transcription with no
+    /// simulation in the loop. Then the MEASUREMENT: both columns of the table in the
+    /// [`Matsuoka::onset_period`] doc, plus the two points at and past `w = beta` that the
+    /// [`Matsuoka::harmonic_period`] doc quotes.
+    #[test]
+    fn the_matsuoka_2011_approximation_meets_the_onset_form_and_then_the_measurement() {
+        let settings = [
+            (40e-3, 240e-3, 2.5),
+            (20e-3, 200e-3, 3.0),
+            (60e-3, 120e-3, 1.8),
+            (10e-3, 400e-3, 5.0),
+            (50e-3, 50e-3, 2.0),
+        ];
+        let forms = |tau_r: f64, tau_a: f64, beta: f64, w: f64| {
+            let m = Matsuoka::new(tau_r, tau_a, beta, w, 1.0).unwrap();
+            (m.harmonic_period().unwrap(), m.onset_period().unwrap())
+        };
+        for &(tau_r, tau_a, beta) in &settings {
+            let wstar = 1.0 + tau_r / tau_a;
+            // The two roots of tau_a·w² − (tau_a·(1 + beta) + tau_r)·w + (tau_r + tau_a)·beta.
+            for w in [wstar, beta] {
+                let (th, t0) = forms(tau_r, tau_a, beta, w);
+                assert!(
+                    (th / t0 - 1.0).abs() < 1e-12,
+                    "tau_r {tau_r} tau_a {tau_a} beta {beta} w {w}: T_harm {th} s, T0 {t0} s"
+                );
+            }
+            // (50 ms, 50 ms, 2.0) has a double root, so there is no "between" to test.
+            if beta - wstar > 0.1 {
+                let (th, t0) = forms(tau_r, tau_a, beta, 0.5 * (wstar + beta));
+                assert!(th > t0 * (1.0 + 1e-6), "{tau_r} {tau_a} {beta}: between the roots");
+            }
+            let (th, t0) = forms(tau_r, tau_a, beta, beta + 0.5);
+            assert!(th < t0 * (1.0 - 1e-6), "{tau_r} {tau_a} {beta}: beyond the roots");
+        }
+
+        // The measurement, at the tabulated setting. Each row is (w, measured/T0, measured/T_harm)
+        // exactly as the docs print them, and 5e-4 is half a unit in the third decimal those docs
+        // give. The run length is the one the table was measured with.
+        let (tau_r, tau_a, beta) = (40e-3, 240e-3, 2.5);
+        let wstar = 1.0 + tau_r / tau_a;
+        let ratios = |w: f64| {
+            let mut m = Matsuoka::new(tau_r, tau_a, beta, w, 1.0).unwrap();
+            let (t0, th) = (m.onset_period().unwrap(), m.harmonic_period().unwrap());
+            let got = m.measure_period(2e-5, 800_000).unwrap();
+            assert!(got.relative_jitter() < 1e-3, "w {w} is not a limit cycle: {got:?}");
+            (got.period_s / t0, got.period_s / th)
+        };
+        let table = [
+            (wstar + 0.001, 1.0000, 0.9998),
+            (wstar + 0.01, 1.0025, 1.0001),
+            (wstar + 0.05, 1.013, 1.0012),
+            (wstar + 0.2, 1.049, 1.0075),
+            (wstar + 0.5, 1.099, 1.0214),
+            (wstar + 0.833, 1.123, 1.0420),
+            (beta, 1.1084, 1.1084),
+            (3.25, 1.0759, 1.8395),
+        ];
+        for &(w, want0, wanth) in &table {
+            let (r0, rh) = ratios(w);
+            assert!((r0 - want0).abs() < 5e-4, "w {w}: measured/T0 {r0}, the table says {want0}");
+            assert!((rh - wanth).abs() < 5e-4, "w {w}: measured/T_harm {rh}, the table says {wanth}");
+            if w > wstar + 0.005 && w < beta {
+                // Below the measurement, and closing at least 65% of the onset form's gap.
+                assert!(rh > 1.0, "w {w}: T_harm overestimated ({rh})");
+                assert!(rh - 1.0 < 0.35 * (r0 - 1.0), "w {w}: {rh} does not beat {r0}");
+            }
+        }
+        // Right at onset it is ABOVE the measurement, which is the one place the doc says so.
+        for eps in [0.001, 0.002] {
+            let (r0, rh) = ratios(wstar + eps);
+            assert!((r0 - 1.0).abs() < 1e-4, "eps {eps}: the measurement left T0 ({r0})");
+            assert!(rh < 1.0 && rh > 0.999, "eps {eps}: measured/T_harm {rh}");
+        }
+        // Past w = beta the approximation is the worse of the two, by an order of magnitude.
+        let (r0, rh) = ratios(3.25);
+        assert!(rh - 1.0 > 10.0 * (r0 - 1.0), "w 3.25: T_harm {rh} against T0 {r0}");
+
+        // Refusals, each the ONLY clause that fires, at an exact binary boundary where one exists.
+        let refuse = |tau_r: f64, tau_a: f64, beta: f64, w: f64| {
+            Matsuoka::new(tau_r, tau_a, beta, w, 1.0).unwrap().harmonic_period().is_none()
+        };
+        // w = 1 + beta exactly (1 + 1.5 = 2.5 in binary); the radicand is positive there.
+        assert!(refuse(0.25, 0.5, 1.5, 2.5), "w = 1 + beta has no rhythm to approximate");
+        assert!(refuse(40e-3, 240e-3, 1.0, 2.5), "w > 1 + beta has no rhythm to approximate");
+        // w = 0 exactly, and below it: tau_r·w is not positive.
+        assert!(refuse(40e-3, 240e-3, 2.5, 0.0), "w = 0 made the radicand zero");
+        assert!(refuse(40e-3, 240e-3, 2.5, -0.5), "a negative w made the radicand negative");
+        // (tau_r + tau_a)·beta = tau_r·w exactly: 1.0·0.25 = 0.25·1.0, with w below 1 + beta.
+        assert!(refuse(0.25, 0.75, 0.25, 1.0), "a zero denominator reported a period");
+        assert!(refuse(0.25, 0.5, 0.125, 1.0), "a negative denominator reported a period");
+        // ANTI-VACUITY: a closure that refused everything would pass all six lines above.
+        assert!(!refuse(0.25, 0.5, 1.5, 2.25), "a legal point inside the domain was refused");
     }
 
     /// The symmetric equilibrium is an exact fixed point — started there, the oscillator does not

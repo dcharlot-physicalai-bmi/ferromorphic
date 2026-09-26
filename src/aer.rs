@@ -3,12 +3,22 @@
 //! # What `AER` is, and what it buys
 //!
 //! A conventional image sensor is read out on a clock: every pixel reports every frame, whether or
-//! not anything happened to it. Misha Mahowald's address-event representation (doctoral thesis,
-//! *VLSI Phototransduction and Stereopsis*, Caltech, 1992; and Sivilotti's contemporaneous work at
-//! the same lab) replaces that with a **shared digital bus that carries the identity of whichever
-//! element just fired**. A 128x128 array does not need 16,384 wires; it needs 14 address lines and
-//! an arbiter. The spike itself is not transmitted — its *address* is, and its *time* is the moment
-//! the transmission happens.
+//! not anything happened to it. Misha Mahowald's address-event representation (M. Mahowald, *VLSI
+//! analogs of neuronal visual processing: a synthesis of form and function*, doctoral dissertation,
+//! California Institute of Technology (1992), doi:10.7907/4bdw-fg34; and, at the same lab, M. A.
+//! Sivilotti, *Wiring considerations in analog VLSI systems, with application to
+//! field-programmable networks*, doctoral dissertation, California Institute of Technology (1991),
+//! doi:10.7907/stj4-kh72) replaces that with a **shared digital bus that carries the identity of
+//! whichever element just fired**. A 128x128 array does not need 16,384 wires; it needs 14 address
+//! lines and an arbiter. The spike itself is not transmitted — its *address* is, and its *time* is
+//! the moment the transmission happens.
+//!
+//! This paragraph used to give Mahowald's thesis as *VLSI Phototransduction and Stereopsis* and
+//! Sivilotti's only as "contemporaneous work at the same lab". `DataCite` records the 1992
+//! dissertation under the title above, and this review did not locate any work by the old title: a
+//! `DataCite` title search for "phototransduction" and "stereopsis" together returns nothing, and
+//! the nearest Mahowald work `Crossref` holds is the 1994 book *An Analog VLSI System for
+//! Stereoscopic Vision*, doi:10.1007/978-1-4615-2724-4.
 //!
 //! That buys three things. Nothing is sent when nothing changes, so a static scene costs nothing.
 //! Latency is set by the bus, not by a frame period, so an event reaches the receiver in
@@ -79,9 +89,23 @@
 //! vendor formats put on the wire and converting at the boundary would make the hand-checkable
 //! word tests unreadable. [`TrainMap`] converts to the crate's tick convention
 //! ([`crate::spike::Spike::t`]) at the point of use, once, with the tick length stated.
-//! Coordinates are pixels: `x` to the right, `y` down, origin top-left, which is the convention all
-//! four formats use on the wire. Whether a given sensor's *optics* invert that is a property of the
-//! camera, not of the file, and this module does not attempt to correct it.
+//!
+//! Coordinates are pixels: `x` to the right, `y` down, origin top-left, in every event a decoder
+//! here **returns**. That is not the same as on the wire, and this paragraph used to say it was —
+//! that all four formats put the origin top-left on the wire. They do not. iniVation's `AEDAT` 1.0
+//! and 2.0 pages both say of the row field "(0, 0) in the lower left corner of the screen";
+//! `jAER`'s extractors take that field as it stands (`e.y = (short) ((addr & YMASK) >>> YSHIFT)`)
+//! and so leave row 0 where the pages put it; and iniVation's own `dv-processing` parser for the
+//! `DVS128` turns it round by default, "Invert Y values (flip along Y axis). To convert to CG
+//! format." The `AEDAT` 3.1 page, by contrast, says "(0, 0) in upper left corner of screen". The
+//! `AEDAT` 2.0 presets therefore set [`Aedat2Layout::y_invert`], so that a row from a `jAER`
+//! recording counts from the top like every other decoder's; through 0.22.0 they did not, and such
+//! a recording came out upside down against the other formats. The same two pages say the same
+//! words of the column field, but `jAER`'s extractors mirror that field (`sxm - ...` for the
+//! `DVS128`, `sx1 - ...` for a `DAVIS`) and `dv-processing` mirrors it for the `DVS128` "To correct
+//! for flipped camera"; the presets follow the code, and each says so.
+//! Whether a given sensor's *optics* invert the image is a property of the camera, not of the
+//! file, and this module does not attempt to correct it.
 //!
 //! # A worked example
 //!
@@ -118,11 +142,13 @@
 //! are `Prophesee`'s, documented in the `Metavision` SDK. None of these has an ISO specification; the
 //! bit layouts below are transcribed from the vendors' public documentation and from open-source
 //! readers, and **every place where this implementation could not confirm a convention says so in
-//! the doc of the item concerned** rather than presenting a guess confidently. The three known soft
-//! spots are the polarity bit's sense in `AEDAT` 2.0 ([`Aedat2Layout::p_on_is_one`]), the `.dat`
-//! record-type byte ([`Dat::CD_TYPE_CODES`]), and the `FlatBuffers` table layout inside an
-//! `AEDAT` 4.0 packet ([`Aedat4`]), which this implementation did not check against a file produced
-//! by `DV` software.
+//! the doc of the item concerned** rather than presenting a guess confidently. The two known soft
+//! spots are the polarity bit's sense in `AEDAT` 2.0 ([`Aedat2Layout::p_on_is_one`]), where for the
+//! `DVS128` iniVation's documentation and iniVation's code disagree, and the `.dat` record-type byte
+//! ([`Dat::CD_TYPE_CODES`]). There used to be a third, the `FlatBuffers` table inside an `AEDAT` 4.0
+//! packet, which this implementation had not checked against a file written by `DV` software. When
+//! it was, the container around the table turned out to be wrong as well, and no file `DV` writes
+//! could be opened: see [`Aedat4`].
 
 use crate::spike::{Event, Polarity, Train};
 
@@ -216,13 +242,14 @@ pub struct Marker {
 /// Which family of non-pixel word a [`Marker`] records.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum MarkerKind {
-    /// An external trigger pulse — `EXT_TRIGGER` in `Prophesee`'s formats. This is the wire's
-    /// synchronisation channel.
+    /// An external trigger pulse — `EXT_TRIGGER` in `Prophesee`'s formats, and the external-input
+    /// word of a `DAVIS` in `AEDAT` 2.0. This is the wire's synchronisation channel.
     ///
-    /// [`Aedat2`] never produces this variant, and the omission is deliberate rather than missing:
-    /// an `AEDAT` 2.0 special word is flagged by a bit in the address and the address alone does
-    /// not say whether it is a trigger, an active-pixel-sensor sample or an inertial reading. Those
-    /// are all [`MarkerKind::Other`], which is what this implementation can honestly claim.
+    /// [`Aedat2`] produces this variant only through [`Aedat2Layout::trigger_mask`], which only the
+    /// [`Aedat2Layout::DAVIS346`] preset sets, on the authority that preset names: `jAER` and
+    /// iniVation's `AEDAT` 2.0 page agree on which `DAVIS` word is the external input. A special
+    /// word under a layout with no trigger mask is [`MarkerKind::Other`], which claims only that
+    /// the word is not a pixel.
     ExternalTrigger,
     /// A vendor-defined `OTHERS` word: monitoring, padding, or a sensor-specific status code whose
     /// payload layout this implementation did not locate documentation for.
@@ -247,7 +274,8 @@ pub enum DecodeError {
         /// Bytes actually left from `offset` to the end of the input.
         have: usize,
     },
-    /// The file did not begin with the magic this decoder requires.
+    /// The file did not begin with the magic this decoder requires, or a `FlatBuffers` buffer inside
+    /// an `AEDAT` 4.0 file did not carry the file identifier expected of it (`IOHE`, `EVTS`).
     ///
     /// Raised eagerly and deliberately: feeding an `EVT` 3.0 recording to the `AEDAT` 2.0 decoder
     /// otherwise produces millions of plausible events at plausible coordinates, because every
@@ -321,7 +349,9 @@ pub enum DecodeError {
     UnsupportedCompression {
         /// Byte offset of the packet header.
         offset: usize,
-        /// The `Format:` value read from the file header.
+        /// The compression the file's `IOHeader` declares, by the name its `CompressionType` enum
+        /// gives it (`LZ4`, `ZSTD_HIGH`), or by its number when the schema names no such value.
+        /// This used to be a `Format:` header line's text, which is not part of `AEDAT` 4.0.
         name: String,
     },
     /// A container's declared item count disagrees with the bytes present.
@@ -428,7 +458,8 @@ impl core::fmt::Display for DecodeError {
 /// `Box<dyn Error>` boundary or its callers reach for `.unwrap()`.
 impl std::error::Error for DecodeError {}
 
-/// Why a stream could not be encoded. Every variant names the **index of the event** at fault.
+/// Why a stream could not be encoded. Every variant about an event names the **index of the
+/// event** at fault.
 ///
 /// Encoding fails for exactly one reason: the caller's data does not fit the format. That is
 /// information — it says the recording cannot be expressed in the format asked for — so it is an
@@ -476,6 +507,20 @@ pub enum EncodeError {
         /// The largest gap the format can express, microseconds.
         max: u64,
     },
+    /// An `AEDAT` 4.0 `IOHeader` puts the file data table somewhere other than where it would be
+    /// written.
+    ///
+    /// The table follows the last packet, and it indexes the packets by byte offset, so it is
+    /// stale the moment a packet changes size. [`Aedat4::encode`] refuses rather than write an
+    /// `IOHeader` that points into the middle of a packet, or a table that no `IOHeader` points
+    /// to; [`Aedat4::drop_data_table`] is the way out.
+    DataTableMisplaced {
+        /// The `IOHeader`'s `dataTablePosition`, bytes from the start of the file, or `None` when
+        /// it is -1, "no table present".
+        declared: Option<u64>,
+        /// Where the packets being written end, which is the only place the table can begin.
+        packets_end: u64,
+    },
 }
 
 impl core::fmt::Display for EncodeError {
@@ -495,6 +540,14 @@ impl core::fmt::Display for EncodeError {
             Self::GapTooLarge { index, gap, max } => write!(
                 f,
                 "event {index} is {gap} us after its predecessor; this format can express at most {max} us between events"
+            ),
+            Self::DataTableMisplaced { declared: Some(at), packets_end } => write!(
+                f,
+                "the IOHeader places the file data table at byte {at}, but the packets end at byte {packets_end}; drop the table or restore the packets"
+            ),
+            Self::DataTableMisplaced { declared: None, packets_end } => write!(
+                f,
+                "the IOHeader declares no file data table, but one would be written at byte {packets_end}"
             ),
         }
     }
@@ -566,9 +619,10 @@ fn header_text(b: &[u8]) -> Option<String> {
 /// Neither `AEDAT` 2.0 nor `.dat` terminates its header: the binary record array begins at the
 /// first byte that is not a header line, so the decoder has to tell the two apart from the bytes.
 /// Taking "begins with the prefix byte" as sufficient **loses records**, because a record can begin
-/// with that byte: a `DAVIS346` row of 140 to 143 puts `0x23`, the character `#`, in the
+/// with that byte: a `DAVIS346` row field of 140 to 143 puts `0x23`, the character `#`, in the
 /// big-endian address MSB, and the record is then swallowed as a comment line, taking every byte
-/// up to the next `0x0A` with it. Four of that sensor's 260 rows do this.
+/// up to the next `0x0A` with it. Four of that sensor's 260 rows do this — decoded rows 116 to 119,
+/// since the field counts from the bottom edge and [`Aedat2Layout::DAVIS346`] turns it round.
 ///
 /// So a candidate line is accepted as a header line only if it is **text** by [`header_text`]. A
 /// binary record essentially always carries a control byte — the zero high byte of a coordinate or
@@ -699,32 +753,54 @@ pub struct Aedat2Layout {
     pub x_shift: u32,
     /// Number of column bits. The column field holds `0 ..= 2^x_bits - 1`.
     pub x_bits: u32,
-    /// Whether the column counts from the right edge, i.e. stored value is `2^x_bits - 1 - x`.
+    /// Whether the column counts from the right edge: the stored value is `width - 1 - x`, the
+    /// mirror `jAER`'s extractors apply, or `2^x_bits - 1 - x` for a layout that states no width.
     ///
     /// Several `AER` chips wire the column address backwards relative to the optical image. The
     /// transform is its own inverse, so an encode-decode round trip cannot detect a wrong setting;
     /// only a picture of a known scene can.
+    ///
+    /// Mirrored about the last column of the stated sensor, not about the top of the field: the two
+    /// agree only when the sensor fills the field, as 128 columns fill seven bits. Through 0.22.0 the stored value was always
+    /// `2^x_bits - 1 - x`, which is right for the 128-column `DVS128` and cannot express the
+    /// `DAVIS346`'s mirror at all: about 1023, its 346 columns land on 678 to 1023 and every one
+    /// fails the width check. A layout that mirrors a field must state a width or height the field
+    /// can hold, or it is refused before a byte is read.
     pub x_invert: bool,
     /// Bit position of the least significant row bit.
     pub y_shift: u32,
     /// Number of row bits.
     pub y_bits: u32,
-    /// Whether the row counts from the bottom edge. Same caveat as [`Aedat2Layout::x_invert`].
+    /// Whether the row counts from the bottom edge: the stored value is `height - 1 - y`, or
+    /// `2^y_bits - 1 - y` for a layout that states no height. Same caveats as
+    /// [`Aedat2Layout::x_invert`].
+    ///
+    /// Both presets set it, because `AEDAT` 2.0 counts rows from the bottom and every decoder in
+    /// this module returns them counted from the top; see the module doc.
     pub y_invert: bool,
     /// Bit position of the single polarity bit.
     pub p_shift: u32,
     /// Whether a set polarity bit means [`Polarity::On`].
     ///
-    /// **This is the flag this implementation is least sure of.** Third-party readers of the same
-    /// chips disagree about the sense of this bit, and both choices produce an event stream that
-    /// looks entirely normal — the scene simply has its contrast inverted, which no event count,
-    /// rate plot or timestamp check can detect. It is exposed as a field, and each preset states
-    /// what this implementation chose, so that a caller who has a recording of a known stimulus can
-    /// settle it for their own data rather than inheriting a guess.
+    /// **This is the flag this implementation is least sure of.** Readers of the same chips
+    /// disagree about the sense of this bit — for the `DVS128`, iniVation's own file-format page
+    /// disagrees with iniVation's own parser — and both choices produce an event stream that looks
+    /// entirely normal: the scene simply has its contrast inverted, which no event count, rate plot
+    /// or timestamp check can detect. It is exposed as a field, and each preset states what this
+    /// implementation chose and on whose authority, so that a caller who has a recording of a known
+    /// stimulus can settle it for their own data rather than inheriting a guess.
     pub p_on_is_one: bool,
     /// Bits that mark a non-pixel word. A record whose address has any of these bits set becomes a
     /// [`Marker`] instead of an event. Zero disables the check.
     pub special_mask: u32,
+    /// The bits of [`Aedat2Layout::special_mask`] that mark an external trigger.
+    ///
+    /// A marker whose address sets only these of the special bits is a
+    /// [`MarkerKind::ExternalTrigger`]; one that sets any other special bit is a
+    /// [`MarkerKind::Other`], because on a `DAVIS` the other bit changes what the rest of the word
+    /// means. Bits outside `special_mask` have no effect, and zero makes every marker
+    /// [`MarkerKind::Other`].
+    pub trigger_mask: u32,
     /// Sensor width in pixels; a decoded column at or past it is [`DecodeError::FieldOutOfRange`].
     /// Zero disables the check, which is the right setting for an unknown chip.
     pub width: u16,
@@ -738,10 +814,22 @@ impl Aedat2Layout {
     /// The `DVS128` retina (Lichtsteiner, Posch and Delbruck, *IEEE J. Solid-State Circuits*
     /// 43(2):566-576, 2008): 128x128, 15 address bits.
     ///
-    /// Row in bits 8-14, column in bits 1-7, polarity in bit 0, column counted from the right.
-    /// Transcribed from the `jAER` `Tmpdiff128` extractor as this implementation reads it.
-    /// **Unverified against a physical device**: the polarity sense here is "bit 0 clear means
-    /// `On`", and the opposite appears in circulating `Python` readers. See
+    /// Row in bits 8-14, column in bits 1-7, polarity in bit 0, both coordinates counted from the
+    /// far edge. Transcribed from the `jAER` `Tmpdiff128` extractor as this implementation reads it.
+    /// iniVation's `dv-processing` parser for the same chip reads the same address the same way by
+    /// default: `x = (WIDTH - 1) - x`, "To correct for flipped camera", and `y = (HEIGHT - 1) - y`,
+    /// "To convert to CG format". `jAER` mirrors the column and leaves the row counting from the
+    /// bottom; this preset turns the row round as well, which is what makes its output top-left like
+    /// every other decoder's. Through 0.22.0 it did not (see the module doc).
+    ///
+    /// **The polarity sense is "bit 0 clear means `On`", and it is unverified against a physical
+    /// device.** iniVation's `AEDAT` 1.0 page says the opposite: "0 | Polarity | Polarity
+    /// (luminosity change): '1' means increase (ON), '0' means decrease (OFF)." Two pieces of code
+    /// agree with this preset against it: `jAER`'s `DVS128.java` ("The ON events have raw polarity
+    /// 0", `e.type = (byte) ((1 - addr) & 1)`) and iniVation's own `dv-processing` `DVS128` parser,
+    /// which reads a clear bit as `On` with the comment "Invert polarity bit. Hardware is like this."
+    /// This doc used to attribute the opposite reading only to "circulating `Python` readers"; the
+    /// vendor's own documentation is the source that disagrees. See
     /// [`Aedat2Layout::p_on_is_one`].
     ///
     /// # Everything above bit 14 is a marker, not a pixel
@@ -763,42 +851,75 @@ impl Aedat2Layout {
         x_invert: true,
         y_shift: 8,
         y_bits: 7,
-        y_invert: false,
+        y_invert: true,
         p_shift: 0,
         p_on_is_one: false,
         special_mask: !0x7FFF,
+        trigger_mask: 0,
         width: 128,
         height: 128,
         source: "DVS128 (Lichtsteiner et al. 2008), jAER Tmpdiff128 extractor",
     };
 
-    /// The `DAVIS346` (Taverni et al., *IEEE Trans. Circuits Syst. II* 65(5), 2018): 346x260.
+    /// The `DAVIS346`: 346x260 (Taverni, Moeys, Li, Cavaco, Motsnyi, San Segundo Bello and
+    /// Delbruck, *Front and Back Illuminated Dynamic and Active Pixel Vision Sensors Comparison*,
+    /// IEEE Trans. Circuits Syst. II 65(5):677-681 (2018), doi:10.1109/TCSII.2018.2824899).
     ///
-    /// Row in bits 22-30, column in bits 12-21, polarity in bit 11, bit 31 marking a special or
-    /// frame-sample word. Transcribed from the `jAER` `DavisBaseCamera` constants as this
-    /// implementation reads them; **this implementation did not verify them against a `DAVIS`
-    /// recording**, and in particular the interleaved active-pixel-sensor samples that share this
-    /// address space are reported as [`MarkerKind::Other`] rather than decoded.
+    /// Row in bits 22-30, column in bits 12-21, polarity in bit 11, external input in bit 10, bit 31
+    /// marking an active-pixel-sensor or inertial word. The constants are `jAER`'s `DavisChip.java`
+    /// — this doc used to say `DavisBaseCamera`, which holds the extractor that uses them — and
+    /// iniVation's `AEDAT` 2.0 page lays out the same bits: "31 | Type | ... '0' means DVS, '1'
+    /// means APS or IMU", then for a `DVS` word "11-10 | sub-Type | 00 -> DVS Polarity OFF 01 ->
+    /// External Event (same as 11) 10 -> DVS Polarity ON 11 -> External Event (Same as 01)". That
+    /// table is also what this preset's polarity sense, bit 11 set means `On`, rests on. **This
+    /// implementation did not verify any of it against a `DAVIS` recording**, and the interleaved
+    /// active-pixel-sensor samples that share this address space are reported as
+    /// [`MarkerKind::Other`] rather than decoded.
     ///
-    /// Bits 0-10 belong to no field this layout names and are **ignored**, so a record that sets
-    /// one still decodes as an ordinary pixel event. Unlike the 15-bit [`Aedat2Layout::DVS128`]
-    /// address, where the width is documented and everything above it is therefore not a pixel,
-    /// this implementation did not locate a statement of what a `DAVIS` puts there, and a
-    /// `special_mask` covering those bits would be a guess that turned real events into markers.
-    /// The uncertainty is disclosed rather than resolved.
+    /// # The column is mirrored, about column 345
+    ///
+    /// `jAER`'s `DavisEventExtractor` sets `sx1 = getChip().getSizeX() - 1` and decodes a `DVS`
+    /// word as `e.x = (short) (sx1 - ((data & DavisChip.XMASK) >>> DavisChip.XSHIFT))`; the
+    /// `DAVIS346` has no extractor of its own and a size of 346. Through 0.22.0 this preset set
+    /// `x_invert: false`, so its every column was the mirror image of `jAER`'s — and setting it to
+    /// `true` would not have fixed that, because inversion then meant `1023 - x` (see
+    /// [`Aedat2Layout::x_invert`]). The row is turned round as well, so that it counts from the top.
+    ///
+    /// # Bit 10 is a trigger, not a pixel
+    ///
+    /// A `DVS` word with bit 10 set is an external-input event. `jAER`'s `DavisChip.java` names it
+    /// `EXTERNAL_INPUT_EVENT_ADDR = 1 << EVENT_TYPE_SHIFT`, "This special address is is for external
+    /// pin input events", with bits 0-2 then carrying falling, rising or pulse as 2, 3 or 4, and
+    /// its extractor marks such a word special ("if special bit for DVS address (bit 10) is set,
+    /// then mark this as spscial event"). Since June 2023 `jAER` still fills in a coordinate and a
+    /// polarity for it, for `v2e` noise labelling, but it does not treat it as a pixel. This preset
+    /// therefore puts bit 10 in [`Aedat2Layout::special_mask`] and in
+    /// [`Aedat2Layout::trigger_mask`], and such a word becomes a [`MarkerKind::ExternalTrigger`]
+    /// whose [`Marker::raw`] carries the edge in its low three bits. A word that also sets bit 31
+    /// is an active-pixel-sensor or inertial word whose bits 11-10 mean something else, and stays
+    /// [`MarkerKind::Other`]. A pixel word that `v2e` labelled by setting bit 10 arrives here as a
+    /// trigger marker too, its coordinate fields intact in [`Marker::raw`]: `jAER` marks both uses
+    /// special without telling them apart, and this preset does not tell them apart either.
+    ///
+    /// This doc used to say that bits 0-10 belong to no field, that this implementation had not
+    /// located a statement of what a `DAVIS` puts there, and that a mask over them would be a guess;
+    /// every trigger was decoded as a pixel. Both sources above are that statement. Bits 0-9 of a
+    /// `DVS` word are "10-bit ADC sample ... Only for Type=APS, else zero", and this preset ignores
+    /// them, as `jAER` does.
     pub const DAVIS346: Self = Self {
         x_shift: 12,
         x_bits: 10,
-        x_invert: false,
+        x_invert: true,
         y_shift: 22,
         y_bits: 9,
-        y_invert: false,
+        y_invert: true,
         p_shift: 11,
         p_on_is_one: true,
-        special_mask: 1 << 31,
+        special_mask: (1 << 31) | (1 << 10),
+        trigger_mask: 1 << 10,
         width: 346,
         height: 260,
-        source: "DAVIS346 (Taverni et al. 2018), jAER DavisBaseCamera constants",
+        source: "DAVIS346 (Taverni et al. 2018), jAER DavisChip constants and DavisEventExtractor",
     };
 
     /// Bits claimed by more than one field, or `0` if the layout is consistent.
@@ -853,24 +974,59 @@ impl Aedat2Layout {
                 });
             }
         }
+        if let Some((field, value, max)) = self.mirror_fault() {
+            return Err(DecodeError::FieldOutOfRange { offset: 0, field, value, max });
+        }
         Ok(())
     }
 
-    fn get(&self, addr: u32, shift: u32, bits: u32, invert: bool) -> u16 {
-        let m = Self::field_mask(shift, bits) >> shift;
-        let raw = (addr >> shift) & m;
-        let v = if invert { m - raw } else { raw };
-        // Unreachable by construction: `Aedat2Layout::check` refuses, before a byte is read, any
-        // layout whose column or row field can hold more than `u16::MAX`, and `v <= m` here. The
-        // saturation is what a `u16` conversion must do with no `Result` to return, and
-        // `a_coordinate_field_wider_than_a_u16_is_refused_before_any_byte_is_read` is the test
-        // that keeps it unreachable.
-        u16::try_from(v).unwrap_or(u16::MAX)
+    /// A stated width or height that an inverted field cannot be mirrored about, as
+    /// `(field, value, max)`.
+    ///
+    /// An inverted field stores `dimension - 1 - coordinate`, so the last column or row of the
+    /// sensor must be a value the field can hold. A width of 2000 over a 10-bit column would
+    /// otherwise write column 0 as 1999, which the field truncates to 975: a file that decodes, to
+    /// the wrong picture. An uninverted field has no such constraint — the columns past its reach
+    /// are merely unreachable — so it is not refused.
+    fn mirror_fault(&self) -> Option<(&'static str, u64, u64)> {
+        let (x_span, y_span) = self.coord_span();
+        [(self.x_invert, self.width, x_span, "width"), (self.y_invert, self.height, y_span, "height")]
+            .into_iter()
+            .find(|&(invert, dim, span, _)| invert && u64::from(dim) > u64::from(span) + 1)
+            .map(|(_, dim, span, field)| (field, u64::from(dim), u64::from(span) + 1))
     }
 
-    fn put(&self, v: u16, shift: u32, bits: u32, invert: bool) -> u32 {
+    /// What an inverted field is mirrored about: the last column or row of the stated sensor, or
+    /// the top of the field for a layout that states no geometry.
+    fn pivot(m: u32, dim: u16) -> u32 {
+        if dim == 0 { m } else { u32::from(dim) - 1 }
+    }
+
+    /// The coordinate a field decodes to, or `Err((raw, last))` — the field as it sits on the wire
+    /// and the last value the stated sensor has — when it names a column or row past the sensor.
+    ///
+    /// The range check is made on the raw field, before the mirror, because a mirrored field past
+    /// the sensor has no coordinate to report: `jAER` would decode column 346 of a `DAVIS346` as
+    /// -1.
+    fn get(&self, addr: u32, shift: u32, bits: u32, invert: bool, dim: u16) -> Result<u16, (u32, u32)> {
         let m = Self::field_mask(shift, bits) >> shift;
-        let raw = if invert { m.saturating_sub(u32::from(v)) } else { u32::from(v) };
+        let raw = (addr >> shift) & m;
+        if dim != 0 && raw >= u32::from(dim) {
+            return Err((raw, u32::from(dim) - 1));
+        }
+        let v = if invert { Self::pivot(m, dim) - raw } else { raw };
+        // Unreachable by construction: `Aedat2Layout::check` refuses, before a byte is read, any
+        // layout whose column or row field can hold more than `u16::MAX`, and `v` is at most the
+        // larger of `m` and `dim - 1`. The saturation is what a `u16` conversion must do with no
+        // `Result` to return, and
+        // `a_coordinate_field_wider_than_a_u16_is_refused_before_any_byte_is_read` is the test
+        // that keeps it unreachable.
+        Ok(u16::try_from(v).unwrap_or(u16::MAX))
+    }
+
+    fn put(&self, v: u16, shift: u32, bits: u32, invert: bool, dim: u16) -> u32 {
+        let m = Self::field_mask(shift, bits) >> shift;
+        let raw = if invert { Self::pivot(m, dim).saturating_sub(u32::from(v)) } else { u32::from(v) };
         (raw & m) << shift
     }
 }
@@ -939,7 +1095,9 @@ impl Aedat2 {
     /// [`DecodeError::BadMagic`] if the first line is not `#!AER-DAT...`, which is what catches a
     /// file of another format being fed in; [`DecodeError::Truncated`] if the header has no
     /// terminator or the record array ends mid-record; [`DecodeError::FieldOutOfRange`] if a
-    /// decoded coordinate is outside the layout's stated sensor geometry;
+    /// coordinate field names a column or row outside the layout's stated sensor geometry — the
+    /// value reported is the field as it sits on the wire, before any mirroring — or if the layout
+    /// mirrors a field about a width or height the field cannot hold;
     /// [`DecodeError::NonMonotonicTimestamp`] if the timestamps go backwards by less than the wrap.
     pub fn decode(bytes: &[u8], layout: Aedat2Layout) -> Result<Self, DecodeError> {
         layout.check()?;
@@ -984,34 +1142,32 @@ impl Aedat2 {
             prev_t = t;
 
             if layout.special_mask != 0 && addr & layout.special_mask != 0 {
-                markers.push(Marker {
-                    offset: at,
-                    kind: MarkerKind::Other,
-                    raw: u64::from(addr),
-                    t,
-                });
+                // A trigger only when the trigger bits are the only special bits set: on a DAVIS,
+                // bit 31 makes bits 11-10 an APS or IMU sub-type, and bit 10 then is not a trigger.
+                let kind = if addr & layout.special_mask & !layout.trigger_mask == 0 {
+                    MarkerKind::ExternalTrigger
+                } else {
+                    MarkerKind::Other
+                };
+                markers.push(Marker { offset: at, kind, raw: u64::from(addr), t });
                 at += 8;
                 continue;
             }
 
-            let x = layout.get(addr, layout.x_shift, layout.x_bits, layout.x_invert);
-            let y = layout.get(addr, layout.y_shift, layout.y_bits, layout.y_invert);
-            if layout.width != 0 && x >= layout.width {
-                return Err(DecodeError::FieldOutOfRange {
-                    offset: at,
-                    field: "column",
-                    value: u64::from(x),
-                    max: u64::from(layout.width - 1),
-                });
-            }
-            if layout.height != 0 && y >= layout.height {
-                return Err(DecodeError::FieldOutOfRange {
-                    offset: at,
-                    field: "row",
-                    value: u64::from(y),
-                    max: u64::from(layout.height - 1),
-                });
-            }
+            // A column or row past the stated sensor is reported as the field on the wire, since
+            // a mirrored field past the sensor has no coordinate to report.
+            let past = |field: &'static str, (raw, last): (u32, u32)| DecodeError::FieldOutOfRange {
+                offset: at,
+                field,
+                value: u64::from(raw),
+                max: u64::from(last),
+            };
+            let x = layout
+                .get(addr, layout.x_shift, layout.x_bits, layout.x_invert, layout.width)
+                .map_err(|e| past("column", e))?;
+            let y = layout
+                .get(addr, layout.y_shift, layout.y_bits, layout.y_invert, layout.height)
+                .map_err(|e| past("row", e))?;
             let bit = (addr >> layout.p_shift) & 1 == 1;
             let polarity =
                 if bit == layout.p_on_is_one { Polarity::On } else { Polarity::Off };
@@ -1039,7 +1195,8 @@ impl Aedat2 {
     ///
     /// [`EncodeError::Unsorted`] if the events are not in timestamp order;
     /// [`EncodeError::FieldOutOfRange`] if a coordinate does not fit the layout's field width or
-    /// its sensor geometry, or the first timestamp is past [`Aedat2::MAX_TIME_US`];
+    /// its sensor geometry, if the layout mirrors a field about a width or height the field cannot
+    /// hold, or if the first timestamp is past [`Aedat2::MAX_TIME_US`];
     /// [`EncodeError::GapTooLarge`] if two consecutive events are more than [`Aedat2::MAX_GAP_US`]
     /// apart; [`EncodeError::HeaderLineContainsNewline`] if a header line would not survive the
     /// round trip.
@@ -1072,6 +1229,9 @@ impl Aedat2 {
                 });
             }
         }
+        if let Some((field, value, max)) = layout.mirror_fault() {
+            return Err(EncodeError::FieldOutOfRange { index: 0, field, value, max });
+        }
         check_sorted(events)?;
         check_wrapping_clock(events, Self::MAX_TIME_US, Self::MAX_GAP_US)?;
         let mut out = Vec::with_capacity(64 + events.len() * 8);
@@ -1090,8 +1250,8 @@ impl Aedat2 {
                 if layout.height == 0 { y_max } else { y_max.min(u64::from(layout.height) - 1) };
             fit(i, "column", u64::from(e.x), x_lim)?;
             fit(i, "row", u64::from(e.y), y_lim)?;
-            let mut addr = layout.put(e.x, layout.x_shift, layout.x_bits, layout.x_invert)
-                | layout.put(e.y, layout.y_shift, layout.y_bits, layout.y_invert);
+            let mut addr = layout.put(e.x, layout.x_shift, layout.x_bits, layout.x_invert, layout.width)
+                | layout.put(e.y, layout.y_shift, layout.y_bits, layout.y_invert, layout.height);
             let on = e.polarity == Polarity::On;
             if on == layout.p_on_is_one {
                 addr |= 1u32 << layout.p_shift;
@@ -2020,48 +2180,75 @@ impl Flat {
 // AEDAT 4.0 — framing in full, payloads as far as a zero-dependency crate can go
 // ---------------------------------------------------------------------------------------------
 
-/// How an `AEDAT` 4.0 packet payload is compressed, as the file's `Format:` header line states it.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// How an `AEDAT` 4.0 file's packets are compressed: field 0 of its `IOHeader`.
+///
+/// The field is `compression: CompressionType = NONE` in `dv-processing`'s `IOHeader.fbs`, with
+/// `enum CompressionType : int32 { NONE, LZ4, LZ4_HIGH, ZSTD, ZSTD_HIGH }`, and iniVation's `AEDAT`
+/// 4.0 page lists the same five: "Compression algorithm applied to all data streams in the file.
+/// Currently supported are: NONE, LZ4, `LZ4_HIGH`, ZSTD and `ZSTD_HIGH`."
+///
+/// Through 0.22.0 this enum was read from a `Format:` text header line holding `RAW`,
+/// `COMPRESSED_LZ4` and the like. `AEDAT` 4.0 has no such line and no such names, and a real `LZ4`
+/// file that had got past the header would have been read as uncompressed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Aedat4Compression {
-    /// `RAW`: the payload is an uncompressed `FlatBuffers` table. This is the only variant whose
-    /// events this crate can extract.
-    Raw,
-    /// `COMPRESSED_LZ4`.
+    /// `NONE`, 0, and the default when the field is absent: every packet is stored as it is. The
+    /// only value whose events this crate can extract.
+    None,
+    /// `LZ4`, 1: each packet is one `LZ4` frame. The one `DV` recording this module was checked
+    /// against uses it.
     Lz4,
-    /// `COMPRESSED_LZ4_HIGH`.
+    /// `LZ4_HIGH`, 2.
     Lz4High,
-    /// `COMPRESSED_ZSTD`.
+    /// `ZSTD`, 3: each packet is one `Zstandard` frame.
     Zstd,
-    /// `COMPRESSED_ZSTD_HIGH`.
+    /// `ZSTD_HIGH`, 4.
     ZstdHigh,
-    /// A `Format:` value this implementation did not recognise, kept verbatim so an error can name
-    /// it and a future reader can match on it.
-    Other(String),
+    /// A value the schema does not define, kept so that an error can name it.
+    Other(i32),
 }
 
 impl Aedat4Compression {
-    /// The `Format:` string this variant corresponds to.
+    /// The value as the `IOHeader` stores it.
     #[must_use]
-    pub fn name(&self) -> &str {
+    pub fn code(self) -> i32 {
         match self {
-            Self::Raw => "RAW",
-            Self::Lz4 => "COMPRESSED_LZ4",
-            Self::Lz4High => "COMPRESSED_LZ4_HIGH",
-            Self::Zstd => "COMPRESSED_ZSTD",
-            Self::ZstdHigh => "COMPRESSED_ZSTD_HIGH",
-            Self::Other(s) => s,
+            Self::None => 0,
+            Self::Lz4 => 1,
+            Self::Lz4High => 2,
+            Self::Zstd => 3,
+            Self::ZstdHigh => 4,
+            Self::Other(code) => code,
         }
     }
 
-    fn parse(s: &str) -> Self {
-        match s {
-            "RAW" => Self::Raw,
-            "COMPRESSED_LZ4" => Self::Lz4,
-            "COMPRESSED_LZ4_HIGH" => Self::Lz4High,
-            "COMPRESSED_ZSTD" => Self::Zstd,
-            "COMPRESSED_ZSTD_HIGH" => Self::ZstdHigh,
-            other => Self::Other(other.to_string()),
+    /// The name the schema gives this value, or `None` for a value it does not define.
+    #[must_use]
+    pub fn name(self) -> Option<&'static str> {
+        match self {
+            Self::None => Some("NONE"),
+            Self::Lz4 => Some("LZ4"),
+            Self::Lz4High => Some("LZ4_HIGH"),
+            Self::Zstd => Some("ZSTD"),
+            Self::ZstdHigh => Some("ZSTD_HIGH"),
+            Self::Other(_) => None,
         }
+    }
+
+    fn from_code(code: i32) -> Self {
+        match code {
+            0 => Self::None,
+            1 => Self::Lz4,
+            2 => Self::Lz4High,
+            3 => Self::Zstd,
+            4 => Self::ZstdHigh,
+            other => Self::Other(other),
+        }
+    }
+
+    /// The name, or the number for a value the schema does not define: what an error reports.
+    fn label(self) -> String {
+        self.name().map_or_else(|| format!("compression type {}", self.code()), str::to_string)
     }
 }
 
@@ -2071,34 +2258,45 @@ impl Aedat4Compression {
 ///
 /// [`Aedat4::encode`] writes [`Aedat4Packet::payload`] **verbatim**, and never the bytes it would
 /// have produced from [`Aedat4Packet::events`]. That is what makes a re-save byte-exact for a file
-/// this crate only partly understands: a real `dv-processing` events table carries fields beyond
-/// the element vector and may lay the vector out at a different offset from the forward layout
-/// [`Aedat4`] writes, and regenerating the payload from the decoded events discards all of it.
+/// this crate only partly understands: a compressed payload it cannot open, and an uncompressed one
+/// laid out differently from the table [`Aedat4Packet::from_events`] writes — `FlatBuffers` is not
+/// a canonical encoding, and a conforming writer may put its padding elsewhere. Regenerating the
+/// payload from the decoded events would discard both.
+///
+/// This note used to add that "a real `dv-processing` events table carries fields beyond the
+/// element vector". It does not. The schema, `include/dv-processing/data/event.fbs` in
+/// `dv-processing` (gitlab.com/inivation/dv/dv-processing, last changed in commit c23aa373 of
+/// 2024-09-18), declares `table EventPacket { elements: [Event] (native_inline); }` and nothing
+/// else, and the event packets of the `DV` recording this module was checked against are laid out
+/// byte for byte as this module's own writer lays them out.
 ///
 /// The consequence for a caller who wants to *change* the events is that editing
 /// [`Aedat4Packet::events`] alone changes nothing on disk. Use [`Aedat4Packet::set_events`], which
 /// rewrites both, or [`Aedat4Packet::from_events`] to build a packet from scratch.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Aedat4Packet {
-    /// The stream this packet belongs to, matching an entry in the file's `IOHeader`. A recording
-    /// interleaves streams — events, frames, IMU — and the id is the only thing that separates them.
+    /// The stream this packet belongs to, matching a node of the `infoNode` in the file's
+    /// `IOHeader`. A recording interleaves streams — events, frames, inertial samples, triggers —
+    /// and the id is the only thing in the packet header that separates them.
     pub stream_id: i32,
     /// Byte offset of this packet's 8-byte header in the whole file.
     pub offset: usize,
     /// The payload bytes exactly as they appeared, and exactly what a re-encode writes.
     ///
     /// Authoritative: see the note on [`Aedat4Packet`]. Not interpreted for a compressed file, and
-    /// not regenerated for a `RAW` one.
+    /// not regenerated for an uncompressed one.
     pub payload: Vec<u8>,
-    /// Events, when the payload was `RAW` and parsed; `None` when it was compressed or was not an
-    /// event packet this implementation could walk — a `DV` recording interleaves frames and
-    /// inertial samples with its events, and those are packets in exactly the same container.
+    /// Events, when the file is uncompressed and the payload is an event packet this
+    /// implementation could walk; `None` when it was compressed or was not — a `DV` recording
+    /// interleaves frames, inertial samples and triggers with its events, and those are packets in
+    /// exactly the same container.
     pub events: Option<Vec<AerEvent>>,
-    /// Why [`Aedat4Packet::events`] is `None` for a `RAW` packet: the error that walking the
-    /// payload produced.
+    /// Why [`Aedat4Packet::events`] is `None` in an uncompressed file: the error that walking the
+    /// payload produced. For a packet of another stream that is [`DecodeError::BadMagic`] naming
+    /// the payload's `FlatBuffers` identifier — `FRME`, `IMUS`, `TRIG` — where `EVTS` was expected.
     ///
-    /// `None` when the events decoded, and `None` for a compressed file, where no attempt was
-    /// made and the reason is the file's `Format:` line instead. [`Aedat4::events`] returns this
+    /// `None` when the events decoded, and `None` for a compressed file, where no attempt was made
+    /// and the reason is the `IOHeader`'s compression instead. [`Aedat4::events`] returns this
     /// error rather than inventing one, so a malformed event payload is still refused — it is the
     /// *framing* that survives it, which is what lets a caller reach the packets of a file whose
     /// other streams this crate cannot read.
@@ -2106,7 +2304,7 @@ pub struct Aedat4Packet {
 }
 
 impl Aedat4Packet {
-    /// Build a `RAW` event packet from events, payload and view consistent.
+    /// Build an uncompressed event packet from events, payload and view consistent.
     ///
     /// # Errors
     ///
@@ -2149,150 +2347,258 @@ impl Aedat4Packet {
     }
 }
 
+/// A bounds-checked view of one `FlatBuffers` buffer inside an `AEDAT` 4.0 file.
+///
+/// # Totality on a 32-bit target, which `wasm32` is
+///
+/// Every offset inside the buffer is a `u32` the file chose, and this crate compiles to `wasm32`,
+/// where `usize` is 32 bits. Adding those `u32`s into a `usize` overflows there — a panic under
+/// debug overflow checks, a wrap in release — and a wrap is the dangerous half: a root offset of
+/// `0xFFFF_FFFE` plus four becomes 2, which passes every bounds check that follows. So the
+/// arithmetic is done in `u64` and narrowed to `usize` only once the value is known to lie inside
+/// the buffer, which makes the 32-bit and the 64-bit path the same path and lets
+/// `aedat4_refuses_offsets_that_would_wrap_a_32_bit_usize` prove it on a 64-bit host.
+struct Fb<'a> {
+    p: &'a [u8],
+    /// Where `p` starts in the whole file, for the offset an error reports.
+    base: usize,
+}
+
+impl Fb<'_> {
+    fn bad(&self, what: &'static str) -> DecodeError {
+        DecodeError::MalformedFlatBuffer { offset: self.base, what }
+    }
+
+    /// `at` as a `usize`, once `at .. at + n` is known to lie wholly inside the buffer, which also
+    /// makes the narrowing exact.
+    fn spot(&self, at: u64, n: u64, what: &'static str) -> Result<usize, DecodeError> {
+        let len = self.p.len() as u64;
+        let end = at.checked_add(n).filter(|&e| e <= len).ok_or(self.bad(what))?;
+        debug_assert!(end <= len);
+        usize::try_from(at).map_err(|_| self.bad(what))
+    }
+
+    fn u32_at(&self, at: u64, what: &'static str) -> Result<u32, DecodeError> {
+        u32_le(self.p, self.spot(at, 4, what)?).map_err(|_| self.bad(what))
+    }
+
+    /// Refuse unless the four-character file identifier at `at` is `want`.
+    fn identifier(&self, at: u64, want: &'static str) -> Result<(), DecodeError> {
+        let i = self.spot(at, 4, "file identifier")?;
+        let found = &self.p[i..i + 4];
+        if found != want.as_bytes() {
+            return Err(DecodeError::BadMagic {
+                offset: self.base.saturating_add(i),
+                expected: want,
+                found: String::from_utf8_lossy(found).into_owned(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Where field `index` of the table at `table` lies, found through the table's vtable — or
+    /// `None` when the vtable does not record the field, which `FlatBuffers` means as "the schema's
+    /// default".
+    fn field(&self, table: u64, index: u64) -> Result<Option<u64>, DecodeError> {
+        let soffset = self.u32_at(table, "root offset")? as i32;
+        let vtable = i64::try_from(table).map_err(|_| self.bad("vtable"))? - i64::from(soffset);
+        let vtable = u64::try_from(vtable).map_err(|_| self.bad("vtable"))?;
+        let vt_at = self.spot(vtable, 4, "vtable")?;
+        let vt_len = u64::from(u16_le(self.p, vt_at).map_err(|_| self.bad("vtable"))?);
+        self.spot(vtable, vt_len, "vtable")?;
+        let slot = 4 + 2 * index;
+        if vt_len < slot + 2 {
+            // A vtable that stops short of the slot has not recorded the field.
+            return Ok(None);
+        }
+        let entry = self.spot(vtable + slot, 2, "vtable")?;
+        let within = u64::from(u16_le(self.p, entry).map_err(|_| self.bad("vtable"))?);
+        if within == 0 {
+            return Ok(None);
+        }
+        Ok(Some(table + within))
+    }
+}
+
 /// A decoded `AEDAT` 4.0 file — **framing complete, payload decoding partial, and this doc says
 /// exactly where the line is**.
 ///
-/// The container is: `#`-prefixed `\r\n` header lines ending with `#!END-HEADER`, a 4-byte
-/// little-endian size followed by that many bytes of `IOHeader`, and then a sequence of packets,
-/// each an 8-byte header — little-endian `int32` stream id, little-endian `int32` payload size —
-/// followed by the payload. [`Aedat4::decode`] reads all of that, for every file, whatever the
-/// compression: you always get the stream ids, the packet boundaries and the byte offsets.
+/// The container, as iniVation's `AEDAT` 4.0 page and `dv-processing`'s reader lay it out:
+///
+/// 1. the 14-byte version line [`Aedat4::MAGIC`];
+/// 2. a 4-byte little-endian size and that many bytes of `IOHeader`, a `FlatBuffers` table with
+///    the file identifier `IOHE` whose fields are the compression, the position of the file data
+///    table, and an XML `infoNode` describing the streams;
+/// 3. packets, each an 8-byte header — little-endian `int32` stream id, little-endian `int32`
+///    payload size — followed by the payload, which once decompressed "is a size-prefixed
+///    Flatbuffer" carrying its own four-character identifier;
+/// 4. when the `IOHeader`'s `dataTablePosition` is not -1, a `FileDataTable` from that offset to
+///    the end: "No more data is present after that offset in the file."
+///
+/// [`Aedat4::decode`] reads all of that, for every file, whatever the compression: you always get
+/// the stream ids, the packet boundaries and the byte offsets.
+///
+/// # What this module used to get wrong
+///
+/// Through 0.22.0 it read `#`-prefixed text header lines after the version line, up to a
+/// `#!END-HEADER` line, and took the compression from a `Format:` line among them; it read a
+/// payload's `FlatBuffers` root offset from byte 0; and it read packets to the end of the file.
+/// None of that is the format. There is no text header: byte 14 of a `DV` recording is the first
+/// byte of the `IOHeader` size — `0x24` in the recording below, not `#` — so every file `DV`
+/// writes was refused there with [`DecodeError::Truncated`]. The compression is the `IOHeader`'s
+/// first field. A payload's first four bytes are its size prefix, which the old reader took for
+/// the root offset. And the data table's bytes are not packets. The round-trip tests passed
+/// throughout, because this module's writer made the same mistakes its reader did — which is what
+/// an encoder used as its own decoder's oracle cannot see.
+///
+/// # Checked against a recording `DV` wrote
+///
+/// The `neuromorphicsystems/aedat` reader's `tests/data/test_data.aedat4`, recorded from
+/// `DAVIS346_00000002` with `LZ4` compression: 6,144,209 bytes, a 3,108-byte `IOHeader`, 708
+/// packets in four streams (events, frames, inertial samples, triggers) and a 22,166-byte data
+/// table at byte 6,122,043. [`Aedat4::decode`] reads that framing and [`Aedat4::encode`] writes the
+/// file back byte for byte. With every packet and the table decompressed outside this crate
+/// (`Python`'s `lz4`) and the `IOHeader` patched to `NONE`, the 236 event packets decode to the
+/// same 78,830 events as an independent `Python` walker, and the other 472 packets are refused by
+/// their identifiers. Rebuilt from its own decoded events by [`Aedat4Packet::from_events`], every
+/// one of the 236 event packets comes out byte for byte as `DV` wrote it;
+/// `aedat4_reads_and_writes_the_event_table_dv_wrote` pins that layout on the recording's first
+/// two events.
 ///
 /// # What this implementation cannot do
 ///
-/// **Compressed payloads.** `DV` writes `LZ4` or `Zstd` by default. This crate has zero
-/// dependencies and carries no decompressor, so a compressed packet arrives with `events: None` and
-/// [`Aedat4::events`] returns [`DecodeError::UnsupportedCompression`] naming the format and the
-/// offset. That is a capability boundary of a zero-dependency crate, stated rather than hidden;
-/// re-save the recording as `RAW` from `DV`, or decompress upstream.
+/// **Compressed payloads.** Each packet of an `LZ4` or `Zstd` file is one compressed frame. This
+/// crate has zero dependencies and carries no decompressor, so a compressed packet arrives with
+/// `events: None` and [`Aedat4::events`] returns [`DecodeError::UnsupportedCompression`] naming
+/// the compression and the offset. That is a capability boundary of a zero-dependency crate,
+/// stated rather than hidden; the one `DV` recording checked is `LZ4`, so decompress upstream.
 ///
-/// **Streams that are not events.** A `DV` recording interleaves frames and inertial samples with
-/// its events, as packets in this same container. Those arrive with `events: None` and the reason
-/// in [`Aedat4Packet::payload_error`]; the framing — stream id, offset, payload — is complete for
-/// them, which is what lets a caller pick out the event stream by its id and hand the rest to a
-/// `FlatBuffers` reader. [`Aedat4::events`] is a whole-file call and refuses if any packet is not
-/// events, because a silently short event list is the worse answer.
+/// **Streams that are not events.** A `DV` recording interleaves frames, inertial samples and
+/// triggers with its events, as packets in this same container. Those arrive with `events: None`
+/// and a [`DecodeError::BadMagic`] naming their identifier in [`Aedat4Packet::payload_error`]; the
+/// framing — stream id, offset, payload — is complete for them, which is what lets a caller pick
+/// out the event stream and hand the rest to a `FlatBuffers` reader. [`Aedat4::events`] is a
+/// whole-file call and refuses if any packet is not events, because a silently short event list is
+/// the worse answer; to read one stream, filter [`Aedat4::packets`] by its id.
 ///
-/// **Certainty about the `FlatBuffers` layout.** For a `RAW` payload this implementation walks the
-/// buffer by hand — root offset, vtable, then a vector of 16-byte inline structs laid out as
-/// `int64` timestamp, `int16` column, `int16` row, `bool` polarity, three bytes of padding — which
-/// is the `events.fbs` schema of `dv-processing` as this implementation reads it. **It was not
-/// checked against a file written by `DV` software**, because this review did not locate a `DV`
-/// recording it could verify byte for byte. What *is* checked is that the reader and the writer
-/// here agree exactly over thousands of events, and that the reader rejects every malformed buffer
-/// it is given rather than reading past the end. Treat this codec as production-ready for the
-/// framing and as unverified for the payload, and say so if you publish a figure that depends on it.
+/// **The stream description.** The `IOHeader`'s `infoNode` is kept verbatim in
+/// [`Aedat4::io_header`] and not parsed, so this crate knows streams only by their ids, and a file
+/// it writes carries no description at all. Assume such a file does not open in `DV` until
+/// someone checks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Aedat4 {
-    /// Header lines with their leading `#` and trailing `\r\n` removed, `!END-HEADER` included.
-    pub header: Vec<String>,
-    /// The compression the `Format:` header line declared, defaulting to `RAW` if it said nothing.
+    /// The compression the `IOHeader` declared when the file was decoded.
+    ///
+    /// A view, like [`Aedat4Packet::events`]: [`Aedat4::encode`] writes [`Aedat4::io_header`],
+    /// and changing this field changes nothing on disk.
     pub compression: Aedat4Compression,
-    /// The `IOHeader` blob verbatim. It is a `FlatBuffers` table describing the streams; this
-    /// implementation preserves it byte for byte and does not interpret it, so a re-encode is
-    /// lossless and a caller with a `FlatBuffers` reader can parse it separately.
+    /// The `IOHeader` verbatim, without the 4-byte size in front of it. Authoritative: it is what a
+    /// re-encode writes, and the compression and the data table's position are read from it.
     pub io_header: Vec<u8>,
     /// Packets in file order.
     pub packets: Vec<Aedat4Packet>,
+    /// The `FileDataTable` verbatim, from the `IOHeader`'s `dataTablePosition` to the end of the
+    /// file, still compressed if the file is; empty when the position is -1. Not interpreted.
+    pub data_table: Vec<u8>,
 }
 
 impl Aedat4 {
-    /// The magic the first header line must start with.
-    pub const MAGIC: &'static str = "!AER-DAT4";
-    /// The header line that terminates the ASCII header.
-    pub const END_HEADER: &'static str = "!END-HEADER";
-    /// Bytes per event inside a `RAW` payload's `FlatBuffers` struct vector.
+    /// The version line every file starts with: exactly 14 bytes, `dv-processing`'s
+    /// `AEDAT_VERSION_LENGTH`.
+    ///
+    /// This constant used to be `"!AER-DAT4"`, the prefix of a `#`-prefixed header line, and a
+    /// sibling `END_HEADER` named the line that closed the header. There is no such header and no
+    /// such line; see the note on [`Aedat4`].
+    pub const MAGIC: &'static str = "#!AER-DAT4.0\r\n";
+    /// The `FlatBuffers` file identifier of an `IOHeader`.
+    pub const IO_HEADER_ID: &'static str = "IOHE";
+    /// The `FlatBuffers` file identifier of an event packet, `file_identifier "EVTS"` in
+    /// `dv-processing`'s `event.fbs`.
+    pub const EVENTS_ID: &'static str = "EVTS";
+    /// Bytes per event inside an uncompressed payload's `FlatBuffers` struct vector.
     pub const FB_EVENT_SIZE: usize = 16;
 
-    /// Decode the container, and the payloads that are `RAW`.
+    /// The smallest `IOHeader` the schema admits: compression `NONE`, written out rather than left
+    /// to the default, no `dataTablePosition` (so -1) and no `infoNode`.
+    ///
+    /// ```text
+    ///  0.. 4  uint32 root offset = 16
+    ///  4.. 8  file identifier "IOHE"
+    ///  8..10  padding
+    /// 10..12  uint16 vtable length = 6
+    /// 12..14  uint16 table length = 8
+    /// 14..16  uint16 offset of field 0 (compression) within the table = 4
+    /// 16..20  int32 soffset back to the vtable = 6
+    /// 20..24  int32 compression = 0, NONE
+    /// ```
+    const MINIMAL_IO_HEADER: [u8; 24] = [
+        16, 0, 0, 0, b'I', b'O', b'H', b'E', 0, 0, 6, 0, 8, 0, 4, 0, 6, 0, 0, 0, 0, 0, 0, 0,
+    ];
+
+    /// Decode the container, and the payloads of an uncompressed file.
     ///
     /// # Errors
     ///
-    /// [`DecodeError::BadMagic`] if the first line is not `#!AER-DAT4...`;
-    /// [`DecodeError::Truncated`] if the header has no `#!END-HEADER`, or a size field or payload
-    /// runs off the end; [`DecodeError::FieldOutOfRange`] for a negative size field.
+    /// [`DecodeError::BadMagic`] at the first byte that differs from [`Aedat4::MAGIC`], or if the
+    /// `IOHeader` does not carry the identifier `IOHE`; [`DecodeError::Truncated`] if the file ends
+    /// inside the version line, or a size field or payload runs off the end of the file or into the
+    /// data table; [`DecodeError::FieldOutOfRange`] for a negative size field;
+    /// [`DecodeError::MalformedFlatBuffer`] for an `IOHeader` whose offsets point outside it, or
+    /// whose `dataTablePosition` is neither -1 nor a position between the end of the `IOHeader` and
+    /// the end of the file. The `IOHeader` is refused rather than defaulted because without it the
+    /// compression is unknown, and a guess would read compressed bytes as events.
     ///
-    /// A `RAW` payload this implementation cannot walk, **or walks and rejects** — a frame or an
-    /// inertial stream, a malformed buffer, a declared count the bytes cannot supply, a negative
-    /// or backwards timestamp — does not fail the decode: the framing is what this call promises
-    /// for every file, so the packet comes back with `events: None` and the reason in
+    /// A payload this implementation cannot walk, **or walks and rejects** — a frame or an inertial
+    /// stream, a malformed buffer, a declared count the bytes cannot supply, a negative or backwards
+    /// timestamp — does not fail the decode: the framing is what this call promises for every file,
+    /// so the packet comes back with `events: None` and the reason in
     /// [`Aedat4Packet::payload_error`], and [`Aedat4::events`] is where it is refused.
     pub fn decode(bytes: &[u8]) -> Result<Self, DecodeError> {
-        // A dedicated header loop rather than `read_header_lines`: the byte after the header is
-        // binary, and 0x23 is both the first byte of a small size field and the character '#'.
-        // Stopping at `#!END-HEADER` is what keeps a size field of 35 from being eaten as a
-        // comment line.
-        let mut header: Vec<String> = Vec::new();
-        let mut at = 0usize;
-        let mut ended = false;
-        while !ended {
-            if bytes.get(at) != Some(&b'#') {
-                // At offset zero this is the wrong file, not a short one, and saying so is what
-                // stops another format's first bytes being walked as a header.
-                return if at == 0 {
-                    Err(DecodeError::BadMagic {
-                        offset: 0,
-                        expected: "#!AER-DAT4.0",
-                        found: String::from_utf8_lossy(&bytes[..bytes.len().min(12)]).into_owned(),
-                    })
-                } else {
-                    Err(DecodeError::Truncated {
-                        offset: at,
-                        need: Self::END_HEADER.len() + 3,
-                        have: bytes.len().saturating_sub(at),
-                    })
-                };
-            }
-            let start = at + 1;
-            let nl = bytes[start..].iter().position(|&c| c == b'\n').ok_or(
-                DecodeError::Truncated {
-                    offset: at,
-                    need: bytes.len() - at + 1,
-                    have: bytes.len() - at,
-                },
-            )?;
-            let end = start + nl;
-            let text_end = if end > start && bytes[end - 1] == b'\r' { end - 1 } else { end };
-            let line = String::from_utf8_lossy(&bytes[start..text_end]).into_owned();
-            if header.is_empty() && !line.starts_with(Self::MAGIC) {
-                return Err(DecodeError::BadMagic {
-                    offset: 0,
-                    expected: "#!AER-DAT4.0",
-                    found: String::from_utf8_lossy(&bytes[..bytes.len().min(12)]).into_owned(),
-                });
-            }
-            ended = line == Self::END_HEADER;
-            header.push(line);
-            at = end + 1;
+        let magic = Self::MAGIC.as_bytes();
+        if let Some(i) = magic.iter().zip(bytes).position(|(m, b)| m != b) {
+            return Err(DecodeError::BadMagic {
+                offset: i,
+                expected: Self::MAGIC,
+                found: String::from_utf8_lossy(&bytes[..bytes.len().min(magic.len())]).into_owned(),
+            });
         }
-
-        let compression = header
-            .iter()
-            .find_map(|l| l.strip_prefix("Format:"))
-            .map_or(Aedat4Compression::Raw, |v| Aedat4Compression::parse(v.trim()));
-
+        // Every byte present matched, so a file shorter than the line is a cut-short one.
+        slice_at(bytes, 0, magic.len())?;
+        let mut at = magic.len();
         let io_len = Self::signed_len(bytes, at, "IOHeader size")?;
         at += 4;
         let io_header = slice_at(bytes, at, io_len)?.to_vec();
+        let (compression, table_at) = Self::read_io_header(&io_header, at)?;
         at += io_len;
+
+        // "No more data is present after that offset in the file": the packets stop where the
+        // data table starts, and its bytes are not packets. Read as a packet header, the first
+        // eight bytes of the recording's LZ4-compressed table are a negative size.
+        let end = match table_at {
+            None => bytes.len(),
+            Some(p) => usize::try_from(p).ok().filter(|p| (at..=bytes.len()).contains(p)).ok_or(
+                DecodeError::MalformedFlatBuffer { offset: magic.len() + 4, what: "dataTablePosition" },
+            )?,
+        };
+        let region = &bytes[..end];
 
         let mut packets = Vec::new();
         // Carried ACROSS packets: a file whose packet boundaries each hold sorted events but whose
         // packets are out of order would otherwise pass every per-packet check and still hand the
         // caller a non-monotonic stream. A mutation fuzzer found exactly that.
         let mut last_t = 0u64;
-        while at < bytes.len() {
+        while at < end {
             let head = at;
-            let stream_id = u32_le(bytes, at)? as i32;
-            let size = Self::signed_len(bytes, at + 4, "packet size")?;
-            let payload = slice_at(bytes, at + 8, size)?.to_vec();
-            // A RAW file interleaves streams: DV writes frames and inertial samples as packets in
-            // this same container, and they are not event tables. Applying the event reader to
-            // every packet AND propagating its error refused the whole file — so no real RAW DV
-            // recording opened at all, which is the opposite of what this type promises. The error
-            // is kept on the packet instead and returned by `events()`, so the refusal survives
-            // without taking the framing with it.
-            let (events, payload_error) = if compression == Aedat4Compression::Raw {
+            let stream_id = u32_le(region, at)? as i32;
+            let size = Self::signed_len(region, at + 4, "packet size")?;
+            let payload = slice_at(region, at + 8, size)?.to_vec();
+            // A file interleaves streams: DV writes frames, inertial samples and triggers as
+            // packets in this same container, and they are not event tables. Applying the event
+            // reader to every packet AND propagating its error refused the whole file — so no
+            // real DV recording opened at all, which is the opposite of what this type promises.
+            // The error is kept on the packet instead and returned by `events()`, so the refusal
+            // survives without taking the framing with it.
+            let (events, payload_error) = if compression == Aedat4Compression::None {
                 match Self::read_event_packet(&payload, at + 8, &mut last_t) {
                     Ok(e) => (Some(e), None),
                     Err(err) => (None, Some(err)),
@@ -2303,7 +2609,7 @@ impl Aedat4 {
             packets.push(Aedat4Packet { stream_id, offset: head, payload, events, payload_error });
             at += 8 + size;
         }
-        Ok(Self { header, compression, io_header, packets })
+        Ok(Self { compression, io_header, packets, data_table: bytes[end..].to_vec() })
     }
 
     fn signed_len(bytes: &[u8], at: usize, field: &'static str) -> Result<usize, DecodeError> {
@@ -2316,17 +2622,43 @@ impl Aedat4 {
         })
     }
 
-    /// Walk a `RAW` `FlatBuffers` event packet. Every offset is bounds-checked before use.
+    /// The two `IOHeader` fields this implementation acts on: `compression`, field 0, default
+    /// `NONE`; and `dataTablePosition`, field 1, default -1, returned as `None`.
     ///
-    /// # Totality on a 32-bit target, which `wasm32` is
+    /// `base` is where the `IOHeader` starts in the file. The container's size field in front of
+    /// it is the `FlatBuffer`'s size prefix, so here the root offset is at byte 0 and the
+    /// identifier at byte 4.
+    fn read_io_header(h: &[u8], base: usize) -> Result<(Aedat4Compression, Option<u64>), DecodeError> {
+        let fb = Fb { p: h, base };
+        fb.identifier(4, Self::IO_HEADER_ID)?;
+        let root = u64::from(fb.u32_at(0, "root offset")?);
+        let compression = match fb.field(root, 0)? {
+            Some(at) => Aedat4Compression::from_code(fb.u32_at(at, "compression")? as i32),
+            None => Aedat4Compression::None,
+        };
+        let position = match fb.field(root, 1)? {
+            Some(at) => {
+                let lo = u64::from(fb.u32_at(at, "dataTablePosition")?);
+                let hi = u64::from(fb.u32_at(at + 4, "dataTablePosition")?);
+                (lo | (hi << 32)) as i64
+            }
+            None => -1,
+        };
+        if position == -1 {
+            return Ok((compression, None));
+        }
+        let position = u64::try_from(position).map_err(|_| fb.bad("dataTablePosition"))?;
+        Ok((compression, Some(position)))
+    }
+
+    /// Walk an uncompressed event packet: a size-prefixed `FlatBuffer` with the identifier `EVTS`.
+    /// Every offset is bounds-checked before use, in `u64`; see [`Fb`].
     ///
-    /// Every offset inside the buffer is a `u32` the file chose, and this crate compiles to
-    /// `wasm32`, where `usize` is 32 bits. Adding those `u32`s into a `usize` overflows there —
-    /// a panic under debug overflow checks, a wrap in release — and a wrap is the dangerous half:
-    /// a root offset of `0xFFFF_FFFE` plus four becomes 2, which passes every bounds check that
-    /// follows. So the arithmetic is done in `u64` and narrowed to `usize` only once the value is
-    /// known to lie inside the payload, which makes the 32-bit and the 64-bit path the same path
-    /// and lets `aedat4_refuses_offsets_that_would_wrap_a_32_bit_usize` prove it on a 64-bit host.
+    /// The size prefix counts the bytes after it, and the root offset that follows counts from
+    /// byte 4, not from byte 0: "All Flatbuffers are size-prefixed, meaning the first four bytes
+    /// represent a 32 bit little-endian integer encoding the size of the following, actual
+    /// Flatbuffer data." Through 0.22.0 this reader took the size prefix for the root offset and its
+    /// writer wrote no prefix, so the two agreed with each other and with no file `DV` writes.
     ///
     /// `last_t` is advanced only if the whole packet decodes, so a packet that is refused does not
     /// leave the cross-packet monotonicity cursor somewhere in the middle of itself.
@@ -2335,44 +2667,24 @@ impl Aedat4 {
         base: usize,
         last_t: &mut u64,
     ) -> Result<Vec<AerEvent>, DecodeError> {
-        let bad = |what: &'static str| DecodeError::MalformedFlatBuffer { offset: base, what };
+        let fb = Fb { p, base };
         let len = p.len() as u64;
-        // `at` and `at + n` in u64; returns `at` as a usize only when the window is wholly inside
-        // the payload, which also makes the narrowing exact.
-        let spot = |at: u64, n: u64, what: &'static str| -> Result<usize, DecodeError> {
-            let end = at.checked_add(n).filter(|&e| e <= len).ok_or(bad(what))?;
-            debug_assert!(end <= len);
-            usize::try_from(at).map_err(|_| bad(what))
+        let prefix = u64::from(fb.u32_at(0, "size prefix")?);
+        if prefix != len - 4 {
+            return Err(DecodeError::CountMismatch { offset: base, declared: prefix, actual: len - 4 });
+        }
+        fb.identifier(8, Self::EVENTS_ID)?;
+        let root = 4 + u64::from(fb.u32_at(4, "root offset")?);
+        let Some(slot) = fb.field(root, 0)? else {
+            // The table records no element vector: an empty packet.
+            return Ok(Vec::new());
         };
-        if p.len() < 8 {
-            return Err(bad("root offset"));
-        }
-        let root = u64::from(u32_le(p, 0).map_err(|_| bad("root offset"))?);
-        let root_at = spot(root, 4, "root offset")?;
-        let soffset = u32_le(p, root_at).map_err(|_| bad("vtable"))? as i32;
-        let vtable = i64::try_from(root).map_err(|_| bad("vtable"))? - i64::from(soffset);
-        let vtable = u64::try_from(vtable).map_err(|_| bad("vtable"))?;
-        let vt_at = spot(vtable, 4, "vtable")?;
-        let vt_len = u64::from(u16_le(p, vt_at).map_err(|_| bad("vtable"))?);
-        spot(vtable, vt_len, "vtable")?;
-        if vt_len < 6 {
-            // A vtable shorter than 6 has no fields at all, so there is no element vector to find.
-            return Ok(Vec::new());
-        }
-        let field = u64::from(u16_le(p, vt_at + 4).map_err(|_| bad("vtable"))?);
-        if field == 0 {
-            return Ok(Vec::new());
-        }
-        let slot = root.checked_add(field).ok_or_else(|| bad("vector"))?;
-        let slot_at = spot(slot, 4, "vector")?;
-        let vec_at = slot
-            .checked_add(u64::from(u32_le(p, slot_at).map_err(|_| bad("vector"))?))
-            .ok_or_else(|| bad("vector"))?;
-        let vec_head = spot(vec_at, 4, "vector")?;
-        let count = u64::from(u32_le(p, vec_head).map_err(|_| bad("vector"))?);
+        let vec_at = slot + u64::from(fb.u32_at(slot, "vector")?);
+        let vec_head = fb.spot(vec_at, 4, "vector")?;
+        let count = u64::from(u32_le(p, vec_head).map_err(|_| fb.bad("vector"))?);
         let size = Self::FB_EVENT_SIZE as u64;
         let first = vec_at + 4;
-        let bytes_needed = count.checked_mul(size).ok_or_else(|| bad("vector"))?;
+        let bytes_needed = count.checked_mul(size).ok_or_else(|| fb.bad("vector"))?;
         if first.checked_add(bytes_needed).is_none_or(|end| end > len) {
             return Err(DecodeError::CountMismatch {
                 offset: base.saturating_add(vec_head),
@@ -2384,8 +2696,8 @@ impl Aedat4 {
         // Committed to `*last_t` only on success; see the note above.
         let mut cursor = *last_t;
         for k in 0..count {
-            let at = spot(first + k * size, size, "vector")?;
-            let raw_t = u64_le(p, at).map_err(|_| bad("vector"))? as i64;
+            let at = fb.spot(first + k * size, size, "vector")?;
+            let raw_t = u64_le(p, at).map_err(|_| fb.bad("vector"))? as i64;
             let t = u64::try_from(raw_t).map_err(|_| DecodeError::FieldOutOfRange {
                 offset: base.saturating_add(at),
                 field: "timestamp",
@@ -2400,8 +2712,8 @@ impl Aedat4 {
                 });
             }
             cursor = t;
-            let sx = u16_le(p, at + 8).map_err(|_| bad("vector"))? as i16;
-            let sy = u16_le(p, at + 10).map_err(|_| bad("vector"))? as i16;
+            let sx = u16_le(p, at + 8).map_err(|_| fb.bad("vector"))? as i16;
+            let sy = u16_le(p, at + 10).map_err(|_| fb.bad("vector"))? as i16;
             for (v, field) in [(sx, "column"), (sy, "row")] {
                 if v < 0 {
                     return Err(DecodeError::FieldOutOfRange {
@@ -2412,7 +2724,7 @@ impl Aedat4 {
                     });
                 }
             }
-            let pol_byte = *p.get(at + 12).ok_or_else(|| bad("vector"))?;
+            let pol_byte = *p.get(at + 12).ok_or_else(|| fb.bad("vector"))?;
             let polarity = match pol_byte {
                 0 => Polarity::Off,
                 1 => Polarity::On,
@@ -2436,14 +2748,15 @@ impl Aedat4 {
     /// # Errors
     ///
     /// [`DecodeError::UnsupportedCompression`] naming the packet's byte offset and the file's
-    /// declared format, if a packet's payload was compressed and so never read. This is where the
+    /// compression, if a packet's payload was compressed and so never read. This is where the
     /// crate's zero-dependency boundary becomes visible to a caller, and it refuses with the reason
     /// rather than returning a partial list that looks like a short recording.
     ///
-    /// Otherwise, whatever [`Aedat4Packet::payload_error`] holds: a `RAW` packet that is not an
-    /// event table — a frame or an inertial sample in an interleaved `DV` recording, or a
-    /// malformed buffer — is refused here with the error that walking it produced, verbatim, so
-    /// that "this stream is not events" and "this crate has no decompressor" cannot be confused.
+    /// Otherwise, whatever [`Aedat4Packet::payload_error`] holds: a packet of an uncompressed file
+    /// that is not an event table — a frame, an inertial sample or a trigger in an interleaved `DV`
+    /// recording, or a malformed buffer — is refused here with the error that walking it produced,
+    /// verbatim, so that "this stream is not events" and "this crate has no decompressor" cannot be
+    /// confused.
     pub fn events(&self) -> Result<Vec<AerEvent>, DecodeError> {
         let mut all = Vec::new();
         for p in &self.packets {
@@ -2453,7 +2766,7 @@ impl Aedat4 {
                 (None, None) => {
                     return Err(DecodeError::UnsupportedCompression {
                         offset: p.offset,
-                        name: self.compression.name().to_string(),
+                        name: self.compression.label(),
                     });
                 }
             }
@@ -2461,12 +2774,12 @@ impl Aedat4 {
         Ok(all)
     }
 
-    /// Build a `RAW` `AEDAT` 4.0 file from events, one packet per `events_per_packet`.
+    /// Build an uncompressed `AEDAT` 4.0 file from events, one packet per `events_per_packet`.
     ///
-    /// The `IOHeader` is written as an empty blob: this implementation does not synthesise a
-    /// stream description it cannot verify against `DV`. A file produced here therefore round-trips
-    /// through [`Aedat4::decode`] exactly and should be assumed **not** to open in `DV` until
-    /// someone checks it.
+    /// The `IOHeader` is the smallest the schema admits — compression `NONE`, no data table, no
+    /// `infoNode` — because this implementation does not synthesise a stream description it cannot
+    /// verify against `DV`. A file produced here therefore round-trips through [`Aedat4::decode`]
+    /// exactly and should be assumed **not** to open in `DV` until someone checks.
     ///
     /// # Errors
     ///
@@ -2496,41 +2809,41 @@ impl Aedat4 {
             })?);
         }
         Ok(Self {
-            header: vec![
-                "!AER-DAT4.0".to_string(),
-                "Format: RAW".to_string(),
-                Self::END_HEADER.to_string(),
-            ],
-            compression: Aedat4Compression::Raw,
-            io_header: Vec::new(),
+            compression: Aedat4Compression::None,
+            io_header: Self::MINIMAL_IO_HEADER.to_vec(),
             packets,
+            data_table: Vec::new(),
         })
     }
 
-    /// The canonical `FlatBuffers` table this implementation writes and reads.
-    ///
-    /// Laid out forwards, which a general `FlatBuffers` writer does not do — it builds backwards —
-    /// but which makes the byte offsets checkable by eye against the reader above:
+    /// The event packet this implementation writes: the layout `DV` gave every event packet of the
+    /// one recording this module was checked against, all 236 of which this function reproduces
+    /// byte for byte from their own events.
     ///
     /// ```text
-    ///  0.. 4  uint32 root offset = 12
-    ///  4.. 6  uint16 vtable length = 6
-    ///  6.. 8  uint16 table length = 8
-    ///  8..10  uint16 offset of field 0 within the table = 4
-    /// 10..12  padding, aligning the table to 4
-    /// 12..16  int32 soffset to the vtable = 8
-    /// 16..20  uint32 offset from this slot to the vector = 4
-    /// 20..24  uint32 element count
-    /// 24..    elements, 16 bytes each, 8-aligned as the int64 field requires
+    ///  0.. 4  uint32 size prefix: the bytes after it
+    ///  4.. 8  uint32 root offset, counted from byte 4 = 16, so the table is at 20
+    ///  8..12  file identifier "EVTS"
+    /// 12..14  padding
+    /// 14..16  uint16 vtable length = 6
+    /// 16..18  uint16 table length = 8
+    /// 18..20  uint16 offset of field 0, the element vector, within the table = 4
+    /// 20..24  int32 soffset back to the vtable = 6
+    /// 24..28  uint32 offset from this slot to the vector = 4
+    /// 28..32  uint32 element count
+    /// 32..    elements, 16 bytes each, 8-aligned as the int64 field requires
     /// ```
     fn write_event_packet(events: &[AerEvent]) -> Vec<u8> {
-        let mut p = Vec::with_capacity(24 + events.len() * Self::FB_EVENT_SIZE);
-        p.extend_from_slice(&12u32.to_le_bytes());
+        let after_prefix = 28 + events.len() * Self::FB_EVENT_SIZE;
+        let mut p = Vec::with_capacity(4 + after_prefix);
+        p.extend_from_slice(&(after_prefix as u32).to_le_bytes());
+        p.extend_from_slice(&16u32.to_le_bytes());
+        p.extend_from_slice(Self::EVENTS_ID.as_bytes());
+        p.extend_from_slice(&[0u8; 2]);
         p.extend_from_slice(&6u16.to_le_bytes());
         p.extend_from_slice(&8u16.to_le_bytes());
         p.extend_from_slice(&4u16.to_le_bytes());
-        p.extend_from_slice(&0u16.to_le_bytes());
-        p.extend_from_slice(&8i32.to_le_bytes());
+        p.extend_from_slice(&6i32.to_le_bytes());
         p.extend_from_slice(&4u32.to_le_bytes());
         p.extend_from_slice(&(events.len() as u32).to_le_bytes());
         for e in events {
@@ -2546,26 +2859,37 @@ impl Aedat4 {
     /// Serialise back to bytes.
     ///
     /// Every packet is written from [`Aedat4Packet::payload`], byte for byte, whatever the
-    /// compression and whether or not its events were decoded. So **any** file survives a
-    /// decode-encode cycle unchanged — a compressed one this crate cannot read inside, and equally
-    /// a `RAW` one whose `FlatBuffers` table is laid out differently from the forward layout
-    /// `Aedat4::write_event_packet` produces, or carries fields beyond the element vector.
-    /// Regenerating the payload from the decoded events drops all of that silently; measured, a
-    /// valid 98-byte packet with a 4-byte alignment gap came back out as 94.
+    /// compression and whether or not its events were decoded, and so are the `IOHeader` and the
+    /// data table. So **any** file this crate decodes survives a decode-encode cycle unchanged — a
+    /// compressed one it cannot read inside, and equally an uncompressed one whose tables are laid
+    /// out differently from the ones this module writes. Regenerating a payload from its decoded
+    /// events drops such differences silently:
+    /// `aedat4_re_saves_a_raw_packet_it_did_not_lay_out_itself_byte_for_byte` builds a 56-byte
+    /// packet with an 8-byte gap in it, which the writer would put back as 48.
     ///
     /// Changing what a packet holds therefore goes through [`Aedat4Packet::set_events`] rather than
-    /// through the `events` field — see the note on [`Aedat4Packet`].
+    /// through the `events` field — see the note on [`Aedat4Packet`] — and in a file with a data
+    /// table it then needs [`Aedat4::drop_data_table`], because the table indexes the packets by
+    /// byte offset.
     ///
     /// # Errors
     ///
-    /// [`EncodeError::HeaderLineContainsNewline`] if a header line would not survive the round
-    /// trip; [`EncodeError::FieldOutOfRange`] if the `IOHeader` or a payload is longer than the
-    /// `int32` size field can express, which is a file that cannot be written rather than one
-    /// written with a wrong length in it. Coordinate ranges were enforced when the packets were
-    /// built.
+    /// [`EncodeError::FieldOutOfRange`] if the `IOHeader` or a payload is longer than the `int32`
+    /// size field can express, which is a file that cannot be written rather than one written with
+    /// a wrong length in it, or if [`Aedat4::io_header`] is not an `IOHeader` this crate can read,
+    /// since then nothing says where the data table belongs; [`EncodeError::DataTableMisplaced`] if
+    /// the `IOHeader`'s `dataTablePosition` is not where the packets end, or is -1 while there is a
+    /// table to write. Coordinate ranges were enforced when the packets were built.
     pub fn encode(&self) -> Result<Vec<u8>, EncodeError> {
-        let mut out = Vec::new();
-        push_header_lines(&mut out, &self.header, b'#', true)?;
+        let (_, declared) = Self::read_io_header(&self.io_header, Self::MAGIC.len() + 4).map_err(|_| {
+            EncodeError::FieldOutOfRange {
+                index: 0,
+                field: "an IOHeader this crate cannot read",
+                value: self.io_header.len() as u64,
+                max: 0,
+            }
+        })?;
+        let mut out = Vec::from(Self::MAGIC.as_bytes());
         out.extend_from_slice(&Self::size_field(0, "IOHeader size", self.io_header.len())?.to_le_bytes());
         out.extend_from_slice(&self.io_header);
         for (i, p) in self.packets.iter().enumerate() {
@@ -2574,7 +2898,42 @@ impl Aedat4 {
             out.extend_from_slice(&size.to_le_bytes());
             out.extend_from_slice(&p.payload);
         }
+        let packets_end = out.len() as u64;
+        let placed = match declared {
+            Some(at) => at == packets_end,
+            None => self.data_table.is_empty(),
+        };
+        if !placed {
+            return Err(EncodeError::DataTableMisplaced { declared, packets_end });
+        }
+        out.extend_from_slice(&self.data_table);
         Ok(out)
+    }
+
+    /// Remove the file data table, and set the `IOHeader`'s `dataTablePosition` to -1 so that it
+    /// says so.
+    ///
+    /// The table indexes the packets by byte offset, so it is stale the moment a packet changes
+    /// size, and [`Aedat4::encode`] refuses to write one anywhere but where the `IOHeader` says it
+    /// starts. Without it a reader walks the packets from the front — "'-1' means no table
+    /// present" — which is all this crate does in any case.
+    ///
+    /// # Errors
+    ///
+    /// Whatever reading [`Aedat4::io_header`] produced, if it cannot be read: there is then no
+    /// field to rewrite, and nothing is changed.
+    pub fn drop_data_table(&mut self) -> Result<(), DecodeError> {
+        let slot = {
+            let fb = Fb { p: &self.io_header, base: Self::MAGIC.len() + 4 };
+            Self::read_io_header(fb.p, fb.base)?;
+            let root = u64::from(fb.u32_at(0, "root offset")?);
+            fb.field(root, 1)?.map(|at| fb.spot(at, 8, "dataTablePosition")).transpose()?
+        };
+        if let Some(i) = slot {
+            self.io_header[i..i + 8].copy_from_slice(&(-1i64).to_le_bytes());
+        }
+        self.data_table.clear();
+        Ok(())
     }
 
     /// A length as the container's signed 32-bit size field, or a refusal.
@@ -3034,9 +3393,10 @@ mod tests {
     ///
     /// `AEDAT` 2.0 has no header terminator: the records start at the first byte that is not a
     /// header line, so a record whose first byte is `#` can be eaten as a comment. It is not
-    /// hypothetical — the `DAVIS346` row field sits at bit 22, so rows 140 to 143 put `0x23` in
-    /// the big-endian address MSB. Measured before the fix: 4 of that sensor's 260 rows destroyed
-    /// their own round trip, and a three-event stream beginning on row 140 came back `Ok` with two
+    /// hypothetical — the `DAVIS346` row field sits at bit 22, so row fields 140 to 143 put `0x23`
+    /// in the big-endian address MSB; since the preset counts rows from the top, those are decoded
+    /// rows 116 to 119. Measured before the fix: 4 of that sensor's 260 rows destroyed their own
+    /// round trip, and a three-event stream beginning on row field 140 came back `Ok` with two
     /// events and two header lines. One seed and one first event is exactly what the bit-exactness
     /// test above samples, which is why this sweeps the coordinate that decides it.
     #[test]
@@ -3077,8 +3437,9 @@ mod tests {
     /// comment that is text must still be read as one.
     #[test]
     fn a_binary_record_beginning_with_the_prefix_byte_is_not_a_header_line() {
-        // Row 140 of a DAVIS346 is address 140 << 22 = 0x23000000: the character '#'.
-        let hazard = AerEvent { t: 10, x: 5, y: 140, polarity: Polarity::On };
+        // Row 119 of a DAVIS346 is row field 259 - 119 = 140, and 140 << 22 = 0x23000000 puts the
+        // character '#' in the address MSB.
+        let hazard = AerEvent { t: 10, x: 5, y: 119, polarity: Polarity::On };
         let bytes = Aedat2::encode(&[hazard], Aedat2Layout::DAVIS346, &[]).expect("encodable");
         assert_eq!(bytes[14], b'#', "the fixture must actually contain the hazard");
         let back = Aedat2::decode(&bytes, Aedat2Layout::DAVIS346).expect("decodable");
@@ -3226,8 +3587,8 @@ mod tests {
         assert_eq!(file.packets.len(), 8, "4000 events in packets of 512");
         let bytes = file.encode().expect("serialisable");
         let back = Aedat4::decode(&bytes).expect("decodable");
-        assert_eq!(back.compression, Aedat4Compression::Raw);
-        assert_eq!(back.events().expect("all RAW"), events);
+        assert_eq!(back.compression, Aedat4Compression::None);
+        assert_eq!(back.events().expect("all uncompressed"), events);
         assert!(back.packets.iter().all(|p| p.stream_id == 7));
         // And the container itself is byte-stable, which is what lets a pipeline re-save a file
         // it only partly understands.
@@ -3316,17 +3677,20 @@ mod tests {
         assert_eq!(Dat::decode(&bytes).unwrap().events, vec![e]);
     }
 
-    /// `AEDAT` 2.0, `DVS128`: row in bits 8-14, column in bits 1-7 counted from the right edge,
-    /// polarity in bit 0, whole record big-endian.
+    /// `AEDAT` 2.0, `DVS128`: row in bits 8-14, column in bits 1-7, both counted from the far edge,
+    /// polarity in bit 0 with a clear bit meaning `On`, whole record big-endian.
     ///
-    /// Column 10 becomes 127 - 10 = 117 at bits 1-7, i.e. 234; row 20 becomes 20 << 8 = 5120; so
-    /// the address is 5354 = `0x14EA`, and the record is `00 00 14 EA` then the timestamp, both
-    /// big-endian — the only big-endian format in this module.
+    /// The mapping is `dv-processing`'s `DVS128` parser at its defaults — `x = (WIDTH - 1) - x`,
+    /// `y = (HEIGHT - 1) - y`, and `On` when the polarity bit is 0 — applied by hand. Column 10
+    /// becomes 127 - 10 = 117 at bits 1-7, i.e. 234; row 20 becomes 127 - 20 = 107 at bits 8-14,
+    /// i.e. 27,392; so the address is 27,626 = `0x6BEA`, and the record is `00 00 6B EA` then the
+    /// timestamp, both big-endian — the only big-endian format in this module. Through 0.22.0 the
+    /// row was not turned round and this record was `00 00 14 EA`.
     #[test]
     fn aedat2_records_match_the_jaer_field_table() {
         let e = AerEvent { t: 0x1122_3344, x: 10, y: 20, polarity: Polarity::On };
         let bytes = Aedat2::encode(&[e], Aedat2Layout::DVS128, &[]).expect("encodable");
-        assert_eq!(&bytes[bytes.len() - 8..], &[0x00, 0x00, 0x14, 0xEA, 0x11, 0x22, 0x33, 0x44]);
+        assert_eq!(&bytes[bytes.len() - 8..], &[0x00, 0x00, 0x6B, 0xEA, 0x11, 0x22, 0x33, 0x44]);
         assert_eq!(Aedat2::decode(&bytes, Aedat2Layout::DVS128).unwrap().events, vec![e]);
     }
 
@@ -4083,7 +4447,7 @@ mod tests {
             (1 << 15, 100),
             (1 << 31, 200),
             (0xFFFF_FFFF, 300),
-            ((20 << 8) | ((127 - 10) << 1) | 1, 400),
+            (((127 - 20) << 8) | ((127 - 10) << 1) | 1, 400),
         ]);
         let f = Aedat2::decode(&bytes, Aedat2Layout::DVS128).expect("decodable");
         assert_eq!(f.markers.len(), 3, "{:?}", f.events);
@@ -4096,13 +4460,124 @@ mod tests {
             ]
         );
         // The ordinary record beside them still decodes, so this is not a blanket refusal: column
-        // 10 counted from the right edge, row 20, polarity bit set.
+        // field 117 and row field 107, counted from the right and bottom edges, are column 10 and
+        // row 20; polarity bit set.
         assert_eq!(
             f.events,
             vec![AerEvent { t: 400, x: 10, y: 20, polarity: Polarity::Off }]
         );
         assert_eq!(Aedat2Layout::DVS128.special_mask, 0xFFFF_8000);
         assert_eq!(Aedat2Layout::DVS128.overlap(), 0, "and the mask does not collide with a field");
+    }
+
+    /// A `DAVIS` `DVS` word with bit 10 set is an external-input event: a trigger, not a pixel.
+    ///
+    /// `jAER`'s `DavisChip.java` has `EVENT_TYPE_SHIFT = 10` and `EXTERNAL_INPUT_EVENT_ADDR = 1 <<
+    /// EVENT_TYPE_SHIFT`, with falling, rising and pulse at `+ 2`, `+ 3` and `+ 4`; iniVation's
+    /// `AEDAT` 2.0 page gives sub-types 01 and 11 in bits 11-10 as "External Event". Through 0.22.0
+    /// the preset's special mask was bit 31 alone and every one of these words decoded as a pixel.
+    #[test]
+    fn a_davis346_external_input_word_is_a_trigger_not_a_pixel() {
+        let ext = 1u32 << 10;
+        let bytes = aedat2_bytes(&[
+            (ext | 2, 100),             // falling edge, sub-type 01
+            (ext | 3, 200),             // rising edge
+            (ext | (1 << 11) | 4, 300), // pulse, sub-type 11, "Same as 01"
+            ((1 << 31) | ext, 400),     // an APS or IMU word, whose bits 11-10 mean something else
+            (0, 500),                   // an ordinary pixel beside them
+        ]);
+        let f = Aedat2::decode(&bytes, Aedat2Layout::DAVIS346).expect("decodable");
+        let trigger = MarkerKind::ExternalTrigger;
+        assert_eq!(
+            f.markers,
+            vec![
+                Marker { offset: 14, kind: trigger, raw: u64::from(ext | 2), t: 100 },
+                Marker { offset: 22, kind: trigger, raw: u64::from(ext | 3), t: 200 },
+                Marker { offset: 30, kind: trigger, raw: u64::from(ext | (1 << 11) | 4), t: 300 },
+                Marker { offset: 38, kind: MarkerKind::Other, raw: u64::from((1u32 << 31) | ext), t: 400 },
+            ]
+        );
+        assert_eq!(f.markers[1].raw & 7, 3, "the edge rides in the low three bits");
+        // Address zero is row field 0 and column field 0: the last row and the last column.
+        assert_eq!(f.events, vec![AerEvent { t: 500, x: 345, y: 259, polarity: Polarity::Off }]);
+        assert_eq!(Aedat2Layout::DAVIS346.special_mask, 0x8000_0400);
+        assert_eq!(Aedat2Layout::DAVIS346.trigger_mask, 0x0000_0400);
+        assert_eq!(Aedat2Layout::DVS128.trigger_mask, 0, "the DVS128 preset calls no marker a trigger");
+    }
+
+    /// The `DAVIS346` column is `jAER`'s, and its row counts from the top.
+    ///
+    /// `jAER`'s `DavisEventExtractor` decodes `e.x = (short) (sx1 - ((data & DavisChip.XMASK) >>>
+    /// DavisChip.XSHIFT))` with `sx1 = getChip().getSizeX() - 1`, 345, and leaves the row field
+    /// counting from the bottom, where iniVation's `AEDAT` 2.0 page puts "(0, 0)". Every expected
+    /// coordinate below is that formula applied by hand to a raw field, then the row turned round:
+    /// `x = 345 - raw_x`, `y = 259 - raw_y`. Through 0.22.0 the preset returned `raw_x` and `raw_y`
+    /// unchanged — the mirror image of `jAER` in `x`, upside down in `y` — and setting its
+    /// `x_invert` would not have helped, because the mirror was then about 1023.
+    #[test]
+    fn the_davis346_preset_mirrors_the_column_as_jaer_does_and_counts_rows_from_the_top() {
+        let layout = Aedat2Layout::DAVIS346;
+        for (raw_x, raw_y) in [(0u32, 0u32), (345, 259), (215, 164), (1, 258)] {
+            let addr = (raw_x << 12) | (raw_y << 22);
+            let f = Aedat2::decode(&aedat2_bytes(&[(addr, 5)]), layout).expect("inside the array");
+            let want = (u16::try_from(345 - raw_x).unwrap(), u16::try_from(259 - raw_y).unwrap());
+            assert_eq!((f.events[0].x, f.events[0].y), want, "fields ({raw_x}, {raw_y})");
+            // And the encoder puts the same fields back. Bit 11 is clear, which this preset reads
+            // as Off and writes for Off.
+            let back = Aedat2::encode(&f.events, layout, &[]).expect("encodable");
+            assert_eq!(&back[back.len() - 8..back.len() - 4], &addr.to_be_bytes());
+        }
+        // A field past the array is refused, and reported as the field on the wire: jAER would
+        // decode column field 346 as column -1, which has no coordinate to report.
+        for (addr, field, value, max) in [(346u32 << 12, "column", 346u64, 345u64), (260 << 22, "row", 260, 259)] {
+            match Aedat2::decode(&aedat2_bytes(&[(addr, 5)]), layout) {
+                Err(DecodeError::FieldOutOfRange { offset, field: f, value: v, max: m }) => {
+                    assert_eq!((offset, f, v, m), (14, field, value, max));
+                }
+                other => panic!("{field} field {value} was decoded: {other:?}"),
+            }
+        }
+        // With no geometry stated there is no edge to mirror about, and the mirror is about the
+        // top of the field: the one case in which the old rule still applies.
+        let free = Aedat2Layout { width: 0, height: 0, ..layout };
+        let f = Aedat2::decode(&aedat2_bytes(&[(0, 5)]), free).expect("no geometry, no check");
+        assert_eq!((f.events[0].x, f.events[0].y), (1023, 511));
+    }
+
+    /// A layout that mirrors a field about an edge the field cannot hold is refused before a byte
+    /// is read, and a field that is not mirrored is not.
+    ///
+    /// A mirrored field stores `edge - coordinate`, so an edge past the field's top would write
+    /// column 0 of a 2000-wide sensor as 1999 into ten bits — 975 once truncated — and the file
+    /// would decode, to the wrong picture.
+    #[test]
+    fn a_mirror_about_an_edge_the_field_cannot_hold_is_refused() {
+        for (layout, field, value, max) in [
+            (Aedat2Layout { width: 1025, ..Aedat2Layout::DAVIS346 }, "width", 1025u64, 1024u64),
+            (Aedat2Layout { height: 513, ..Aedat2Layout::DAVIS346 }, "height", 513, 512),
+        ] {
+            match Aedat2::decode(&aedat2_bytes(&[]), layout) {
+                Err(DecodeError::FieldOutOfRange { offset: 0, field: f, value: v, max: m }) => {
+                    assert_eq!((f, v, m), (field, value, max));
+                }
+                other => panic!("a {field} of {value} over a {max}-value field decoded: {other:?}"),
+            }
+            match Aedat2::encode(&[], layout, &[]) {
+                Err(EncodeError::FieldOutOfRange { index: 0, field: f, value: v, max: m }) => {
+                    assert_eq!((f, v, m), (field, value, max));
+                }
+                other => panic!("a {field} of {value} over a {max}-value field encoded: {other:?}"),
+            }
+        }
+        // A full field is the widest edge a mirror can use, and it is accepted at both ends.
+        let full = Aedat2Layout { width: 1024, height: 512, ..Aedat2Layout::DAVIS346 };
+        let corner = [AerEvent { t: 1, x: 1023, y: 0, polarity: Polarity::On }];
+        let bytes = Aedat2::encode(&corner, full, &[]).expect("a 1024-wide mirror fits ten bits");
+        assert_eq!(Aedat2::decode(&bytes, full).expect("and decodes").events, corner);
+        // An unmirrored field has no edge to hold: its columns past the field are merely
+        // unreachable, so a wide stated sensor is not a contradiction.
+        let plain = Aedat2Layout { x_invert: false, width: 2000, ..Aedat2Layout::DAVIS346 };
+        assert!(Aedat2::decode(&aedat2_bytes(&[]), plain).is_ok());
     }
 
     /// A coordinate field wider than a `u16` has no representable answer, so the layout is refused
@@ -4119,6 +4594,7 @@ mod tests {
             p_shift: 25,
             p_on_is_one: true,
             special_mask: 0,
+            trigger_mask: 0,
             width: 0,
             height: 0,
             source: "a 17-bit column, which no sensor has and a caller can write",
@@ -4219,8 +4695,85 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------------------------
-    // AEDAT 4.0: the framing works, the compressed payload refuses, and says which.
+    // AEDAT 4.0: the container DV writes, the compressed payload refuses, and says which.
     // -----------------------------------------------------------------------------------------
+
+    /// An `AEDAT` 4.0 file assembled by hand from the container's layout, NOT by the encoder under
+    /// test: the 14-byte version line, the `IOHeader` behind its size, each packet behind its
+    /// stream id and size, then the data table.
+    fn aedat4_file(io_header: &[u8], packets: &[(i32, &[u8])], table: &[u8]) -> Vec<u8> {
+        let mut f = b"#!AER-DAT4.0\r\n".to_vec();
+        f.extend_from_slice(&u32::try_from(io_header.len()).unwrap().to_le_bytes());
+        f.extend_from_slice(io_header);
+        for &(id, payload) in packets {
+            f.extend_from_slice(&id.to_le_bytes());
+            f.extend_from_slice(&i32::try_from(payload.len()).unwrap().to_le_bytes());
+            f.extend_from_slice(payload);
+        }
+        f.extend_from_slice(table);
+        f
+    }
+
+    /// The `IOHeader` `DV` wrote into `tests/data/test_data.aedat4` of the `neuromorphicsystems/aedat`
+    /// reader, recorded from `DAVIS346_00000002`: its first 48 bytes verbatim — root offset 24,
+    /// `IOHE`, six bytes of padding, a 10-byte vtable recording all three fields, and the table —
+    /// then an EMPTY `infoNode` string where the recording carries 3,053 bytes of XML. The two
+    /// fields a test names are patched in place: compression at byte 28 (1, `LZ4`, in the
+    /// recording) and `dataTablePosition` at byte 36 (6,122,043).
+    fn dv_io_header(compression: i32, data_table_position: i64) -> Vec<u8> {
+        let mut h = vec![
+            0x18, 0x00, 0x00, 0x00, 0x49, 0x4f, 0x48, 0x45, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x0a,
+            0x00, 0x18, 0x00, 0x04, 0x00, 0x0c, 0x00, 0x08, 0x00, 0x0a, 0x00, 0x00, 0x00, 0x01, 0x00,
+            0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x3b, 0x6a, 0x5d, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00,
+        ];
+        // The emptied infoNode: a length of zero, the NUL FlatBuffers ends a string with, padding.
+        h.extend_from_slice(&[0u8; 8]);
+        h[28..32].copy_from_slice(&compression.to_le_bytes());
+        h[36..44].copy_from_slice(&data_table_position.to_le_bytes());
+        h
+    }
+
+    /// The event table `DV` wrote, read and written byte for byte.
+    ///
+    /// The first 64 bytes of the recording's first event packet once `Python`'s `lz4` has
+    /// decompressed it: the size prefix, the root offset 16 counted from byte 4, `EVTS`, two bytes
+    /// of padding, the vtable, the table, the vector's count, and the first two of the packet's 402
+    /// events, verbatim — except that the size prefix (6,460 in the recording) and the count (402)
+    /// are set for two events. Through 0.22.0 this reader took the size prefix for the root offset,
+    /// and its writer wrote neither a prefix nor an identifier; the two agreed, and neither agreed
+    /// with this.
+    #[test]
+    fn aedat4_reads_and_writes_the_event_table_dv_wrote() {
+        let mut dv: [u8; 64] = [
+            0x3c, 0x19, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x45, 0x56, 0x54, 0x53, 0x00, 0x00, 0x06,
+            0x00, 0x08, 0x00, 0x04, 0x00, 0x06, 0x00, 0x00, 0x00, 0x04, 0x00, 0x00, 0x00, 0x92, 0x01,
+            0x00, 0x00, 0xa4, 0x99, 0xe3, 0xe0, 0x55, 0xa5, 0x05, 0x00, 0xd7, 0x00, 0xa4, 0x00, 0x01,
+            0x00, 0x00, 0x00, 0xf6, 0x99, 0xe3, 0xe0, 0x55, 0xa5, 0x05, 0x00, 0xe2, 0x00, 0xa0, 0x00,
+            0x01, 0x00, 0x00, 0x00,
+        ];
+        assert_eq!(u32::from_le_bytes([dv[0], dv[1], dv[2], dv[3]]), 6_460, "the recording's prefix");
+        assert_eq!(u32::from_le_bytes([dv[28], dv[29], dv[30], dv[31]]), 402, "and its count");
+        dv[0..4].copy_from_slice(&60u32.to_le_bytes());
+        dv[28..32].copy_from_slice(&2u32.to_le_bytes());
+        // The two events, read off the bytes by hand: an int64 of microseconds, int16 column, int16
+        // row, a bool, three bytes of padding.
+        let want = [
+            AerEvent { t: 0x0005_A555_E0E3_99A4, x: 215, y: 164, polarity: Polarity::On },
+            AerEvent { t: 0x0005_A555_E0E3_99F6, x: 226, y: 160, polarity: Polarity::On },
+        ];
+        assert_eq!(want[0].t, 1_589_163_147_368_868);
+        let mut cursor = 0;
+        assert_eq!(Aedat4::read_event_packet(&dv, 0, &mut cursor).expect("DV's own table"), want);
+        assert_eq!(cursor, want[1].t, "the cross-packet cursor advanced to the last event");
+        // And this module's writer lays the table out exactly as DV did.
+        assert_eq!(Aedat4::write_event_packet(&want), dv.to_vec());
+        // Through the whole container, as a packet of an uncompressed file.
+        let file = aedat4_file(&dv_io_header(0, -1), &[(0, &dv[..])], &[]);
+        let d = Aedat4::decode(&file).expect("decodable");
+        assert_eq!(d.events().expect("uncompressed events"), want);
+        assert_eq!(d.encode().expect("serialisable"), file);
+    }
 
     /// The capability boundary of a zero-dependency crate, asserted rather than described.
     ///
@@ -4229,29 +4782,236 @@ mod tests {
     /// survives a decode-encode cycle byte for byte even though nothing read inside it.
     #[test]
     fn aedat4_decodes_the_framing_of_a_compressed_file_and_refuses_its_events() {
-        let mut f = b"#!AER-DAT4.0\r\n#Format: COMPRESSED_LZ4\r\n#!END-HEADER\r\n".to_vec();
-        f.extend_from_slice(&3i32.to_le_bytes());
-        f.extend_from_slice(&[0xAA, 0xBB, 0xCC]);
-        for (id, payload) in [(0i32, vec![1u8, 2, 3, 4]), (1, vec![9u8; 7])] {
-            f.extend_from_slice(&id.to_le_bytes());
-            f.extend_from_slice(&i32::try_from(payload.len()).unwrap().to_le_bytes());
-            f.extend_from_slice(&payload);
-        }
+        let io = dv_io_header(1, -1);
+        let f = aedat4_file(&io, &[(0, &[1u8, 2, 3, 4][..]), (1, &[9u8; 7][..])], &[]);
         let d = Aedat4::decode(&f).expect("the framing decodes whatever the compression");
         assert_eq!(d.compression, Aedat4Compression::Lz4);
-        assert_eq!(d.io_header, vec![0xAA, 0xBB, 0xCC]);
+        assert_eq!(d.io_header, io);
         assert_eq!(d.packets.len(), 2);
+        assert_eq!(d.packets[0].offset, 14 + 4 + io.len());
         assert_eq!(d.packets[1].stream_id, 1);
         assert_eq!(d.packets[1].payload, vec![9u8; 7]);
-        assert!(d.packets.iter().all(|p| p.events.is_none()));
+        assert!(d.packets.iter().all(|p| p.events.is_none() && p.payload_error.is_none()));
         match d.events() {
             Err(DecodeError::UnsupportedCompression { offset, name }) => {
-                assert_eq!(name, "COMPRESSED_LZ4");
+                assert_eq!(name, "LZ4");
                 assert_eq!(offset, d.packets[0].offset);
             }
             other => panic!("a compressed payload was not refused: {other:?}"),
         }
         assert_eq!(d.encode().unwrap(), f, "a file we cannot read inside still re-saves exactly");
+    }
+
+    /// The version line is the whole header: 14 bytes, then the `IOHeader`'s size.
+    ///
+    /// Through 0.22.0 the decoder read `#`-prefixed lines after the version line until one read
+    /// `#!END-HEADER`. Byte 14 of the `DV` recording is `0x24`, the low byte of its 3,108-byte
+    /// `IOHeader` size, so every `DV` file was refused right there. This builds exactly that start
+    /// and checks the refusals that remain: another format's first byte, a file cut inside the
+    /// line, and an `IOHeader` that is not one.
+    #[test]
+    fn aedat4_reads_the_version_line_then_the_io_header_and_nothing_between() {
+        let mut real_start = b"#!AER-DAT4.0\r\n".to_vec();
+        real_start.extend_from_slice(&3_108u32.to_le_bytes());
+        assert_eq!(real_start[14], 0x24, "the recording's byte 14");
+        let f = aedat4_file(&dv_io_header(0, -1), &[], &[]);
+        assert_eq!(&f[..14], b"#!AER-DAT4.0\r\n");
+        let d = Aedat4::decode(&f).expect("a version line, an IOHeader and no packets");
+        assert!(d.packets.is_empty() && d.data_table.is_empty());
+        // An AEDAT 3.1 file differs at the version digit, byte 9, and is named there.
+        match Aedat4::decode(b"#!AER-DAT3.1\r\n#!END-HEADER\r\n") {
+            Err(DecodeError::BadMagic { offset, expected, found }) => {
+                assert_eq!((offset, expected, found.as_str()), (9, "#!AER-DAT4.0\r\n", "#!AER-DAT3.1\r\n"));
+            }
+            other => panic!("an AEDAT 3.1 file was read as 4.0: {other:?}"),
+        }
+        // Cut inside the line, a file is short rather than foreign.
+        assert!(matches!(
+            Aedat4::decode(&f[..9]),
+            Err(DecodeError::Truncated { offset: 0, need: 14, have: 9 })
+        ));
+        assert!(matches!(Aedat4::decode(&[]), Err(DecodeError::Truncated { offset: 0, need: 14, have: 0 })));
+        // An IOHeader without its identifier is refused, not defaulted, at the identifier's byte.
+        let mut bad = f.clone();
+        bad[18 + 4] = b'X';
+        match Aedat4::decode(&bad) {
+            Err(DecodeError::BadMagic { offset, expected, found }) => {
+                assert_eq!((offset, expected, found.as_str()), (22, "IOHE", "XOHE"));
+            }
+            other => panic!("an IOHeader with the wrong identifier was read: {other:?}"),
+        }
+    }
+
+    /// The compression is field 0 of the `IOHeader`, an `int32` enum, and `NONE` when absent.
+    ///
+    /// Through 0.22.0 it was read from a `Format:` header line holding names — `RAW`,
+    /// `COMPRESSED_LZ4` — that `AEDAT` 4.0 does not use. Each value below is set in the `IOHeader`
+    /// `DV` wrote, at the byte where the recording carries its 1.
+    #[test]
+    fn the_aedat4_compression_is_the_io_headers_first_field() {
+        let cases = [
+            (0, Aedat4Compression::None, Some("NONE")),
+            (1, Aedat4Compression::Lz4, Some("LZ4")),
+            (2, Aedat4Compression::Lz4High, Some("LZ4_HIGH")),
+            (3, Aedat4Compression::Zstd, Some("ZSTD")),
+            (4, Aedat4Compression::ZstdHigh, Some("ZSTD_HIGH")),
+            (9, Aedat4Compression::Other(9), None),
+        ];
+        for (code, want, name) in cases {
+            let f = aedat4_file(&dv_io_header(code, -1), &[], &[]);
+            let d = Aedat4::decode(&f).expect("an empty body is a file with no packets");
+            assert_eq!(d.compression, want, "{code}");
+            assert_eq!((d.compression.code(), d.compression.name()), (code, name));
+            assert!(d.packets.is_empty());
+            assert_eq!(d.events().expect("no packets, no refusal"), Vec::new());
+            assert_eq!(d.encode().expect("serialisable"), f);
+        }
+        // An undefined value is named by its number when a packet is refused for it.
+        let f = aedat4_file(&dv_io_header(9, -1), &[(0, &[0u8; 4][..])], &[]);
+        match Aedat4::decode(&f).expect("framing").events() {
+            Err(DecodeError::UnsupportedCompression { name, .. }) => assert_eq!(name, "compression type 9"),
+            other => panic!("an undefined compression was not refused: {other:?}"),
+        }
+        // A vtable that does not record the field means the schema's default, NONE — even when
+        // the bytes where the field would sit say LZ4. This module's own IOHeader, cut to a
+        // 4-byte vtable, with a 1 left in the table.
+        let mut h = Aedat4::MINIMAL_IO_HEADER.to_vec();
+        h[10] = 4;
+        h[20] = 1;
+        let d = Aedat4::decode(&aedat4_file(&h, &[], &[])).expect("a vtable with no fields");
+        assert_eq!(d.compression, Aedat4Compression::None);
+        // And the minimal IOHeader as written records the field, as 0.
+        let d = Aedat4::decode(&aedat4_file(&Aedat4::MINIMAL_IO_HEADER, &[], &[])).unwrap();
+        assert_eq!(d.compression, Aedat4Compression::None);
+    }
+
+    /// A vtable entry of zero is how `FlatBuffers` says a field was not written, so the field reads
+    /// as the schema's default whatever the bytes where it would sit hold.
+    ///
+    /// The `IOHeader` `DV` wrote, with its vtable entry for `compression` (bytes 18-19) and then
+    /// for `dataTablePosition` (bytes 20-21) set to zero. The table itself still holds 1, `LZ4`,
+    /// at byte 28 and 6,122,043 at byte 36; neither may be read, and the defaults `IOHeader.fbs`
+    /// gives are `NONE` and -1.
+    #[test]
+    fn an_aedat4_vtable_entry_of_zero_reads_as_the_schema_default() {
+        let mut h = dv_io_header(1, -1);
+        h[18..20].copy_from_slice(&0u16.to_le_bytes());
+        assert_eq!(h[28], 1, "the table still says LZ4");
+        let d = Aedat4::decode(&aedat4_file(&h, &[], &[])).expect("compression not recorded");
+        assert_eq!(d.compression, Aedat4Compression::None);
+        let mut h = dv_io_header(1, 6_122_043);
+        h[20..22].copy_from_slice(&0u16.to_le_bytes());
+        let d = Aedat4::decode(&aedat4_file(&h, &[], &[])).expect("no table position recorded");
+        assert_eq!(d.compression, Aedat4Compression::Lz4, "the entry beside it is still read");
+        assert!(d.data_table.is_empty() && d.packets.is_empty());
+    }
+
+    /// Packets stop where the `IOHeader`'s `dataTablePosition` says the file data table starts,
+    /// and the table is kept, verbatim, for the re-save.
+    ///
+    /// "No more data is present after that offset in the file." Through 0.22.0 the table's bytes
+    /// were read as packets; here they are the first 16 bytes of the recording's own table, an
+    /// `LZ4` frame, whose size field read as a packet's is negative.
+    #[test]
+    fn aedat4_stops_the_packets_at_the_data_table_the_io_header_names() {
+        let table: [u8; 16] = [
+            0x04, 0x22, 0x4d, 0x18, 0x40, 0x40, 0xc0, 0x87, 0x56, 0x00, 0x00, 0xd1, 0x1c, 0x90,
+            0x00, 0x00,
+        ];
+        let events = synth(3, 0x7A, 346, 260, 9);
+        let packet = Aedat4Packet::from_events(0, &events).expect("encodable");
+        let io_len = dv_io_header(0, 0).len();
+        let packets_end = 14 + 4 + io_len + 8 + packet.payload.len();
+        let at = |p: usize| i64::try_from(p).unwrap();
+        let file = aedat4_file(&dv_io_header(0, at(packets_end)), &[(0, &packet.payload)], &table);
+        let d = Aedat4::decode(&file).expect("decodable");
+        assert_eq!(d.packets.len(), 1);
+        assert_eq!(d.data_table, table.to_vec());
+        assert_eq!(d.events().expect("uncompressed"), events);
+        assert_eq!(d.encode().expect("serialisable"), file, "table and all, byte for byte");
+        // The same bytes with the position at -1: the table is read as a packet and refused.
+        let unmarked = aedat4_file(&dv_io_header(0, -1), &[(0, &packet.payload)], &table);
+        assert!(
+            matches!(Aedat4::decode(&unmarked), Err(DecodeError::FieldOutOfRange { field: "packet size", .. })),
+            "{:?}",
+            Aedat4::decode(&unmarked)
+        );
+        // A position at the very end is an empty table, which is a file.
+        let empty = aedat4_file(&dv_io_header(0, at(packets_end)), &[(0, &packet.payload)], &[]);
+        let e = Aedat4::decode(&empty).expect("an empty table at the end");
+        assert!(e.data_table.is_empty());
+        assert_eq!(e.encode().expect("serialisable"), empty);
+        // A position inside the last packet cuts it short.
+        let inside = aedat4_file(&dv_io_header(0, at(packets_end - 1)), &[(0, &packet.payload)], &table);
+        assert!(matches!(Aedat4::decode(&inside), Err(DecodeError::Truncated { .. })));
+        // Positions that are not in the file at all, or are in its header, or are negative
+        // without being -1, are refused at the IOHeader.
+        let header_end = 14 + 4 + io_len;
+        for position in [at(header_end) - 1, 0, at(file.len()) + 1, -2] {
+            let f = aedat4_file(&dv_io_header(0, position), &[(0, &packet.payload)], &table);
+            assert!(
+                matches!(
+                    Aedat4::decode(&f),
+                    Err(DecodeError::MalformedFlatBuffer { offset: 18, what: "dataTablePosition" })
+                ),
+                "position {position}: {:?}",
+                Aedat4::decode(&f)
+            );
+        }
+        // The first valid position, straight after the IOHeader, is a file with no packets.
+        let first = aedat4_file(&dv_io_header(0, at(header_end)), &[], &table);
+        let f = Aedat4::decode(&first).expect("a table and no packets");
+        assert!(f.packets.is_empty());
+        assert_eq!(f.data_table, table.to_vec());
+    }
+
+    /// A data table the packets have moved away from is refused at encode, and
+    /// [`Aedat4::drop_data_table`] is the way out.
+    ///
+    /// The table indexes the packets by byte offset, so changing a packet's events makes it stale,
+    /// and writing it anyway would put an `IOHeader` on disk that points into the middle of a
+    /// packet — a file this crate's own decoder would then cut short.
+    #[test]
+    fn aedat4_refuses_to_write_a_data_table_where_the_io_header_does_not_point() {
+        let events = synth(3, 0x7B, 346, 260, 9);
+        let packet = Aedat4Packet::from_events(0, &events).expect("encodable");
+        let packets_end = 14 + 4 + dv_io_header(0, 0).len() + 8 + packet.payload.len();
+        let table = [0xABu8; 8];
+        let position = i64::try_from(packets_end).unwrap();
+        let file = aedat4_file(&dv_io_header(0, position), &[(0, &packet.payload)], &table);
+        let mut d = Aedat4::decode(&file).expect("decodable");
+        // One more event: 16 more bytes, and the table would land 16 bytes past where it says.
+        let more = synth(4, 0x7B, 346, 260, 9);
+        d.packets[0].set_events(&more).expect("encodable");
+        let moved = u64::try_from(packets_end + 16).unwrap();
+        assert_eq!(
+            d.encode(),
+            Err(EncodeError::DataTableMisplaced { declared: Some(u64::try_from(packets_end).unwrap()), packets_end: moved })
+        );
+        // Dropping the table sets the position to -1 in place and empties the table.
+        d.drop_data_table().expect("the IOHeader DV wrote records the field");
+        assert!(d.data_table.is_empty());
+        assert_eq!(&d.io_header[36..44], &(-1i64).to_le_bytes());
+        let back = Aedat4::decode(&d.encode().expect("nothing left to misplace")).expect("decodable");
+        assert_eq!(back.events().expect("uncompressed"), more);
+        assert!(back.data_table.is_empty());
+        // A table with no position declared is refused the same way.
+        let mut orphan = Aedat4::raw_from_events(&events, 8, 0).expect("encodable");
+        orphan.data_table = table.to_vec();
+        let end = u64::try_from(14 + 4 + Aedat4::MINIMAL_IO_HEADER.len() + 8 + packet.payload.len()).unwrap();
+        assert_eq!(orphan.encode(), Err(EncodeError::DataTableMisplaced { declared: None, packets_end: end }));
+        // Dropping it where the IOHeader never recorded a position leaves the IOHeader alone.
+        orphan.drop_data_table().expect("readable");
+        assert_eq!(orphan.io_header, Aedat4::MINIMAL_IO_HEADER.to_vec());
+        assert!(orphan.encode().is_ok());
+        // And an IOHeader this crate cannot read cannot say where a table belongs.
+        let mut unreadable = Aedat4::raw_from_events(&events, 8, 0).expect("encodable");
+        unreadable.io_header = vec![1, 2, 3];
+        assert!(matches!(
+            unreadable.encode(),
+            Err(EncodeError::FieldOutOfRange { field: "an IOHeader this crate cannot read", value: 3, .. })
+        ));
+        assert!(unreadable.drop_data_table().is_err());
     }
 
     /// A payload whose `FlatBuffers` offsets point outside it is refused, not followed.
@@ -4261,9 +5021,9 @@ mod tests {
         let file = Aedat4::raw_from_events(&e, 8, 0).unwrap();
         let good = file.encode().unwrap();
         let decoded = Aedat4::decode(&good).expect("valid to start with");
-        // The payload begins 8 bytes past the packet header, and its first four bytes are the
-        // FlatBuffers root offset. Point it past the end of the payload.
-        let root_at = decoded.packets[0].offset + 8;
+        // The payload begins 8 bytes past the packet header; its first four bytes are the size
+        // prefix and the next four the FlatBuffers root offset. Point it past the end.
+        let root_at = decoded.packets[0].offset + 8 + 4;
         let mut bad = good.clone();
         bad[root_at] = 0xFF;
         bad[root_at + 1] = 0xFF;
@@ -4274,8 +5034,8 @@ mod tests {
         let d = Aedat4::decode(&bad).expect("the framing survives a broken payload");
         assert_eq!(d.packets.len(), decoded.packets.len(), "the packet boundaries are still read");
         let mut damaged = decoded.packets[0].payload.clone();
-        damaged[0] = 0xFF;
-        damaged[1] = 0xFF;
+        damaged[4] = 0xFF;
+        damaged[5] = 0xFF;
         assert_eq!(d.packets[0].payload, damaged, "the payload is preserved verbatim, damage too");
         assert!(d.packets[0].events.is_none());
         assert!(
@@ -4295,35 +5055,75 @@ mod tests {
         assert_eq!(d.events().unwrap_err(), d.packets[0].payload_error.clone().unwrap());
     }
 
-    /// A `RAW` `AEDAT` 4.0 file whose packet is not an event table keeps its framing.
+    /// A size prefix that disagrees with the payload is refused, and a packet of another stream is
+    /// refused by its identifier.
+    #[test]
+    fn aedat4_checks_the_size_prefix_and_the_identifier_of_an_event_packet() {
+        let payload = Aedat4::write_event_packet(&synth(2, 0x51, 32, 32, 4));
+        assert_eq!(payload.len(), 64);
+        let mut cursor = 0;
+        assert!(Aedat4::read_event_packet(&payload, 0, &mut cursor).is_ok());
+        for prefix in [59u32, 61, 64] {
+            let mut p = payload.clone();
+            p[0..4].copy_from_slice(&prefix.to_le_bytes());
+            assert_eq!(
+                Aedat4::read_event_packet(&p, 100, &mut 0),
+                Err(DecodeError::CountMismatch { offset: 100, declared: u64::from(prefix), actual: 60 })
+            );
+        }
+        let mut frame = payload.clone();
+        frame[8..12].copy_from_slice(b"FRME");
+        assert_eq!(
+            Aedat4::read_event_packet(&frame, 100, &mut 0),
+            Err(DecodeError::BadMagic { offset: 108, expected: "EVTS", found: "FRME".to_string() })
+        );
+        // A table that records no element vector is an empty packet, not an error: the vtable
+        // shortened to its 4-byte head.
+        let mut empty = payload.clone();
+        empty[14] = 4;
+        assert_eq!(Aedat4::read_event_packet(&empty, 0, &mut 0), Ok(Vec::new()));
+        // Too short to hold a prefix at all.
+        assert_eq!(
+            Aedat4::read_event_packet(&[1, 2, 3], 7, &mut 0),
+            Err(DecodeError::MalformedFlatBuffer { offset: 7, what: "size prefix" })
+        );
+    }
+
+    /// An uncompressed `AEDAT` 4.0 file whose packet is not an event table keeps its framing.
     ///
-    /// `DV` interleaves frames and inertial samples with events, as packets in this same
-    /// container, so refusing the whole file when one packet is not events means no real `RAW` `DV`
+    /// `DV` interleaves frames, inertial samples and triggers with events, as packets in this same
+    /// container, so refusing the whole file when one packet is not events means no real `DV`
     /// recording opens at all — which is the opposite of what [`Aedat4`] claims. Measured before
     /// this was fixed: a well-formed file with one 64-byte non-event payload failed the decode
-    /// outright with `MalformedFlatBuffer`.
+    /// outright with `MalformedFlatBuffer`. The recording this module was checked against has 472
+    /// such packets beside its 236 event packets.
     #[test]
     fn aedat4_keeps_the_framing_of_a_raw_file_whose_packet_is_not_events() {
         let events = synth(24, 0x2B, 64, 64, 30);
-        let mut f = b"#!AER-DAT4.0\r\n#Format: RAW\r\n#!END-HEADER\r\n".to_vec();
-        f.extend_from_slice(&0i32.to_le_bytes());
-        // Stream 5: something this crate cannot walk. Stream 1: events it can.
-        let other = vec![0x55u8; 64];
-        f.extend_from_slice(&5i32.to_le_bytes());
-        f.extend_from_slice(&i32::try_from(other.len()).unwrap().to_le_bytes());
-        f.extend_from_slice(&other);
+        // Stream 1: a frame packet's head, as DV frames it — size prefix, root offset and the
+        // identifier FRME — over a table this reader has no business walking.
+        let mut frame = vec![0x55u8; 64];
+        frame[0..4].copy_from_slice(&60u32.to_le_bytes());
+        frame[4..8].copy_from_slice(&16u32.to_le_bytes());
+        frame[8..12].copy_from_slice(b"FRME");
         let evt = Aedat4::write_event_packet(&events);
-        f.extend_from_slice(&1i32.to_le_bytes());
-        f.extend_from_slice(&i32::try_from(evt.len()).unwrap().to_le_bytes());
-        f.extend_from_slice(&evt);
+        let f = aedat4_file(&dv_io_header(0, -1), &[(5, &frame[..]), (1, &evt[..])], &[]);
 
         let d = Aedat4::decode(&f).expect("the framing decodes even though one stream is not events");
-        assert_eq!(d.compression, Aedat4Compression::Raw);
+        assert_eq!(d.compression, Aedat4Compression::None);
         assert_eq!(d.packets.len(), 2);
         assert_eq!((d.packets[0].stream_id, d.packets[1].stream_id), (5, 1));
-        assert_eq!(d.packets[0].payload, other, "the unreadable payload is kept byte for byte");
+        assert_eq!(d.packets[0].payload, frame, "the unreadable payload is kept byte for byte");
         assert!(d.packets[0].events.is_none());
-        assert!(d.packets[0].payload_error.is_some(), "and it says why");
+        assert_eq!(
+            d.packets[0].payload_error,
+            Some(DecodeError::BadMagic {
+                offset: d.packets[0].offset + 8 + 8,
+                expected: "EVTS",
+                found: "FRME".to_string()
+            }),
+            "and it says why, by the identifier"
+        );
         // The event stream is fully decoded beside it.
         assert_eq!(d.packets[1].events.as_deref(), Some(&events[..]));
         assert!(d.packets[1].payload_error.is_none());
@@ -4334,38 +5134,35 @@ mod tests {
         assert_eq!(d.encode().unwrap(), f);
     }
 
-    /// A `RAW` packet laid out differently from this module's own writer re-saves byte for byte.
+    /// An uncompressed packet laid out differently from this module's own writer re-saves byte for
+    /// byte.
     ///
     /// `FlatBuffers` is not a canonical encoding: a conforming writer may leave alignment padding
-    /// between the vector slot and the vector, and a real `dv-processing` events table carries
-    /// fields this reader does not look at. Regenerating the payload from the decoded events
-    /// discards all of it — measured, this 98-byte packet came back out as 94 — so
-    /// [`Aedat4::encode`] writes [`Aedat4Packet::payload`] instead.
+    /// between the vector slot and the vector. Regenerating the payload from the decoded events
+    /// discards it — this 56-byte packet would come back out as 48 — so [`Aedat4::encode`] writes
+    /// [`Aedat4Packet::payload`] instead.
     #[test]
     fn aedat4_re_saves_a_raw_packet_it_did_not_lay_out_itself_byte_for_byte() {
         let mut payload: Vec<u8> = Vec::new();
-        payload.extend_from_slice(&12u32.to_le_bytes()); //  0.. 4  root
-        payload.extend_from_slice(&6u16.to_le_bytes()); //  4.. 6  vtable length
-        payload.extend_from_slice(&8u16.to_le_bytes()); //  6.. 8  table length
-        payload.extend_from_slice(&4u16.to_le_bytes()); //  8..10  field 0 at +4
-        payload.extend_from_slice(&0u16.to_le_bytes()); // 10..12  padding
-        payload.extend_from_slice(&8i32.to_le_bytes()); // 12..16  soffset to the vtable
-        payload.extend_from_slice(&8u32.to_le_bytes()); // 16..20  slot -> the vector at 24
-        payload.extend_from_slice(&[0xEEu8; 4]); //        20..24  four bytes this reader ignores
-        payload.extend_from_slice(&1u32.to_le_bytes()); // 24..28  element count
-        payload.extend_from_slice(&77i64.to_le_bytes());
+        payload.extend_from_slice(&52u32.to_le_bytes()); //  0.. 4  size prefix
+        payload.extend_from_slice(&16u32.to_le_bytes()); //  4.. 8  root, from byte 4: table at 20
+        payload.extend_from_slice(b"EVTS"); //                8..12  identifier
+        payload.extend_from_slice(&[0u8; 2]); //             12..14  padding
+        payload.extend_from_slice(&6u16.to_le_bytes()); //   14..16  vtable length
+        payload.extend_from_slice(&8u16.to_le_bytes()); //   16..18  table length
+        payload.extend_from_slice(&4u16.to_le_bytes()); //   18..20  field 0 at +4
+        payload.extend_from_slice(&6i32.to_le_bytes()); //   20..24  soffset to the vtable
+        payload.extend_from_slice(&12u32.to_le_bytes()); //  24..28  slot -> the vector at 36
+        payload.extend_from_slice(&[0xEEu8; 8]); //          28..36  eight bytes this reader ignores
+        payload.extend_from_slice(&1u32.to_le_bytes()); //   36..40  element count
+        payload.extend_from_slice(&77i64.to_le_bytes()); //  40..    the element, still 8-aligned
         payload.extend_from_slice(&3i16.to_le_bytes());
         payload.extend_from_slice(&4i16.to_le_bytes());
         payload.push(1);
         payload.extend_from_slice(&[0u8; 3]);
-        assert_eq!(payload.len(), 44, "44 bytes in; this module's own writer would lay out 40");
+        assert_eq!(payload.len(), 56, "56 bytes in; this module's own writer would lay out 48");
 
-        let mut f = b"#!AER-DAT4.0\r\n#Format: RAW\r\n#!END-HEADER\r\n".to_vec();
-        f.extend_from_slice(&0i32.to_le_bytes());
-        f.extend_from_slice(&0i32.to_le_bytes());
-        f.extend_from_slice(&i32::try_from(payload.len()).unwrap().to_le_bytes());
-        f.extend_from_slice(&payload);
-
+        let f = aedat4_file(&dv_io_header(0, -1), &[(0, &payload[..])], &[]);
         let d = Aedat4::decode(&f).expect("a conforming layout decodes");
         assert_eq!(
             d.packets[0].events.as_deref(),
@@ -4374,8 +5171,8 @@ mod tests {
         );
         assert_eq!(
             Aedat4::write_event_packet(&d.packets[0].events.clone().unwrap()).len(),
-            40,
-            "regenerating the payload would lose the four bytes at 20..24"
+            48,
+            "regenerating the payload would lose the eight bytes at 28..36"
         );
         let re = d.encode().expect("serialisable");
         assert_eq!(re, f, "re-saved {} bytes against the {} that came in", re.len(), f.len());
@@ -4390,18 +5187,9 @@ mod tests {
         let mut p = Aedat4Packet::from_events(3, &first).expect("encodable");
         assert_eq!(p.events.as_deref(), Some(&first[..]));
         p.set_events(&second).expect("encodable");
-        let file = Aedat4 {
-            header: vec![
-                "!AER-DAT4.0".to_string(),
-                "Format: RAW".to_string(),
-                Aedat4::END_HEADER.to_string(),
-            ],
-            compression: Aedat4Compression::Raw,
-            io_header: Vec::new(),
-            packets: vec![p],
-        };
+        let file = Aedat4 { packets: vec![p], ..Aedat4::raw_from_events(&[], 1, 0).expect("empty") };
         let back = Aedat4::decode(&file.encode().expect("serialisable")).expect("decodable");
-        assert_eq!(back.events().expect("RAW"), second, "the file holds the events set last");
+        assert_eq!(back.events().expect("uncompressed"), second, "the file holds the events set last");
         assert_eq!(back.packets[0].stream_id, 3);
         // And the range refusals ride along rather than being bypassed by the back door.
         let wide = [AerEvent { t: 0, x: 32_768, y: 0, polarity: Polarity::On }];
@@ -4414,7 +5202,7 @@ mod tests {
     /// Offsets that would wrap a 32-bit `usize` are refused rather than followed.
     ///
     /// This crate compiles to `wasm32`, where `usize` is 32 bits, and every offset in a
-    /// `FlatBuffers` payload is a `u32` the file chose. `16 + 0xFFFF_FFFF` is 15 on that target:
+    /// `FlatBuffers` payload is a `u32` the file chose. `24 + 0xFFFF_FFFF` is 23 on that target:
     /// in bounds, and pointing at a length this reader never wrote. The walker does its
     /// arithmetic in `u64` for exactly that reason, which makes the 32-bit and 64-bit paths the
     /// same path and lets this test stand for both.
@@ -4422,37 +5210,32 @@ mod tests {
     fn aedat4_refuses_offsets_that_would_wrap_a_32_bit_usize() {
         let wrap = |patch: &dyn Fn(&mut Vec<u8>)| {
             let mut payload = vec![0u8; 64];
-            payload[0..4].copy_from_slice(&12u32.to_le_bytes());
-            payload[4..6].copy_from_slice(&6u16.to_le_bytes());
-            payload[6..8].copy_from_slice(&8u16.to_le_bytes());
-            payload[8..10].copy_from_slice(&4u16.to_le_bytes());
-            payload[12..16].copy_from_slice(&8i32.to_le_bytes());
-            payload[16..20].copy_from_slice(&8u32.to_le_bytes());
-            payload[24..28].copy_from_slice(&0u32.to_le_bytes());
+            payload[0..4].copy_from_slice(&60u32.to_le_bytes());
+            payload[4..8].copy_from_slice(&16u32.to_le_bytes());
+            payload[8..12].copy_from_slice(b"EVTS");
+            payload[14..16].copy_from_slice(&6u16.to_le_bytes());
+            payload[16..18].copy_from_slice(&8u16.to_le_bytes());
+            payload[18..20].copy_from_slice(&4u16.to_le_bytes());
+            payload[20..24].copy_from_slice(&6i32.to_le_bytes());
+            payload[24..28].copy_from_slice(&4u32.to_le_bytes());
+            payload[28..32].copy_from_slice(&0u32.to_le_bytes());
             patch(&mut payload);
-            let mut f = b"#!AER-DAT4.0\r\n#Format: RAW\r\n#!END-HEADER\r\n".to_vec();
-            f.extend_from_slice(&0i32.to_le_bytes());
-            f.extend_from_slice(&0i32.to_le_bytes());
-            f.extend_from_slice(&i32::try_from(payload.len()).unwrap().to_le_bytes());
-            f.extend_from_slice(&payload);
+            let f = aedat4_file(&dv_io_header(0, -1), &[(0, &payload[..])], &[]);
             Aedat4::decode(&f).expect("framing").packets[0].payload_error.clone()
         };
         // Unpatched, the buffer is a valid empty event packet.
         assert_eq!(wrap(&|_| {}), None, "the fixture itself must decode, or this proves nothing");
-        // root + 4 wraps to 2.
-        let e = wrap(&|p| p[0..4].copy_from_slice(&0xFFFF_FFFEu32.to_le_bytes()));
+        // 4 + the root offset wraps to 2.
+        let e = wrap(&|p| p[4..8].copy_from_slice(&0xFFFF_FFFEu32.to_le_bytes()));
         assert!(matches!(e, Some(DecodeError::MalformedFlatBuffer { .. })), "{e:?}");
         // slot + the vector offset wraps back inside the payload.
-        let e = wrap(&|p| p[16..20].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes()));
+        let e = wrap(&|p| p[24..28].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes()));
         assert!(matches!(e, Some(DecodeError::MalformedFlatBuffer { what: "vector", .. })), "{e:?}");
-        // root + field wraps: a vtable field offset of 0xFFFF against a root near the top.
-        let e = wrap(&|p| {
-            p[10..12].copy_from_slice(&0xFFFFu16.to_le_bytes());
-            p[8..10].copy_from_slice(&0xFFFFu16.to_le_bytes());
-        });
+        // The table + a vtable field offset of 0xFFFF points far past the payload.
+        let e = wrap(&|p| p[18..20].copy_from_slice(&0xFFFFu16.to_le_bytes()));
         assert!(matches!(e, Some(DecodeError::MalformedFlatBuffer { what: "vector", .. })), "{e:?}");
         // count * 16 overflows a 32-bit size calculation.
-        let e = wrap(&|p| p[24..28].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes()));
+        let e = wrap(&|p| p[28..32].copy_from_slice(&0xFFFF_FFFFu32.to_le_bytes()));
         assert!(matches!(e, Some(DecodeError::CountMismatch { declared: 4_294_967_295, .. })), "{e:?}");
     }
 
@@ -4473,34 +5256,6 @@ mod tests {
             Aedat4::size_field(7, "packet size", over),
             Err(EncodeError::FieldOutOfRange { index: 7, field: "packet size", max: 2_147_483_647, .. })
         ));
-    }
-
-    /// Every `Format:` value the container can carry survives a decode, and names itself back.
-    #[test]
-    fn the_aedat4_compression_names_round_trip() {
-        let cases = [
-            ("RAW", Aedat4Compression::Raw),
-            ("COMPRESSED_LZ4", Aedat4Compression::Lz4),
-            ("COMPRESSED_LZ4_HIGH", Aedat4Compression::Lz4High),
-            ("COMPRESSED_ZSTD", Aedat4Compression::Zstd),
-            ("COMPRESSED_ZSTD_HIGH", Aedat4Compression::ZstdHigh),
-            ("SOMETHING_NEW", Aedat4Compression::Other("SOMETHING_NEW".to_string())),
-        ];
-        for (name, want) in cases {
-            let mut f = b"#!AER-DAT4.0\r\n#Format: ".to_vec();
-            f.extend_from_slice(name.as_bytes());
-            f.extend_from_slice(b"\r\n#!END-HEADER\r\n");
-            f.extend_from_slice(&0i32.to_le_bytes());
-            let d = Aedat4::decode(&f).expect("an empty body is a file with no packets");
-            assert_eq!(d.compression, want, "{name}");
-            assert_eq!(d.compression.name(), name, "the name comes back as it went in");
-            assert!(d.packets.is_empty());
-            assert_eq!(d.events().expect("no packets, no refusal"), Vec::new());
-        }
-        // And a file with no Format: line at all is RAW, which is what the container defaults to.
-        let mut f = b"#!AER-DAT4.0\r\n#!END-HEADER\r\n".to_vec();
-        f.extend_from_slice(&0i32.to_le_bytes());
-        assert_eq!(Aedat4::decode(&f).unwrap().compression, Aedat4Compression::Raw);
     }
 
     // -----------------------------------------------------------------------------------------
@@ -4587,16 +5342,22 @@ mod tests {
         assert_eq!(a2, b"#!AER-DAT2.0\r\n");
         assert_eq!(Flat::MAGIC, *b"FMAER-01");
         assert_eq!(&Flat::encode(&[], 0, 0).unwrap()[..8], &Flat::MAGIC);
-        assert_eq!((Aedat4::MAGIC, Aedat4::END_HEADER), ("!AER-DAT4", "!END-HEADER"));
+        // AEDAT 4.0: the version line is dv-processing's AEDAT_VERSION_LENGTH of 14 bytes, and
+        // the IOHeader's size follows it directly — no text header, no END-HEADER line.
+        assert_eq!(Aedat4::MAGIC, "#!AER-DAT4.0\r\n");
+        assert_eq!(Aedat4::MAGIC.len(), 14);
+        assert_eq!((Aedat4::IO_HEADER_ID, Aedat4::EVENTS_ID), ("IOHE", "EVTS"));
         let a4 = Aedat4::raw_from_events(&[], 8, 0).unwrap().encode().unwrap();
-        assert!(a4.starts_with(b"#!AER-DAT4.0\r\n"), "{:?}", &a4[..14]);
-        assert!(a4.windows(14).any(|w| w == b"#!END-HEADER\r\n"));
+        assert_eq!(&a4[..14], b"#!AER-DAT4.0\r\n");
+        assert_eq!(&a4[14..18], &24u32.to_le_bytes(), "the minimal IOHeader's size");
+        assert_eq!(&a4[18 + 4..18 + 8], b"IOHE");
+        assert_eq!(a4.len(), 18 + 24, "and nothing else in a file with no packets");
 
-        // Record sizes: 16 bytes per FlatBuffers event on top of the 24-byte table this module
-        // lays out, and 16 bytes per Flat record on top of its 24-byte header.
+        // Record sizes: 16 bytes per FlatBuffers event on top of the 32-byte head DV's own event
+        // packets carry, and 16 bytes per Flat record on top of its 24-byte header.
         assert_eq!(Aedat4::FB_EVENT_SIZE, 16);
         let e = synth(5, 9, 16, 16, 4);
-        assert_eq!(Aedat4::write_event_packet(&e).len(), 24 + 5 * Aedat4::FB_EVENT_SIZE);
+        assert_eq!(Aedat4::write_event_packet(&e).len(), 32 + 5 * Aedat4::FB_EVENT_SIZE);
         assert_eq!(Flat::RECORD_SIZE, 16);
         assert_eq!(Flat::HEADER_SIZE, 24);
 
@@ -4939,17 +5700,18 @@ mod tests {
             Aedat2::encode(&past_row, Aedat2Layout::DAVIS346, &[]),
             Err(EncodeError::FieldOutOfRange { field: "row", value: 260, max: 259, .. })
         ));
-        // Polarity in bit 11, big-endian record: On sets it, Off clears it. Column and row are
-        // zero so the address is the polarity bit alone, 0x00000800.
+        // Polarity in bit 11, big-endian record: On sets it, Off clears it — iniVation's sub-type
+        // 10, "DVS Polarity ON". The pixel is the last column and the last row, whose fields are
+        // both zero once mirrored, so the address is the polarity bit alone, 0x00000800.
         assert_eq!(
             [Aedat2Layout::DAVIS346.p_on_is_one, Aedat2Layout::DVS128.p_on_is_one],
             [true, false],
             "the two presets state opposite senses, and each says so on its own constant"
         );
-        let on = [AerEvent { t: 0, x: 0, y: 0, polarity: Polarity::On }];
+        let on = [AerEvent { t: 0, x: 345, y: 259, polarity: Polarity::On }];
         let on_bytes = Aedat2::encode(&on, Aedat2Layout::DAVIS346, &[]).expect("encodable");
         assert_eq!(&on_bytes[on_bytes.len() - 8..], &[0x00, 0x00, 0x08, 0x00, 0, 0, 0, 0]);
-        let off = [AerEvent { t: 0, x: 0, y: 0, polarity: Polarity::Off }];
+        let off = [AerEvent { t: 0, x: 345, y: 259, polarity: Polarity::Off }];
         let off_bytes = Aedat2::encode(&off, Aedat2Layout::DAVIS346, &[]).expect("encodable");
         assert_eq!(&off_bytes[off_bytes.len() - 8..], &[0, 0, 0, 0, 0, 0, 0, 0]);
         // And the decoder reads the same bit the same way.
@@ -5043,18 +5805,23 @@ mod tests {
     /// column check must not fire — and one that states only a width, where it must.
     #[test]
     fn each_coordinate_is_range_checked_against_its_own_axis() {
-        let free = Aedat2Layout { width: 0, height: 0, ..Aedat2Layout::DAVIS346 };
+        // Unmirrored, so that the field on the wire is the coordinate and the stated axes are all
+        // that differ between the cases below. (A mirror is about the stated edge, so a layout
+        // stating no geometry mirrors about the top of the field instead, and these fixtures
+        // would change meaning from one layout to the next.)
+        let davis = Aedat2Layout { x_invert: false, y_invert: false, ..Aedat2Layout::DAVIS346 };
+        let free = Aedat2Layout { width: 0, height: 0, ..davis };
         let wide = [AerEvent { t: 5, x: 400, y: 10, polarity: Polarity::On }];
         let bytes = Aedat2::encode(&wide, free, &[])
             .expect("a layout stating no geometry checks none, and the 10-bit field holds 400");
         // Height stated, width unstated: nothing bounds the column, so the event decodes.
-        let no_width = Aedat2Layout { width: 0, ..Aedat2Layout::DAVIS346 };
+        let no_width = Aedat2Layout { width: 0, ..davis };
         assert_eq!(
             Aedat2::decode(&bytes, no_width).expect("no width, no column check").events,
             wide
         );
         // Width stated, height unstated: the column is checked, and against the width.
-        let no_height = Aedat2Layout { height: 0, ..Aedat2Layout::DAVIS346 };
+        let no_height = Aedat2Layout { height: 0, ..davis };
         match Aedat2::decode(&bytes, no_height) {
             Err(DecodeError::FieldOutOfRange { field, value, max, .. }) => {
                 assert_eq!((field, value, max), ("column", 400, 345));
@@ -5065,7 +5832,7 @@ mod tests {
         // layout whose width would admit it.
         let tall = [AerEvent { t: 5, x: 3, y: 300, polarity: Polarity::On }];
         let tall_bytes = Aedat2::encode(&tall, free, &[]).expect("the 9-bit row field holds 300");
-        match Aedat2::decode(&tall_bytes, Aedat2Layout::DAVIS346) {
+        match Aedat2::decode(&tall_bytes, davis) {
             Err(DecodeError::FieldOutOfRange { field, value, max, .. }) => {
                 assert_eq!((field, value, max), ("row", 300, 259));
             }
@@ -5319,8 +6086,8 @@ mod tests {
             Aedat4::decode(&good).expect("the fixture is valid").events().unwrap(),
             events
         );
-        // The single packet is last, its 16-byte element vector starts 24 bytes into the payload.
-        let first_event = good.len() - file.packets[0].payload.len() + 24;
+        // The single packet is last, its 16-byte element vector starts 32 bytes into the payload.
+        let first_event = good.len() - file.packets[0].payload.len() + 32;
         for (at, field) in [(8usize, "column"), (10, "row")] {
             for raw in [0xFFFFu16, 0xFFFE, 0x8000] {
                 let mut b = good.clone();
@@ -5351,7 +6118,7 @@ mod tests {
             file.packets.iter().all(|p| p.events.as_ref().is_some_and(|e| e.len() == 1)),
             "one event per packet"
         );
-        assert_eq!(file.events().expect("all raw"), events);
+        assert_eq!(file.events().expect("all uncompressed"), events);
         let bytes = file.encode().expect("encodable");
         assert_eq!(Aedat4::decode(&bytes).unwrap().events().unwrap(), events);
         // And an empty stream with a zero request is an empty file, not a panic either.

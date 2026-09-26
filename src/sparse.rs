@@ -29,18 +29,44 @@
 //!
 //! # Why it is in a neuromorphic crate
 //!
-//! The LCA is the canonical non-machine-learning workload for neuromorphic hardware: it was the
-//! first algorithm demonstrated on Loihi to beat a CPU on energy-delay product for the same
-//! solution quality (Davies et al., *Advancing neuromorphic computing with Loihi: a survey of
-//! results and outlook*, Proceedings of the IEEE 109(5):911–934, 2021, reviewing Tang, Lin and
-//! Davies, *Sparse coding by spiking neural networks: convergence theory and computational
-//! results*, arXiv:1705.05475, 2017). What makes it a fit is the shape of the computation: `n`
-//! neurons, an `n × n` lateral inhibition, and a solution that is mostly zeros — so most neurons
-//! are silent most of the time, and a spiking implementation pays for the lateral matrix **only
-//! when a neuron fires**. [`SpikingLca`] counts exactly that: each spike delivers `n − 1` lateral
-//! operations, and [`lateral_ops_per_step`] is the `n(n − 1)` a rate implementation pays every
-//! step whether anything changed or not. The ratio is the sparsity of the *activity*, which is the
-//! number the whole argument turns on, and it is measured here rather than assumed.
+//! The LCA is the canonical non-machine-learning workload for neuromorphic hardware, and the
+//! paper that introduced Loihi ran it against a CPU: Davies et al., *Loihi: a neuromorphic
+//! manycore processor with on-chip learning*, IEEE Micro 38(1):82–99 (2018),
+//! doi:10.1109/MM.2018.112130359. Its abstract: "Running a spiking convolutional form of the
+//! Locally Competitive Algorithm, Loihi can solve LASSO optimization problems with over three
+//! orders of magnitude superior energy-delay-product compared to conventional solvers running on
+//! a CPU iso-process/voltage/area." Davies et al., *Advancing neuromorphic computing with Loihi:
+//! a survey of results and outlook*, Proceedings of the IEEE 109(5):911–934 (2021),
+//! doi:10.1109/JPROC.2021.3067593, reviews the result; its Fig. 4 sets LCA on Loihi against
+//! FISTA on an i7 CPU, as time to solution and dynamic energy at about 1% of the optimal LASSO
+//! objective.
+//!
+//! **Correction.** This paragraph used to say that the LCA "was the first algorithm demonstrated
+//! on Loihi to beat a CPU on energy-delay product for the same solution quality", citing the 2021
+//! survey as "reviewing Tang, Lin and Davies" (2017). The survey credits other work. Its LCA
+//! section (pp. 918–919): "Previous results \[13\], \[53\] demonstrated the efficiency of
+//! neuromorphic architectures, such as Loihi, for solving LASSO problems with LCA, especially the
+//! convolutional form of the problem." Its \[13\] is the 2018 IEEE Micro paper above; its \[53\] is
+//! Shapero, Rozell and Hasler, *Configurable hardware integrate and fire neurons for sparse
+//! approximation*, Neural Networks 45:134–143 (2013), doi:10.1016/j.neunet.2013.03.012. The survey
+//! cites Tang, Lin and Davies once, as \[51\], and for something else: that "it is often possible
+//! to rigorously link the rate neuron dynamics with the corresponding dynamics of an equivalent
+//! SNN". That paper is Tang, Lin and Davies, *Sparse coding by spiking neural networks:
+//! convergence theory and computational results*, arXiv:1705.05475 (2017): convergence theory for
+//! spiking LCA and a simulation of it on one core of a 2.3 GHz Intel Xeon, timed against FISTA on
+//! the same CPU, where "the spiking network delivers much faster early convergence than FISTA"
+//! (§4.3, Fig. 3). This review did not locate the word Loihi, or any energy or energy-delay figure,
+//! in it. "First" was this crate's word: this review did not locate it in the survey's LCA
+//! section, and the 2018 abstract calls the result "an unambiguous example of spike-based
+//! computation". Docs only; no test or constant rests on this paragraph.
+//!
+//! What makes it a fit is the shape of the computation: `n` neurons, an `n × n` lateral
+//! inhibition, and a solution that is mostly zeros — so most neurons are silent most of the time,
+//! and a spiking implementation pays for the lateral matrix **only when a neuron fires**.
+//! [`SpikingLca`] counts exactly that: each spike delivers `n − 1` lateral operations, and
+//! [`lateral_ops_per_step`] is the `n(n − 1)` a rate implementation pays every step whether
+//! anything changed or not. The ratio is the sparsity of the *activity*, which is the number the
+//! whole argument turns on, and it is measured here rather than assumed.
 //!
 //! # The two thresholds
 //!
@@ -63,13 +89,32 @@
 //!
 //! # What this module has NOT reproduced
 //!
-//! - Dictionary learning. The atoms are given; learning them (Olshausen and Field, 1996) is a
-//!   gradient step outside the loop and is not here.
+//! - Dictionary learning. The atoms are given; learning them (Olshausen and Field, *Emergence of
+//!   simple-cell receptive field properties by learning a sparse code for natural images*, Nature
+//!   381(6583):607–609 (1996), doi:10.1038/381607a0) is a gradient step outside the loop and is
+//!   not here. This item used to cite "Olshausen and Field, 1996", which fits two papers of theirs
+//!   from that year; the other is *Natural image statistics and efficient coding*, Network:
+//!   Computation in Neural Systems 7(2):333–339 (1996), doi:10.1088/0954-898x_7_2_014, and the
+//!   Nature paper is the one meant.
 //! - Loihi's fixed-point arithmetic, its 8-bit weights or its published energy-delay figures.
 //!   Nothing here is a measurement of any chip; the operation counts are exact integers about
 //!   this implementation.
-//! - The convergence-rate theorem (Tang, Lin and Davies bound the time to an `ε`-solution). The
-//!   tests assert convergence at a stated horizon, not the rate.
+//! - A convergence rate. The tests assert convergence at a stated horizon, not a rate, and none of
+//!   the rate results below is reproduced. This item used to say that "Tang, Lin and Davies bound
+//!   the time to an `ε`-solution". They do not: they prove convergence, not a rate, of the spike
+//!   rates to the solution of the non-negative LASSO (their CLASSO) as `t → ∞`. Their Eq. (8),
+//!   `T_λ(u_i(t)) − a_i(t) → 0`, rests on "a moderate assumption that inter-spike
+//!   duration `t_{i,k+1} − t_{i,k}` cannot be arbitrarily long unless neuron-i stops spiking
+//!   altogether", and the limit point comes from Bolzano–Weierstrass. The `1/t` bounds in their
+//!   appendix are steps inside the proof of Theorem 2, on one neuron's rate-versus-current gap,
+//!   not on the distance to the optimum. Rates are published elsewhere. Shapero, Zhu, Hasler and
+//!   Rozell (2014, above) report that "the firing rate of the Spiking LCA converges on the same
+//!   solution as the analog LCA, with an error inversely proportional to the sampling time".
+//!   Balavoine, Romberg and Rozell, *Convergence and rate analysis of neural networks for sparse
+//!   approximation*, IEEE Transactions on Neural Networks and Learning Systems 23(9):1377–1389
+//!   (2012), doi:10.1109/TNNLS.2012.2202400, show that under restrictions on the problem the
+//!   analog LCA "converges exponentially fast with an analytically bounded convergence rate".
+//!   Docs only; no test or constant implemented a rate.
 
 use core::fmt;
 

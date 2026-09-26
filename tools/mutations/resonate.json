@@ -106,13 +106,53 @@
  },
  {
   "label": "the textbook resonator's natural frequency is ten times the paper's",
-  "old": "Self::new(-1.0, core::f64::consts::TAU * 10.0, 1.0, (0.0, 0.0), 0.0)",
-  "new": "Self::new(-1.0, core::f64::consts::TAU * 100.0, 1.0, (0.0, 0.0), 0.0)"
+  "old": "Self::new(-1.0, 10.0, 1.0, (0.0, 1.0), 0.0)",
+  "new": "Self::new(-1.0, 100.0, 1.0, (0.0, 1.0), 0.0)"
+ },
+ {
+  "label": "the textbook resonator's frequency is read as 10 Hz, 2pi times the paper's omega = 10 (the preset this crate shipped)",
+  "old": "Self::new(-1.0, 10.0, 1.0, (0.0, 1.0), 0.0)",
+  "new": "Self::new(-1.0, core::f64::consts::TAU * 10.0, 1.0, (0.0, 1.0), 0.0)"
  },
  {
   "label": "the textbook resonator's damping is ten times the paper's",
-  "old": "Self::new(-1.0, core",
-  "new": "Self::new(-10.0, core"
+  "old": "Self::new(-1.0, 10.0,",
+  "new": "Self::new(-10.0, 10.0,"
+ },
+ {
+  "label": "the textbook cell resets to the origin, the paper's rest state, rather than to i (the reset this crate shipped)",
+  "old": "1.0, (0.0, 1.0), 0.0)?",
+  "new": "1.0, (0.0, 0.0), 0.0)?"
+ },
+ {
+  "label": "the textbook cell resets to 1 on the real axis rather than to i",
+  "old": "1.0, (0.0, 1.0), 0.0)?",
+  "new": "1.0, (1.0, 0.0), 0.0)?"
+ },
+ {
+  "label": "the textbook threshold is twice the paper's y = 1",
+  "old": "10.0, 1.0, (0.0, 1.0)",
+  "new": "10.0, 2.0, (0.0, 1.0)"
+ },
+ {
+  "label": "the textbook cell carries a refractory period the paper's Eq. (2) does not have",
+  "old": "(0.0, 1.0), 0.0)?",
+  "new": "(0.0, 1.0), 1e-3)?"
+ },
+ {
+  "label": "the textbook cell is born at its reset point i, on the threshold line, rather than at the rest state",
+  "old": "Ok(Self { x: 0.0, y: 0.0, ..Self::new",
+  "new": "Ok(Self { ..Self::new"
+ },
+ {
+  "label": "the textbook cell is born with its real part displaced from rest",
+  "old": "Ok(Self { x: 0.0, y: 0.0,",
+  "new": "Ok(Self { x: 0.5, y: 0.0,"
+ },
+ {
+  "label": "the textbook cell is born with its imaginary part half-way to the threshold",
+  "old": "x: 0.0, y: 0.0, ..Self",
+  "new": "x: 0.0, y: 0.5, ..Self"
  },
  {
   "label": "the natural period is half of 2pi/omega",

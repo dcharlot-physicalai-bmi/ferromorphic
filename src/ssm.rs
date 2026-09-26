@@ -5,11 +5,28 @@
 //!
 //! A linear state-space model is `ẋ = A x + B u`, `y = C x + D u`. Gu, Goel and Ré's S4 (*Efficiently
 //! modeling long sequences with structured state spaces*, ICLR 2022) made this a sequence model by
-//! choosing `A` so that the state remembers usefully far back, and Gu, Gupta, Goel and Ré
-//! (*On the parameterization and initialization of diagonal state space models*, `NeurIPS` 2022)
-//! showed the structure can be DIAGONAL without losing that — which is the version here, because a
-//! diagonal `A` is exactly a bank of independent leaky integrators, and a bank of leaky
-//! integrators is what neuromorphic hardware already is.
+//! choosing `A` so that the state remembers usefully far back. Gupta, Gu and Berant's DSS
+//! (*Diagonal state spaces are as effective as structured state spaces*, `NeurIPS`
+//! 35:22982–22994 (2022), arXiv:2203.14343) showed the structure can be DIAGONAL without losing
+//! that, provided `A` is initialised to approximate S4's `HiPPO` matrix. Gu, Gupta, Goel and Ré's
+//! S4D (*On the parameterization and initialization of diagonal state space models*, `NeurIPS`
+//! 35:35971–35983 (2022), arXiv:2206.11893) explained why this works and reduced it to a simpler
+//! method. The diagonal form is the version here, because a diagonal `A` is exactly a bank of
+//! independent leaky integrators, and a bank of leaky integrators is what neuromorphic hardware
+//! already is.
+//!
+//! An earlier version of this paragraph credited S4D with showing that the structure can be
+//! diagonal, and stated that finding without its condition. S4D's own abstract gives the finding
+//! to DSS — "a recent variant of S4 called DSS showed that restricting the state matrix to be fully
+//! diagonal can still preserve the performance of the original model when using a specific
+//! initialization based on approximating S4's matrix" — and its introduction (§1) says "Gupta
+//! \[11\] made the empirical observation that a variant of S4 using a particular diagonal matrix is
+//! nearly as effective as the original S4 method", \[11\] being arXiv:2203.14343. What S4D claims
+//! for itself is the explanation ("We explain why DSS works mathematically") and a simpler diagonal
+//! model that "performs comparably to S4 in almost all settings". The dropped condition is the one
+//! S4D stresses — "we show that the initialization is critical for performance" — and this module
+//! reproduces none of those initialisations (see below), so what it checks is the diagonal FORM,
+//! not the performance the papers report for it.
 //!
 //! Discretised for a step `Δ`, a diagonal model has two forms that are the same computation:
 //!

@@ -11,16 +11,53 @@
 //! complex sum whose phase is a circular mean. And a symbol becomes something a spiking network
 //! can hold with no numbers at all: one spike per element per cycle of a background rhythm, at the
 //! time the phase says. Binding two symbols is then delaying one train by the other, and reading
-//! a similarity is counting coincidences. That mapping is Frady and Sommer, *Robust computation
-//! with rhythmic spike patterns*, PNAS 116(36):18050–18058, 2019, and it is the reason a
-//! hyperdimensional computer can live on a chip that emits only spike times.
+//! a similarity is counting coincidences. That mapping is E. P. Frady and F. T. Sommer, *Robust
+//! computation with rhythmic spike patterns*, PNAS 116(36):18050–18059 (2019),
+//! doi:10.1073/pnas.1902653116, and it is the reason a hyperdimensional computer can live on a chip
+//! that emits only spike times.
 //!
-//! The same paper's memory is the **threshold phasor associative memory**: store patterns as a
-//! complex Hebbian matrix `W = Σ_μ ξ^μ ξ^μ†`, and retrieve by iterating `z ← ph(W z)`, each element
-//! re-normalised to unit magnitude if its field is above a threshold and silenced otherwise. A
-//! stored pattern is a fixed point because its own term of the field is `D ξ^ν` and the others are
-//! crosstalk of magnitude `√((P − 1) D)` — the same ratio that governs [`crate::hopfield`], now in
-//! phase.
+//! The same paper's memory is the **threshold phasor associative memory** (TPAM): store patterns
+//! as a complex Hebbian matrix `W = Σ_μ ξ^μ ξ^μ†` **with its diagonal set to zero** (the paper's
+//! Eq. 1), and retrieve by iterating `z ← g(W z)` (Eqs. 2 and 3), each element re-normalised to
+//! unit magnitude if its field reaches the threshold `Θ(t) = θ Σ_k |z_k(t)|` (Eq. 4) and set to
+//! zero amplitude otherwise. A stored pattern is a fixed point because its own term of the field
+//! is `(D − 1) ξ^ν` and the other `P − 1` patterns add crosstalk of magnitude `√((P − 1)(D − 1))`
+//! — the same ratio that governs [`crate::hopfield`], now in phase.
+//!
+//! # Corrected against the paper
+//!
+//! Three statements here were checked against the paper's text (Europe PMC, PMC6731666) and two
+//! of them changed the code.
+//!
+//! - **The diagonal of `W`.** This module used to store `W = Σ_μ ξ^μ ξ^μ†` and keep its diagonal,
+//!   so every element's field carried a self-coupling `P z_k`, and the signal at a stored pattern
+//!   was `D ξ^ν` plus a coherent `(P − 1) ξ^ν` that the stated crosstalk did not account for. The
+//!   paper: "The entries along the diagonal of W are set to 0", and "TPAM uses the same learning
+//!   rule \[1\] and postsynaptic summation \[2\] as the original phasor network". [`Tpam::field`]
+//!   now computes `Σ_μ ξ^μ_k (⟨ξ^μ, z⟩ − conj(ξ^μ_k) z_k)`, and
+//!   `the_field_is_w_z_for_the_papers_zero_diagonal_matrix` checks it against the matrix built
+//!   entry by entry. The one exact field value the suite pins moved: a two-element memory
+//!   holding `(0, 0)`, cued at `(0, π/2)`, now has imaginary parts `(1, 0)` where it had `(1, 1)`.
+//! - **The threshold.** This module used a fixed floor of `θ D` on every iteration and kept a
+//!   silenced element as a unit phasor at phase zero, so it went on feeding the next field. The
+//!   paper's Eq. 3 outputs zero for it ("Otherwise, the output is zero"), and Eq. 4 sets
+//!   "the threshold proportional to the overall activity: `Θ(t) = θ Σ_i |z_i(t)|`". Retrieval
+//!   now carries each element's amplitude (one or zero) from iteration to iteration: a silenced
+//!   element adds nothing to the next field, and the floor is `θ` times the number of elements
+//!   still active. Because an element can now switch off and back on, an iteration that switches
+//!   any makes [`Retrieval::last_move`] infinite, and `converged` requires that none did. The two
+//!   rules agree while nothing is silenced; they part once something is.
+//!   `the_threshold_follows_the_activity_and_a_silenced_element_feeds_nothing` traces the
+//!   difference by hand, and the random cues of
+//!   `stored_patterns_are_fixed_points_and_a_corrupted_cue_converges` measure it: of 64 random
+//!   cues against ten stored patterns at `θ = 0.35`, 30 are silenced entirely on the first
+//!   iteration and stay in the all-zero state, a fixed point; the other 34 keep a few elements
+//!   on, meet a floor that has shrunk with them, and are re-lit almost entirely on the second
+//!   iteration, without settling or coming within 0.9 of any pattern by the tenth. Under the old
+//!   fixed floor (the pre-correction retrieval, rebuilt in a scratch fixture for the comparison)
+//!   60 of the same 64 were still at least 80% silent after ten iterations.
+//! - **The citation's last page**, which read 18058. Crossref and Europe PMC both give
+//!   18050–18059.
 //!
 //! # The closed forms this module is checked against
 //!
@@ -29,6 +66,8 @@
 //! - A sum-bundle of `k` symbols has similarity `1` to each member in expectation, with noise of
 //!   standard deviation `√((k − 1)/(2D))` — measured.
 //! - Binding by spike-time delays equals binding by phases, modulo the cycle, to 1e-12.
+//! - The memory's field is `W z` for the paper's `W` (Eq. 1, diagonal zero) built as an explicit
+//!   `D × D` matrix, to 1e-12, with and without silenced elements in `z`.
 //! - Stored patterns are fixed points of the memory to the similarity the crosstalk predicts
 //!   (`1 − σ²/2` with `σ` the per-element phase error), and a cue with a fifth of its phases
 //!   randomised converges to its pattern.
@@ -294,15 +333,19 @@ pub fn noise_sd(dim: usize) -> f64 {
 // Threshold phasor associative memory
 // ---------------------------------------------------------------------------------------------
 
-/// The threshold phasor associative memory: complex Hebbian storage, phase-normalising retrieval.
+/// The threshold phasor associative memory: complex Hebbian storage with a zero diagonal,
+/// phase-normalising retrieval under a threshold that follows the activity (Frady and Sommer,
+/// Eqs. 1–4).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tpam {
     /// Dimension.
     pub dim: usize,
     /// Stored patterns.
     pub patterns: Vec<Phasor>,
-    /// Elements whose field magnitude falls below `threshold · D` are silenced (phase set to zero
-    /// and reported as silent) rather than normalised out of noise.
+    /// The paper's `θ`. On each iteration an element whose field magnitude falls below
+    /// `Θ(t) = θ Σ_k |z_k(t)|` — `θ` times the number of elements active in the current state —
+    /// is silenced (zero amplitude, reported as phase zero and counted as silent) rather than
+    /// normalised out of noise. From a cue, whose every element is active, that is `θ D`.
     pub threshold: f64,
 }
 
@@ -313,19 +356,24 @@ pub struct Retrieval {
     pub state: Phasor,
     /// Iterations run.
     pub iterations: usize,
-    /// Whether the last iteration moved no phase by more than `1e-9`.
+    /// Whether the last iteration moved no phase by more than `1e-9` and switched no element on
+    /// or off.
     pub converged: bool,
     /// The largest phase movement on the last iteration, radians: how far from a fixed point the
-    /// state still is when `converged` is false.
+    /// state still is when `converged` is false. An element switched on or off has no phase
+    /// distance to report, and makes this infinite.
     pub last_move: f64,
-    /// Elements silenced by the threshold on the last iteration. A silenced element is reported
-    /// with phase zero, because [`Phasor`] carries phases only; a caller reading a similarity off
-    /// a state with silenced elements should discount up to `2 · silent / D` for them.
+    /// Elements silenced by the threshold on the last iteration. Inside the iteration a silenced
+    /// element has zero amplitude; it is reported with phase zero because [`Phasor`] carries
+    /// phases only, so a caller reading a similarity off a state with silenced elements should
+    /// discount up to `2 · silent / D` for them, and a caller feeding the state back in as a cue
+    /// switches them on again at phase zero.
     pub silent: usize,
 }
 
 impl Tpam {
-    /// An empty memory of dimension `dim` with the given threshold, a fraction of `D`.
+    /// An empty memory of dimension `dim` with the given threshold `θ`, a fraction of the current
+    /// activity (of `D` on the first iteration from a cue).
     ///
     /// # Errors
     ///
@@ -352,13 +400,22 @@ impl Tpam {
         Ok(())
     }
 
-    /// The field `W z = Σ_μ ξ^μ ⟨ξ^μ, z⟩` at `z`, as `(re, im)` per element, computed through the
-    /// patterns in `O(P D)` rather than through the `D × D` matrix.
+    /// The field `W z` at a state `z` whose every element is active, as `(re, im)` per element,
+    /// for the paper's `W = Σ_μ ξ^μ ξ^μ†` with its diagonal set to zero:
+    /// `Σ_μ ξ^μ_k (⟨ξ^μ, z⟩ − conj(ξ^μ_k) z_k)`, computed through the patterns in `O(P D)` rather
+    /// than through the `D × D` matrix.
     ///
     /// # Errors
     ///
     /// [`PhasorError::Dimension`], [`PhasorError::Empty`] with nothing stored.
     pub fn field(&self, z: &Phasor) -> Result<Bundle, PhasorError> {
+        self.field_at(z, &vec![1.0; self.dim])
+    }
+
+    /// `W z` for the state whose element `k` is `amp[k] · e^{i z_k}`: Eq. 2 with the zero-diagonal
+    /// `W` of Eq. 1. `amp` is one for an active element and zero for a silenced one, and has
+    /// length `self.dim`.
+    fn field_at(&self, z: &Phasor, amp: &[f64]) -> Result<Bundle, PhasorError> {
         if self.patterns.is_empty() {
             return Err(PhasorError::Empty { what: "patterns" });
         }
@@ -366,11 +423,11 @@ impl Tpam {
         let d = self.dim;
         let (mut re, mut im) = (vec![0.0; d], vec![0.0; d]);
         for p in &self.patterns {
-            // ⟨ξ, z⟩ = Σ_k e^{i(z_k − ξ_k)} — the overlap, a complex number.
+            // ⟨ξ, z⟩ = Σ_k |z_k| e^{i(z_k − ξ_k)} — the overlap, a complex number.
             let (mut or, mut oi) = (0.0, 0.0);
-            for (a, b) in p.phase.iter().zip(&z.phase) {
-                or += (b - a).cos();
-                oi += (b - a).sin();
+            for ((a, b), w) in p.phase.iter().zip(&z.phase).zip(amp) {
+                or += w * (b - a).cos();
+                oi += w * (b - a).sin();
             }
             for (k, &a) in p.phase.iter().enumerate() {
                 // ξ_k · overlap
@@ -379,30 +436,45 @@ impl Tpam {
                 im[k] += s * or + c * oi;
             }
         }
+        // The overlap above runs over every j, including j = k, so each pattern also added
+        // ξ_k · conj(ξ_k) · z_k = z_k: the diagonal of Σ_μ ξ^μ ξ^μ†, which is P at every element.
+        // Eq. 1 sets that diagonal to zero, so P · z_k is taken back out.
+        let diagonal = self.patterns.len() as f64;
+        for (k, &b) in z.phase.iter().enumerate() {
+            re[k] -= diagonal * amp[k] * b.cos();
+            im[k] -= diagonal * amp[k] * b.sin();
+        }
         Ok(Bundle { re, im })
     }
 
-    /// Iterate `z ← ph(W z)` from `cue` until the phases stop moving or `max_iters`.
+    /// Iterate `z ← g(W z)` from `cue` until the state stops moving or `max_iters`: Eq. 3, with
+    /// the threshold of Eq. 4 recomputed from the current state's activity on every iteration.
+    /// The cue's elements all start active.
     ///
     /// # Errors
     ///
     /// As [`Tpam::field`].
     pub fn retrieve(&self, cue: &Phasor, max_iters: usize) -> Result<Retrieval, PhasorError> {
         let mut state = cue.clone();
-        let floor = self.threshold * self.dim as f64;
+        let mut amp = vec![1.0; self.dim];
         let mut iterations = 0;
         let mut converged = false;
         let mut silent = 0;
         let mut last_move = f64::INFINITY;
         while iterations < max_iters {
             iterations += 1;
-            let f = self.field(&state)?;
+            // Eq. 4: Θ(t) = θ Σ_k |z_k(t)|, and |z_k| is one or zero.
+            let floor = self.threshold * amp.iter().sum::<f64>();
+            let f = self.field_at(&state, &amp)?;
             let mut moved = 0.0f64;
             silent = 0;
             let mut next = Vec::with_capacity(self.dim);
+            let mut next_amp = Vec::with_capacity(self.dim);
             for k in 0..self.dim {
                 let mag = (f.re[k] * f.re[k] + f.im[k] * f.im[k]).sqrt();
-                let p = if mag >= floor {
+                // A zero field has no phase to keep, so it stays silent even under a zero floor.
+                let on = mag > 0.0 && mag >= floor;
+                let p = if on {
                     wrap(f.im[k].atan2(f.re[k]))
                 } else {
                     silent += 1;
@@ -410,10 +482,13 @@ impl Tpam {
                 };
                 let delta = wrap(p - state.phase[k]);
                 let delta = delta.min(core::f64::consts::TAU - delta);
+                let delta = if on == (amp[k] > 0.0) { delta } else { f64::INFINITY };
                 moved = moved.max(delta);
                 next.push(p);
+                next_amp.push(if on { 1.0 } else { 0.0 });
             }
             state = Phasor { phase: next };
+            amp = next_amp;
             last_move = moved;
             if moved < 1e-9 {
                 converged = true;
@@ -423,8 +498,11 @@ impl Tpam {
         Ok(Retrieval { state, iterations, converged, last_move, silent })
     }
 
-    /// The crosstalk-to-signal ratio a stored pattern's field carries: `√((P − 1)/D)`. Below
-    /// about `0.3` the stored patterns are fixed points to within a few degrees.
+    /// The crosstalk-to-signal ratio a stored pattern's field carries, in its large-`D` form
+    /// `√((P − 1)/D)`. With the diagonal of `W` at zero the signal is `(D − 1) ξ^ν` and the
+    /// crosstalk `√((P − 1)(D − 1))`, a ratio of `√((P − 1)/(D − 1))`; this returns the large-`D`
+    /// form, which is low by the factor `√((D − 1)/D)` (0.13% at `D = 400`). Below about `0.3` the
+    /// stored patterns are fixed points to within a few degrees.
     #[must_use]
     pub fn crosstalk_ratio(&self) -> f64 {
         ((self.patterns.len().saturating_sub(1)) as f64 / self.dim as f64).sqrt()
@@ -537,11 +615,13 @@ mod tests {
             mem.store(q).unwrap();
         }
         assert!((mem.crosstalk_ratio() - 0.15).abs() < 1e-12);
-        // A stored pattern's field: D ξ^ν plus crosstalk of magnitude about sqrt((P−1) D) per
-        // element — a ratio of 0.15, so a per-element phase error of about 0.1 rad at one sigma.
-        // The similarity to the pattern is the mean cosine of those errors, 1 − σ²/2 ≈ 0.99; the
-        // WORST element over four hundred is several sigma out (0.67 rad was measured), so the
-        // bound on it is loose and the bound on the mean is tight.
+        // A stored pattern's field: (D − 1) ξ^ν (the diagonal of W is zero) plus crosstalk of
+        // magnitude about sqrt((P−1)(D − 1)) per element — a ratio of 0.15, so a per-element phase
+        // error of about 0.1 rad at one sigma. The similarity to the pattern is the mean cosine of
+        // those errors, 1 − σ²/2 ≈ 0.99; the WORST element over four hundred is several sigma out
+        // (0.48 to 1.06 rad across the ten patterns, measured with the zero diagonal; 0.67 rad
+        // was the figure recorded when the diagonal was kept), so the bound on it is loose and the
+        // bound on the mean is tight. The measured similarities are 0.961 to 0.986.
         for (mu, q) in patterns.iter().enumerate() {
             let r = mem.retrieve(q, 50).unwrap();
             let sim = r.state.similarity(q).unwrap();
@@ -570,20 +650,55 @@ mod tests {
         }
         // A random cue at a low threshold lands in SOME basin — an associative memory with ten
         // patterns in four hundred dimensions has no empty space; the first draft asserted it
-        // would resemble nothing and it retrieved a pattern at 0.956. Rejecting a cue that matches
-        // nothing is the THRESHOLD's job: a random cue's field has magnitude about √(P·D) = 63 per
-        // element (0.16 D) with a Rayleigh tail, a stored pattern's about D minus that same
-        // crosstalk, so a threshold of 0.35 D silences all but a few elements of the one and none
-        // of the other. (0.5 D was tried first: one element of a stored pattern fell under it —
-        // the crosstalk's tail is fatter than a single-sigma estimate, because each pattern pair's
-        // overlap is itself Rayleigh.) The fractions are asserted, not the exact counts.
+        // would resemble nothing and it retrieved a pattern at 0.956 (0.938 since the diagonal of
+        // W was zeroed). Rejecting a cue that matches nothing is the THRESHOLD's job, and on the
+        // FIRST iteration, from a cue whose every element is active, the paper's floor
+        // Θ(0) = θ Σ_k |z_k| is θ D: a random cue's field has magnitude about √(P(D − 1)) = 63 per
+        // element (0.16 D) with a Rayleigh tail, a stored pattern's about D − 1 minus that same
+        // crosstalk, so θ = 0.35 silences all but a few elements of the one and none of the other.
+        // (0.5 was tried first: one element of a stored pattern fell under it — the crosstalk's
+        // tail is fatter than a single-sigma estimate, because each pattern pair's overlap is
+        // itself Rayleigh.) The fractions are asserted, not the exact counts.
         let noise = Phasor::random(d, &mut rng).unwrap();
         let r = mem.retrieve(&noise, 50).unwrap();
         let best = patterns.iter().map(|q| r.state.similarity(q).unwrap()).fold(f64::NEG_INFINITY, f64::max);
         assert!(best > 0.9, "at threshold 0.1 a random cue must fall into a basin: best similarity {best}");
         let strict = Tpam { threshold: 0.35, ..mem.clone() };
+        let r = strict.retrieve(&noise, 1).unwrap();
+        assert!(r.silent >= d * 95 / 100, "a first floor of 0.35 D let {} elements of a random cue through", d - r.silent);
+        // AFTER the first iteration the floor is θ times the elements still active (Eq. 4), and a
+        // silenced element feeds nothing (Eq. 3). So there are two outcomes, and both occur. A cue
+        // whose first iteration silences everything is at the all-zero state, whose field is zero
+        // and which is therefore a fixed point. A cue that leaves even one element on meets a floor
+        // that has shrunk with it, and is re-lit almost entirely on the next iteration — without
+        // resembling any pattern. Measured over these sixty-four cues: 30 went to the zero state,
+        // 34 were re-lit, the most elements any cue kept on through the first iteration was 33,
+        // the most any re-lit cue had silent on the second was 14, none of the 34 had converged by
+        // the tenth, and the best similarity any of them reached to a pattern was 0.577. Under the
+        // fixed floor of θ D this module used to apply (rebuilt in a scratch fixture for the
+        // comparison), 60 of the same 64 were still at least 80% silent after ten iterations —
+        // the rejection signature was a silent count, and under the paper's rule it is not.
+        let mut noise_rng = Rng::new(77);
+        let (mut to_zero, mut relit) = (0usize, 0usize);
+        for _ in 0..64 {
+            let cue = Phasor::random(d, &mut noise_rng).unwrap();
+            let first = strict.retrieve(&cue, 1).unwrap();
+            assert!(first.silent >= d * 9 / 10, "a first floor of 0.35 D let {} elements through", d - first.silent);
+            let tenth = strict.retrieve(&cue, 10).unwrap();
+            if first.silent == d {
+                to_zero += 1;
+                assert!(tenth.silent == d && tenth.converged, "the all-silent state is not a fixed point");
+            } else {
+                relit += 1;
+                let second = strict.retrieve(&cue, 2).unwrap();
+                assert!(second.silent <= d / 20, "the shrunken floor re-lit only {} elements", d - second.silent);
+                let best = patterns.iter().map(|q| tenth.state.similarity(q).unwrap()).fold(f64::NEG_INFINITY, f64::max);
+                assert!(best < 0.9, "a random cue, re-lit, reached a pattern at {best}");
+            }
+        }
+        assert!(to_zero >= 16 && relit >= 16, "each outcome must be reached: {to_zero} to zero, {relit} re-lit");
         let r = strict.retrieve(&noise, 10).unwrap();
-        assert!(r.silent >= d * 95 / 100, "a threshold of 0.35 D let {} elements of a random cue through", d - r.silent);
+        assert!(r.silent == d && r.converged, "this cue's first iteration silenced every element, and stays there");
         let r = strict.retrieve(&patterns[0], 50).unwrap();
         assert!(r.silent <= d / 100, "a stored pattern's field is near D, and {} elements fell under 0.35 D", r.silent);
         assert!(r.state.similarity(&patterns[0]).unwrap() > 0.95);
@@ -730,8 +845,16 @@ mod tests {
         let mut rng = Rng::new(21);
         let mut strict = Tpam::new(64, 0.5).unwrap();
         strict.store(&Phasor::random(64, &mut rng).unwrap()).unwrap();
-        let r = strict.retrieve(&Phasor::random(64, &mut rng).unwrap(), 1).unwrap();
+        let cue = Phasor::random(64, &mut rng).unwrap();
+        let r = strict.retrieve(&cue, 1).unwrap();
         assert_eq!(r.silent, 64, "a constructed threshold of 0.5 D silenced nothing");
+        assert!(!r.converged && r.last_move == f64::INFINITY, "switching elements off is a move with no phase distance");
+        // Once everything is silent the state is zero, its field is zero and the floor is zero:
+        // a field of zero has no phase to take, so nothing is switched back on, and the zero
+        // state is a fixed point. (Admitted at `0 ≥ 0`, all 64 would come back at phase zero.)
+        let r = strict.retrieve(&cue, 3).unwrap();
+        assert_eq!(r.silent, 64, "the all-silent state switched {} elements back on", 64 - r.silent);
+        assert!(r.converged && r.iterations == 2, "the zero state is a fixed point: {r:?}");
     }
 
     /// The overlap `⟨ξ, z⟩` is a COMPLEX number and the field carries both of its parts, so the
@@ -746,13 +869,18 @@ mod tests {
     fn the_field_carries_the_imaginary_part_of_the_overlap() {
         // A two-element memory holding the all-zero pattern. The overlap with a cue at phases
         // (0, π/2) is 1 + e^{iπ/2}, whose imaginary part is exactly 1, and the field of a pattern
-        // whose own phases are zero is that overlap unrotated.
+        // whose own phases are zero is that overlap unrotated, less each element's own term: the
+        // paper's W for this pattern is [[0, 1], [1, 0]] (Eq. 1, diagonal zero), so element 0
+        // hears element 1 (imaginary part 1) and element 1 hears element 0 (imaginary part 0).
+        // This line expected (1, 1) while the module kept the diagonal, which made each element
+        // hear itself as well.
         let mut mem = Tpam::new(2, 0.0).unwrap();
         mem.store(&Phasor::new(&[0.0, 0.0]).unwrap()).unwrap();
         let f = mem.field(&Phasor::new(&[0.0, PI / 2.0]).unwrap()).unwrap();
-        assert_eq!(f.im, vec![1.0, 1.0], "the imaginary part of the overlap was dropped");
+        assert_eq!(f.im, vec![1.0, 0.0], "the imaginary part of the overlap was dropped, or the diagonal kept");
+        assert!(f.re[0].abs() < 1e-15 && (f.re[1] - 1.0).abs() < 1e-15, "real parts {:?} vs (cos(π/2), 1)", f.re);
         // And the consequence: a bodily rotation of the one stored pattern is a fixed point,
-        // because the overlap is D·e^{iδ} and the field is the pattern turned by δ.
+        // because the overlap is D·e^{iδ} and the field is the pattern turned by δ, times D − 1.
         let mut rng = Rng::new(31);
         let xi = Phasor::random(64, &mut rng).unwrap();
         let mut one = Tpam::new(64, 0.1).unwrap();
@@ -765,6 +893,102 @@ mod tests {
         assert!((back - delta.cos()).abs() < 1e-9, "similarity to the unturned pattern {back} vs cos(0.7)");
     }
 
+    /// The field is `W z` for the matrix the paper writes down: `W = Σ_μ ξ^μ ξ^μ†` with "the
+    /// entries along the diagonal of W ... set to 0" (Frady and Sommer, Eq. 1) and
+    /// `u_i = Σ_j W_ij z_j` (Eq. 2), built here entry by entry as a `D × D` complex matrix and
+    /// compared to 1e-12 — at a state whose every element is active, and at one with two elements
+    /// at zero amplitude, which is what a silenced element is. A stored pattern of a one-pattern
+    /// memory therefore has field `(D − 1) ξ`, not `D ξ`.
+    ///
+    /// Why the suite could not see it: the diagonal adds `P z_k` to element `k`'s field, a term
+    /// aligned with the state itself, so at a stored pattern it only strengthens the signal the
+    /// fixed-point test looks for; and nothing compared the field with the matrix.
+    #[test]
+    fn the_field_is_w_z_for_the_papers_zero_diagonal_matrix() {
+        let mut rng = Rng::new(51);
+        let (d, p) = (6usize, 3usize);
+        let mut mem = Tpam::new(d, 0.25).unwrap();
+        let pats: Vec<Phasor> = (0..p).map(|_| Phasor::random(d, &mut rng).unwrap()).collect();
+        for q in &pats {
+            mem.store(q).unwrap();
+        }
+        // W_ij = Σ_μ e^{i(ξ_i − ξ_j)} off the diagonal, and zero on it.
+        let w: Vec<Vec<(f64, f64)>> = (0..d)
+            .map(|i| {
+                (0..d)
+                    .map(|j| {
+                        if i == j {
+                            return (0.0, 0.0);
+                        }
+                        pats.iter().fold((0.0, 0.0), |(r, s), q| {
+                            let a = q.phase[i] - q.phase[j];
+                            (r + a.cos(), s + a.sin())
+                        })
+                    })
+                    .collect()
+            })
+            .collect();
+        let z = Phasor::random(d, &mut rng).unwrap();
+        for amp in [vec![1.0; d], vec![1.0, 0.0, 1.0, 1.0, 0.0, 1.0]] {
+            let f = mem.field_at(&z, &amp).unwrap();
+            for (i, row) in w.iter().enumerate() {
+                let (ur, ui) = row.iter().zip(&z.phase).zip(&amp).fold((0.0, 0.0), |(ur, ui), ((&(wr, wi), &ph), &a)| {
+                    let (zr, zi) = (a * ph.cos(), a * ph.sin());
+                    (ur + wr * zr - wi * zi, ui + wr * zi + wi * zr)
+                });
+                assert!(
+                    (f.re[i] - ur).abs() < 1e-12 && (f.im[i] - ui).abs() < 1e-12,
+                    "element {i} at amplitudes {amp:?}: field ({}, {}) against W z ({ur}, {ui})",
+                    f.re[i],
+                    f.im[i]
+                );
+            }
+        }
+        assert_eq!(mem.field(&z).unwrap(), mem.field_at(&z, &[1.0; 6]).unwrap(), "the public field is every element active");
+        // One pattern: its own field is (D − 1) ξ.
+        let mut one = Tpam::new(d, 0.25).unwrap();
+        one.store(&pats[0]).unwrap();
+        let f = one.field(&pats[0]).unwrap();
+        for (k, &a) in pats[0].phase.iter().enumerate() {
+            let (wr, wi) = ((d - 1) as f64 * a.cos(), (d - 1) as f64 * a.sin());
+            assert!((f.re[k] - wr).abs() < 1e-12 && (f.im[k] - wi).abs() < 1e-12, "element {k}: ({}, {}) vs (D − 1) ξ", f.re[k], f.im[k]);
+        }
+    }
+
+    /// The threshold follows the activity — "we set the threshold proportional to the overall
+    /// activity: `Θ(t) = θ Σ_i |z_i(t)|`" (Frady and Sommer, Eq. 4) — and a silenced element
+    /// outputs zero (Eq. 3), so it feeds nothing into the next field. Traced by hand through a
+    /// four-element memory holding one pattern `ξ`, with `θ = ½`, cued with `ξ` but its last element
+    /// turned half a cycle. Measured relative to `ξ`, `W` is the all-ones matrix less its diagonal,
+    /// so an element's field is `ξ_k` times the sum of the OTHER active elements' relative states:
+    ///
+    /// | iteration | active before | floor `θ Σ_i abs(z_i)` | fields, elements 0, 1, 2 and 3 | silent after |
+    /// |---|---|---|---|---|
+    /// | 1 | 4 | 2 | 1, 1, 1, 3 | 3 |
+    /// | 2 | 1 (element 3) | ½ | 1, 1, 1, 0 | 1 |
+    /// | 3 | 3 | 3/2 | 2, 2, 2, 3 | 0 |
+    /// | 4 | 4 | 2 | 3, 3, 3, 3 | 0, and nothing moved |
+    ///
+    /// Under the fixed floor `θ D = 2` this module used to apply, iteration 2's fields of 1 fall
+    /// under it, and every element is silent from then on.
+    #[test]
+    fn the_threshold_follows_the_activity_and_a_silenced_element_feeds_nothing() {
+        let xi = Phasor::new(&[0.25, 1.5, 2.75, 4.0]).unwrap();
+        let cue = Phasor::new(&[0.25, 1.5, 2.75, 4.0 + PI]).unwrap();
+        let mut mem = Tpam::new(4, 0.5).unwrap();
+        mem.store(&xi).unwrap();
+        let silent: Vec<usize> = (1..=4).map(|t| mem.retrieve(&cue, t).unwrap().silent).collect();
+        assert_eq!(silent, vec![3, 1, 0, 0], "silent elements after iterations 1 to 4");
+        for t in 1..=3 {
+            let r = mem.retrieve(&cue, t).unwrap();
+            assert!(r.last_move == f64::INFINITY && !r.converged, "iteration {t} switched elements on or off: {r:?}");
+        }
+        let r = mem.retrieve(&cue, 50).unwrap();
+        assert!(r.converged && r.iterations == 4, "the trace settles on its fourth iteration: {r:?}");
+        assert_eq!(r.silent, 0);
+        assert!(r.state.similarity(&xi).unwrap() > 1.0 - 1e-12, "the turned element was put back");
+    }
+
     /// `max_iters` is a cap on the iterations RUN, and a state that has stopped moving is reported
     /// as converged.
     ///
@@ -772,6 +996,8 @@ mod tests {
     /// stopped by the tolerance long before the cap, so one iteration more or fewer changed
     /// nothing; and the ten-pattern memory it uses never reaches the 1e-9 movement that sets the
     /// flag, so `converged` is false in every retrieval the suite performs and is never asserted.
+    /// (That described the suite this test was added to. Since the diagonal of `W` was zeroed,
+    /// four of the ten stored patterns do reach it within fifty iterations.)
     #[test]
     fn the_cap_counts_the_iterations_run_and_a_fixed_point_reports_convergence() {
         let mut rng = Rng::new(41);

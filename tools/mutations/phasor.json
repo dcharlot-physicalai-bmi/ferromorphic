@@ -21,8 +21,8 @@
  },
  {
   "label": "tpam overlap conjugated wrong",
-  "old": "                or += (b - a).cos();\n                oi += (b - a).sin();",
-  "new": "                or += (a - b).cos();\n                oi += (a - b).sin();"
+  "old": "                or += w * (b - a).cos();\n                oi += w * (b - a).sin();",
+  "new": "                or += w * (a - b).cos();\n                oi += w * (a - b).sin();"
  },
  {
   "label": "noise_sd 1/sqrt(D)",
@@ -36,8 +36,8 @@
  },
  {
   "label": "tpam threshold never silences",
-  "old": "                let p = if mag >= floor {",
-  "new": "                let p = if mag >= 0.0 * floor {"
+  "old": "let on = mag > 0.0 && mag >= floor;",
+  "new": "let on = mag > 0.0 && mag >= 0.0 * floor;"
  },
  {
   "label": "wrap may return tau",
@@ -221,13 +221,13 @@
  },
  {
   "label": "the overlap is taken against the stored pattern itself rather than against the state",
-  "old": "for (a, b) in p.phase.iter().zip(&z.phase) {",
-  "new": "for (a, b) in p.phase.iter().zip(&p.phase) {"
+  "old": "for ((a, b), w) in p.phase.iter().zip(&z.phase).zip(amp) {",
+  "new": "for ((a, b), w) in p.phase.iter().zip(&p.phase).zip(amp) {"
  },
  {
   "label": "the overlap keeps only its real part, so the field ignores the phase of the match",
-  "old": "                oi += (b - a).sin();",
-  "new": "                oi += 0.0 * (b - a).sin();"
+  "old": "                oi += w * (b - a).sin();",
+  "new": "                oi += 0.0 * w * (b - a).sin();"
  },
  {
   "label": "the real part of the pattern times the overlap adds the cross term instead of subtracting it",
@@ -235,9 +235,9 @@
   "new": "                re[k] += c * or + s * oi;"
  },
  {
-  "label": "the silencing threshold is an absolute field magnitude rather than a fraction of D",
-  "old": "        let floor = self.threshold * self.dim as f64;",
-  "new": "        let floor = self.threshold;"
+  "label": "the silencing threshold is an absolute field magnitude rather than a fraction of the activity",
+  "old": "            let floor = self.threshold * amp.iter().sum::<f64>();",
+  "new": "            let floor = self.threshold;"
  },
  {
   "label": "retrieval starts from an all-zero state rather than from the cue",
@@ -283,5 +283,70 @@
   "label": "an emptiness refusal prints nothing at all",
   "old": "Self::Empty { what } => write!(f, \"{what} is empty\"),",
   "new": "Self::Empty { what } => { let _ = what; write!(f, \"\") },"
+ },
+ {
+  "label": "the floor is the fixed theta D this module used to apply, not theta times the current activity (Frady and Sommer Eq. 4)",
+  "old": "let floor = self.threshold * amp.iter().sum::<f64>();",
+  "new": "let floor = self.threshold * self.dim as f64;"
+ },
+ {
+  "label": "a silenced element still feeds the overlap at unit amplitude, against Eq. 3's zero output",
+  "old": "                or += w * (b - a).cos();\n                oi += w * (b - a).sin();",
+  "new": "                or += (b - a).cos();\n                oi += (b - a).sin();"
+ },
+ {
+  "label": "the diagonal of W is kept, so every element hears itself P times (the pre-correction field)",
+  "old": "let diagonal = self.patterns.len() as f64;",
+  "new": "let diagonal = 0.0 * self.patterns.len() as f64;"
+ },
+ {
+  "label": "the diagonal taken out is one pattern's, not all P",
+  "old": "let diagonal = self.patterns.len() as f64;",
+  "new": "let diagonal = 1.0;"
+ },
+ {
+  "label": "the diagonal is added a second time rather than taken out",
+  "old": "re[k] -= diagonal * amp[k] * b.cos();\n            im[k] -= diagonal * amp[k] * b.sin();",
+  "new": "re[k] += diagonal * amp[k] * b.cos();\n            im[k] += diagonal * amp[k] * b.sin();"
+ },
+ {
+  "label": "the diagonal is taken out of the real part only",
+  "old": "            im[k] -= diagonal * amp[k] * b.sin();",
+  "new": "            im[k] -= 0.0 * diagonal * amp[k] * b.sin();"
+ },
+ {
+  "label": "the diagonal is taken out at a silenced element too, which has no self-term to remove",
+  "old": "re[k] -= diagonal * amp[k] * b.cos();\n            im[k] -= diagonal * amp[k] * b.sin();",
+  "new": "re[k] -= diagonal * b.cos();\n            im[k] -= diagonal * b.sin();"
+ },
+ {
+  "label": "a zero field under a zero floor is switched back on at phase zero",
+  "old": "let on = mag > 0.0 && mag >= floor;",
+  "new": "let on = mag >= floor;"
+ },
+ {
+  "label": "an element switched on or off counts as no more than its phase movement",
+  "old": "let delta = if on == (amp[k] > 0.0) { delta } else { f64::INFINITY };",
+  "new": "let delta = if on == (amp[k] > 0.0) { delta } else { delta };"
+ },
+ {
+  "label": "a silenced element keeps unit amplitude into the next iteration",
+  "old": "next_amp.push(if on { 1.0 } else { 0.0 });",
+  "new": "next_amp.push(1.0);"
+ },
+ {
+  "label": "the amplitudes are never carried forward, so every iteration sees the cue's activity",
+  "old": "            amp = next_amp;",
+  "new": "            let _ = next_amp;"
+ },
+ {
+  "label": "retrieval starts with every element of the cue silenced",
+  "old": "let mut amp = vec![1.0; self.dim];",
+  "new": "let mut amp = vec![0.0; self.dim];"
+ },
+ {
+  "label": "the public field is taken with every element silenced",
+  "old": "self.field_at(z, &vec![1.0; self.dim])",
+  "new": "self.field_at(z, &vec![0.0; self.dim])"
  }
 ]

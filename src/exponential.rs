@@ -19,10 +19,25 @@
 //! Two nonlinearities are in use, and they are the two leading terms of the same story:
 //!
 //! - **Quadratic** — `dV/dt ∝ (V - v_rest)(V - v_c)`. This is not a guess. Any Type I membrane
-//!   (one whose firing rate can be made arbitrarily small by lowering the current) is, near the
-//!   saddle-node bifurcation where firing begins, *exactly* this equation after a change of
-//!   variables. Ermentrout & Kopell proved it; Ermentrout, *Neural Comput.* 8:979–1001, 1996 is
-//!   the readable version. [`Qif`] and [`Theta`] are two coordinate systems for that one system.
+//!   (one whose firing rate can be made arbitrarily small by lowering the current) reduces, near
+//!   the saddle-node on an invariant circle where firing begins, to this equation **to leading
+//!   order** in the distance from onset: a centre-manifold, normal-form reduction to
+//!   `dz/dτ = η + q z²`. Ermentrout & Kopell, *Parabolic bursting in an excitable system coupled
+//!   with a slow oscillation*, *SIAM J. Appl. Math.* 46:233–253 (1986) did the reduction;
+//!   Ermentrout, *Type I membranes, phase resetting curves, and synchrony*, *Neural Comput.*
+//!   8:979–1001 (1996) is the readable version. [`Qif`] and [`Theta`] are two coordinate systems
+//!   for that one reduced system, and the map between them, `z = tan(θ/2)`, is exact.
+//!
+//!   **Corrected.** This paragraph used to say that such a membrane *is*, "*exactly*", this
+//!   equation after a change of variables, and that Ermentrout & Kopell proved it. Only the second
+//!   step, quadratic to theta, is exact (the 1996 paper's substitution on p. 988). The first is a
+//!   lowest-order one, and the 1996 paper says so: "if η and q have the same sign, say, positive,
+//!   then the lowest order solution to equation 2.5 is", and "The 'blow-up' of a solution is an
+//!   indication that equation 2.3 is singularly perturbed as ε tends to zero" (pp. 986–987); and
+//!   "our response function, 1 + cos θ is only the lowest order term in asymptotic expansion;
+//!   higher order terms will generally contain modes such as cos 2θ" (p. 996). Nothing in the code
+//!   depended on the stronger word: [`Qif`] and [`Theta`] are models in their own right, and every
+//!   check on them in this module is of the reduced system itself, not of a membrane reduced to it.
 //! - **Exponential** — `dV/dt ∝ ... + Δ_T exp((V - V_T)/Δ_T)`. Fourcaud-Trocmé, Hansel, van
 //!   Vreeswijk & Brunel, *J. Neurosci.* 23:11628–11640, 2003 derived it from the activation curve
 //!   of a sodium conductance and showed it reproduces the high-frequency response of a
@@ -72,8 +87,9 @@
 //! SI at every interface, like the rest of the crate: `dt` in seconds, current in amperes,
 //! potential in volts, conductance in siemens, capacitance in farads. The one dimensionless frame
 //! kept as such is the canonical pair `dy/ds = y² + η` (and its circle twin
-//! `dθ/ds = (1 - cos θ) + (1 + cos θ)η`), because those two equations are the theorem — rescaling
-//! them into millivolts would hide the fact that every Type I neuron reduces to them.
+//! `dθ/ds = (1 - cos θ) + (1 + cos θ)η`), because those two equations are the normal form —
+//! rescaling them into millivolts would hide the fact that every Type I neuron reduces to them, to
+//! leading order, near onset.
 //! [`Qif::canonical_y`] and [`Qif::eta`] are the exact change of variables, and [`Theta`] takes a
 //! `tau` and an `i_ref` so its dimensionless input can be reached from amperes.
 //!
@@ -98,11 +114,18 @@
 //!
 //! # Cross-fabric note
 //!
-//! [`AdEx`] is one of the few spiking models implemented in analog silicon rather than emulated:
-//! the `BrainScaleS`-2 neuron circuit realises it directly, which is why the model keeps appearing
-//! in hardware papers long after simpler ones would have done. This crate has no hardware and
-//! measures nothing; the note is here so a reader knows which model to reach for if they ever get
-//! near a wafer.
+//! [`AdEx`] is one of the few spiking models implemented in analog silicon rather than simulated
+//! digitally: the `BrainScaleS`-2 neuron circuit realises it directly, which is why the model keeps
+//! appearing in hardware papers long after simpler ones would have done. The primary for that
+//! circuit is Billaudelle, Weis, Dauer & Schemmel, *An accurate and flexible analog emulation of
+//! `AdEx` neuron dynamics in silicon*, 29th IEEE ICECS, pp. 1–4 (2022),
+//! doi:10.1109/ICECS202256217.2022.9971058, `arXiv`:2209.09280, whose abstract says the circuits
+//! "are capable of flexibly and accurately emulating the adaptive exponential leaky
+//! integrate-and-fire model equations in combination with both current- and conductance-based
+//! synapses". This note used to cite nothing, and used to say "rather than emulated"; the source
+//! calls its own circuit an analog emulation, so the contrast is with a digital simulation. This
+//! crate has no hardware and measures nothing; the note is here so a reader knows which model to
+//! reach for if they ever get near a wafer.
 
 use crate::neuron::{Lif, Neuron};
 
@@ -366,7 +389,8 @@ fn canonical_flow(y0: f64, eta: f64, h: f64) -> Flow {
 /// ```
 ///
 /// with no approximation anywhere — it is an affine change of variables. That is the equation every
-/// Type I membrane reduces to near onset, and everything below is read off it:
+/// Type I membrane reduces to near onset, to leading order in the distance from it (the module
+/// header says where the approximation is), and everything below is read off it:
 ///
 /// - **Rheobase** `I_rheo = Δ / (4 r_m)`, the current at which `η` crosses zero and the two fixed
 ///   points annihilate. See [`Qif::rheobase`].
@@ -1061,14 +1085,28 @@ pub struct Eif {
 }
 
 impl Default for Eif {
-    /// The parameter set the `AdEx` literature uses as its reference membrane: `C` 200 pF, `g_L`
-    /// 10 nS (so `tau_m` = 20 ms), `E_L` −70 mV, `V_T` −50 mV, `Δ_T` 2 mV, cutoff 0 mV, reset
-    /// −58 mV, no refractory period. Rheobase is then `10 nS · (20 mV - 2 mV) = 180 pA`.
+    /// The membrane of the tonic cell in Naud, Marcille, Clopath & Gerstner (2008), Table 1,
+    /// Fig. 4a, with its adaptation dropped: `C` 200 pF, `g_L` 10 nS (so `tau_m` = 20 ms), `E_L`
+    /// −70 mV, `V_T` −50 mV, `Δ_T` 2 mV, reset −58 mV, and the paper's cutoff of 0 mV (its eq. 3,
+    /// "if V > 0 mV then"), with no refractory period. Rheobase is then
+    /// `10 nS · (20 mV - 2 mV) = 180 pA`. The table's row is
+    /// "Fig. 4a | 200 | 10 | −70 | −50 | 2 | 2 | 30 | 0 | −58 | − | 500" (columns `C`, `g_L`,
+    /// `E_L`, `V_T`, `Δ_T`, `a`, `τ_w`, `b`, `V_r`, `C(β)`, `I`), and the `a`, `τ_w`, `b` and `I`
+    /// it drops here are [`FiringPattern::Tonic`]'s.
     ///
-    /// These are the round numbers of Brette & Gerstner (2005) and Naud et al. (2008) rather than
-    /// the fit in Fourcaud-Trocmé et al. (2003), whose `Δ_T` came from a `Hodgkin`-`Huxley` model
-    /// and is larger; this implementation did not verify that fit against the paper and does not
-    /// quote a number for it.
+    /// **Corrected attribution.** This doc used to call these "the round numbers of Brette &
+    /// Gerstner (2005) and Naud et al. (2008)". They are Naud et al.'s alone. Brette & Gerstner,
+    /// *Adaptive exponential integrate-and-fire model as an effective description of neuronal
+    /// activity*, *J. Neurophysiol.* 94:3637–3642 (2005), Table 2, fit a different cell — `C`
+    /// 281 pF, `g_L` 30 nS, `E_L` −70.6 mV, `V_T` −50.4 mV, `Δ_T` 2 mV, `τ_w` 144 ms, `a` 4 nS,
+    /// `b` 0.0805 nA, reset to `E_L` "At spike time (V > 20 mV)" — and only its `Δ_T` agrees with
+    /// the numbers here. No constant changed, and
+    /// `the_reference_membrane_has_no_refractory_period_and_its_rate_says_so` holds every one of
+    /// them to the Fig. 4a row.
+    ///
+    /// Neither is the fit in Fourcaud-Trocmé et al. (2003), whose `Δ_T` came from a
+    /// `Hodgkin`-`Huxley` model and is larger; this implementation did not verify that fit against
+    /// the paper and does not quote a number for it.
     fn default() -> Self {
         Self {
             c: 200e-12,
@@ -1578,14 +1616,22 @@ impl Neuron for AdEx {
 /// pattern you get is decided by where `(a, b, τ_w, V_reset)` sits relative to the membrane — not
 /// by adding mechanisms.
 ///
-/// **Honesty about these constants.** They are transcribed from that table and this implementation
-/// did **not** verify them digit by digit against the printed paper; a reader with it in hand
-/// should check them. What *is* verified, by a test per variant, is that each parameter set
-/// produces the pattern it is named after, asserted numerically: lengthening intervals for
+/// **Honesty about these constants.** They were transcribed from that table. Two rows have since
+/// been checked against it by an independent review, from the Europe PMC full text (PMC2798047)
+/// and the authors' EPFL PDF: [`FiringPattern::Tonic`] is the Fig. 4a row exactly, and
+/// [`FiringPattern::Transient`] is the Fig. 4g row except for the sign of `a` and the drive, two
+/// departures that variant's note states and argues. The other four rows this implementation did
+/// **not** verify digit by digit against the printed paper; a reader with it in hand should check
+/// them. What *is* verified, by a test per variant, is that each parameter set produces the
+/// pattern it is named after, asserted numerically: lengthening intervals for
 /// [`FiringPattern::Adapting`], a bimodal interval distribution for
 /// [`FiringPattern::RegularBursting`], silence in the second half of the run for
-/// [`FiringPattern::Transient`]. Where a value here differs from the table, the test is what
-/// caught it and the pattern is what was preserved.
+/// [`FiringPattern::Transient`]. Where a value here is known to differ from the table, the
+/// variant's note says which value, what the table prints, and why this crate departs from it.
+///
+/// This paragraph used to end "Where a value here differs from the table, the test is what caught
+/// it and the pattern is what was preserved", and the one instance it had in mind — a `b` said to
+/// have been moved off the Fig. 4g row — was not one: the row's `b` is the 30 pA shipped here.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FiringPattern {
     /// Regular firing at a constant rate: no spike-triggered adaptation at all (`b = 0`).
@@ -1603,20 +1649,46 @@ pub enum FiringPattern {
     /// adaptation (`a` large and positive) wins the race against the drive. The cell is not
     /// exhausted — it has acquired a stable fixed point, at `E_L + I/(g_L + a)`, and settled on it.
     ///
-    /// **This variant's `b` was changed from what was transcribed, and `b` alone.** With the
-    /// transcribed pair (`τ_w` 90 ms, `b` 100 pA) the cell fires once at 180 and 200 pA and twice
-    /// at 220, 250 and 270 pA before falling silent, and at 280 pA the window closes — it then
-    /// fires for the whole second. One or two spikes is a degenerate corner of the pattern rather
-    /// than the published figure's short train, and no current produces a train: the window is
-    /// shut before the count reaches three. Dropping `b` to 30 pA, with `τ_w` left at the
-    /// transcribed 90 ms, gives 3, 4, 5 and 6 spikes at 200, 220, 250 and 270 pA, each train over
-    /// within 31 ms, and the window still closes at 280 pA. Both halves are measured in
-    /// `the_transient_pattern_is_transient_across_its_window_and_not_above_it`, which fails if
-    /// either stops being true.
+    /// **Against the table, and where this variant departs from it.** Naud et al. (2008), Table 1,
+    /// Fig. 4g prints `C` 100 pF, `g_L` 10 nS, `E_L` −65 mV, `V_T` −50 mV, `Δ_T` 2 mV, `a`
+    /// −10 nS, `τ_w` 90 ms, `b` 30 pA, `V_r` −47 mV and `I` 350 pA — the Europe PMC full text's
+    /// row is "Fig. 4g | 100 | 10 | −65 | −50 | 2 | −10 | 90 | 30 | −47 | − | 350". This variant
+    /// takes every one of those numbers except two, and both departures are this crate's choice,
+    /// not the table's:
     ///
-    /// The transcription is the suspect party here, not the model — a reader with the paper should
-    /// check `b` and this note. What is claimed is that ONE number had to move, and that the test
-    /// is what says so.
+    /// - **`a` is +10 nS, not the printed −10 nS.** The printed sign contradicts the paper twice
+    ///   over. Its own Fig. 4g draws the `w`-nullcline rising left to right, through `(E_L, 0)` and
+    ///   the filled stable fixed point, at a slope the independent review read off the pixels as
+    ///   about +30 nS, while panels e, f and h, whose `a` is negative, slope down. And its text
+    ///   says the pattern "occurs only for sizable a" and that "In both cases a stable fixed point
+    ///   remains, even after the sudden increase in current." With the printed `a`, `g_L + a` is
+    ///   zero, the fixed-point condition reduces to `g_L Δ_T exp((V - V_T)/Δ_T) + I = 0`, and that
+    ///   has no root for any `I >= 0`: the printed row has no stable fixed point to settle on, and
+    ///   run here at the table's 350 pA it fires 167 times in the second, the last at 0.997 s.
+    ///   The EPFL PDF also sets that one entry with an ASCII hyphen where every other negative in
+    ///   the table is a U+2212 minus sign. The printed sign is therefore the likely misprint; this
+    ///   implementation did not confirm that with the authors.
+    /// - **The drive is 220 pA, not the table's 350 pA.** With `a` at +10 nS the fixed points
+    ///   annihilate at `(g_L + a)(V_T - E_L + Δ_T(ln 2 - 1)) ≈ 287.7 pA`, so at 350 pA there is no
+    ///   fixed point to settle on and the cell keeps firing: 39 spikes, the last at 0.93 s. The
+    ///   slope read off the figure, about +30 nS, does give the pattern at the table's own 350 pA
+    ///   (6 spikes, all within 21 ms); this variant was not moved there, because a slope read off
+    ///   pixels is not a published number.
+    ///
+    /// Across its window this cell fires 3, 4, 5 and 6 spikes at 200, 220, 250 and 270 pA, each
+    /// train over within 31 ms, and at 280 pA the window has closed: it fires for the whole second.
+    /// Asking for at least three spikes is this crate's criterion, not the figure's; the review
+    /// read the published Fig. 4g trace as a single spike, and this implementation has not seen
+    /// the figure.
+    ///
+    /// **Corrected.** This note used to say that "This variant's `b` was changed from what was
+    /// transcribed, and `b` alone", from 100 pA to 30 pA, and that "The transcription is the
+    /// suspect party here". The table's `b` for Fig. 4g is 30 pA, the value shipped; 100 pA is the
+    /// Fig. 4d (regular bursting) row's. Nothing was moved off this row's `b`, and the two numbers
+    /// that do differ from the row, the sign of `a` and the drive, were not mentioned. No constant
+    /// changed with this correction.
+    /// `the_transient_pattern_is_transient_across_its_window_and_not_above_it` holds the row, both
+    /// departures and the window to what is written here.
     Transient,
     /// Sustained irregular firing from **negative** `a`, which makes the adaptation a positive
     /// feedback. The published pattern is chaotic; this implementation asserts sustained interval
@@ -2817,14 +2889,21 @@ mod tests {
         assert!(last < 0.2, "still firing at {last} s into a 1 s run: {t:?}");
     }
 
-    /// The transient WINDOW, and the one constant in the taxonomy that deviates from the table.
+    /// The transient WINDOW, the Fig. 4g row it is checked against, and the two places it departs
+    /// from that row.
     ///
     /// `the_transient_pattern_falls_silent_under_a_current_that_stays_on` asserts the pattern at
     /// one current, which a single lucky drive can satisfy. This asserts it across the window, and
-    /// asserts the two things that make "transient" mean something: above the window the same cell
-    /// fires for the whole second, so the silence is not weak drive; and with the table's
-    /// `b = 100 pA` the cell manages at most two spikes anywhere in the window, which is the
-    /// measurement the variant's doc rests on and the reason `b` was moved.
+    /// asserts what makes "transient" mean something: above the window the same cell fires for the
+    /// whole second, so the silence is not weak drive. Then it holds the variant to Naud et al.
+    /// (2008), Table 1, Fig. 4g number by number, and shows each departure NEEDED rather than
+    /// asserting it: the printed `a = −10 nS` has no fixed point and never falls silent, and the
+    /// printed 350 pA is above this cell's saddle-node.
+    ///
+    /// **Corrected.** This test used to call `b = 100 pA` "the table's `b`" and hold the cell to at
+    /// most two spikes with it, as "the reason `b` was moved". The row's `b` is 30 pA, which the
+    /// variant already carries, so that loop tested a number the paper does not give for this
+    /// cell. It is gone; the `τ_w` = 90 ms check it sat beside was right and is kept below.
     #[test]
     fn the_transient_pattern_is_transient_across_its_window_and_not_above_it() {
         let p = FiringPattern::Transient;
@@ -2834,18 +2913,70 @@ mod tests {
             assert!(t.len() >= 3, "{pa} pA gave {} spikes, which is not a train", t.len());
             assert!(t[t.len() - 1] < 0.2, "{pa} pA was still firing at {} s", t[t.len() - 1]);
         }
-        let mut open = p.model();
-        let t = spike_times(&mut open, 1e-5, 100_000, 300e-12);
-        assert!(t[t.len() - 1] > 0.8, "above the window it stopped at {} s", t[t.len() - 1]);
-        for &pa in &[180.0, 200.0, 220.0, 250.0, 270.0] {
-            let mut table = AdEx { b: 100e-12, ..p.model() };
-            let t = spike_times(&mut table, 1e-5, 100_000, pa * 1e-12);
-            let n = t.len();
-            assert!(n <= 2, "b = 100 pA at {pa} pA gave {n} spikes; the variant's note is stale");
+        for &pa in &[280.0, 300.0] {
+            let mut open = p.model();
+            let t = spike_times(&mut open, 1e-5, 100_000, pa * 1e-12);
+            let last = t[t.len() - 1];
+            assert!(last > 0.8, "above the window {pa} pA stopped at {last} s");
         }
-        // And τ_w is the table's own 90 ms, which is what the doc claims and what a reader with
-        // the paper will compare against.
-        assert!((p.model().tau_w - 90e-3).abs() < 1e-15, "τ_w is {} s", p.model().tau_w);
+
+        // Naud et al. (2008), Table 1, Fig. 4g, as printed: C 100 pF, g_L 10 nS, E_L −65 mV,
+        // V_T −50 mV, Δ_T 2 mV, a −10 nS, τ_w 90 ms, b 30 pA, V_r −47 mV, I 350 pA.
+        let (c, g_l, e_l, v_t, delta_t) = (100e-12, 10e-9, -65e-3, -50e-3, 2e-3);
+        let (a_printed, tau_w, b, v_r, i_printed) = (-10e-9, 90e-3, 30e-12, -47e-3, 350e-12);
+        let m = p.model();
+        assert_eq!((m.eif.c, m.eif.g_l, m.eif.e_l), (c, g_l, e_l), "the membrane left the row");
+        assert_eq!((m.eif.v_t, m.eif.delta_t), (v_t, delta_t), "the onset left the row");
+        assert_eq!(m.eif.v_reset, v_r, "V_r is {} V, the row's is −47 mV", m.eif.v_reset);
+        assert_eq!(m.tau_w, tau_w, "τ_w is {} s, the row's is 90 ms", m.tau_w);
+        assert_eq!(m.b, b, "b is {} A, the row's is 30 pA", m.b);
+        // The row's magnitude of `a` with the sign its own figure and text imply.
+        assert_eq!(m.a, -a_printed, "a is {} S; the note says +10 nS, the row's size", m.a);
+        assert_eq!(p.drive(), 220e-12, "the drive is {} A; the note says 220 pA", p.drive());
+
+        // Departure 1. With the printed sign `g_L + a` is zero, so on the `w`-nullcline
+        // `w = a(V - E_L)` the drift is `g_L Δ_T exp((V - V_T)/Δ_T) + I`, positive everywhere:
+        // no fixed point. Checked on a grid from −100 mV to −40 mV in 0.5 mV steps.
+        let printed = AdEx { a: a_printed, ..m };
+        assert_eq!(g_l + a_printed, 0.0, "the printed row's g_L + a is not zero");
+        for k in 0..=120u32 {
+            let v = -100e-3 + f64::from(k) * 0.5e-3;
+            let w = printed.a * (v - e_l);
+            let f = printed.eif.drift(v, i_printed - w);
+            assert!(f > 0.0, "the printed row has a fixed point near {v} V: drift {f} V/s");
+        }
+        assert!(matches!(
+            printed.linear_subthreshold(i_printed, 1e-3),
+            Err(ModelError::Degenerate { what: "g_l + a" })
+        ));
+        // And so it never falls silent at its own drive: measured 167 spikes, the last at 0.997 s.
+        let mut q = printed;
+        let t = spike_times(&mut q, 1e-5, 100_000, i_printed);
+        assert!(t.len() > 100, "the printed row gave only {} spikes at 350 pA", t.len());
+        assert!(t[t.len() - 1] > 0.9, "the printed row stopped at {} s", t[t.len() - 1]);
+
+        // Departure 2. At the fixed point `w = a(V - E_L)`, so the fixed points of this `AdEx` are
+        // those of an `Eif` with leak `g_L + a` and threshold `V_T + Δ_T ln((g_L + a)/g_L)`. Its
+        // rheobase is the saddle-node the note quotes, ≈ 287.7 pA: below it at 220 pA, above it
+        // at the row's 350 pA.
+        let g = m.eif.g_l + m.a;
+        let twin = Eif { g_l: g, v_t: m.eif.v_t + m.eif.delta_t * (g / m.eif.g_l).ln(), ..m.eif };
+        let sn = twin.rheobase();
+        let quoted = g * (v_t - e_l + delta_t * (2f64.ln() - 1.0));
+        assert!((sn - quoted).abs() < 1e-22, "saddle-node {sn} A vs the note's formula {quoted} A");
+        assert!((sn - 287.7e-12).abs() < 0.05e-12, "the saddle-node is {sn} A, not ≈ 287.7 pA");
+        assert!(twin.fixed_points(p.drive()).is_some(), "no fixed point at the variant's drive");
+        assert!(twin.fixed_points(i_printed).is_none(), "a fixed point survives at 350 pA");
+        let mut hot = p.model();
+        let t = spike_times(&mut hot, 1e-5, 100_000, i_printed);
+        assert!(t[t.len() - 1] > 0.8, "at the row's 350 pA it stopped at {} s", t[t.len() - 1]);
+
+        // The slope the review read off the figure, about +30 nS, gives the pattern at the row's
+        // own drive: measured 6 spikes, all within 21 ms.
+        let mut steep = AdEx { a: 30e-9, ..m };
+        let t = spike_times(&mut steep, 1e-5, 100_000, i_printed);
+        assert!(t.len() >= 3, "a = +30 nS at 350 pA gave {} spikes", t.len());
+        assert!(t[t.len() - 1] < 0.2, "a = +30 nS at 350 pA still firing at {} s", t[t.len() - 1]);
     }
 
     /// Irregular: the interval sequence must keep varying LATE in the run, which rules out a
@@ -3446,8 +3577,11 @@ mod tests {
         assert_eq!(q.potential(), q.v_reset, "the refractory tick left {} V", q.potential());
     }
 
-    /// `Eif::default` is the `AdEx` literature's reference membrane, transcribed, and its doc
+    /// `Eif::default` is the membrane of Naud et al. (2008), Table 1, Fig. 4a — "Fig. 4a | 200 | 10
+    /// | −70 | −50 | 2 | 2 | 30 | 0 | −58 | − | 500" — with the paper's 0 mV cutoff, and its doc
     /// lists every number it carries. The one with nothing behind it was "no refractory period".
+    /// (That doc used to credit Brette & Gerstner (2005) as well; their Table 2 cell is a different
+    /// one, and only `Δ_T` = 2 mV is shared. The assertions below are against the Fig. 4a row.)
     ///
     /// Why the suite could not see it: `Eif::lif_limit` COPIES `t_ref`, so
     /// `the_eif_relaxes_onto_the_lif_as_delta_t_shrinks` moves both sides of its comparison
@@ -3459,9 +3593,16 @@ mod tests {
     #[test]
     fn the_reference_membrane_has_no_refractory_period_and_its_rate_says_so() {
         let e = Eif::default();
-        assert_eq!((e.c, e.g_l, e.e_l), (200e-12, 10e-9, -70e-3), "the reference membrane moved");
-        assert_eq!((e.v_t, e.delta_t), (-50e-3, 2e-3), "the soft threshold or its width moved");
-        assert_eq!((e.v_peak, e.v_reset), (0.0, -58e-3), "the cutoff or the reset moved");
+        assert_eq!((e.c, e.g_l, e.e_l), (200e-12, 10e-9, -70e-3), "left the Fig. 4a membrane");
+        assert_eq!((e.v_t, e.delta_t), (-50e-3, 2e-3), "left the Fig. 4a V_T or Δ_T");
+        assert_eq!((e.v_peak, e.v_reset), (0.0, -58e-3), "left Naud's 0 mV cutoff or 4a's V_r");
+        // And the Fig. 4a row's adaptation is exactly what `FiringPattern::Tonic` adds back on
+        // top of this membrane: a 2 nS, τ_w 30 ms, b 0, at the row's 500 pA.
+        let tonic = FiringPattern::Tonic;
+        let t = tonic.model();
+        assert_eq!(t.eif, Eif { v: t.eif.e_l, ..e }, "Tonic's membrane is not Eif::default");
+        assert_eq!((t.a, t.tau_w, t.b), (2e-9, 30e-3, 0.0), "Tonic left the Fig. 4a adaptation");
+        assert_eq!(tonic.drive(), 500e-12, "Tonic's drive left the Fig. 4a 500 pA");
         assert_eq!(e.t_ref, 0.0, "the doc says no refractory period and it carries {}", e.t_ref);
         assert!((e.tau_m() - 20e-3).abs() < 1e-18, "C/g_L is {} s, not 20 ms", e.tau_m());
         // What "no refractory period" means is that the rate is bounded by the membrane and by

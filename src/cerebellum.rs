@@ -4,23 +4,43 @@
 //!
 //! # What the mechanism is
 //!
-//! Marr (*A theory of cerebellar cortex*, Journal of Physiology 202(2):437–470, 1969) and Albus
-//! (*A theory of cerebellar function*, Mathematical Biosciences 10(1–2):25–61, 1971) read the
-//! cerebellar cortex as a learning device with three parts. A small number of mossy-fibre inputs
-//! is **recoded** by an enormous number of granule cells into many parallel-fibre signals. One
-//! Purkinje cell sums about two hundred thousand of them through adjustable synapses. And a single
-//! climbing fibre carries an **error** signal that changes those synapses — depressing the ones
-//! that were active when the error came.
+//! Marr (*A theory of cerebellar cortex*, Journal of Physiology 202(2):437–470, 1969,
+//! doi:10.1113/jphysiol.1969.sp008820) and Albus (*A theory of cerebellar function*, Mathematical
+//! Biosciences 10(1–2):25–61, 1971, doi:10.1016/0025-5564(71)90051-4) read the cerebellar cortex
+//! as a learning device with three parts. A small number of mossy-fibre inputs is **recoded** by an
+//! enormous number of granule cells into many parallel-fibre signals. One Purkinje cell sums about
+//! two hundred thousand of them through adjustable synapses. And a single climbing fibre carries a
+//! **teaching** signal that changes those synapses. The two theories disagree on the sign of that
+//! change. Marr predicted that parallel-fibre synapses active together with the climbing fibre are
+//! **facilitated**; Albus proposed instead that they are **weakened**. The adaptive filter below
+//! takes Albus's sign and reads the climbing fibre as an error (Fujita 1982; Dean et al. 2010).
 //!
-//! Two machines follow from that reading, and both are here.
+//! ⚠ CORRECTED, against Marr's own abstract. This paragraph previously said that Marr and Albus
+//! both read the climbing fibre as an **error** signal that depresses the synapses active with it.
+//! For Marr the sign is wrong, and for learned actions so is the word. When the cerebellum learns
+//! actions he assumes that "each olivary cell responds to a cerebral instruction for an elemental
+//! movement", an instruction rather than an error, and his prediction 5(a) is that "the synapses
+//! from parallel fibres to Purkinje cells are facilitated by the conjunction of presynaptic and
+//! climbing fibre (or post-synaptic) activity". Only for maintenance reflexes (his 2′) does the
+//! olivary drive act as negative feedback — each olivary cell is stimulated by receptors "all of
+//! whose activities are usually reduced by the results of stimulating the corresponding Purkinje
+//! cell" — and even there the change he predicts is facilitation. The depression sign is Albus's,
+//! and the Fujita adaptive-filter line kept it. This review did not locate a readable copy of Albus
+//! (1971); his sign rests on Table 1, row "Sign of cf-trained pf-PC change" (Marr LTP;
+//! Albus/perceptron LTD; Fujita/adaptive filter LTD), of Gilbert, *Gating by Memory: a Theory of
+//! Learning in the Cerebellum*, The Cerebellum 21(6):926–943, 2022, doi:10.1007/s12311-021-01325-9.
+//! The rule this module implements, `Δw_i = −β e p_i`, and every test of it are unchanged: only the
+//! history it was credited to moved.
+//!
+//! Two machines follow from the three-part reading, and both are here.
 //!
 //! - **The adaptive filter** ([`AdaptiveFilter`]; Fujita, *Adaptive filter model of the cerebellum*,
 //!   Biological Cybernetics 45(3):195–206, 1982; Dean, Porrill, Ekerot and Jörntell, *The cerebellar
 //!   microcircuit as an adaptive filter: experimental and computational evidence*, Nature Reviews
-//!   Neuroscience 11(1):30–43, 2010). The output is `z = Σ w_i p_i(t)`, the rule is
-//!   `Δw_i = −β e p_i` — the covariance of the climbing-fibre error with each parallel fibre — and
-//!   learning stops exactly when the error is uncorrelated with every input: the decorrelation
-//!   principle. The granule layer is stood in for by a bank of leaky integrators
+//!   Neuroscience 11(1):30–43, 2010, doi:10.1038/nrn2756). The output is `z = Σ w_i p_i(t)`, the
+//!   rule is `Δw_i = −β e p_i` — the covariance of the climbing-fibre error with each parallel
+//!   fibre — and learning stops exactly when the error is uncorrelated with every input: the
+//!   decorrelation principle. The granule layer is stood in for by a bank of leaky integrators
 //!   ([`GranuleBank`]), which gives the filter a spread of time courses to weigh.
 //! - **The CMAC** ([`Cmac`]; Albus, *A new approach to manipulator control: the cerebellar model
 //!   articulation controller*, Journal of Dynamic Systems, Measurement, and Control
@@ -258,7 +278,9 @@ impl AdaptiveFilter {
     }
 
     /// One online update from a climbing-fibre error: `w_i ← w_i − β e p_i`. An input that was
-    /// silent when the error came is not changed.
+    /// silent when the error came is not changed. A fibre active with a positive error is
+    /// depressed, which is Albus's sign and the adaptive filter's; Marr (1969) predicted
+    /// facilitation instead (see the module documentation).
     ///
     /// # Errors
     ///
@@ -637,7 +659,8 @@ mod tests {
         let mut cell = AdaptiveFilter::new(3, 0.1).unwrap();
         cell.w = vec![1.0, 1.0, 1.0];
         cell.learn(&[2.0, 0.0, -1.0], 0.5).unwrap();
-        // Active with a positive error: depressed. Silent: untouched. Negative input: potentiated.
+        // Albus's sign, not Marr's (see the module doc). Active with a positive error: depressed.
+        // Silent: untouched. Negative input: potentiated.
         assert_eq!(cell.w, vec![1.0 - 0.1, 1.0, 1.0 + 0.05]);
         assert_eq!(cell.output(&[1.0, 1.0, 1.0]).unwrap(), 0.9 + 1.0 + 1.05);
     }

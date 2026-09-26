@@ -9,7 +9,7 @@ hardware constraint models, analog device non-idealities, NIR, event-camera deco
 metrics, teaching tasks — and a joules ledger that charges for the memory traffic a synaptic
 operation needs.
 
-**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 81 modules, 2,703 tests.**
+**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 81 modules, 2,736 tests.**
 
 Run it in a browser without installing anything:
 **[energy.physicalai-bmi.org/neuromorphic](https://energy.physicalai-bmi.org/neuromorphic)** — the
@@ -97,13 +97,13 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 | `sdr` | sparse distributed representations: the hypergeometric arithmetic of why a few active bits out of many are unconfusable, computed in logarithms so it holds at a hundred thousand bits, with subsampling, noise and union capacity |
 | `srm` | the Spike Response Model: the kernel form the crate's time-coded learning is written in, checked against `eventprop`'s own integration, plus escape noise — a hazard, a survivor function and an interval distribution — and the exact term SRM₀ drops when the synapse has a time constant |
 | `ottt` | online training through time: the gradient of a spiking layer computed FORWARD in constant memory, proven equal to the true gradient when the reset path is off and measured against it when it is on |
-| `polychron` | polychronous groups: the time-locked patterns axonal delays buy, enumerated by simulation — with the count shown to be combinatorics rather than evidence, and a prediction about cascade length refuted by the measurement |
+| `polychron` | polychronous groups: the time-locked patterns axonal delays buy, enumerated by simulation — with the count shown to be combinatorics rather than evidence, and a prediction about cascade size refuted by the measurement |
 | `eventprop` | `EventProp`: exact gradients for LIF networks with exponential synapses whose neurons fire any number of times and may be recurrent — an event-driven forward pass with spike times found to the last bit, an adjoint that jumps only at the spikes, checked against a closed-form spike time and its derivative and against finite differences of every weight |
 | `alignment` | learning without weight transport: feedback alignment and direct feedback alignment beside the backpropagation they replace — identical to it when the feedback IS the transpose, and measured aligning from the output downward |
 | `decolle` | deep continuous local learning: every spiking layer descends its own loss through a fixed random readout — three local factors, no gradient between layers or through time — with the update checked as the exact gradient of that loss |
 | `forwardforward` | Hinton's forward-forward algorithm: layer-local goodness on positive and negative data, the length normalisation that hides a layer's goodness from the next, labels written into the input |
 | `force` | FORCE learning: recursive least squares — shown identical to ridge regression at every step — taming a chaotic rate network into holding a sine on its own, with the measured limit where it stops working |
-| `biosignal` | the ECGSYN synthetic electrocardiogram with its published constants, a level-crossing encoder, a spiking R-peak detector and rhythm monitor that flags an ectopic beat, and the EMG envelope read straight off an event rate |
+| `biosignal` | the ECGSYN synthetic electrocardiogram with the constants of the authors' reference code (its P and T angles differ from the paper's Table I, and the module says so), a level-crossing encoder, a spiking R-peak detector and rhythm monitor that flags an ectopic beat, and the EMG envelope read straight off an event rate |
 | `intspike` | integer and multi-bit spikes, from `SpikingBrain` (CASIA, 2025): the adaptive threshold `mean(\|x\|)/k`, integer spike counts, and binary, ternary and two's-complement bitwise spike trains, each shown to lose nothing; an accumulate-only product written with additions and shifts and shown equal to the dense integer product; and the paper's arithmetic-only energy model reproduced, its two headline ratios shown to disagree, and the weight-read energy — 1.508 pJ against INT8 — past which a fetch-per-spike dataflow loses to a dense layer |
 | `sim`, `net`, `spike`, `rng` | the simulator, clocked and event-driven, with optional exact spike timing (several spikes a tick, counts independent of the tick); sparse connectivity, spike trains, seeded PCG32 |
 
@@ -213,8 +213,8 @@ wins. At least six papers give a number for it. **Every one is below 2. Several 
 | threshold | source | what it says |
 |---|---|---|
 | **~1.72** | Davidson & Furber, *Front. Neurosci.* 15:651141 (2021) | "most rate-coded spiking network implementations will not be more energy or resource efficient than the original ANN" |
-| **0.15 – 1.38** | Dampfhoffer et al., *IEEE TETCI* 7(3):731–741 (2023) | "many previous studies did not consider **memory accesses**, which account for an important fraction of the energy consumption" |
-| **~0.06 – 0.35**, this review's arithmetic | Yan, Bai, Tang & Wong (NUS), arXiv:2409.08290 | op-count evaluations "neglect critical overheads like comprehensive data movements and memory accesses" and reach "misleading conclusions"; under a fair mapping the SNN reaches **0.78×** — a 22% saving, not a 100× one — at 94.19% sparsity with T=6. The band is that sparsity read as spike density across those timesteps, which is this review's reading of their figure and not a number they print |
+| **0.15 – 1.38** | Dampfhoffer et al., *IEEE TETCI* 7(3):731–741 (2023) | "Many studies do not consider **memory accesses**, which account for an important fraction of the energy consumption, use naïve ANN hardware implementations, or lack generality" |
+| **~0.06 – 0.35**, this review's arithmetic | Yan, Bai & Wong (NUS), arXiv:2409.08290v1 (2024) | "most SNN works only consider the counting of additions to evaluate energy consumption, neglecting other overheads such as memory accesses and data movement operations"; against the best-case ANN their spiking VGG16 reaches **0.85×** (GPU-like) and **0.78×** (spatial dataflow) — at best a 22% saving, not a 100× one — at 94.19% sparsity with T=6. Those figures are v1's only; the four-author IEEE TCAD 2026 version (doi:10.1109/tcad.2026.3718799) does not print them. The band is that sparsity read as spike density across those timesteps, which is this review's reading of their figure and not a number they print |
 
 Steve Furber designed SpiNNaker, so the first of those is the field auditing itself, not an outsider
 objecting to it.
@@ -282,7 +282,7 @@ rather than assumed.
 - **A sub-threshold current returns `None`, not a large number.** "Fires rarely" and "does not fire"
   are different statements and a rate-coded readout cannot recover the difference later.
 
-2,703 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
+2,736 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
 `#![forbid(unsafe_code)]`, and `cargo build --target wasm32-unknown-unknown` compiles the library
 unchanged. Three of the four `examples/` are verification gates that exit non-zero when a check fails. Two of them run
 a closed form against the simulator — the LIF's analytic inter-spike interval, and the STDP pair
@@ -333,7 +333,7 @@ be reproduced cannot be checked against anything, including itself.
 
 ## Status
 
-**Today:** eighty-one modules, 2,703 tests, and **8,311 recorded mutations — one list per
+**Today:** eighty-one modules, 2,736 tests, and **8,452 recorded mutations — one list per
 module**, every one applicable to today's source by `python3 tools/mutate.py`.
 `python3 tools/readme_numbers.py` recomputes those figures from the repository and refuses if this
 paragraph disagrees with it, because the last time they were typed by hand the test count was 423
@@ -656,14 +656,15 @@ same network, seed and ridge do NOT learn it, and `a_network_that_is_too_chaotic
 pins that.
 
 `biosignal` is the application these were missing: the ECGSYN model with the constants read out of
-the authors' own `ecgsyn.m`, a level-crossing encoder whose event count is the signal's total
+the authors' own `ecgsyn.m` and `derivsecgsyn.m` (whose P and T angles, −70° and 100°, are not the
+−60° and 90° of the paper's Table I; the module says so), a level-crossing encoder whose event count is the signal's total
 variation over `δ`, a one-integrator R-peak detector with a rate threshold in closed form, and a
 rhythm monitor that catches a premature beat and its compensatory pause. Two findings came out of
 building it. The detector fires on the R wave's UPSTROKE, a few milliseconds before the peak, and
 because every wave in this model scales with the beat's length, a premature beat is a SMALLER one
 whose upstroke is caught later in its own wave — so intervals between beats of different lengths
-carry a bias that the test states as a bound rather than hides in a tolerance. And `ecgsyn.m`
-itself takes `rem(θ − θᵢ, 2π)`, which does not bring the difference into `(−π, π]`: the T wave's
+carry a bias that the test states as a bound rather than hides in a tolerance. And `derivsecgsyn.m`,
+the right-hand side `ecgsyn.m` hands to `ode45`, takes `rem(θ − θᵢ, 2π)`, which does not bring the difference into `(−π, π]`: the T wave's
 tail is cut where the phase wraps. This module wraps it, and says so.
 
 The simulator gained exact spike timing in both modes (`Sim::with_exact_timing`), which is the

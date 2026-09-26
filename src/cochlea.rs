@@ -19,21 +19,32 @@
 //! silicon cochleae, and the `AER` ear chips since) pay in mismatch, drift and calibration.
 //!
 //! Lyon's 1982 cascade model (Lyon, *A computational model of filtering, detection and compression
-//! in the cochlea*, `ICASSP` 1982; the modern account is Lyon, *Human and Machine Hearing*,
-//! Cambridge, 2017) is the ancestor of every neuromorphic audio front end, including the ones
-//! [`crate::hardware`] describes. **This module did not port Lyon's cascade or its coupled
-//! four-stage `AGC`** (the `CARFAC` model). What is here is the parallel gammatone bank that the
-//! same literature uses as the standard reference filterbank, plus a deliberately simpler
-//! feed-forward `AGC` whose steady state is exactly computable — and the doc on [`Agc`] says which
-//! is which.
+//! in the cochlea*, Proc. `ICASSP` 1982, pp. 1282–1285) is the ancestor of every neuromorphic audio
+//! front end, including the ones [`crate::hardware`] describes. Its modern form is `CARFAC` (Lyon,
+//! *Cascades of two-pole–two-zero asymmetric resonators are good models of peripheral auditory
+//! function*, `JASA` 130(6):3893–3904 (2011), doi:10.1121/1.3658470; Lyon, *Human and Machine
+//! Hearing*, Cambridge, 2017). **This module did not port the cascade, the 1982 model's gain stages
+//! or `CARFAC`'s coupled four-stage `AGC`.** ⛔ This paragraph used to call `CARFAC` the 1982
+//! model's `AGC`: "did not port Lyon's cascade or its coupled four-stage `AGC` (the `CARFAC`
+//! model)". The four-stage `AGC` is `CARFAC`'s. The 1982 paper describes "a cascade of three stages
+//! of bilinear elements (simple multipliers)" that set gains after the filterbank and detector, the
+//! slowest optionally moved in front of it (p. 1284). What is here is the parallel gammatone bank
+//! that the same literature uses as the standard reference filterbank, plus a deliberately simpler
+//! feed-forward `AGC` whose steady state is exactly computable — and the doc on [`Agc`] describes
+//! both of Lyon's gain controls and says which is which.
 //!
 //! # The four stages, and the closed form each is checked against
 //!
 //! 1. **[`Gammatone`] filterbank**, centre frequencies on the `ERB` scale (Glasberg & Moore,
 //!    *Derivation of auditory filter shapes from notched-noise data*, Hearing Research 47, 1990).
 //!    Checked by driving each channel with a pure-tone sweep: the peak must land on the stated
-//!    `f_c` and the −3 dB width must match `0.887 · ERB(f_c)`, the published width of a fourth-order
-//!    gammatone (Holdsworth, Nimmo-Smith, Patterson & Rice, `APU` report 2341, 1988).
+//!    `f_c` and the −3 dB width must match `0.887 · ERB(f_c)`, the width of a fourth-order
+//!    gammatone that follows from the published table (Holdsworth, Nimmo-Smith, Patterson & Rice,
+//!    *Implementing a `GammaTone` Filter Bank*, Annex C of the `SVOS` Final Report, Part A: The
+//!    Auditory Filterbank, `MRC` Applied Psychology Unit, 26 Feb 1988, Table 1: `c_4 = 0.870`, so
+//!    the −3 dB width is `0.870 × 1.019 = 0.887` `ERB`; the annex's worked example gives 113.59 Hz
+//!    at an `ERB` of 128.14 Hz). ⛔ This line used to cite "`APU` report 2341, 1988". This review
+//!    did not locate that number on either annex scan; [`PATTERSON_B`] says where it comes from.
 //! 2. **Rectification and compression**, [`Compression`]. Half-wave rectification is what the inner
 //!    hair cell does — it depolarises when the stereocilia bend one way and not the other — and the
 //!    compression that follows is the reason a 120 dB input range fits into a 40 dB firing-rate
@@ -131,10 +142,10 @@ pub enum CochleaError {
     },
     /// A centre frequency fell outside the band this module will filter at the given sample rate.
     ///
-    /// The upper limit is [`NYQUIST_GUARD`] times the sample rate, not half of it: the all-pole
-    /// gammatone's negative-frequency image aliases back toward `f_c` as `f_c` approaches Nyquist,
-    /// and the guarantee that the response peaks exactly at `f_c` stops holding before the sampling
-    /// theorem does.
+    /// The upper limit is [`NYQUIST_GUARD`] times the sample rate, not half of it: the
+    /// negative-frequency image that the complex gammatone's closed form leaves out aliases back
+    /// toward `f_c` as `f_c` approaches Nyquist, and the guarantee that the response peaks exactly
+    /// at `f_c` stops holding before the sampling theorem does.
     CentreFrequency {
         /// The centre frequency asked for, hertz.
         f_c: f64,
@@ -274,8 +285,9 @@ pub const MAX_ORDER: usize = 8;
 /// `0.0005 ERB` below `f_c`, at `0.44·fs` `0.0014 ERB`, at `0.445·fs` `0.03 ERB`, and at the old
 /// guard itself, `0.45·fs`, **`0.0375 ERB` — 1.9× the tolerance the peak test holds every other
 /// channel to** (`Gammatone::new(21600, 48000)` was accepted and peaked 88 Hz low). The
-/// negative-frequency image the all-pole form drops stops being negligible between 0.44 and
-/// 0.445; 0.40 is the value with margin, and the peak test now runs at the guard itself.
+/// negative-frequency image, which the complex output's closed form leaves out, stops being
+/// negligible between 0.44 and 0.445; 0.40 is the value with margin, and the peak test now runs at
+/// the guard itself.
 pub const NYQUIST_GUARD: f64 = 0.40;
 
 /// Patterson's bandwidth factor: the gammatone's exponential decay rate is `2π · b · ERB(f_c)`.
@@ -283,8 +295,20 @@ pub const NYQUIST_GUARD: f64 = 0.40;
 /// `1.019` is the value that makes a **fourth-order** gammatone's equivalent rectangular bandwidth
 /// equal `ERB(f_c)`. It is order-specific — the factor for a third- or fifth-order filter is
 /// different — and [`Gammatone::with_shape`] lets a caller supply their own rather than silently
-/// reusing this one at an order it was not derived for. Source: Patterson et al., *An efficient
-/// auditory filterbank based on the gammatone function*, `APU` report 2341, 1988.
+/// reusing this one at an order it was not derived for. Source: Holdsworth, Nimmo-Smith, Patterson
+/// & Rice, *Implementing a `GammaTone` Filter Bank*, Annex C of the `SVOS` Final Report, Part A:
+/// The Auditory Filterbank (`MRC` Applied Psychology Unit, 26 Feb 1988), Table 1, row `n = 4`:
+/// `a_4 = 0.982` and `1/a_4 = 1.019`, where `a_n` is the order-`n` gammatone's `ERB` in units of
+/// `b`. In closed form `a_4 = 5π/16 = 0.98175`, so `1/a_4 = 1.0186`, which the table rounds to
+/// 1.019; `patterson_b_is_row_four_of_annex_c_table_1` recomputes the row.
+///
+/// ⛔ This doc used to credit the value to Patterson et al., *An efficient auditory filterbank
+/// based on the gammatone function*, "`APU` report 2341, 1988". That title is Annex B of the same
+/// report (Patterson, Nimmo-Smith, Holdsworth & Rice, December 1987), and Annex B states only the
+/// rounded figure: "for order 4, the gammatone `ERB` is 1.02b" (p. 7). 1.019 is printed in Annex C.
+/// The number 2341 comes from later citations of the report (for example the `AMT` 0.9.8
+/// gammatone documentation: "`APU` report, 2341, 1987"); this review did not locate it on either
+/// annex scan.
 pub const PATTERSON_B: f64 = 1.019;
 
 /// Default amperes per unit of half-wave-rectified, compressed basilar-membrane displacement.
@@ -445,18 +469,37 @@ pub fn erb_space(lo: f64, hi: f64, n: usize) -> Result<Vec<f64>, CochleaError> {
 /// ```
 ///
 /// fitted by de Boer (1975) to reverse-correlation measurements of cat auditory nerve fibres and
-/// made the standard filterbank by Patterson and colleagues (`APU` report 2341, 1988). `n` is the
-/// order, almost always 4.
+/// made the standard filterbank by Patterson and colleagues (the `SVOS` Final Report, Part A: The
+/// Auditory Filterbank, `MRC` Applied Psychology Unit, 1987/88, whose Annexes B and C are cited at
+/// [`PATTERSON_B`]). `n` is the order, almost always 4.
 ///
 /// # How it is implemented, and why that matters for the tests
 ///
-/// This is the **all-pole gammatone** (Lyon, *The all-pole gammatone filter and auditory models*,
-/// Forum Acusticum, 1996): a cascade of `n` identical one-pole *complex* sections,
-/// `y[k] = x[k] + p·y[k-1]` with `p = e^{(-β + i·2π·f_c)/fs}` and `β = 2π·b·ERB(f_c)`. It differs
-/// from the real gammatone by dropping the negative-frequency image, which at these centre
-/// frequencies is five orders of magnitude down.
+/// This is the **complex (analytic) gammatone**: a cascade of `n` identical one-pole
+/// complex-coefficient sections, `y[k] = x[k] + p·y[k-1]` with `p = e^{(-β + i·2π·f_c)/fs}` and
+/// `β = 2π·b·ERB(f_c)` (Darling, *Properties and implementation of the gammatone filter: a
+/// tutorial*, `UCL` Speech Hearing and Language: Work in Progress 5:43–61 (1991); Lyon 1996, cited
+/// below, names it the "complex" (or "analytic") gammatone filter on p. 16 and credits the
+/// construction to Darling on p. 17). Its complex output is all-pole, with no pole at the
+/// conjugate of `p`, so its transfer function leaves out the negative-frequency image, which at
+/// these centre frequencies is five orders of magnitude down. [`Gammatone::step`] returns the real
+/// part. That reintroduces zeros on the real axis and makes the output a gammatone again:
+/// exactly in continuous time ("Taking the real part of the output introduces spurious zeros on
+/// the real axis in the Laplace domain, and converts it back exactly to the GTF", Lyon 1996,
+/// p. 16), and approximately here, where the impulse response carries the binomial
+/// `C(m+n−1, n−1)` in place of the sampled `t^(n-1)`.
 ///
-/// The payoff is that the transfer function is exact and short:
+/// ⛔ This paragraph used to call the filter "the **all-pole gammatone** (Lyon, *The all-pole
+/// gammatone filter and auditory models*, Forum Acusticum, 1996)". That paper's all-pole gammatone
+/// (`APGF`) is a different, real-valued filter that keeps both poles of each pair: "the order-N
+/// `APGF` is the Nth power of a filter with a complex-conjugate pair of poles", implemented as "a
+/// cascade of N identical two-pole filter stages" (abstract of the draft of 5 Feb. 1996,
+/// `dicklyon.com/tech/Hearing/APGF_Lyon_1996.pdf`). This filter keeps one pole of each pair and
+/// takes the real part at the end, which is Darling's construction (Lyon 1996, p. 17: "a
+/// complex-coefficient IIR filter to place N poles directly at the complex location corresponding
+/// to CF ... then converted back to a gamma-tone by taking the real part"). No code changed.
+///
+/// The payoff is that the complex output's transfer function is exact and short:
 /// `|H(f)|² = |1 − p·e^{-i·2π·f/fs}|^{-2n}`, whose minimum denominator is at `f = f_c`
 /// **exactly**, for any sample rate. So [`Gammatone::peak_frequency`] is not an approximation, and
 /// below [`NYQUIST_GUARD`]`·fs` a measured peak that misses `f_c` is a real defect rather than a
@@ -635,10 +678,15 @@ impl Gammatone {
     /// The −3 dB bandwidth of the *continuous* gammatone this filter discretises, hertz.
     ///
     /// `2 · b_factor · ERB(f_c) · √(2^{1/n} − 1)`. For `n = 4` and [`PATTERSON_B`] the numeric
-    /// factor is `0.8865`, which is the published "−3 dB width is 0.887 `ERB`" of the fourth-order
-    /// gammatone (Patterson et al., 1988). The discrete and continuous values agree to a few parts
-    /// in ten thousand at audio sample rates, and the pair is kept separate so a test can check one
-    /// against the other rather than against itself.
+    /// factor is `0.8865`, the fourth-order gammatone's −3 dB width in `ERB` from the published
+    /// table (Holdsworth et al., Annex C of the `SVOS` Final Report Part A, 1988, Table 1:
+    /// `c_4 = 0.870` times `1/a_4 = 1.019`, which is `0.88653`, the 0.887 `ERB` the width test
+    /// uses). The annex prints the two factors, not their product. ⛔ This line used to quote
+    /// "−3 dB width is 0.887 `ERB`" as published and credit it to "Patterson et al., 1988", which
+    /// is Annex B; this review did not locate the product there, only the rounded "1.02b".
+    /// The discrete and continuous values agree to a few parts in ten thousand at audio sample
+    /// rates, and the pair is kept separate so a test can check one against the other rather than
+    /// against itself.
     #[must_use]
     pub fn bandwidth_3db_continuous(&self) -> f64 {
         let factor = (2f64.powf(1.0 / self.order as f64) - 1.0).sqrt();
@@ -863,10 +911,28 @@ pub fn half_wave(x: f64) -> f64 {
 
 /// A one-pole feed-forward automatic gain control.
 ///
-/// **This is not Lyon's `AGC`, and the difference is worth stating.** Lyon's cochlear model closes
-/// four coupled `AGC` loops around the filter cascade, each with its own time constant and each
-/// leaking laterally into its neighbours, so that a loud sound at one place turns the gain down at
-/// nearby places too. That coupling is most of what makes the model behave like an ear.
+/// **This is not Lyon's `AGC`, and the difference is worth stating.** Lyon's `CARFAC` model (Lyon,
+/// *Cascades of two-pole–two-zero asymmetric resonators are good models of peripheral auditory
+/// function*, `JASA` 130(6):3893–3904 (2011), doi:10.1121/1.3658470; *Human and Machine Hearing*,
+/// 2017) feeds a four-stage coupled `AGC` smoothing network back into the pole damping of its
+/// filter cascade. The stages have time constants of 2, 8, 32 and 128 ms in the reference code
+/// (`google/carfac`, `matlab/AGC_params_default.m`: `'n_stages', 4` and
+/// `'time_constants', 0.002 * 4.^(0:3)`), and each spreads laterally across neighbouring channels
+/// (`'AGC1_scales', 1.0 * sqrt(2).^(0:3)`, "in units of channels"), so that a loud sound at one
+/// place turns the gain down at nearby places too. That coupling is most of what makes the model
+/// behave like an ear. Strictly it is one loop whose smoothing filter has four coupled stages, not
+/// four loops.
+///
+/// ⛔ This paragraph used to say that "Lyon's cochlear model closes four coupled `AGC` loops", and
+/// the module doc gave that `AGC` to the 1982 model. The 1982 model has three stages, not four,
+/// and they set a gain after the filterbank and detector instead of damping the filters: "a
+/// cascade of three stages of bilinear elements (simple multipliers), with possibly separate
+/// control signals, time constants, and degrees of coupling on each" (Lyon, `ICASSP` 1982,
+/// p. 1284). The slowest could optionally be moved in front of the filterbank, "like the stapedial
+/// reflex". Lyon (2011) draws the line himself: the coupled smoothing network "descends from one
+/// first described by Lyon (1982); in that work, the loop filter directly controlled a
+/// post-filterbank gain rather than a pole damping as it does in more recent versions." No code
+/// changed; this type is neither model.
 ///
 /// What is here is a single uncoupled loop per channel whose level detector watches the **input**
 /// rather than the output. That makes it feed-forward, which costs the stability argument a real
@@ -2557,9 +2623,12 @@ mod tests {
     }
 
     /// The −3 dB width, measured by bisecting the driven response, against the **published**
-    /// number for a fourth-order gammatone: 0.887 `ERB`. The literal on the right comes from
-    /// Patterson et al. (1988), not from [`Gammatone::bandwidth_3db_continuous`], so mutating
-    /// [`PATTERSON_B`] or the order breaks this test.
+    /// table for a fourth-order gammatone: 0.887 `ERB`. The literal on the right is the product
+    /// `0.870 × 1.019` of two entries of Holdsworth et al., Annex C of the `SVOS` Final Report
+    /// Part A (1988), Table 1, which prints the factors rather than the product (this doc used to
+    /// credit the number to "Patterson et al. (1988)"). It does not come from
+    /// [`Gammatone::bandwidth_3db_continuous`], so mutating [`PATTERSON_B`] or the order breaks
+    /// this test.
     #[test]
     fn the_three_db_width_matches_the_published_erb_relation() {
         for &f_c in &[250.0, 1000.0, 4000.0] {
@@ -2586,6 +2655,37 @@ mod tests {
                 "measured {measured} vs closed form {discrete}"
             );
         }
+    }
+
+    /// [`PATTERSON_B`] against the table row it is transcribed from: Holdsworth, Nimmo-Smith,
+    /// Patterson & Rice, Annex C of the `SVOS` Final Report Part A (1988), Table 1, `n = 4`, which
+    /// prints `a_4 = 0.982`, `1/a_4 = 1.019`, `c_4 = 0.870` and `1/c_4 = 1.149`. `a_n` is the
+    /// order-`n` gammatone's `ERB` over `b`, the integral of `(1 + u²)^{-n}` along the whole line;
+    /// with `u = tan θ` that is the integral of `cos^{2n−2} θ` over one period, which the midpoint
+    /// rule integrates exactly (a trigonometric polynomial of degree 3 in `2θ`, sampled 64 times),
+    /// and whose closed form at `n = 4` is `5π/16`, the annex's own eqn (6),
+    /// `π·(2n−2)!·2^{−(2n−2)}/((n−1)!)²`, at `n = 4`. `c_n` is the −3 dB width over `b`,
+    /// `2√(2^{1/n} − 1)`. Each printed entry must be the three-decimal rounding of the recomputed
+    /// value, and the 0.887 `ERB` the width test uses must be the three-decimal rounding of the
+    /// product of the two printed entries, as the module doc says it is.
+    #[test]
+    fn patterson_b_is_row_four_of_annex_c_table_1() {
+        let round3 = |v: f64| (v * 1000.0).round() / 1000.0;
+        let steps = 64;
+        let h = PI / f64::from(steps);
+        let a4: f64 = (0..steps)
+            .map(|k| (-PI / 2.0 + (f64::from(k) + 0.5) * h).cos().powi(6) * h)
+            .sum();
+        assert!((a4 - 5.0 * PI / 16.0).abs() < 1e-12, "a_4 integrated to {a4}");
+        // Eqn (6) at n = 4: π · 6! · 2^-6 / (3!)².
+        let eqn6 = PI * 720.0 / 64.0 / 36.0;
+        assert!((a4 - eqn6).abs() < 1e-12, "eqn (6) gives {eqn6}, the integral {a4}");
+        let c4 = 2.0 * (2f64.powf(0.25) - 1.0).sqrt();
+        assert_eq!(round3(a4), 0.982, "a_4 = {a4}");
+        assert_eq!(round3(1.0 / a4), PATTERSON_B, "1/a_4 = {}", 1.0 / a4);
+        assert_eq!(round3(c4), 0.870, "c_4 = {c4}");
+        assert_eq!(round3(1.0 / c4), 1.149, "1/c_4 = {}", 1.0 / c4);
+        assert_eq!(round3(0.870 * 1.019), 0.887, "the published width is c_4 times 1/a_4");
     }
 
     /// The whole shape, not just its two landmarks: the driven response at a spread of detunings
@@ -3951,13 +4051,13 @@ mod tests {
             trace[a..b].iter().fold(0.0f64, |m, v| m.max(v.abs()))
         };
         // Normalised against the BANK's onset response, not each channel's own. A channel 30 dB
-        // off band has an envelope that is not perfectly ripple-free: the all-pole gammatone drops
+        // off band has an envelope that is not perfectly ripple-free: the complex gammatone drops
         // the negative-frequency image, and far from f_c that image is only 6 dB down rather than
         // 100, so the recovered envelope ripples at twice the stimulus frequency by a few percent
         // OF ITS OWN TINY VALUE. Measured here, under a 300 Hz tone: the worst channel is the one
         // at 2000 Hz, which swings 3.5 % of its own onset response and 0.24 % of the bank's; the
-        // 1532 Hz channel swings 2.3 % and 0.19 %. That is a property of the all-pole
-        // approximation, stated rather than tuned around, and it leaves an eightfold margin under
+        // 1532 Hz channel swings 2.3 % and 0.19 %. That is a property of the complex
+        // gammatone, stated rather than tuned around, and it leaves an eightfold margin under
         // the bound below — a margin a carrier-driven detector overruns by two orders of
         // magnitude, which is what the mutation check confirmed.
         let best = d

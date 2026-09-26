@@ -16,9 +16,13 @@
 //!   [`van_rossum_squared`] evaluates; [`van_rossum_by_quadrature`] does the integral the slow way
 //!   and is the referee.
 //! - **Vector strength** (Goldberg and Brown, *Response of binaural neurons of dog superior
-//!   olivary complex to dichotic tonal stimuli*, Journal of Neurophysiology 32(4):613–636, 1969).
+//!   olivary complex to dichotic tonal stimuli: some physiological mechanisms of sound
+//!   localization*, Journal of Neurophysiology 32(4):613–636, 1969, doi:10.1152/jn.1969.32.4.613).
 //!   Put every spike on the unit circle at its phase in a stimulus period and take the length of
-//!   the mean vector: 1 for perfect phase locking, near 0 for none.
+//!   the mean vector: 1 for perfect phase locking, near 0 for none. (This citation used to stop
+//!   at "dichotic tonal stimuli", dropping the subtitle; the title above is the one Crossref and
+//!   Europe PMC, PMID 5810617, give for that DOI. Authors, year, volume, issue and pages were
+//!   already right, and nothing computed here depended on the title.)
 //! - **The Fano factor**: the variance of the spike count in a window over its mean. One for a
 //!   Poisson process, less for anything more regular.
 //! - **The ISI-distance and the SPIKE-distance** (Kreuz, Haas, Morelli, Abarbanel and Politi,

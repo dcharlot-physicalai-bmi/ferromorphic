@@ -138,5 +138,20 @@
   "label": "the traces count is not checked",
   "old": "        if traces.len() != self.layers.len() {\n            return Err(DecolleError::Shape { what: \"traces\", got: traces.len(), want: self.layers.len() });\n        }\n",
   "new": ""
+ },
+ {
+  "label": "Q takes the journal's (1 - beta) input factor, which this module's unnormalised form leaves out",
+  "old": "            self.q[j] = d.beta * self.q[j] + input[j];",
+  "new": "            self.q[j] = d.beta * self.q[j] + (1.0 - d.beta) * input[j];"
+ },
+ {
+  "label": "P takes the journal's (1 - alpha) factor, which this module's unnormalised form leaves out",
+  "old": "            self.p[j] = d.alpha * self.p[j] + self.q[j];",
+  "new": "            self.p[j] = d.alpha * self.p[j] + (1.0 - d.alpha) * self.q[j];"
+ },
+ {
+  "label": "R takes the journal's (1 - gamma) factor, which this module's unnormalised form leaves out",
+  "old": "            self.r[i] = d.gamma * self.r[i] + self.s[i];",
+  "new": "            self.r[i] = d.gamma * self.r[i] + (1.0 - d.gamma) * self.s[i];"
  }
 ]

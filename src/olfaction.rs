@@ -1,5 +1,5 @@
-//! Neuromorphic olfaction: the olfactory bulb's external plexiform layer, learning an odour from
-//! one presentation.
+//! Neuromorphic olfaction: a rate-coded model of the olfactory bulb's external plexiform layer,
+//! learning an odour from one presentation.
 //!
 //! # What the mechanism is, and why it exists
 //!
@@ -41,10 +41,31 @@
 //!    *larger* than the open-loop one (1.90). ⛔ Not ten-fold, which this line used to say: from
 //!    0.1x the broad pool is below its own rheobase at the low end, removes nothing there, and the
 //!    ratio claim inverts (open 2.44, settled 1.87). The subtractive claim needs the pool above its
-//!    rheobase at both ends of the range. Divisive normalisation is a glomerular-layer
-//!    mechanism (Cleland and colleagues) that this module does not implement, and the phrase "gain
-//!    control" is avoided here for that reason. The numbers are from
+//!    rheobase at both ends of the range. The numbers are from
 //!    `the_broad_pool_answers_concentration_and_not_shape`.
+//!
+//!    Ratio-preserving normalisation is a different operation; this module does not implement it,
+//!    and the phrase "gain control" is avoided here for that reason. The bulb literature's
+//!    candidate is *global normalisation* at the glomerular layer, proposed by Cleland, Johnson,
+//!    Leon & Linster, *Relational representation in the olfactory system*, Proceedings of the
+//!    National Academy of Sciences 104:1953–1958 (2007), doi:10.1073/pnas.0608564104, whose
+//!    abstract reports that "global normalization preserves concentration-independent odor-quality
+//!    information" and that "a recurrent excitatory circuit recently described in the olfactory
+//!    bulb is capable of performing such normalization". That is a modelled capability, not a
+//!    demonstrated mechanism. The review by Cleland, Chen, Hozer, Ukatu, Wong & Zheng, *Sequential
+//!    mechanisms underlying concentration invariance in biological olfaction*, Frontiers in
+//!    Neuroengineering 4:21 (2012), doi:10.3389/fneng.2011.00021, describes it as "theoretical
+//!    modeling" of a deep-glomerular-layer network that generates "a uniform level of inhibition
+//!    proportional to the total input activity across the olfactory bulb and delivered onto mitral
+//!    cells", and states that "Evidence for a cellular or network mechanism that can mediate global
+//!    normalization in the olfactory bulb is incomplete." This module's broad limb is also one
+//!    uniform inhibition, but it is driven by the mitral OUTPUT through a thresholded granule pool
+//!    rather than by the total input, and the measurement above shows it does not preserve ratios.
+//!    ⛔ This paragraph used to read "Divisive normalisation is a glomerular-layer mechanism
+//!    (Cleland and colleagues)": it named no work, called the operation divisive where the review
+//!    describes a uniform inhibition, and stated as established what both sources present as a
+//!    model. Imam and Cleland (below) cite both, as their refs. 20 and 21, where they write of
+//!    "implementing gain control in the superficial layers".
 //! 2. **Decorrelation.** Two odours whose receptor patterns overlap heavily leave the EPL less
 //!    similar than they entered it, because subtracting a common inhibitory term and passing the
 //!    remainder through a spiking threshold is an expansive operation on the differences.
@@ -61,38 +82,81 @@
 //! dense dendrodendritic field, and that traffic is the energy bill. [`Epl`] counts it into
 //! [`crate::ledger::Ledger`], which then refuses to price it, for the reason that module states.
 //!
-//! # The work this module implements
+//! # The work this module is modelled on
 //!
 //! Nabil Imam and Thomas A. Cleland, **"Rapid online learning and robust recall in a neuromorphic
-//! olfactory circuit"**, *Nature Machine Intelligence* 2:181–191 (2020), built this circuit on
-//! Intel's `Loihi` and, per its title and abstract, learned odours from single presentations and
-//! recalled them under impaired conditions. It is the clearest published case of a spiking network
-//! doing something a conventional network finds awkward, which is why it is in this library.
+//! olfactory circuit"**, *Nature Machine Intelligence* 2:181–191 (2020),
+//! doi:10.1038/s42256-020-0159-4, built a spiking EPL circuit on Intel's `Loihi` and, per its title
+//! and abstract, learned odours from single presentations and recalled them under impaired
+//! conditions. It is the clearest published case of a spiking network doing something a
+//! conventional network finds awkward, which is why this library carries an analogue of it.
 //!
 //! ## ⚠ What this implementation has NOT reproduced, stated plainly
 //!
-//! **This review could not reach the paper's figures.** The source was behind a paywall. So the
-//! following are *not* claimed, not transcribed and not checked here:
+//! **The paper is open, and its numbers are unchecked here rather than unreachable.** It is
+//! available as an NIH author manuscript, PMC11034913 (released in PMC on 2024-04-22, with its six
+//! figures), and as arXiv:1906.07067 (v1 2019-06-17, v3 2020-01-23). ⛔ This section used to open
+//! "This review could not reach the paper's figures. The source was behind a paywall." Both open
+//! versions carry the figures, so that was wrong. What remains true is that nothing below was
+//! checked against them, and where the paper's value is now given it is given for contrast:
 //!
-//! - **The paper's accuracy-versus-baseline numbers.** No figure from it is reproduced. Nothing in
-//!   this module should be read as agreeing or disagreeing with one.
-//! - **Any energy figure for the work.** This review did not locate a joules-per-inference number
-//!   for the `Loihi` implementation that it could check, so none is quoted.
-//! - **The paper's own similarity measure.** This module uses [`cosine_similarity`] on per-cycle
-//!   mitral spike counts, and [`tanimoto`] is provided beside it; which measure the paper reports
-//!   is not known here. A threshold quoted in this module's docs is a threshold *measured in this
-//!   module's tests*, on this module's synthetic odours.
-//! - **The paper's parameters**: cell counts, membrane constants, gamma frequency, plasticity rule
-//!   and its constants, and the chemosensor dataset. Every constant in [`EplParams`] is a default
-//!   chosen *here* to make a 40 Hz gamma cycle carry a usable spike count, and it is stated rather
-//!   than fitted. Where a value could be wrong, the field doc says so.
+//! - **The paper's accuracy-versus-baseline numbers** (its Figure 6a–b). No figure from it is
+//!   reproduced. Nothing in this module should be read as agreeing or disagreeing with one.
+//! - **Any energy figure for the work.** The paper's Figure 6g plots total energy against network
+//!   size ("The total energy consumed increases only modestly as the EPL network size is
+//!   expanded"). This review did not read values off it and did not locate a joules-per-inference
+//!   number that it checked, so none is quoted.
+//! - **The paper's own similarity measure.** The paper identifies an odour by the Jaccard index
+//!   between spike patterns, "the number of spikes in the intersection of two representations,
+//!   divided by the number of spikes in their union", over the 16 timesteps of each gamma cycle's
+//!   permissive epoch ("these 16 bins were used for Jaccard calculations"), with a sample
+//!   "classified as one of the network's known odourants if the similarity exceeded a threshold of
+//!   0.75 in the fifth (final) gamma cycle". Its Results and Methods both give 0.75; the captions
+//!   of its Figures 4b and 5h say the toluene stimulus was "classified as toluene (similarity >
+//!   0.8)", and this review did not locate a statement reconciling the two. For its comparison with
+//!   other methods it scores 1/(1+d) instead, `d` the Manhattan distance between 72-dimensional
+//!   rank-order vectors normalised to sum to one. This module scores [`cosine_similarity`] on
+//!   per-cycle mitral spike counts at 0.85: a different measure on a different representation, so
+//!   neither threshold says anything about the other. [`tanimoto`] is provided beside it and is the
+//!   Jaccard index on 0/1 vectors, but [`Epl::recall`] scores spike counts and never bins spike
+//!   times, so this module does not compute the paper's score either. ⛔ This bullet used to say
+//!   which measure the paper reports "is not known here". A threshold quoted in this module's docs
+//!   is a threshold *measured in this module's tests*, on this module's synthetic odours.
+//! - **The paper's parameters.** None of them is used here. For contrast, its main text gives 72
+//!   columns, each "a single MC principal neuron as well as up to 50 inhibitory GC interneurons",
+//!   with "five GCs per trained odourant" in its simulations; mitral-to-granule excitation across
+//!   columns "with a uniform probability of 0.2", and granule-to-mitral inhibition inside the
+//!   column only ("GCs did not inhibit MCs from other columns"); a gamma cycle of 40 `Loihi`
+//!   timesteps, "the permissive epoch comprised 16 ts and the inhibitory epoch 24 ts", about 0.4 ms
+//!   at the chip's ~100 kHz, with "The correspondence with real time is arbitrary"; five gamma
+//!   cycles per sniff; learning by "a heterosynaptic spike timing-dependent plasticity (STDP)
+//!   rule"; and the "Gas sensor arrays in open sampling settings" data of 72 metal-oxide sensors
+//!   across a wind tunnel, from Vergara, Fonollosa, Mahiques, Trincavelli, Rulkov & Huerta, *On the
+//!   performance of gas sensor arrays in open sampling systems using Inhibitory Support Vector
+//!   Machines*, Sensors and Actuators B 185:462–477 (2013), doi:10.1016/j.snb.2013.05.027. It cites
+//!   30–80 Hz as the biological gamma band. Its main text defers membrane constants to its
+//!   Supplementary Methods, which this review did not check. Every constant in [`EplParams`] is a
+//!   default chosen *here* to make a 40 Hz gamma cycle carry a usable spike count, and it is stated
+//!   rather than fitted: 40 Hz sits inside that band and is this module's choice, not a
+//!   transcription. Where a value could be wrong, the field doc says so. ⛔ This bullet used to list
+//!   the paper's cell counts, gamma frequency, plasticity rule and chemosensor dataset as not known
+//!   here; its main text gives all four.
 //! - **The `Loihi` deployment.** This is a pure-Rust simulation on a clock.
 //!
-//! What *is* implemented is the circuit and its mechanism, and what is verified is what is
-//! internally checkable: the oscillation's period against the parameter that sets it, the granule
-//! cell's dendritic sum against the closed-form cosine it is supposed to compute, one-shot recall
-//! against a measured false-positive rate, monotone degradation under occlusion, and the fall in
-//! pattern overlap the inhibitory loop is supposed to produce.
+//! What is implemented is a **rate-coded analogue** of the paper's circuit: mitral/granule
+//! reciprocal inhibition, with learned inhibitory ensembles that pull a probe toward a stored
+//! pattern. The paper's own mechanism is not implemented. Its representation is "sparse patterns of
+//! spike timing"; its inhibition acts as "delays in MC spike times on the gamma timescale"; its
+//! wiring is sparse and columnar (mitral-to-granule at p = 0.2, granule-to-mitral inside the column
+//! only); its learning is heterosynaptic STDP. Here the code is a per-cycle spike COUNT, the wiring
+//! is dense, the inhibition is a subtractive current through a complement mask, and learning is a
+//! one-shot template write. ⛔ This paragraph used to begin "What *is* implemented is the circuit
+//! and its mechanism", which claimed a correspondence the code does not have.
+//!
+//! What is verified is what is internally checkable: the oscillation's period against the parameter
+//! that sets it, the granule cell's dendritic sum against the closed-form cosine it is supposed to
+//! compute, one-shot recall against a measured false-positive rate, monotone degradation under
+//! occlusion, and the fall in pattern overlap the inhibitory loop is supposed to produce.
 //!
 //! # The circuit, as built here
 //!
@@ -682,8 +746,12 @@ pub struct EplParams {
     pub max_odours: usize,
     /// Simulation time step, seconds. Must divide the gamma period into at least four ticks.
     pub dt: f64,
-    /// Gamma oscillation frequency, hertz. ~40 Hz is the mammalian bulb's band (Adrian, 1942); the
-    /// frequency the paper used is not known here.
+    /// Gamma oscillation frequency, hertz. The default 40 Hz is this module's choice, inside the
+    /// 30–80 Hz biological gamma band that Imam and Cleland cite (Adrian recorded the bulb's
+    /// oscillation in 1942), and it is not a transcription of anything in their paper: their gamma
+    /// cycle is 40 `Loihi` timesteps (16 permissive, 24 inhibitory), about 0.4 ms at the chip's
+    /// ~100 kHz, and they state that "The correspondence with real time is arbitrary". ⛔ This doc
+    /// used to say the frequency the paper used "is not known here".
     pub gamma_hz: f64,
     /// Fraction of each gamma cycle in which mitral cells are free to fire, in `(0, 1)`. The
     /// remainder is the granule phase.
@@ -726,7 +794,9 @@ pub struct EplParams {
     ///
     /// **The default 0.85 is measured in this module's tests, not taken from the paper**, and it is
     /// a property of the layer's WIDTH rather than of the circuit: two random patterns in 64
-    /// dimensions overlap less than two in 32, so the same threshold buys different safety. On the
+    /// dimensions overlap less than two in 32, so the same threshold buys different safety. The
+    /// paper's 0.75 is a Jaccard threshold on spike-time bins (see the module doc) and cannot be
+    /// compared with a cosine on spike counts; the two numbers answer different questions. On the
     /// 32-cell layer the tests use, `one_shot_learning_recalls_and_the_false_positive_rate_is_measured`
     /// finds a false-positive rate of exactly zero at 0.85 over 120 unlearned odours; the review's
     /// wider sweep of that layer (60 seeds × 120 unlearned odours at sparsity 0.35) found unlearned
@@ -1846,8 +1916,10 @@ mod tests {
     /// The second assertion is the honest counterpart and is pinned so it cannot be quietly
     /// overclaimed later: the limb is **subtractive**, so it does not preserve ratios. It removes a
     /// near-constant number of spikes and the settled ratio therefore comes out LARGER than the
-    /// open-loop one. Divisive normalisation is a glomerular-layer mechanism this module does not
-    /// implement.
+    /// open-loop one. Ratio-preserving global normalisation has been proposed for the glomerular
+    /// layer as a model (Cleland, Johnson, Leon & Linster, PNAS 2007; the module doc gives the
+    /// citations and the review that calls the evidence for it incomplete), and this module does
+    /// not implement it. ⛔ This doc used to call it an established divisive glomerular mechanism.
     #[test]
     fn the_broad_pool_answers_concentration_and_not_shape() {
         let measure = |gain: f64, scale: f64| {

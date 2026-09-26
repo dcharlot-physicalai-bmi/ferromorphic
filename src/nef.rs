@@ -68,18 +68,36 @@
 //!   needs EXACT spike timing ([`crate::neuron::Lif::step_exact`], the loop's default). Stepped
 //!   tick by tick at 1 ms, a 300 Hz cell's interval of 3.3 ticks is rounded up to 4, every rate is
 //!   biased low, and the same network's error is 47% however many neurons it has.
-//! - **PES** ([`Pes`]): on a fixed input every update multiplies the decoding error by exactly
-//!   `1 − κ|a|²/n`; the rule is stable iff `κ < 2n/|a|²`, at which the error neither shrinks nor
-//!   grows but alternates; and what it learns over a sample set can approach, and never beat, the
-//!   least-squares decoders' error on that set.
+//! - **PES** ([`Pes`]): with `κ` normalised per neuron, as Nengo normalises it, on a fixed input
+//!   every update multiplies the decoding error by exactly `1 − κ|a|²/n`; the rule is stable iff
+//!   `κ < 2n/|a|²`, at which the error neither shrinks nor grows but alternates; and what it learns
+//!   over a sample set can approach, and never beat, the least-squares decoders' error on that set.
+//!   The published rules carry no `1/n`, and on their `κ` the same limit is `2/|a|²`; [`Pes`] says
+//!   which paper wrote which form.
 //!
 //! # What this module has NOT reproduced
 //!
 //! - Spaun, or any model beyond one or two populations. The framework composes; this module gives
 //!   the pieces and checks each, and stops there.
 //! - Nengo's exact random-number stream: encoders, intercepts and maximum rates are drawn from
-//!   this crate's generator, so a population built here with the same seed as a Nengo model is
-//!   *statistically* the same population and not the same neurons.
+//!   this crate's generator, so a population built from [`EnsembleSpec::default_for`] is
+//!   *statistically* the same population as a Nengo 2.x model with default parameters (with its
+//!   intercepts drawn from `(−0.999, 0.999)` in place of `(−1, 1)`), and not the same neurons.
+//!   Nengo ≥ 3.0 draws intercepts from `Uniform(−1, 0.9)`, and Nengo ≥ 3.1 draws encoders from
+//!   `ScatteredHypersphere` — a quasi-random set with a random rotation, not independent Gaussian
+//!   draws — so against current Nengo the encoder distribution differs even when the intercept
+//!   range is matched. A scattered-hypersphere sampler is not here. The same Nengo change moved
+//!   its default evaluation points to that sampler; [`Ensemble::sample_points`] draws them
+//!   independently and uniformly in the ball.
+//!
+//!   This item used to say "the same seed as a Nengo model", with no version. That holds only
+//!   against Nengo 2.x. In `nengo/ensemble.py` the encoder default is
+//!   `UniformHypersphere(surface=True)` at v2.0.0, v2.8.0 and v3.0.0 — which `nengo/dists.py`
+//!   (v2.8.0) samples as `randn`, normalised, the distribution [`Ensemble::new`] draws from, `±1`
+//!   in one dimension — and `ScatteredHypersphere(surface=True)` from v3.1.0 on; Nengo's
+//!   `CHANGES.rst`, 3.1.0: "The `encoders` and `eval_points` of `Ensemble` are now sampled from
+//!   `ScatteredHypersphere` by default. (#1611)". The intercept change is at
+//!   [`EnsembleSpec::default_for`].
 //! - Exact timing for cells other than [`Lif`], or for the feedforward [`SpikingEnsemble::step`],
 //!   which keeps the tick-based step it has always had; [`SpikingEnsemble::step_exact`] is the
 //!   exact one.
@@ -310,8 +328,21 @@ pub struct EnsembleSpec {
 }
 
 impl EnsembleSpec {
-    /// Nengo's defaults for a population of `n` neurons in `dim` dimensions: radius 1, maximum
-    /// rates 200–400 Hz, intercepts uniform in `(−1, 1)`.
+    /// Nengo 2.x's defaults for a population of `n` neurons in `dim` dimensions: radius 1, maximum
+    /// rates uniform in 200–400 Hz, intercepts uniform in `(−1, 1)` — drawn here from
+    /// `(−0.999, 0.999)`, because [`Ensemble::new`] accepts only the open interval `(−1, 1)` (at
+    /// an intercept of 1 the gain `(x − 1)/(1 − intercept)` is infinite). Nengo ≥ 3.0 uses
+    /// `Uniform(−1, 0.9)`; to follow it, set `intercept` to `(-0.999, 0.9)`.
+    ///
+    /// This used to say "Nengo's defaults", with no version, and the intercepts are Nengo 2.x's
+    /// only. `nengo/ensemble.py` has `default=Uniform(-1.0, 1.0)` at v2.0.0 and v2.8.0 and
+    /// `default=Uniform(-1.0, 0.9)` at v3.0.0, v3.1.0, v3.2.0 and v4.0.0. The change is Nengo
+    /// commit `2579f0e68e`, "Change default intercept range to -1, 0.9" (2019), and `CHANGES.rst`
+    /// gives the reason under 3.0.0 (November 18, 2019): "The default `intercepts` value has been
+    /// changed to `Uniform(-1, 0.9)` to avoid high gains when intercepts are close to 1. (#1534,
+    /// #1561)". The maximum rates, `Uniform(200, 400)`, are the same in every release named. The
+    /// drawn values did not change: the label did. The encoders are Nengo 2.x's too, and not
+    /// current Nengo's; [`crate::nef`] says how they differ.
     #[must_use]
     pub fn default_for(n: usize, dim: usize, seed: u64) -> Self {
         Self {
@@ -971,16 +1002,40 @@ impl SpikingLoop {
 // Learning the decoders
 // ---------------------------------------------------------------------------------------------
 
-/// The Prescribed Error Sensitivity rule (`MacNeil` and Eliasmith, *Fine-tuning and the stability of
-/// recurrent neural networks*, `PLoS` ONE 6(9):e22885, 2011; Bekolay, Kolbeck and Eliasmith, *Simultaneous
-/// unsupervised and supervised learning of cognitive functions in biologically plausible spiking
-/// neural networks*, `CogSci` 2013): `Δd_i = −(κ/n) a_i E`, with `E = x̂ − target` the decoded error
-/// broadcast to the population. It is Widrow–Hoff least-mean-squares on the decoders — local to
-/// the neuron, given a broadcast error, which is the form a chip's learning engine can run.
+/// The PES (Prescribed Error Sensitivity) rule, written with Nengo's per-neuron normalisation:
+/// `Δd_i = −(κ/n) a_i E`, with `E = x̂ − target` the decoded error broadcast to the population. It
+/// is Widrow–Hoff least-mean-squares on the decoders — local to the neuron, given a broadcast
+/// error, which is the form a chip's learning engine can run.
+///
+/// The rule is `MacNeil` and Eliasmith, *Fine-tuning and the stability of recurrent neural
+/// networks*, `PLoS` ONE 6(9):e22885 (2011), doi:10.1371/journal.pone.0022885, Eq. 16,
+/// "Converting this into standard delta rule form, and including the learning rate parameter":
+/// `Δd_i = κ v_c a_i`, with `v_c` the corrective-saccade signal. The name is Bekolay,
+/// Kolbeck and Eliasmith, *Simultaneous unsupervised and supervised learning of cognitive functions
+/// in biologically plausible spiking neural networks*, `CogSci` (2013),
+/// <https://compneuro.uwaterloo.ca/files/publications/bekolay.2013.pdf>, Eq. 6, `Δd_i = κ E a_i`:
+/// "`MacNeil` and Eliasmith (2011) proposed a learning rule that minimizes the error … We will refer
+/// to Equation (6) as the Prescribed Error Sensitivity (PES) rule." Neither equation has a `1/n`.
+/// The `1/n` is Nengo's: `SimPES` in `nengo/builder/learning_rules.py` (v4.0.0) computes
+/// `alpha = -self.learning_rate * dt / n_neurons`. This rule is one update, not one time step, so
+/// `dt` is folded into `κ`: the `κ` here is Nengo's `learning_rate × dt`, and it is the papers' `κ`
+/// times `n`. The error here is `x̂ − target`, which is why the step carries a minus, as Nengo's
+/// negative `alpha` does.
+///
+/// This used to credit `Δd_i = −(κ/n) a_i E`, and the name "Prescribed Error Sensitivity", to both
+/// papers. The `1/n` is in neither, and this review did not locate the name, or "PES", in the 2011
+/// paper's full text (Europe PMC, PMC3181247); the name is the 2013 paper's. Nothing numeric
+/// changed: [`Pes::update`], [`Pes::contraction`] and [`Pes::stability_limit`] agree with one
+/// another under the normalisation stated here, and only the stability limit's units needed saying
+/// — see [`Pes::kappa`].
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Pes {
-    /// Learning rate `κ`. With rates in hertz the stable range is `κ < 2n/|a|²`, which is small:
-    /// fifty neurons at a hundred hertz put it at `2e-4`.
+    /// Learning rate `κ`, normalised per neuron as in Nengo's `SimPES`. With that normalisation,
+    /// on a fixed input, the rule is stable iff `κ < 2n/|a|²`, which with rates in hertz is small:
+    /// fifty neurons at a hundred hertz put it at `2e-4`. On the papers' unnormalised `κ`
+    /// (Bekolay et al. 2013 Eq. 6; `MacNeil` and Eliasmith 2011 Eq. 16) the same bound is
+    /// `κ < 2/|a|²` per update. This used to state `2n/|a|²` without saying it belongs to the
+    /// normalisation and not to either paper.
     pub kappa: f64,
 }
 
@@ -1006,15 +1061,17 @@ impl Pes {
     }
 
     /// The factor `1 − κ|a|²/n` the decoding error is multiplied by when the same activities are
-    /// presented again. Inside `(−1, 1)` the rule converges on that input.
+    /// presented again, on this rule's per-neuron `κ` (on the papers' `κ` it is `1 − κ|a|²`).
+    /// Inside `(−1, 1)` the rule converges on that input.
     #[must_use]
     pub fn contraction(&self, rates: &[f64]) -> f64 {
         let energy: f64 = rates.iter().map(|a| a * a).sum();
         1.0 - self.kappa * energy / rates.len().max(1) as f64
     }
 
-    /// The learning rate at which the rule stops converging on these activities, `2n/|a|²`.
-    /// `None` for a silent population, which no rate can destabilise — or teach.
+    /// The learning rate at which the rule stops converging on these activities, `2n/|a|²`, in the
+    /// per-neuron units of [`Pes::kappa`]; divide by `n` for the papers' `2/|a|²`. `None` for a
+    /// silent population, which no rate can destabilise — or teach.
     #[must_use]
     pub fn stability_limit(rates: &[f64]) -> Option<f64> {
         let energy: f64 = rates.iter().map(|a| a * a).sum();
@@ -1628,6 +1685,40 @@ mod tests {
         assert_eq!(Pes::stability_limit(&[]), None);
     }
 
+    /// The published PES carries no `1/n` — `Δd_i = κ E a_i` in Bekolay, Kolbeck and Eliasmith
+    /// 2013 Eq. 6, `Δd_i = κ v_c a_i` in `MacNeil` and Eliasmith 2011 Eq. 16 — and this rule's `κ` is
+    /// normalised per neuron, as Nengo's is. So a [`Pes`] built with `κ = n·κ_p` writes exactly the
+    /// papers' step on `κ_p` (with the papers' error read as `target − x̂`, the sign that descends;
+    /// here `E = x̂ − target` and the minus is in the rule), its contraction is the papers'
+    /// `1 − κ_p|a|²`, and the papers' stability limit is [`Pes::stability_limit`] over `n`,
+    /// `2/|a|²`. The rates, decoders, targets and `κ_p` are binary fractions, so every product in
+    /// the step and the contraction is exact; the limit `8/21` is not, but `n = 4` is a power of
+    /// two, so dividing it by `n` lands exactly on the nearest double to `2/21`, and every
+    /// comparison is an equality.
+    #[test]
+    fn the_papers_unnormalised_rate_is_this_rules_kappa_over_n() {
+        let rates = [2.0, 0.0, 4.0, 1.0];
+        let n = rates.len() as f64;
+        let energy: f64 = rates.iter().map(|a| a * a).sum();
+        assert_eq!(energy, 21.0);
+        let kappa_paper = 0.03125;
+        let pes = Pes::new(n * kappa_paper).unwrap();
+        let mut dec = Decoders { d: vec![0.5, -0.25, 0.0, 0.75, 0.125, 0.0, -0.5, 0.25], n: 4, out_dim: 2 };
+        let before = dec.d.clone();
+        let target = [0.5, -1.0];
+        let step = pes.update(&mut dec, &rates, &target).unwrap();
+        // x̂ = Σ a_i d_i = (1, −0.25), so the error x̂ − target is (0.5, 0.75).
+        assert_eq!(step.error, vec![0.5, 0.75]);
+        for i in 0..4 {
+            for j in 0..2 {
+                let paper = before[i * 2 + j] - kappa_paper * step.error[j] * rates[i];
+                assert_eq!(dec.d[i * 2 + j], paper, "neuron {i}, output {j}");
+            }
+        }
+        assert_eq!(pes.contraction(&rates), 1.0 - kappa_paper * energy);
+        assert_eq!(Pes::stability_limit(&rates).unwrap() / n, 2.0 / energy);
+    }
+
     /// Over a sample set PES approaches the least-squares decoders' error from above: least
     /// squares is the optimum on that set, so PES can match it and cannot beat it.
     #[test]
@@ -2015,6 +2106,8 @@ mod tests {
         assert_eq!(spec.seed, 9);
         assert_eq!(spec.radius, 1.0, "Nengo's default radius is one");
         assert_eq!(spec.max_rate, (200.0, 400.0));
+        // Nengo 2.x's `Uniform(-1.0, 1.0)`, inset to the open interval `Ensemble::new` accepts. It
+        // is NOT current Nengo's: v3.0.0 onward ship `Uniform(-1.0, 0.9)`, and the doc says so.
         assert_eq!(spec.intercept, (-0.999, 0.999));
         assert_eq!(spec.neuron, LifRate::new(20e-3, 2e-3).unwrap());
         // And the default population really does represent the UNIT ball: its own sample points
@@ -2029,6 +2122,36 @@ mod tests {
             let top = ens.rates(&[ens.encoder(i)[0]]).unwrap()[i];
             assert!(top >= 200.0 - 1e-6, "neuron {i} reaches only {top} Hz at x = ±1");
         }
+    }
+
+    /// The way [`EnsembleSpec::default_for`] says to follow Nengo ≥ 3.0 works. Nengo's default
+    /// intercepts are `Uniform(-1.0, 0.9)` in `nengo/ensemble.py` from v3.0.0 on, and the doc says
+    /// to set `intercept` to `(-0.999, 0.9)`. That spec builds; every neuron's intercept, read back
+    /// from its gain and bias as `(1 − J^bias)/α`, lies in that range; and the reason Nengo's
+    /// `CHANGES.rst` gives for the change, "to avoid high gains when intercepts are close to 1",
+    /// shows here too. With the same seed the two specs make the same draws, so each neuron's
+    /// intercept can only move down, and `α = (x − 1)/(1 − intercept)` with it: no neuron's gain
+    /// rises, the largest falls, and none exceeds `(x(400 Hz) − 1)/(1 − 0.9)`.
+    #[test]
+    fn nengo_3_intercepts_are_one_field_away_and_lower_the_gains() {
+        let old = EnsembleSpec::default_for(200, 2, 13);
+        let mut new = old;
+        new.intercept = (-0.999, 0.9);
+        let a = Ensemble::new(&old).unwrap();
+        let b = Ensemble::new(&new).unwrap();
+        assert_eq!(a.encoders, b.encoders, "the intercept range must not change the encoder draws");
+        let x_top = old.neuron.current_for_rate(400.0).unwrap();
+        let cap = (x_top - 1.0) / (1.0 - 0.9);
+        let mut hi = [0.0f64; 2];
+        for i in 0..200 {
+            let c = (1.0 - b.biases[i]) / b.gains[i];
+            assert!((-0.999 - 1e-12..=0.9 + 1e-12).contains(&c), "neuron {i}: intercept {c}");
+            assert!(b.gains[i] <= a.gains[i], "neuron {i}: gain rose from {} to {}", a.gains[i], b.gains[i]);
+            assert!(b.gains[i] <= cap * (1.0 + 1e-12), "neuron {i}: gain {} above {cap}", b.gains[i]);
+            hi[0] = hi[0].max(a.gains[i]);
+            hi[1] = hi[1].max(b.gains[i]);
+        }
+        assert!(hi[1] < hi[0], "the largest gain did not fall: {} then {}", hi[0], hi[1]);
     }
 
     // ---- what the numbers mean ----

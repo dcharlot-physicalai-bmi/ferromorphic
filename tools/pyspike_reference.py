@@ -7,8 +7,9 @@
 
 PySpike (Mulansky and Kreuz, SoftwareX 5:183-189, 2016) is the SPIKE measures' reference
 implementation, maintained by their authors. Every train here is strictly increasing and inside
-[0, 1], so PySpike's silent clean-up -- sorting, dropping duplicates, dropping spikes up to 1e-6
-outside the window -- changes nothing, and the two implementations see the same input.
+[0, 1], so PySpike's silent clean-up -- sorting, dropping duplicates, dropping spikes more than
+1e-6 outside the window (and keeping those within 1e-6) -- changes nothing, and the two
+implementations see the same input.
 """
 import random
 import sys

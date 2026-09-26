@@ -669,12 +669,37 @@ impl Izhikevich {
         Self::new(0.02, 0.2, -50.0, 2.0)
     }
 
-    /// Build from the paper's four parameters, starting at rest.
+    /// The membrane potential every cell starts at, in millivolts: −65, whatever its `c`.
     ///
-    /// The initial state is the paper's own: `v = c`, `u = b * v`.
+    /// From the paper's own reference code: Izhikevich, *Simple Model of Spiking Neurons*, IEEE
+    /// Transactions on Neural Networks 14(6):1569–1572 (2003), doi:10.1109/TNN.2003.820440. The
+    /// MATLAB program of its Section IV, printed on p. 1571 beside the Fig. 3 raster it produces,
+    /// sets `v=-65*ones(Ne+Ni,1); % Initial values of v`, then `u=b.*v; % Initial values of u`.
+    /// That network holds cells whose `c` runs from −65 to −50 (`c=[-65+15*re.^2; ...]`, and
+    /// `r_i = 1` "corresponds to the chattering (CH) cell"), and it starts every one of them at
+    /// −65 mV.
+    pub const V_INIT: f64 = -65.0;
+
+    /// Build from the paper's four parameters, in the paper's initial state: `v` =
+    /// [`Izhikevich::V_INIT`], `u = b * v`.
+    ///
+    /// That is −65 mV for every cell, not the reset value `c`, and it is not rest either. The
+    /// paper puts rest "between −70 and −60 mV depending on the value of b"; with `I = 0` and
+    /// `b = 0.2`, the value all three presets share, the equilibria are `v = −70` (stable) and
+    /// `v = −50` (a saddle), and from −65 mV the membrane starts down at 3 mV/ms towards the
+    /// first.
+    ///
+    /// This doc used to say the cell was built "starting at rest", in "the paper's own" initial
+    /// state `v = c`, `u = b * v`, and the code started it at `v = c`. That matches the paper only
+    /// where `c = −65`, which is [`Izhikevich::regular_spiking`] and [`Izhikevich::fast_spiking`].
+    /// [`Izhikevich::chattering`] (`c = −50`) started at `v = −50, u = −10`, which with `I = 0`
+    /// is the saddle itself: both derivatives are exactly zero there, in `f64` as well, so an
+    /// undriven chattering cell sat on an unstable equilibrium for good. The paper starts it at
+    /// `v = −65, u = −13`, and so does this now. A cell whose `c` is −65 starts where it always
+    /// did; one whose `c` is anything else now starts at −65 mV with `u = −65·b`.
     #[must_use]
     pub fn new(a: f64, b: f64, c: f64, d: f64) -> Self {
-        Self { a, b, c, d, v: c, u: b * c, substeps: 2 }
+        Self { a, b, c, d, v: Self::V_INIT, u: b * Self::V_INIT, substeps: 2 }
     }
 }
 
@@ -725,9 +750,15 @@ impl Neuron for Izhikevich {
         self.v * 1e-3
     }
 
+    /// Back to the state [`Izhikevich::new`] builds: `v` = [`Izhikevich::V_INIT`], `u = b * v`.
+    ///
+    /// That is the paper's initial state, not the model's rest, which the paper puts between −70
+    /// and −60 mV depending on `b`. It used to be `v = c`, `u = b * c`, in step with what `new`
+    /// used to do; the two changed together, so a reset cell's `v` and `u` are still those of a
+    /// fresh one built from the same four parameters.
     fn reset(&mut self) {
-        self.v = self.c;
-        self.u = self.b * self.c;
+        self.v = Self::V_INIT;
+        self.u = self.b * Self::V_INIT;
     }
 }
 
@@ -1526,7 +1557,8 @@ mod tests {
         assert!(AdaptiveLif::new(lif, 100e-3, 0.0).adapted_isi(i).is_some());
     }
 
-    /// The three presets are the paper's four parameters, and `new` starts at the paper's rest.
+    /// The three presets are the paper's four parameters, and `new` starts where the paper's code
+    /// starts every cell.
     ///
     /// Izhikevich (2003) Figure 2: regular spiking `a=0.02, b=0.2, c=-65, d=8`; the fast-spiking
     /// interneuron `a=0.1`; chattering `c=-50, d=2`. Every existing fixture builds a preset and
@@ -1542,16 +1574,67 @@ mod tests {
         assert_eq!((fs.a, fs.b, fs.c, fs.d), (0.1, 0.2, -65.0, 2.0));
         let ch = Izhikevich::chattering();
         assert_eq!((ch.a, ch.b, ch.c, ch.d), (0.02, 0.2, -50.0, 2.0));
-        // The paper's own initial state: `v = c`, `u = b * v`. Dropping the sensitivity factor
-        // leaves `u = c`, which for regular spiking is −65 against the correct −13.
+        // The paper's initial state, from its Section IV program beside Fig. 3 (p. 1571):
+        // `v=-65*ones(Ne+Ni,1)` for every cell whatever its `c`, then `u=b.*v`. Dropping the
+        // sensitivity factor leaves `u = −65` against the correct −13. This comment used to call
+        // `v = c` the paper's own, and this loop asserted it; the two agree only for `c = −65`,
+        // so it passed for regular and fast spiking and pinned the chattering cell at
+        // `v = −50, u = −10`, where the paper has −65 and −13.
+        assert_eq!(Izhikevich::V_INIT, -65.0, "the paper's `v=-65*ones(Ne+Ni,1)`");
         for p in [rs, fs, ch] {
-            assert_eq!(p.v, p.c);
-            assert_eq!(p.u, p.b * p.c);
+            assert_eq!(p.v, -65.0);
+            assert_eq!(p.u, p.b * -65.0);
         }
         assert_eq!(rs.u, -13.0);
+        assert_eq!((ch.v, ch.u), (-65.0, -13.0), "chattering starts at −65 mV like every cell");
+        assert_ne!(ch.v, ch.c, "chattering's reset is −50, and it does not start there");
+        // A custom cell with any other `c` starts there too; `b = 0.25` makes the product exact.
+        let custom = Izhikevich::new(0.02, 0.25, -55.0, 4.0);
+        assert_eq!((custom.v, custom.u), (-65.0, -16.25));
         // And the three are genuinely different cells, which is the only reason to ship three.
         assert_ne!((rs.a, rs.d), (fs.a, fs.d));
         assert_ne!(rs.c, ch.c);
+    }
+
+    /// The start `new` used to give a chattering cell is the model's saddle, and the paper's is not
+    /// rest either; `reset` returns to the paper's start, not to either of those.
+    ///
+    /// Three claims in the [`Izhikevich::new`] doc, each read here. With `I = 0` and `b = 0.2` the
+    /// equilibria solve `0.04v² + 4.8v + 140 = 0`, so `v = −70` and `v = −50`. The old chattering
+    /// start `v = −50, u = −10` is the second one exactly, in `f64`: a cell placed there does not
+    /// move in a hundred steps. From the paper's −65 mV, `v' = 169 − 325 + 140 + 13 = −3` mV/ms.
+    /// And `reset` must land on the paper's start for every preset, including the one whose `c`
+    /// is not −65, after a drive that has moved both variables well away from it.
+    #[test]
+    fn the_old_chattering_start_was_the_saddle_and_reset_returns_to_the_papers_start() {
+        let ch = Izhikevich::chattering();
+        let rhs = |v: f64| 0.04 * v * v + 5.0 * v + 140.0 - ch.b * v;
+        assert!(rhs(-70.0).abs() < 1e-12 && rhs(-50.0).abs() < 1e-12, "the two equilibria");
+        // The old start, stepped undriven: bit for bit where it began, a hundred times over.
+        let mut saddle = Izhikevich { v: ch.c, u: ch.b * ch.c, ..ch };
+        assert_eq!((saddle.v, saddle.u), (-50.0, -10.0));
+        for _ in 0..100 {
+            assert!(!saddle.step(1e-3, 0.0));
+        }
+        assert_eq!((saddle.v, saddle.u), (-50.0, -10.0), "the old start does not move");
+        // The paper's start is not an equilibrium: one step of the paper's 0.5 ms falls 1.5 mV.
+        let mut paper = Izhikevich { substeps: 1, ..ch };
+        assert!(!paper.step(0.5e-3, 0.0));
+        assert_eq!(paper.v, -65.0 - 1.5, "v' = −3 mV/ms at −65 mV with u = −13");
+
+        // Reset, after a drive long enough to fire and to move `u` off `b·v`.
+        for fresh in [Izhikevich::regular_spiking(), Izhikevich::fast_spiking(), ch] {
+            let mut cell = fresh;
+            let mut spikes = 0u32;
+            for _ in 0..200 {
+                spikes += u32::from(cell.step(1e-3, 10e-9));
+            }
+            assert!(spikes > 0, "the drive must fire the cell");
+            assert!(cell.v != fresh.v && cell.u != fresh.u, "the drive must move both variables");
+            cell.reset();
+            assert_eq!((cell.v, cell.u), (fresh.v, fresh.u));
+            assert_eq!((cell.v, cell.u), (-65.0, cell.b * -65.0));
+        }
     }
 
     /// The quadratic is integrated in the paper's HALF-steps, and cut off at its 30 mV.

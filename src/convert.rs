@@ -22,8 +22,10 @@
 //! spiking deep networks through weight and threshold balancing*, IJCNN 2015 — the threshold
 //! balancing and weight normalisation. Rueckauer, Lungu, Hu, Pfeiffer & Liu, *Conversion of
 //! continuous-valued deep networks to efficient event-driven networks for image classification*,
-//! Front. Neurosci. 11:682, 2017 — the percentile-based robust normalisation and the
-//! reset-by-subtraction correction. Everything in this module is one of those two papers, an exact
+//! Front. Neurosci. 11:682, 2017, doi:10.3389/fnins.2017.00682 — the percentile-based robust
+//! normalisation and the reset-by-subtraction correction. Section numbers cited in this module are
+//! the journal version's, not those of its predecessor, arXiv:1612.04052, where the same
+//! conversion rules are §3.1–3.6. Everything in this module is one of those two papers, an exact
 //! consequence of one of them, or a caveat marked as this implementation's own.
 //!
 //! # The equivalence, derived
@@ -90,15 +92,28 @@
 //! ```
 //!
 //! At `z = 0.99` that is `1/2`. **An error of 0.49, and it does not shrink with `T`** — it is a
-//! bias, not a variance, and running longer cannot remove it. Rueckauer et al. (2017) identified
-//! this as the single largest source of conversion loss and replaced the reset with `V <- V - V_th`,
-//! which keeps the overshoot for the next interval. [`Reset`] carries both,
-//! [`Reset::spikes_in`] gives the exact spike count of each in closed form, and
-//! `reset_by_subtraction_beats_reset_to_zero_and_here_is_by_how_much` measures the gap on one
-//! network: **0.00085 versus 0.0418 mean absolute activation error at `T = 512`, a factor of 49**.
-//! Beside that figure, the caveat that gives it its meaning: quadrupling the run to `T = 2048` cuts
-//! the first number and leaves the second where it was, because one is a variance and the other is
-//! a bias. The factor of 49 is not a constant — it grows with `T`.
+//! bias, not a variance, and running longer cannot remove it. Rueckauer et al. (2017, §2.1.1)
+//! derive that lost residual and replace the reset with `V <- V - V_th`, which keeps the overshoot
+//! for the next interval.
+//!
+//! This section used to say they "identified this as the single largest source of conversion
+//! loss". What the paper says is milder. §2.1.1: "For shallow networks and small datasets such as
+//! MNIST, this error seems to be a minor problem but we have found that an accumulation of
+//! approximation errors in deeper layers degrades the classification error rate." Their own
+//! `CIFAR-10` ablation (§3.2, Fig. 2) adds one mechanism at a time. The default conversion scores
+//! 83.50% error, data-based weight normalisation brings it to 40.18%, reset by subtraction to
+//! 20.50% ("another 20% improvement"), analog input to 16.40% and the 99.9th-percentile
+//! normalisation to 12.18%. So the reset switch is the largest single gain among the paper's own
+//! additions, 19.68 points against 4.10 and 4.22, and it is second to normalisation's 43.32
+//! points. This review did not locate a sentence in the paper that ranks reset to zero first among
+//! the sources of loss.
+//!
+//! [`Reset`] carries both, [`Reset::spikes_in`] gives the exact spike count of each in closed
+//! form, and `reset_by_subtraction_beats_reset_to_zero_and_here_is_by_how_much` measures the gap
+//! on one network: **0.00085 versus 0.0418 mean absolute activation error at `T = 512`, a factor
+//! of 49**. Beside that figure, the caveat that gives it its meaning: quadrupling the run to
+//! `T = 2048` cuts the first number and leaves the second where it was, because one is a variance
+//! and the other is a bias. The factor of 49 is not a constant — it grows with `T`.
 //!
 //! # Normalisation: why a trained network cannot be converted as it stands
 //!
@@ -144,9 +159,17 @@
 //! # What this module does NOT do
 //!
 //! - **It does not train.** It converts. Supply an already-trained [`Mlp`].
-//! - **Dense layers only.** Convolutions, average and max pooling, and `BatchNorm` folding are all
-//!   given as conversion rules in Rueckauer et al. (2017) §2.3–2.4; this implementation did not
-//!   attempt them. The dense case carries the whole argument and none of the index arithmetic.
+//! - **Dense layers only.** `BatchNorm` folding (§2.2.3) and spiking max-pooling (§2.2.6) are
+//!   given as conversion rules in Rueckauer et al. (2017). Convolutional layers are covered by the
+//!   general rate theory of §2.1 (Eq. 2, which §2.2.4 applies to kernels), and average pooling is
+//!   the earlier practice of Cao, Chen & Khosla, *Spiking deep convolutional neural networks for
+//!   energy-efficient object recognition*, Int. J. Comput. Vis. 113:54–66 (2015),
+//!   doi:10.1007/s11263-014-0788-3, and of Diehl et al. (2015), which §2.2.6 cites. This
+//!   implementation did not attempt any of them. The dense case carries the whole argument and
+//!   none of the index arithmetic. This item used to say all four were "given as conversion rules
+//!   in Rueckauer et al. (2017) §2.3–2.4". The paper's methods end at §2.3, which is "Counting
+//!   operations", and this review did not locate a dedicated conversion rule in it for
+//!   convolutions or for average pooling.
 //! - **It does not claim conversion is a good deal.** It is a latency-for-accuracy trade, and
 //!   [`SpikingMlp::ledger`] prices it: `a_converted_network_at_realistic_latency_is_refuted_by_
 //!   every_published_crossover` runs the converted network past [`crate::crossover`] and gets
@@ -1052,11 +1075,14 @@ pub fn percentile(values: &mut [f64], p: f64) -> Option<f64> {
 pub enum InputCoding {
     /// A constant current proportional to the input, injected on every tick.
     ///
-    /// Rueckauer et al., Front. Neurosci. 11:682, 2017 §2.5 call this analog input and recommend
-    /// it, and the reason is visible in the exponents: the error falls as `1/T` because the only
-    /// error left is quantisation. The cost is that the first layer is then a dense matrix-vector
-    /// product on EVERY tick — `T` times the `ANN`'s work for that layer — and
-    /// [`SpikingMlp::ledger`] charges for it.
+    /// Rueckauer et al., Front. Neurosci. 11:682, 2017 §2.2.4 call this analog input and recommend
+    /// it over the Poisson coding below, which "introduces variability into the firing of the
+    /// network and impairs its performance. Here, we interpret the analog input activations as
+    /// constant currents." This line used to cite §2.5, but the paper's methods end at §2.3;
+    /// §2.2.4 is "Analog input to first hidden layer". The reason is visible in the exponents: the
+    /// error falls as `1/T` because the only error left is quantisation. The cost is that the
+    /// first layer is then a dense matrix-vector product on EVERY tick — `T` times the `ANN`'s
+    /// work for that layer — and [`SpikingMlp::ledger`] charges for it.
     Analog,
     /// Bernoulli spikes at probability equal to the normalised input, one draw per input per tick.
     /// A normalised input above 1 spikes on every tick, which is the same saturation the rest of

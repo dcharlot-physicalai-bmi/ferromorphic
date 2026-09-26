@@ -111,14 +111,22 @@ pub const DAVIDSON_FURBER_2021: Crossover = Crossover {
 };
 
 /// Dampfhoffer, Mesquida, Valentian and Anghel, *Are SNNs Really More Energy-Efficient Than ANNs?*,
-/// IEEE Transactions on Emerging Topics in Computational Intelligence 7(3):731–741 (2023).
+/// IEEE Transactions on Emerging Topics in Computational Intelligence 7(3):731–741 (2023),
+/// doi:10.1109/tetci.2022.3214509.
 ///
-/// > many previous studies did not consider memory accesses, which account for an important
-/// > fraction of the energy consumption.
+/// > Many studies do not consider memory accesses, which account for an important fraction of the
+/// > energy consumption, use naïve ANN hardware implementations, or lack generality.
 ///
 /// That sentence is the reason [`crate::ledger::Prices`] carries `e_syn_fetch` at all. The paper
 /// finds spiking networks competitive only in the band **0.15 to 1.38 spikes per synapse per
 /// inference**, depending on the architecture assumed.
+///
+/// **Corrected quotation.** This entry used to quote the paper as "many previous studies did not
+/// consider memory accesses, which account for an important fraction of the energy consumption."
+/// That is not the paper's sentence. The words above are its abstract's, as printed in the
+/// accepted version on HAL (cea-03852141), and this review did not locate "many previous studies
+/// did not consider memory accesses" anywhere in that full text. The meaning was right and the
+/// quotation marks were not; no constant or test depended on the wording.
 pub const DAMPFHOFFER_2023: Crossover = Crossover {
     max_spikes_per_synapse: 1.38,
     min_spikes_per_synapse: 0.15,
@@ -128,25 +136,53 @@ pub const DAMPFHOFFER_2023: Crossover = Crossover {
     evidence: Evidence::Derived,
 };
 
-/// Yan, Bai, Tang and Wong (National University of Singapore), arXiv:2409.08290.
+/// Yan, Bai and Wong (National University of Singapore), *Reconsidering the energy efficiency of
+/// spiking neural networks*, arXiv:2409.08290v1 (29 Aug 2024).
 ///
-/// > op-count evaluations neglect critical overheads like comprehensive data movements and memory
-/// > accesses
+/// > However, most SNN works only consider the counting of additions to evaluate energy
+/// > consumption, neglecting other overheads such as memory accesses and data movement operations.
 ///
-/// Under a fair mapping against an equivalent quantised network their spiking model reaches
-/// **0.78x** the energy on a spatial-dataflow architecture and 0.85x on a GPU-like one — a 22%
-/// saving, achieved at **94.19% sparsity** with four timesteps over the nominal. The threshold here
-/// is that sparsity expressed as the complementary spike density, and it is the tightest of the
-/// three.
+/// Their spiking VGG16 (CIFAR-10, T = 6, **94.19% sparsity**) reaches **0.85x** and **0.78x** the
+/// energy of the best-case ANN on classical GPU-like and spatial-dataflow architectures
+/// respectively — at best a 22% saving. The best case is the paper's own framing: "A fair
+/// comparison should involve an ideally optimized ANN", one assumed to have "optimal sparsity and
+/// weight reuse to minimize the DRAM energy". The threshold here is that sparsity expressed as the
+/// complementary spike density, and it is the tightest of the three.
 ///
 /// Worth reading next to any headline in the hundreds: this is what the same comparison looks like
 /// when the data movement is counted.
+///
+/// **Corrected: this entry mixed two versions of one paper.** It used to credit "Yan, Bai, Tang and
+/// Wong", cite the unversioned arXiv:2409.08290, and say the figures were reached "under a fair
+/// mapping against an equivalent quantised network". The figures it pins (0.78x, 0.85x, 94.19%,
+/// T = 6) are v1's. The v1 PDF names three authors, and prints those figures in its Table 5
+/// ("VGG16 92.76 94.19 0.85/0.78 6") and in its conclusion, against "the best-case ANN". Kaiwen
+/// Tang joins the author list from v2 (3 Jul 2025), and so does the equivalent-QNN baseline:
+/// "functionally equivalent QNNs with ⌈log2(T+1)⌉ bits" in v2 to v4, "capacity-matched QNNs" in v5
+/// and v6. This review did not locate 94.19 or 0.78 in the v2 to v6 PDFs. v1's ANN is quantised
+/// during training (its Eq. 2, `Q_T(x) = ⌊x·T⌋/T`) and costed with 8-bit operations (its Table 1),
+/// so the word "quantised" was not foreign to it; "equivalent" was.
+///
+/// The quotation above replaces one that was verbatim in no version. "op-count evaluations neglect
+/// critical overheads like comprehensive data movements and memory accesses" put this review's own
+/// words in front of the v5 and v6 abstract's "neglecting critical overheads like comprehensive
+/// data movements and memory accesses", and set the result beside figures only v1 prints.
+///
+/// The published version is Yan, Bai, Tang and Wong, *Reconsidering the Energy Efficiency of
+/// Spiking Neural Networks Inference from Analytical Perspectives*, IEEE Transactions on
+/// Computer-Aided Design of Integrated Circuits and Systems (2026), doi:10.1109/tcad.2026.3718799.
+/// Its headline is a different figure: in the v6 abstract, a spike rate below 5.7% at T = 5 to
+/// outperform equivalent QNNs. The band below is still v1's figure read as spike density, so the
+/// constants, the `yan-2024` key and the verdicts are unchanged; a band re-derived from the
+/// published version would be a different threshold, not a correction to this one.
 pub const YAN_2024: Crossover = Crossover {
     max_spikes_per_synapse: 0.35,
     min_spikes_per_synapse: 0.06,
-    source: "Yan, Bai, Tang & Wong (NUS), arXiv:2409.08290 — 0.78x energy on spatial dataflow and \
-             0.85x GPU-like, at 94.19% sparsity with T=6, against an equivalent quantised network. \
-             The band here is that sparsity read as spike density across the reported timesteps, so \
+    source: "Yan, Bai & Wong (NUS), arXiv:2409.08290v1 (2024) — spiking VGG16 on CIFAR-10 at \
+             94.19% sparsity with T=6 reaches 0.85x (classical GPU-like) and 0.78x (spatial \
+             dataflow) the energy of the best-case ANN. Those figures are printed in v1 only; \
+             the four-author IEEE TCAD 2026 version does not carry them. The band here is that \
+             sparsity read as spike density across the reported timesteps, so \
              it is this review's reading of their figure rather than a number they print.",
     evidence: Evidence::Derived,
 };
@@ -246,6 +282,22 @@ mod tests {
             );
             assert!(c.min_spikes_per_synapse <= c.max_spikes_per_synapse, "{name} has an inverted band");
             assert!(c.source.len() > 40, "{name} does not cite anything");
+        }
+    }
+
+    /// The Yan figures (0.85x, 0.78x, 94.19%, T=6) are arXiv:2409.08290v1's, 0.78 and 94.19
+    /// appear in no later version, and v1 sets them against its best-case ANN, not an equivalent
+    /// QNN. The source string used to cite the unversioned paper with the later versions' author
+    /// list and baseline, so a reader following it found a paper that does not print the numbers.
+    /// This pins the version and the baseline the numbers belong to.
+    #[test]
+    fn the_yan_source_names_the_version_and_the_baseline_its_figures_come_from() {
+        let s = YAN_2024.source;
+        assert!(s.contains("arXiv:2409.08290v1"), "{s}");
+        assert!(s.contains("best-case ANN"), "{s}");
+        assert!(!s.contains("equivalent quantised"), "{s}");
+        for figure in ["0.85x", "0.78x", "94.19%", "T=6"] {
+            assert!(s.contains(figure), "{figure} is missing from {s}");
         }
     }
 

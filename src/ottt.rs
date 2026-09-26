@@ -9,26 +9,63 @@
 //! learning is hard: the chip would have to store the run before it could learn from it.
 //!
 //! Xiao, Meng, Zhang, He and Lin (*Online training through time for spiking neural networks*,
-//! `NeurIPS` 2022) observe that for the standard spiking layer,
+//! Advances in Neural Information Processing Systems 35:20717-20730 (2022), `arXiv`:2210.04195v2)
+//! compute the gradient forward instead. Their layer has ONE leak, with the reset inside it —
+//! Eq. (2):
+//!
+//! ```text
+//! u_i[t+1] = λ(u_i[t] − V_th s_i[t]) + Σ_j w_ij s_j[t] + b_i          s_i[t+1] = H(u_i[t+1] − V_th)
+//! ```
+//!
+//! Holding the spikes fixed — they "do not apply surrogate derivatives" to the spike's own slope
+//! in the temporal dependency (§4.1), which footnote 3 notes is consistent with implementations
+//! that "detach the neuron reset operation from the computational graph" — the derivative of `u`
+//! with respect to `W` is a single exponential of the presynaptic spikes, which the forward pass
+//! carries along (§4.1, after Eq. (4)):
+//!
+//! ```text
+//! â[t+1] = λ â[t] + s[t+1]          ∇_W L[t] = g_u[t] â[t]ᵀ
+//! ```
+//!
+//! This module applies the same derivation to the current-based layer that
+//! [`crate::surrogate::LifLayer`] runs, which filters the synaptic current as well:
 //!
 //! ```text
 //! I[t] = α I[t−1] + W x[t]        U[t] = β U[t−1] + I[t] − θ s[t−1]        s[t] = Θ(U[t] − θ)
 //! ```
 //!
-//! the derivative of `U[t]` with respect to `W` — holding the spikes fixed — is a FILTER of the
-//! input that the forward pass can carry along:
+//! There the derivative of `U[t]` with respect to `W`, spikes held fixed, is a DOUBLE filter of the
+//! input, one stage per leak:
 //!
 //! ```text
 //! q[t] = α q[t−1] + x[t]          â[t] = β â[t−1] + q[t]          ∂U[t]/∂W_ji = â_i[t]
 //! ```
 //!
-//! so the gradient of a loss that is a sum over steps is `Σ_t (∂L/∂s[t]) σ′(U[t] − θ) â[t]`, and
-//! every term of it is available AT step `t`. The memory is the trace, `n_in` numbers, not
-//! `T × n_in`.
+//! With `α = 0` the current has no memory, `q[t] = x[t]`, and the second stage is the paper's
+//! trace with `λ = β`;
+//! `with_no_synaptic_filter_the_trace_is_the_papers_single_exponential` checks that bit for bit.
+//! Two differences survive the reduction. This layer has no bias `b`. And the paper's reset,
+//! `−λ V_th s[t]` once Eq. (2) is expanded, sits INSIDE the leak, where this layer's `−θ s[t−1]`
+//! sits outside it. Since OTTT drops the reset path, that moves the membrane — so the spikes and
+//! the slope `σ′(U − θ)` — but never the trace.
+//!
+//! So the gradient of a loss that is a sum over steps is `Σ_t (∂L/∂s[t]) σ′(U[t] − θ) â[t]`, and
+//! every term of it is available AT step `t`. The memory is the trace: `2 · n_in` numbers for this
+//! layer's two stages, `n_in` for the paper's one, and never `T × n_in`.
 //!
 //! What this drops is the paths that run through the spikes themselves: the reset `−θ s[t−1]` and,
 //! in a recurrent layer, `V s[t−1]`. This module keeps both switchable so that the exact case and
 //! the approximate one can be told apart, and measures the second rather than asserting it.
+//!
+//! **Correction.** This doc used to say that Xiao et al. "observe that for the standard spiking
+//! layer" the two-leak recursion above holds, and credited them with the `q`/`â` double filter.
+//! Their paper has neither. Its §3.1 considers "a simple current model" with a single leak,
+//! "`λ < 1` is a leaky term (typically taken as `1 − 1/τ_m`)", and no filter on the synaptic
+//! current; its trace is `â^l[t] = Σ_{τ≤t} λ^{t−τ} s^l[τ]`. The authors' released code agrees:
+//! `OnlineLIFNode` in `modules/neuron.py` of `github.com/pkuxmq/OTTT-SNN` updates
+//! `self.v = self.v.detach() * (1 - 1. / self.tau) + x` and tracks
+//! `rate_tracking * (1 - 1. / self.tau) + spike`. The two-leak layer and its double filter are
+//! this crate's generalisation, and correcting the attribution changed no code.
 //!
 //! # Why it is in a neuromorphic crate
 //!
@@ -44,8 +81,13 @@
 //!   for the same weights and input. That is what makes the comparison below a comparison of
 //!   GRADIENTS rather than of two different networks.
 //! - **The trace is a double exponential.** One input spike at step 0 gives
-//!   `â[t] = (α^{t} − β^{t})·α/(α − β)` for `α ≠ β` and `â[t] = t α^{t−1}·α` for `α = β`; checked
-//!   against both closed forms and against the recursion.
+//!   `â[t] = (α^{t+1} − β^{t+1})/(α − β)` for `α ≠ β` and `â[t] = (t + 1) α^t` for `α = β`, so
+//!   `â[0] = 1` — that is [`Online::impulse`] at `t + 1` — checked against both closed forms and
+//!   against the recursion. At `α = 0` it is `β^t`, the paper's single exponential. ⚠ CORRECTED:
+//!   this line used to read `(α^{t} − β^{t})·α/(α − β)` and `t α^{t−1}·α`. Counted as
+//!   [`Online::impulse`] counts `t`, that is a factor `α` too large at every step; counted from
+//!   the input's own step, as the line said, it also gave `â[0] = 0` where the recursion gives
+//!   one.
 //! - **Without the reset path, OTTT IS the gradient.** With `reset: false` and a differentiable
 //!   spike ([`Layer::smooth`]) the online gradient equals central finite differences of the loss
 //!   on every weight — it is not an approximation of the gradient, it is the gradient, computed
@@ -367,14 +409,17 @@ impl Layer {
     }
 }
 
-/// The state OTTT carries between steps: two filters of the input and nothing else.
+/// The state OTTT carries between steps for this module's current-based layer: two filters of the
+/// input and nothing else. The single-leak layer of Xiao et al. needs only the second; the first is
+/// this crate's, for the synaptic current (see the module doc).
 ///
 /// Its size is `2 · n_in`, whatever the run's length — the point of the method.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Online {
-    /// The first filter, `q[t] = α q[t−1] + x[t]`.
+    /// The first filter, `q[t] = α q[t−1] + x[t]`. At `α = 0` it is the input itself.
     pub q: Vec<f64>,
-    /// The second, `â[t] = β â[t−1] + q[t]`: the trace the gradient multiplies.
+    /// The second, `â[t] = β â[t−1] + q[t]`: the trace the gradient multiplies, and at `α = 0`
+    /// the paper's `â[t+1] = λ â[t] + s[t+1]` with `λ = β`.
     pub a: Vec<f64>,
     /// `α`.
     pub alpha: f64,
@@ -420,8 +465,19 @@ impl Online {
         Ok(&self.a)
     }
 
-    /// The trace `t` steps after a single unit input at step zero, in closed form:
-    /// `α(α^t − β^t)/(α − β)`, or `t α^t` when the two decays are equal. `None` before the input.
+    /// The trace at the `t`-th step of a single unit input, the input's own step counted as
+    /// `t = 1`, in closed form: `(α^t − β^t)/(α − β)`, or `t α^{t−1}` when the two decays are equal.
+    /// `None` for `t = 0`, before the input. At `α = 0` it is `β^{t−1}`, the single exponential of
+    /// Xiao et al. with `λ = β`.
+    ///
+    /// ⚠ CORRECTED. This doc used to give `α(α^t − β^t)/(α − β)` and `t α^t`, a factor `α` too
+    /// large against the recursion — [`Online::step`] gives `â = 1` at the input's own step — and
+    /// described `t` as the steps elapsed after the input, one fewer than the code's `t`. The code
+    /// carried the same factor and divided it back out,
+    /// `alpha * (alpha.powi(k) - beta.powi(k)) / (alpha - beta) / alpha`, which is `0/0` at
+    /// `α = 0`: it returned `NaN` at exactly the setting that recovers the paper's trace, and
+    /// returns `β^{t−1}` there now. Elsewhere the two forms differ by rounding alone, at most 2
+    /// ulp over the grid `the_impulse_closed_form_carries_no_factor_of_alpha` sweeps.
     #[must_use]
     pub fn impulse(alpha: f64, beta: f64, t: usize) -> Option<f64> {
         if t == 0 {
@@ -431,7 +487,7 @@ impl Online {
         if alpha == beta {
             Some(f64::from(k) * alpha.powi(k - 1))
         } else {
-            Some(alpha * (alpha.powi(k) - beta.powi(k)) / (alpha - beta) / alpha)
+            Some((alpha.powi(k) - beta.powi(k)) / (alpha - beta))
         }
     }
 }
@@ -553,6 +609,90 @@ mod tests {
         assert!(tr.trace.iter().any(|a| *a > 1.5), "the trace never accumulated anything");
         assert!(Online::new(0, 0.5, 0.5).is_err() && Online::new(2, 1.0, 0.5).is_err() && Online::new(2, 0.5, -0.1).is_err());
         assert!(on.step(&[1.0]).is_err() && on.step(&[f64::NAN, 0.0, 0.0, 0.0, 0.0]).is_err());
+    }
+
+    #[test]
+    fn with_no_synaptic_filter_the_trace_is_the_papers_single_exponential() {
+        // Xiao et al., §4.1 after Eq. (4): `â[t+1] = λ â[t] + s[t+1]`, the recursive form of
+        // `â[t] = Σ_{τ≤t} λ^{t−τ} s[τ]`. At α = 0 this module's double filter must be exactly that
+        // with λ = β. λ = 3/4 and 1/2 keep every partial sum over 24 steps a binary fraction of
+        // at most 48 significant bits, so the comparisons below are equalities, not tolerances.
+        let steps = 24;
+        let spikes = input(steps, 3, 17);
+        let count = spikes.iter().filter(|s| **s == 1.0).count();
+        assert!(count > 12, "only {count} input spikes: the trace would barely be exercised");
+        for lambda in [0.75, 0.5] {
+            let mut on = Online::new(3, 0.0, lambda).unwrap();
+            let mut paper = [0.0f64; 3];
+            for t in 0..steps {
+                let s = &spikes[t * 3..(t + 1) * 3];
+                let a = on.step(s).unwrap().to_vec();
+                assert_eq!(on.q.as_slice(), s, "at α = 0 the first stage is the input itself");
+                for i in 0..3 {
+                    paper[i] = lambda * paper[i] + s[i];
+                    let sum: f64 = (0..=t).map(|tau| lambda.powi(i32::try_from(t - tau).unwrap()) * spikes[tau * 3 + i]).sum();
+                    assert_eq!(a[i], paper[i], "λ={lambda} at {t},{i}: against the recursion");
+                    assert_eq!(a[i], sum, "λ={lambda} at {t},{i}: against the sum");
+                }
+            }
+            // One spike's closed form: `β^{t−1}`, which was `NaN` here before the correction.
+            for t in 1..=24usize {
+                let want = lambda.powi(i32::try_from(t).unwrap() - 1);
+                assert_eq!(Online::impulse(0.0, lambda, t), Some(want), "λ={lambda} at {t}");
+            }
+        }
+        // The trace the layer's forward pass records reduces the same way.
+        let l = Layer::random(3, 2, 1, 0.0, 0.75, 0.5, 1.0, 1.0, 5).unwrap();
+        let tr = l.forward(&FastSigmoid::default(), &spikes).unwrap();
+        let mut paper = [0.0f64; 3];
+        for t in 0..steps {
+            for i in 0..3 {
+                paper[i] = 0.75 * paper[i] + spikes[t * 3 + i];
+                assert_eq!(tr.trace[t * 3 + i], paper[i], "layer trace at {t},{i}");
+            }
+        }
+        assert!(paper.iter().any(|a| *a > 1.0), "the trace never accumulated past one spike: {paper:?}");
+    }
+
+    #[test]
+    fn the_impulse_closed_form_carries_no_factor_of_alpha() {
+        // The form `impulse` had before the correction: the doc's extra `α`, divided back out.
+        let before = |alpha: f64, beta: f64, k: i32| alpha * (alpha.powi(k) - beta.powi(k)) / (alpha - beta) / alpha;
+        let (mut worst_ulp, mut differ, mut nan_before) = (0u64, 0usize, 0usize);
+        for ai in 0..20u8 {
+            for bi in 0..20u8 {
+                if ai == bi {
+                    continue;
+                }
+                let (alpha, beta) = (f64::from(ai) / 20.0, f64::from(bi) / 20.0);
+                let (mut q, mut a) = (0.0f64, 0.0f64);
+                for k in 1..=40i32 {
+                    q = alpha * q + f64::from(u8::from(k == 1));
+                    a = beta * a + q;
+                    let now = Online::impulse(alpha, beta, usize::try_from(k).unwrap()).unwrap();
+                    // MEASURED: the worst gap to the recursion on this grid is 2.1e-15.
+                    assert!((now - a).abs() < 1e-14 * a.abs().max(1.0), "α={alpha} β={beta} k={k}: {now} against {a}");
+                    let old = before(alpha, beta, k);
+                    if ai == 0 {
+                        assert!(old.is_nan(), "α=0 β={beta} k={k}: the old form gave {old}");
+                        nan_before += 1;
+                    } else {
+                        let gap = now.to_bits().abs_diff(old.to_bits());
+                        differ += usize::from(gap > 0);
+                        worst_ulp = worst_ulp.max(gap);
+                    }
+                }
+            }
+        }
+        // 19 values of β at α = 0, 40 steps each: every one of them was NaN.
+        assert_eq!(nan_before, 19 * 40);
+        // Elsewhere the correction is rounding, and the sweep did see rounding.
+        assert!(worst_ulp <= 2 && differ > 0, "worst {worst_ulp} ulp, {differ} values differ");
+        // The step the input arrives on is one, whatever the decays — not α, which the old doc gave.
+        assert_eq!(Online::impulse(0.5, 0.25, 1), Some(1.0));
+        assert_eq!(Online::impulse(0.5, 0.5, 1), Some(1.0));
+        assert_eq!(Online::impulse(0.5, 0.25, 2), Some(0.75));
+        assert_eq!(Online::impulse(0.5, 0.5, 2), Some(1.0));
     }
 
     /// Central finite differences of the loss on every input weight.

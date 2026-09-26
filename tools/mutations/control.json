@@ -496,6 +496,66 @@
   "new": "        Some(TAU * (self.tau_r * self.tau_a / det))"
  },
  {
+  "label": "the 2011 period accepts a non-positive mutual inhibition",
+  "old": "        if !(num > 0.0 && den > 0.0 && self.w < 1.0 + self.beta) {",
+  "new": "        if !(den > 0.0 && self.w < 1.0 + self.beta) {"
+ },
+ {
+  "label": "the 2011 period accepts w = 0 exactly",
+  "old": "        if !(num > 0.0 && den > 0.0 && self.w < 1.0 + self.beta) {",
+  "new": "        if !(num >= 0.0 && den > 0.0 && self.w < 1.0 + self.beta) {"
+ },
+ {
+  "label": "the 2011 period accepts a non-positive radicand denominator",
+  "old": "        if !(num > 0.0 && den > 0.0 && self.w < 1.0 + self.beta) {",
+  "new": "        if !(num > 0.0 && self.w < 1.0 + self.beta) {"
+ },
+ {
+  "label": "the 2011 period accepts a zero radicand denominator",
+  "old": "        if !(num > 0.0 && den > 0.0 && self.w < 1.0 + self.beta) {",
+  "new": "        if !(num > 0.0 && den >= 0.0 && self.w < 1.0 + self.beta) {"
+ },
+ {
+  "label": "the 2011 period is reported for a winner-take-all pair",
+  "old": "        if !(num > 0.0 && den > 0.0 && self.w < 1.0 + self.beta) {",
+  "new": "        if !(num > 0.0 && den > 0.0) {"
+ },
+ {
+  "label": "the 2011 period is reported at w = 1 + beta exactly",
+  "old": "        if !(num > 0.0 && den > 0.0 && self.w < 1.0 + self.beta) {",
+  "new": "        if !(num > 0.0 && den > 0.0 && self.w <= 1.0 + self.beta) {"
+ },
+ {
+  "label": "the 2011 period's numerator uses the adaptation time constant",
+  "old": "        let num = self.tau_r * self.w;",
+  "new": "        let num = self.tau_a * self.w;"
+ },
+ {
+  "label": "the 2011 period drops tau_r from the adaptation term",
+  "old": "        let den = (self.tau_r + self.tau_a) * self.beta - num;",
+  "new": "        let den = self.tau_a * self.beta - num;"
+ },
+ {
+  "label": "the 2011 period adds the inhibition term to its denominator",
+  "old": "        let den = (self.tau_r + self.tau_a) * self.beta - num;",
+  "new": "        let den = (self.tau_r + self.tau_a) * self.beta + num;"
+ },
+ {
+  "label": "the 2011 period's prefactor is the membrane time constant",
+  "old": "        Some(TAU * self.tau_a * (num / den).sqrt())",
+  "new": "        Some(TAU * self.tau_r * (num / den).sqrt())"
+ },
+ {
+  "label": "the 2011 period drops its square root",
+  "old": "        Some(TAU * self.tau_a * (num / den).sqrt())",
+  "new": "        Some(TAU * self.tau_a * (num / den))"
+ },
+ {
+  "label": "the 2011 period inverts its radicand",
+  "old": "        Some(TAU * self.tau_a * (num / den).sqrt())",
+  "new": "        Some(TAU * self.tau_a * (den / num).sqrt())"
+ },
+ {
   "label": "the oscillation predicate drops its upper bound",
   "old": "        self.w > self.onset_threshold() && self.w < 1.0 + self.beta",
   "new": "        self.w > self.onset_threshold()"

@@ -63,9 +63,11 @@
 //! # Trains
 //!
 //! Every train is strictly increasing, finite, and inside the window it is measured over. A repeated
-//! spike time is refused rather than merged — `PySpike` silently drops duplicates, and spikes up to
-//! 10⁻⁶ outside the window whatever the time unit — because a duplicate is a recording artefact the
-//! caller should see.
+//! spike time is refused rather than merged — `PySpike` 0.9.0 silently drops duplicates, drops every
+//! spike more than 10⁻⁶ outside the window and KEEPS one less than 10⁻⁶ outside it, whatever the time
+//! unit (`reconcile_spike_trains`, `Eps = 1e-6`; for a population the window runs from the earliest
+//! start to the latest end) — because a duplicate is a recording artefact the caller should see.
+//! Earlier releases said it dropped the spikes within 10⁻⁶; it keeps them.
 
 use core::fmt;
 

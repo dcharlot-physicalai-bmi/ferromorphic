@@ -138,8 +138,12 @@
 //!   wire-resistance treatment.
 //! * Sebastian, Le Gallo, Khaddam-Aljameh and Eleftheriou, *Memory devices and applications for
 //!   in-memory computing*, Nature Nanotechnology 15:529-544, 2020.
-//! * Yu, *Neuro-inspired computing with emerging nonvolatile memories*, Proceedings of the IEEE
-//!   106(2):260-285, 2018 — the finite-state-count limit.
+//! * Yu, *Neuro-Inspired Computing With Emerging Nonvolatile Memorys* (sic), Proceedings of the
+//!   IEEE 106(2):260-285, 2018, doi:10.1109/JPROC.2018.2790840 — the finite-state-count limit.
+//!   The title is spelled as Crossref and Semantic Scholar register it, misspelling included. This
+//!   entry used to read *Neuro-inspired computing with emerging nonvolatile memories*, a silent
+//!   normalisation of that title; the DOI is what makes the work findable under either spelling.
+//!   This review did not check the heading printed on the paper itself.
 //! * Prezioso, Merrikh-Bayat, Hoskins, Adam, Likharev and Strukov, *Training and operation of an
 //!   integrated neuromorphic network based on metal-oxide memristors*, Nature 521:61-64, 2015;
 //!   Ambrogio et al., *Equivalent-accuracy accelerated neural-network training using analogue
@@ -148,9 +152,13 @@
 //!   and the accuracy they actually reach.
 //! * Joshi et al., *Accurate deep neural network inference using computational phase-change
 //!   memory*, Nature Communications 11:2473, 2020 — drift compensation in practice.
-//! * Chen, Lin, Li et al., *Accelerator-friendly neural-network training: learning variations and
-//!   defects in RRAM crossbar*, DATE 2017 — the stuck-at fault model and the rates that motivate
-//!   [`RRAM_STUCK_AT_PLACEHOLDER`].
+//! * Chen, Li, Chen et al., *Accelerator-friendly neural-network training: Learning variations and
+//!   defects in RRAM crossbar*, DATE 2017, pp. 19-24, doi:10.23919/DATE.2017.7926952 — the
+//!   stuck-at fault model and the rates that motivate [`RRAM_STUCK_AT_PLACEHOLDER`]. ⛔ This entry,
+//!   that constant's doc and its runtime `source` string used to name the authors "Chen, Lin, Li
+//!   et al.". No author of the paper is named Lin: the byline Crossref and Semantic Scholar
+//!   register is Lerong Chen, Jiawen Li, Yiran Chen, Qiuping Deng, Jiyuan Shen, Xiaoyao Liang and
+//!   Li Jiang, in that order.
 //!
 //! ⚠ **The list above is a reading list, not a provenance chain.** It names where each mechanism
 //! comes from; it does not assert that this review opened each document and read the figure out of
@@ -1599,9 +1607,16 @@ pub const RRAM_VARIABILITY_PLACEHOLDER: Variability = Variability {
 /// A placeholder stuck-at rate for an immature resistive array.
 ///
 /// ⛔ **A placeholder, on the same terms as [`RRAM_VARIABILITY_PLACEHOLDER`].** Fault rates around
-/// ten percent motivate the fault-tolerant training literature — Chen, Lin, Li et al., DATE 2017 is
-/// the usual entry point — and the rate is a property of a particular array at a particular
-/// maturity, so it varies by orders of magnitude between a research wafer and a product.
+/// ten percent motivate the fault-tolerant training literature — Chen, Li, Chen et al., DATE 2017,
+/// doi:10.23919/DATE.2017.7926952, is the usual entry point — and the rate is a property of a
+/// particular array at a particular maturity, so it varies by orders of magnitude between a
+/// research wafer and a product.
+///
+/// ⚠ **The byline in [`StuckAt::source`] changed.** This doc and the string below used to cite
+/// "Chen, Lin, Li et al."; the paper has no author named Lin (the module's reading list gives the
+/// registered byline). The string is a runtime value, so a caller who printed or logged it carried
+/// the wrong byline; `the_same_seed_gives_the_same_array_and_the_weakest_grade_wins` now pins the
+/// corrected one and the DOI. No number in this constant changed.
 ///
 /// ⛔ **The citation covers the mechanism and the order of magnitude. It does not cover
 /// [`StuckAt::p_at_on`].** The half-and-half split is a convention of this crate: the two failure
@@ -1615,7 +1630,8 @@ pub const RRAM_STUCK_AT_PLACEHOLDER: StuckAt = StuckAt {
     rate: 0.10,
     p_at_on: 0.5,
     source: "PLACEHOLDER, not a measurement: 10% of devices stuck, split evenly between rails. \
-             Motivated by the fault-tolerance literature (Chen, Lin, Li et al., DATE 2017); the \
+             Motivated by the fault-tolerance literature (Chen, Li, Chen et al., DATE 2017, \
+             doi:10.23919/DATE.2017.7926952); the \
              split is this crate's convention. Replace with your array's measured map.",
     evidence: Evidence::Projected,
 };
@@ -5021,6 +5037,16 @@ mod tests {
         // change to it visible, in either direction.
         assert_eq!(RRAM_STUCK_AT_PLACEHOLDER.p_at_on, 0.5);
         assert!(RRAM_STUCK_AT_PLACEHOLDER.source.contains("convention"));
+        // The string's citation against the paper's registered byline. It used to read "Chen, Lin,
+        // Li et al."; the DATE 2017 paper at this DOI is by Lerong Chen, Jiawen Li, Yiran Chen,
+        // Qiuping Deng, Jiyuan Shen, Xiaoyao Liang and Li Jiang, and no author is named Lin. The
+        // string is what a caller prints, so the byline is checked where it is emitted.
+        assert!(
+            RRAM_STUCK_AT_PLACEHOLDER.source.contains("(Chen, Li, Chen et al., DATE 2017, "),
+            "{}",
+            RRAM_STUCK_AT_PLACEHOLDER.source
+        );
+        assert!(RRAM_STUCK_AT_PLACEHOLDER.source.contains("doi:10.23919/DATE.2017.7926952"));
         assert_eq!(THERMAL_READ_NOISE_300K.temp_k, 300.0);
         assert_eq!(THERMAL_READ_NOISE_300K.bandwidth_hz, 1e6);
         assert_eq!(THERMAL_READ_NOISE_300K.sigma_rel, 0.0);

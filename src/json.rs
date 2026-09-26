@@ -7,20 +7,44 @@
 //!
 //! # What "strict" means here
 //!
-//! RFC 8259, and nothing it does not allow:
+//! A subset of RFC 8259: T. Bray (ed.), *The JavaScript Object Notation (JSON) Data Interchange
+//! Format*, IETF RFC 8259, STD 90 (2017), doi:10.17487/RFC8259. The reader accepts no text the
+//! RFC's grammar does not allow, and it refuses four kinds of text the grammar does allow. §9
+//! requires that "A JSON parser MUST accept all texts that conform to the JSON grammar", and then
+//! lets it limit three of the four: "An implementation may set limits on the maximum depth of
+//! nesting. An implementation may set limits on the range and precision of numbers. An
+//! implementation may set limits on the length and character contents of strings." The fourth, a
+//! repeated key, the grammar allows and §4 advises against ("The names within an object SHOULD be
+//! unique"). Each rule below says whether it is the RFC's or a limit of this reader's; a text
+//! refused under a limit is still JSON by the grammar, and this reader does not read it.
 //!
-//! - numbers are `-?(0|[1-9][0-9]*)(.[0-9]+)?([eE][+-]?[0-9]+)?` and are converted by Rust's
-//!   correctly rounded `str::parse::<f64>`, so a value written by Python's shortest-round-trip
-//!   `repr` comes back to the same bits;
-//! - ⚠ `NaN`, `Infinity` and `-Infinity` are refused. Python's `json.dumps` WRITES them by default
-//!   for non-finite floats, so a file that contains them is not JSON, and a reader that quietly
-//!   accepts them is how a NaN parameter enters a model as though it had been fitted;
-//! - a duplicated key in one object is refused. The RFC leaves its meaning to the implementation,
-//!   and implementations disagree — first wins in some, last in others — so a file with one has no
-//!   single meaning to read;
-//! - strings must be valid: every escape is one the RFC lists, `\u` surrogates come in pairs, and
-//!   raw control characters are refused;
-//! - nesting deeper than [`MAX_DEPTH`] is refused rather than allowed to exhaust the stack.
+//! - numbers are `-?(0|[1-9][0-9]*)(.[0-9]+)?([eE][+-]?[0-9]+)?`, the RFC's grammar (§6), and are
+//!   converted by Rust's correctly rounded `str::parse::<f64>`, so a value written by Python's
+//!   shortest-round-trip `repr` comes back to the same bits. A number too large for `f64`, such as
+//!   `1e400`, is grammatical and refused: a limit on range;
+//! - ⚠ `NaN`, `Infinity` and `-Infinity` are refused, by the RFC's rule (§6: "Numeric values that
+//!   cannot be represented in the grammar below (such as Infinity and NaN) are not permitted").
+//!   Python's `json.dumps` WRITES them by default for non-finite floats, so a file that contains
+//!   them is not JSON, and a reader that quietly accepts them is how a NaN parameter enters a model
+//!   as though it had been fitted;
+//! - a duplicated key in one object is refused, a limit of this reader's. The RFC leaves its
+//!   meaning to the implementation, and implementations disagree — first wins in some, last in
+//!   others — so a file with one has no single meaning to read;
+//! - every escape is one the RFC lists, and a raw control character is refused: both the RFC's
+//!   rules (§7: "the characters that MUST be escaped: quotation mark, reverse solidus, and the
+//!   control characters (U+0000 through U+001F)");
+//! - a `\u` surrogate must be paired, a limit of this reader's and not an RFC rule. §8.2: "the ABNF
+//!   in this specification allows member names and string values to contain bit sequences that
+//!   cannot encode Unicode characters; for example, `"\uDEAD"` (a single unpaired UTF-16
+//!   surrogate)", and the behaviour of software receiving one "is unpredictable". A Rust `String`
+//!   cannot hold a lone surrogate, so it is refused rather than replaced;
+//! - nesting deeper than [`MAX_DEPTH`] is refused rather than allowed to exhaust the stack, a
+//!   limit on depth.
+//!
+//! This header used to open "RFC 8259, and nothing it does not allow" and list "`\u` surrogates
+//! come in pairs" among the string rules, beside the RFC's escape list, as though the RFC required
+//! the pairing. It does not (§8.2, quoted above). The reader's behaviour is unchanged: the refusal
+//! was always this crate's limit, and it is now attributed as one.
 //!
 //! An object keeps its members in file order.
 

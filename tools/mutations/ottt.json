@@ -145,9 +145,24 @@
   "new": "        checked(\"gradient\""
  },
  {
-  "label": "the impulse closed form drops the alpha factor",
-  "old": "            Some(alpha * (alpha.powi(k) - beta.powi(k)) / (alpha - beta) / alpha)",
+  "label": "the impulse closed form carries the old doc's extra factor of alpha",
+  "old": "            Some((alpha.powi(k) - beta.powi(k)) / (alpha - beta))",
   "new": "            Some(alpha * (alpha.powi(k) - beta.powi(k)) / (alpha - beta))"
+ },
+ {
+  "label": "the impulse closed form divides the old factor back out, NaN at alpha = 0",
+  "old": "            Some((alpha.powi(k) - beta.powi(k)) / (alpha - beta))",
+  "new": "            Some(alpha * (alpha.powi(k) - beta.powi(k)) / (alpha - beta) / alpha)"
+ },
+ {
+  "label": "the impulse closed form's denominator has its sign flipped",
+  "old": "            Some((alpha.powi(k) - beta.powi(k)) / (alpha - beta))",
+  "new": "            Some((alpha.powi(k) - beta.powi(k)) / (beta - alpha))"
+ },
+ {
+  "label": "the impulse closed form is off by one step",
+  "old": "            Some((alpha.powi(k) - beta.powi(k)) / (alpha - beta))",
+  "new": "            Some((alpha.powi(k + 1) - beta.powi(k + 1)) / (alpha - beta))"
  },
  {
   "label": "the impulse's equal-decay branch is off by one",

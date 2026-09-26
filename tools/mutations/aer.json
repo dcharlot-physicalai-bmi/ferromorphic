@@ -85,9 +85,9 @@
   "new": "        p_shift: 0,\n        p_on_is_one: true,"
  },
  {
-  "label": "the davis346 column is counted from the right edge",
-  "old": "        x_shift: 12,\n        x_bits: 10,\n        x_invert: false,",
-  "new": "        x_shift: 12,\n        x_bits: 10,\n        x_invert: true,"
+  "label": "the davis346 column is not mirrored, which is the image jaer draws turned left to right",
+  "old": "        x_shift: 12,\n        x_bits: 10,\n        x_invert: true,",
+  "new": "        x_shift: 12,\n        x_bits: 10,\n        x_invert: false,"
  },
  {
   "label": "the davis346 preset is a pixel narrower than the sensor it names",
@@ -106,13 +106,13 @@
  },
  {
   "label": "the column inversion is applied when writing but not when reading",
-  "old": "        let v = if invert { m - raw } else { raw };",
+  "old": "        let v = if invert { Self::pivot(m, dim) - raw } else { raw };",
   "new": "        let v = if invert { raw } else { raw };"
  },
  {
-  "label": "an inverted column is written one place above the top of its field",
-  "old": "        let raw = if invert { m.saturating_sub(u32::from(v)) } else { u32::from(v) };",
-  "new": "        let raw = if invert { (m + 1).saturating_sub(u32::from(v)) } else { u32::from(v) };"
+  "label": "an inverted column is written one place past the edge it is mirrored about",
+  "old": "        let raw = if invert { Self::pivot(m, dim).saturating_sub(u32::from(v)) } else { u32::from(v) };",
+  "new": "        let raw = if invert { (Self::pivot(m, dim) + 1).saturating_sub(u32::from(v)) } else { u32::from(v) };"
  },
  {
   "label": "a coordinate field too wide for a u16 is accepted by the decoder",
@@ -191,8 +191,8 @@
  },
  {
   "label": "a decoded column is range-checked against the sensor's height",
-  "old": "            if layout.width != 0 && x >= layout.width {",
-  "new": "            if layout.height != 0 && x >= layout.width {"
+  "old": "                .get(addr, layout.x_shift, layout.x_bits, layout.x_invert, layout.width)",
+  "new": "                .get(addr, layout.x_shift, layout.x_bits, layout.x_invert, layout.height)"
  },
  {
   "label": "the polarity bit is read from the bottom of the row field",
@@ -253,7 +253,7 @@
   "label": "an eight-wide vector mask is read as twelve bits",
   "old": "                        (8u16, payload & 0x00FF)",
   "new": "                        (8u16, payload)",
-  "equivalent": "In this match arm `mask` is read in exactly one place -- `mask & (1 << k)` inside `for k in 0..width` -- and for a VECT_8 word `width` is 8, so only bits 0..=7 are ever tested. `payload & 0x00FF` equals `payload` on bits 0..=7 by definition of the AND and differs only on bits 8..=11, which the loop never reaches; `width` and the advance of `vect_base` are computed from `code`, not from `mask`, and nothing after the tuple reads `payload` again. So for every 16-bit input word the two expressions give the same loop outcomes and therefore the same events, markers, errors and offsets: no input could tell them apart. The observable decision a test could pin instead is a different one -- refusing a VECT_8 whose unused bits 11-8 are set -- and this review did not locate a statement that those bits are guaranteed zero on the wire, so making the decoder refuse real Prophesee recordings on that guess is the change this module declines elsewhere (see the special_mask note on Aedat2Layout::DAVIS346)."
+  "equivalent": "In this match arm `mask` is read in exactly one place -- `mask & (1 << k)` inside `for k in 0..width` -- and for a VECT_8 word `width` is 8, so only bits 0..=7 are ever tested. `payload & 0x00FF` equals `payload` on bits 0..=7 by definition of the AND and differs only on bits 8..=11, which the loop never reaches; `width` and the advance of `vect_base` are computed from `code`, not from `mask`, and nothing after the tuple reads `payload` again. So for every 16-bit input word the two expressions give the same loop outcomes and therefore the same events, markers, errors and offsets: no input could tell them apart. The observable decision a test could pin instead is a different one -- refusing a VECT_8 whose unused bits 11-8 are set -- and this review did not locate a statement that those bits are guaranteed zero on the wire, so making the decoder refuse real Prophesee recordings on that guess is a change this module makes only on a source's word (Aedat2Layout::DAVIS346 masks its bit 10 because jAER's DavisChip.java and iniVation's AEDAT 2.0 page both say what that bit is; this review located nothing that says what bits 11-8 of a VECT_8 are). Fixture, built and run for the 2026-09 aer correction: two slim copies of the crate, one unmutated and one with this edit, decode every VECT_8 word (all 4096 payloads) alone, after a row with no base, and after a row and each VECT_BASE_X column 0..=2047 of both polarities followed by a VECT_12 of all ones, comparing the Debug text of the two results: 16,785,408 streams, 0 disagreements. The same fixture against a mutant masking with 0x007F instead reports 8,318,912 disagreements, so it can fail."
  },
  {
   "label": "a vector mask bit implying a column past the sensor is decoded rather than refused",
@@ -367,8 +367,8 @@
  },
  {
   "label": "the flatbuffers vtable is found by adding the signed offset rather than subtracting it",
-  "old": "        let vtable = i64::try_from(root).map_err(|_| bad(\"vtable\"))? - i64::from(soffset);",
-  "new": "        let vtable = i64::try_from(root).map_err(|_| bad(\"vtable\"))? + i64::from(soffset);"
+  "old": "        let vtable = i64::try_from(table).map_err(|_| self.bad(\"vtable\"))? - i64::from(soffset);",
+  "new": "        let vtable = i64::try_from(table).map_err(|_| self.bad(\"vtable\"))? + i64::from(soffset);"
  },
  {
   "label": "the first element of the vector is read where its count is",
@@ -382,8 +382,8 @@
  },
  {
   "label": "an aedat4 event's row is read from the column's two bytes",
-  "old": "            let sy = u16_le(p, at + 10).map_err(|_| bad(\"vector\"))? as i16;",
-  "new": "            let sy = u16_le(p, at + 8).map_err(|_| bad(\"vector\"))? as i16;"
+  "old": "            let sy = u16_le(p, at + 10).map_err(|_| fb.bad(\"vector\"))? as i16;",
+  "new": "            let sy = u16_le(p, at + 8).map_err(|_| fb.bad(\"vector\"))? as i16;"
  },
  {
   "label": "a coordinate of minus one passes the signed-field check",
@@ -411,9 +411,9 @@
   "new": "                    EncodeError::FieldOutOfRange { index, field, value, max }"
  },
  {
-  "label": "a file with no format line is assumed to be lz4",
-  "old": "            .map_or(Aedat4Compression::Raw, |v| Aedat4Compression::parse(v.trim()));",
-  "new": "            .map_or(Aedat4Compression::Lz4, |v| Aedat4Compression::parse(v.trim()));"
+  "label": "an ioheader that does not record its compression is assumed to be lz4",
+  "old": "            None => Aedat4Compression::None,\n        };",
+  "new": "            None => Aedat4Compression::Lz4,\n        };"
  },
  {
   "label": "the tick index rounds up rather than down",
@@ -469,5 +469,260 @@
   "label": "the byte offset of a label line does not count the line terminators before it",
   "old": "        at += line.len() + 1;",
   "new": "        at += line.len();"
+ },
+ {
+  "label": "the davis346 row counts from the bottom edge, as the wire does",
+  "old": "        y_shift: 22,\n        y_bits: 9,\n        y_invert: true,",
+  "new": "        y_shift: 22,\n        y_bits: 9,\n        y_invert: false,"
+ },
+ {
+  "label": "the dvs128 row counts from the bottom edge, as the wire does",
+  "old": "        y_shift: 8,\n        y_bits: 7,\n        y_invert: true,",
+  "new": "        y_shift: 8,\n        y_bits: 7,\n        y_invert: false,"
+ },
+ {
+  "label": "the davis346 external-input bit is left out of the special mask, so a trigger decodes as a pixel",
+  "old": "        special_mask: (1 << 31) | (1 << 10),",
+  "new": "        special_mask: 1 << 31,"
+ },
+ {
+  "label": "the davis346 external-input bit is not a trigger bit",
+  "old": "        trigger_mask: 1 << 10,",
+  "new": "        trigger_mask: 0,"
+ },
+ {
+  "label": "every dvs128 special bit is taken for a trigger",
+  "old": "        special_mask: !0x7FFF,\n        trigger_mask: 0,",
+  "new": "        special_mask: !0x7FFF,\n        trigger_mask: !0,"
+ },
+ {
+  "label": "a word setting a trigger bit is a trigger whatever other special bit it sets",
+  "old": "                let kind = if addr & layout.special_mask & !layout.trigger_mask == 0 {",
+  "new": "                let kind = if addr & layout.trigger_mask != 0 {"
+ },
+ {
+  "label": "the bits outside the special mask decide whether a marker is a trigger",
+  "old": "                let kind = if addr & layout.special_mask & !layout.trigger_mask == 0 {",
+  "new": "                let kind = if addr & !layout.trigger_mask == 0 {"
+ },
+ {
+  "label": "an inverted field is mirrored one past the last column of the sensor",
+  "old": "        if dim == 0 { m } else { u32::from(dim) - 1 }",
+  "new": "        if dim == 0 { m } else { u32::from(dim) }"
+ },
+ {
+  "label": "an inverted field is mirrored about the top of the field, as through 0.22.0",
+  "old": "        if dim == 0 { m } else { u32::from(dim) - 1 }",
+  "new": "        if dim == 0 { m } else { m }"
+ },
+ {
+  "label": "a layout stating no geometry mirrors about zero",
+  "old": "        if dim == 0 { m } else { u32::from(dim) - 1 }",
+  "new": "        if dim == 0 { 0 } else { u32::from(dim) - 1 }"
+ },
+ {
+  "label": "a raw field one past the last column is accepted",
+  "old": "        if dim != 0 && raw >= u32::from(dim) {",
+  "new": "        if dim != 0 && raw > u32::from(dim) {"
+ },
+ {
+  "label": "a field past the sensor reports the width as the largest value allowed",
+  "old": "            return Err((raw, u32::from(dim) - 1));",
+  "new": "            return Err((raw, u32::from(dim)));"
+ },
+ {
+  "label": "a mirror about an edge the field can hold exactly is refused",
+  "old": "            .find(|&(invert, dim, span, _)| invert && u64::from(dim) > u64::from(span) + 1)",
+  "new": "            .find(|&(invert, dim, span, _)| invert && u64::from(dim) >= u64::from(span) + 1)"
+ },
+ {
+  "label": "an unmirrored field is refused for a width it cannot reach",
+  "old": "            .find(|&(invert, dim, span, _)| invert && u64::from(dim) > u64::from(span) + 1)",
+  "new": "            .find(|&(_invert, dim, span, _)| u64::from(dim) > u64::from(span) + 1)"
+ },
+ {
+  "label": "the decoder does not refuse a mirror about an edge its field cannot hold",
+  "old": "        if let Some((field, value, max)) = self.mirror_fault() {\n            return Err(DecodeError::FieldOutOfRange { offset: 0, field, value, max });",
+  "new": "        if let Some((field, value, max)) = None::<(&str, u64, u64)> {\n            return Err(DecodeError::FieldOutOfRange { offset: 0, field, value, max });"
+ },
+ {
+  "label": "the encoder does not refuse a mirror about an edge its field cannot hold",
+  "old": "        if let Some((field, value, max)) = layout.mirror_fault() {\n            return Err(EncodeError::FieldOutOfRange { index: 0, field, value, max });",
+  "new": "        if let Some((field, value, max)) = None::<(&str, u64, u64)> {\n            return Err(EncodeError::FieldOutOfRange { index: 0, field, value, max });"
+ },
+ {
+  "label": "the aedat4 version line loses its line terminator",
+  "old": "    pub const MAGIC: &'static str = \"#!AER-DAT4.0\\r\\n\";",
+  "new": "    pub const MAGIC: &'static str = \"#!AER-DAT4.0\";"
+ },
+ {
+  "label": "a file cut inside the version line is read on as if the line were whole",
+  "old": "        slice_at(bytes, 0, magic.len())?;\n        let mut at = magic.len();",
+  "new": "        let mut at = magic.len();"
+ },
+ {
+  "label": "the ioheader's offsets are reported from the start of the file rather than of the ioheader",
+  "old": "        let (compression, table_at) = Self::read_io_header(&io_header, at)?;",
+  "new": "        let (compression, table_at) = Self::read_io_header(&io_header, 0)?;"
+ },
+ {
+  "label": "a data table position at the very end of the file is refused",
+  "old": "            Some(p) => usize::try_from(p).ok().filter(|p| (at..=bytes.len()).contains(p)).ok_or(",
+  "new": "            Some(p) => usize::try_from(p).ok().filter(|p| (at..bytes.len()).contains(p)).ok_or("
+ },
+ {
+  "label": "a data table position inside the ioheader is accepted",
+  "old": "            Some(p) => usize::try_from(p).ok().filter(|p| (at..=bytes.len()).contains(p)).ok_or(",
+  "new": "            Some(p) => usize::try_from(p).ok().filter(|p| (0..=bytes.len()).contains(p)).ok_or("
+ },
+ {
+  "label": "the packets are read to the end of the file, through the data table",
+  "old": "        while at < end {",
+  "new": "        while at < bytes.len() {"
+ },
+ {
+  "label": "the data table is dropped at decode",
+  "old": "        Ok(Self { compression, io_header, packets, data_table: bytes[end..].to_vec() })",
+  "new": "        Ok(Self { compression, io_header, packets, data_table: Vec::new() })"
+ },
+ {
+  "label": "the compression enum reads lz4 for lz4_high",
+  "old": "            2 => Self::Lz4High,\n            3 => Self::Zstd,",
+  "new": "            2 => Self::Lz4,\n            3 => Self::Zstd,"
+ },
+ {
+  "label": "zstd and zstd_high are read the other way round",
+  "old": "            3 => Self::Zstd,\n            4 => Self::ZstdHigh,\n            other => Self::Other(other),",
+  "new": "            3 => Self::ZstdHigh,\n            4 => Self::Zstd,\n            other => Self::Other(other),"
+ },
+ {
+  "label": "lz4_high is stored as the number zstd has",
+  "old": "            Self::Lz4High => 2,",
+  "new": "            Self::Lz4High => 3,"
+ },
+ {
+  "label": "zstd_high is named as zstd",
+  "old": "            Self::ZstdHigh => Some(\"ZSTD_HIGH\"),",
+  "new": "            Self::ZstdHigh => Some(\"ZSTD\"),"
+ },
+ {
+  "label": "an undefined compression is refused with no name at all",
+  "old": "        self.name().map_or_else(|| format!(\"compression type {}\", self.code()), str::to_string)",
+  "new": "        self.name().map_or_else(String::new, str::to_string)"
+ },
+ {
+  "label": "the data table position keeps only its low four bytes",
+  "old": "                (lo | (hi << 32)) as i64",
+  "new": "                lo as i64"
+ },
+ {
+  "label": "a data table position of -1 is taken for a real position",
+  "old": "        if position == -1 {\n            return Ok((compression, None));",
+  "new": "        if position == -2 {\n            return Ok((compression, None));"
+ },
+ {
+  "label": "the data table position is read from the ioheader's third field",
+  "old": "        let position = match fb.field(root, 1)? {",
+  "new": "        let position = match fb.field(root, 2)? {"
+ },
+ {
+  "label": "a vtable one slot too short is read past its end",
+  "old": "        if vt_len < slot + 2 {",
+  "new": "        if vt_len < slot {"
+ },
+ {
+  "label": "a vtable entry of zero is followed to the table itself",
+  "old": "        if within == 0 {\n            return Ok(None);\n        }",
+  "new": "        if false {\n            return Ok(None);\n        }"
+ },
+ {
+  "label": "a window ending exactly at the end of a buffer is refused",
+  "old": "        let end = at.checked_add(n).filter(|&e| e <= len).ok_or(self.bad(what))?;",
+  "new": "        let end = at.checked_add(n).filter(|&e| e < len).ok_or(self.bad(what))?;"
+ },
+ {
+  "label": "the flatbuffers identifier is never compared",
+  "old": "        if found != want.as_bytes() {",
+  "new": "        if false {"
+ },
+ {
+  "label": "a wrong identifier is reported at the start of its buffer",
+  "old": "                offset: self.base.saturating_add(i),",
+  "new": "                offset: self.base,"
+ },
+ {
+  "label": "an event packet whose size prefix overstates its bytes is read",
+  "old": "        if prefix != len - 4 {",
+  "new": "        if prefix > len - 4 {"
+ },
+ {
+  "label": "an event packet whose size prefix understates its bytes is read",
+  "old": "        if prefix != len - 4 {",
+  "new": "        if prefix < len - 4 {"
+ },
+ {
+  "label": "a packet of another stream is walked as events",
+  "old": "        fb.identifier(8, Self::EVENTS_ID)?;",
+  "new": "        // the identifier is not checked"
+ },
+ {
+  "label": "the root offset of an event packet is counted from byte 0, as through 0.22.0",
+  "old": "        let root = 4 + u64::from(fb.u32_at(4, \"root offset\")?);",
+  "new": "        let root = u64::from(fb.u32_at(4, \"root offset\")?);"
+ },
+ {
+  "label": "the event packet writer counts its own size prefix in the size",
+  "old": "        let after_prefix = 28 + events.len() * Self::FB_EVENT_SIZE;",
+  "new": "        let after_prefix = 32 + events.len() * Self::FB_EVENT_SIZE;"
+ },
+ {
+  "label": "the event packet writer points the root at the vtable rather than the table",
+  "old": "        p.extend_from_slice(&16u32.to_le_bytes());\n        p.extend_from_slice(Self::EVENTS_ID.as_bytes());",
+  "new": "        p.extend_from_slice(&10u32.to_le_bytes());\n        p.extend_from_slice(Self::EVENTS_ID.as_bytes());"
+ },
+ {
+  "label": "the event packet writer writes no identifier",
+  "old": "        p.extend_from_slice(Self::EVENTS_ID.as_bytes());\n        p.extend_from_slice(&[0u8; 2]);",
+  "new": "        p.extend_from_slice(&[0u8; 4]);\n        p.extend_from_slice(&[0u8; 2]);"
+ },
+ {
+  "label": "the event table points two bytes short of its vtable",
+  "old": "        p.extend_from_slice(&6i32.to_le_bytes());",
+  "new": "        p.extend_from_slice(&4i32.to_le_bytes());"
+ },
+ {
+  "label": "a file built from events carries no ioheader",
+  "old": "            io_header: Self::MINIMAL_IO_HEADER.to_vec(),",
+  "new": "            io_header: Vec::new(),"
+ },
+ {
+  "label": "the minimal ioheader declares lz4",
+  "old": "        16, 0, 0, 0, b'I', b'O', b'H', b'E', 0, 0, 6, 0, 8, 0, 4, 0, 6, 0, 0, 0, 0, 0, 0, 0,",
+  "new": "        16, 0, 0, 0, b'I', b'O', b'H', b'E', 0, 0, 6, 0, 8, 0, 4, 0, 6, 0, 0, 0, 1, 0, 0, 0,"
+ },
+ {
+  "label": "a data table the packets have moved away from is written anyway",
+  "old": "            Some(at) => at == packets_end,",
+  "new": "            Some(at) => at == at,"
+ },
+ {
+  "label": "a table no ioheader points to is written anyway",
+  "old": "            None => self.data_table.is_empty(),",
+  "new": "            None => true,"
+ },
+ {
+  "label": "the data table is not written back",
+  "old": "        out.extend_from_slice(&self.data_table);\n        Ok(out)",
+  "new": "        Ok(out)"
+ },
+ {
+  "label": "dropping the table leaves the ioheader pointing at it",
+  "old": "            self.io_header[i..i + 8].copy_from_slice(&(-1i64).to_le_bytes());",
+  "new": "            let _ = i;"
+ },
+ {
+  "label": "dropping the table keeps its bytes",
+  "old": "        self.data_table.clear();\n        Ok(())",
+  "new": "        Ok(())"
  }
 ]

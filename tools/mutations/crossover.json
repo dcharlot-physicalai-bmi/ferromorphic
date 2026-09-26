@@ -103,5 +103,15 @@
   "label": "one threshold is listed twice in the published table",
   "old": "pub const THRESHOLDS: [(&str, Crossover); 3] = [\n    (\"davidson-furber-2021\", DAVIDSON_FURBER_2021),",
   "new": "pub const THRESHOLDS: [(&str, Crossover); 3] = [\n    (\"dampfhoffer-2023\", DAMPFHOFFER_2023),"
+ },
+ {
+  "label": "Yan's source cites the unversioned paper, whose later versions do not print its figures",
+  "old": "arXiv:2409.08290v1 (2024) — spiking VGG16",
+  "new": "arXiv:2409.08290 (2024) — spiking VGG16"
+ },
+ {
+  "label": "Yan's source sets v1's figures against the later versions' equivalent quantised network",
+  "old": "dataflow) the energy of the best-case ANN. Those figures",
+  "new": "dataflow) the energy of an equivalent quantised network. Those figures"
  }
 ]

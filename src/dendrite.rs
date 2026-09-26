@@ -42,11 +42,32 @@
 //!
 //! # Why it is in a neuromorphic crate
 //!
-//! Multi-compartment neurons are what the second generation of neuromorphic chips added — Loihi 2
-//! exposes them, and the field's argument for them is exactly the two results above: a local
-//! learning rule and per-branch nonlinearity, each bought with one more state variable per cell,
-//! which [`crate::ledger`] counts as a membrane update. This module states what the extra
-//! compartment computes so that the count has something to be weighed against.
+//! Multi-compartment neurons are already in production neuromorphic silicon, and have been since
+//! the first generation. Intel's first Loihi (Davies et al., *Loihi: A Neuromorphic Manycore
+//! Processor with On-Chip Learning*, IEEE Micro 38(1):82–99 (2018), doi:10.1109/MM.2018.112130359)
+//! names "dendritic compartments" in its abstract among the features it "integrates", and the same
+//! group's survey of that chip says a neuron's compartments "communicate integer-value (graded)
+//! state variables over tree topologies, analogous to a dendritic tree" (Davies et al., *Advancing
+//! Neuromorphic Computing With Loihi: A Survey of Results and Outlook*, Proc. IEEE 109(5):911–934
+//! (2021), doi:10.1109/JPROC.2021.3067593, Sec. II). Intel's brief on the successor opens its
+//! architecture section with "Loihi 2 has the same base architecture as its predecessor Loihi"
+//! (Intel, *Taking Neuromorphic Computing to the Next Level with Loihi 2*, technology brief
+//! (2021),
+//! <https://download.intel.com/newsroom/2021/new-technologies/neuromorphic-computing-loihi-2-brief.pdf>),
+//! and its Table 2, "Comparison of Loihi to Loihi 2", does not list compartments among the
+//! changes. What Loihi 2 added is fully programmable neuron microcode (Table 2: neuron models go
+//! from "Generalized LIF" to "Fully programmable"), with which a neuron "may now manipulate
+//! synaptic input received from its dendritic compartments with arbitrary microcode and assign the
+//! results to third factor modulatory terms" of its learning rules.
+//!
+//! This section used to say that multi-compartment neurons "are what the second generation of
+//! neuromorphic chips added — Loihi 2 exposes them", with no citation for either chip. Loihi 2
+//! does expose them; it did not add them, and the sources above say so. The same sentence went on
+//! to call the two results above exactly "the field's argument" for compartments, which this
+//! review did not locate a source for. It is this module's argument instead: a local learning
+//! rule and per-branch nonlinearity, each bought with one more state variable per cell, which
+//! [`crate::ledger`] counts as a membrane update. This module states what the extra compartment
+//! computes so that the count has something to be weighed against.
 //!
 //! # What this module has NOT reproduced
 //!

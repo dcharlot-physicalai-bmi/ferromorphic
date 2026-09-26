@@ -17,8 +17,21 @@
 //! Each term of the sum is the `θ`-derivative of a Gaussian bump `aᵢ bᵢ² exp(−Δθᵢ²/2bᵢ²)`, so `z`
 //! traces out five bumps per revolution, relaxing to a baseline `z₀` that breathes at the
 //! respiratory frequency. The constants here are those of the authors' reference implementation
-//! (`ecgsyn.m`, `PhysioNet`), read from its source, including its rescaling of the wave angles and
-//! widths with heart rate.
+//! (ECGSYN, `PhysioNet`), read from its source: the wave angles, amplitudes and widths and
+//! their rescaling with heart rate from `ecgsyn.m`, and the baseline wander from
+//! `derivsecgsyn.m`, the right-hand side that `ecgsyn.m` hands to `ode45`.
+//!
+//! **Where the code and the paper differ.** This paragraph used to name `ecgsyn.m` alone, and did
+//! not say that two of its angles are not the paper's. Table I of the paper gives
+//! `θ_P = −π/3` and `θ_T = π/2`, that is −60° and 90°; `ecgsyn.m` has −70° and 100°, and so does
+//! [`ECGSYN_ANGLES_DEG`]. Q, R, S and every `aᵢ` and `bᵢ` agree. The two baseline amplitudes
+//! are in different units. The paper's is `A = 0.15 mV` in its equation (2),
+//! `z₀(t) = A sin(2π f₂ t)`, in millivolts; ECGSYN's `0.005` is in the model's units, before the
+//! finished record is rescaled to `[−0.4, 1.2]` mV ([`to_millivolts`]). Put through that rescale
+//! at 60 beats per minute it comes to roughly 0.13 mV: 0.126 mV over a settled 16-second record,
+//! 0.137 mV over one beat with the wander off, both measured in
+//! `the_baseline_amplitude_is_in_the_models_units_and_the_papers_order_after_the_rescale`. That
+//! is the paper's order, and `0.005` against `0.15 mV` is not a like-for-like disagreement.
 //!
 //! **The front end.** A neuromorphic sensor does not sample: it emits an UP or DOWN event each
 //! time the signal has moved by `δ` since the last event ([`LevelCrossing`]) — silent on a flat
@@ -65,16 +78,26 @@
 //! - **The rhythm monitor's mean** after `k` equal intervals `r` from `m₀`:
 //!   `r + (m₀ − r)(1 − η)^k`.
 //! - **EMG.** For Gaussian samples of standard deviation `aσ` the mean absolute value is
-//!   `aσ √(2/π)` and the mean absolute increment `2aσ/√π` (Rice), so the level-crossing event
-//!   rate is `2aσ / (δ√π)` per sample — linear in the activation `a`.
+//!   `aσ √(2/π)`. The difference of two independent such samples is Gaussian of standard
+//!   deviation `√2 aσ`, so the mean absolute increment is `√2 aσ √(2/π) = 2aσ/√π`, and the
+//!   level-crossing event rate is `2aσ / (δ√π)` per sample — linear in the activation `a`. This
+//!   item used to attribute the increment to a bare "(Rice)" that named no work. It needs no
+//!   citation, since the arithmetic above is the whole of it. The work that name suggests is
+//!   S. O. Rice, *Mathematical Analysis of Random Noise*, Bell System Technical Journal
+//!   23(3):282–332 (1944), doi:10.1002/j.1538-7305.1944.tb00874.x, and 24(1):46–156 (1945),
+//!   doi:10.1002/j.1538-7305.1945.tb00453.x; this review did not confirm that it was the one
+//!   meant, and nothing here rests on it.
 //!
 //! # What this module has NOT reproduced
 //!
 //! - ECGSYN's RR-interval generator (a bimodal power spectrum for the Mayer and respiratory
 //!   rhythms). The RR interval is an input here, beat by beat.
-//! - One deliberate difference: `ecgsyn.m` takes `rem(θ − θᵢ, 2π)`, which does not bring the
-//!   difference into `(−π, π]`, so the T wave's tail is cut off where the phase wraps. This
-//!   module wraps it. The effect is of order `10⁻³` of the R wave's drive.
+//! - One deliberate difference: `derivsecgsyn.m` (the ODE right-hand side distributed with
+//!   `ecgsyn.m`, which reaches it only through `ode45`) takes `rem(θ − θᵢ, 2π)`, which does not
+//!   bring the difference into `(−π, π]`, so the T wave's tail is cut off where the phase wraps.
+//!   This module wraps it. The effect is of order `10⁻³` of the R wave's drive. This item used to
+//!   say that `ecgsyn.m` takes the remainder; `ecgsyn.m` has no `rem` or `mod` call, and the line
+//!   is `dti = rem(ta - ti, 2*pi);` in `derivsecgsyn.m`. The C version does the same with `fmod`.
 //! - Real recordings, noise and artefact models, lead geometry, and any clinical claim: the
 //!   detector is checked on the synthetic signal, and its figures are measured on it.
 //! - The EMG's spectrum. The samples here are white; the closed forms need only Gaussianity of
@@ -84,13 +107,16 @@ use crate::rng::Rng;
 use core::f64::consts::{PI, TAU};
 use core::fmt;
 
-/// ECGSYN's wave angles for P, Q, R, S, T at 60 beats per minute, degrees.
+/// ECGSYN's wave angles for P, Q, R, S, T at 60 beats per minute, degrees: those of `ecgsyn.m`.
+/// Table I of the paper gives −60° for P and 90° for T; see the module documentation.
 pub const ECGSYN_ANGLES_DEG: [f64; 5] = [-70.0, -15.0, 0.0, 15.0, 100.0];
 /// ECGSYN's wave amplitudes `aᵢ`.
 pub const ECGSYN_A: [f64; 5] = [1.2, -5.0, 30.0, -7.5, 0.75];
 /// ECGSYN's wave widths `bᵢ` at 60 beats per minute, radians.
 pub const ECGSYN_B: [f64; 5] = [0.25, 0.1, 0.1, 0.1, 0.4];
-/// ECGSYN's baseline wander: amplitude in the model's units, and respiratory frequency in hertz.
+/// ECGSYN's baseline wander, from `derivsecgsyn.m`: amplitude in the model's units, and
+/// respiratory frequency in hertz. The amplitude is taken before the rescale to millivolts, so it
+/// is not to be compared with the paper's `A = 0.15 mV` as it stands; see the module documentation.
 pub const ECGSYN_BASELINE: (f64, f64) = (0.005, 0.25);
 
 /// What went wrong, named rather than guessed around.
@@ -508,6 +534,35 @@ mod tests {
         assert!(Ecg::ecgsyn(0.0).is_err() && Ecg::ecgsyn(f64::NAN).is_err());
         assert_eq!(wrapped(PI), PI);
         assert!((wrapped(-PI) - PI).abs() < 1e-15 && (wrapped(3.0 * PI + 0.25) - (-PI + 0.25)).abs() < 1e-12);
+    }
+
+    #[test]
+    fn the_baseline_amplitude_is_in_the_models_units_and_the_papers_order_after_the_rescale() {
+        // The paper's A = 0.15 mV is AFTER ECGSYN's rescale of the record to [−0.4, 1.2] mV;
+        // ECGSYN's 0.005 is before it. Put 0.005 through the millivolts-per-unit that
+        // `to_millivolts` applies to a record at 60 bpm, one beat a second, 2048 steps a beat.
+        let dt = 1.0 / 2048.0;
+        let rescaled = |wander: bool, record: usize| {
+            let mut ecg = Ecg::ecgsyn(60.0).unwrap();
+            if !wander {
+                ecg.baseline = 0.0;
+            }
+            // Sixteen unit time constants of relaxation leave e^{−16} of the start.
+            for _ in 0..16 * 2048 {
+                ecg.step(dt, 1.0).unwrap();
+            }
+            let z: Vec<f64> = (0..record).map(|_| ecg.step(dt, 1.0).unwrap().0).collect();
+            let mv = to_millivolts(&z).unwrap();
+            let span = |v: &[f64]| v.iter().fold(f64::NEG_INFINITY, |m, &x| m.max(x)) - v.iter().fold(f64::INFINITY, |m, &x| m.min(x));
+            ECGSYN_BASELINE.0 * span(&mv) / span(&z)
+        };
+        // Sixteen seconds is four breaths, so the record carries the wander at its full swing.
+        let settled = rescaled(true, 16 * 2048);
+        let one_beat = rescaled(false, 2048);
+        assert!((settled - 0.126).abs() < 5e-4, "0.005 over a settled 16 s record is {settled} mV");
+        assert!((one_beat - 0.137).abs() < 5e-4, "0.005 over one beat without wander is {one_beat} mV");
+        // The paper's order — within 20% of 0.15 mV — and nowhere near 0.005 read as millivolts.
+        assert!(settled > 0.8 * 0.15 && one_beat < 0.15 && settled > 20.0 * ECGSYN_BASELINE.0);
     }
 
     #[test]

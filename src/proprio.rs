@@ -88,10 +88,15 @@
 //!   contractions of the soleus muscle of the cat*, Journal of Neurophysiology 30(3):466–481,
 //!   1967) fitted a linear model whose response to a unit step of force is
 //!   `K [1 + B e^{−bt} + C e^{−ct}]` — an overshoot of `K(B + C)` that relaxes at two rates to the
-//!   static gain `K` — as summarised by Mileusnic and Loeb in *Proprioceptors and models of
-//!   transduction* (Scholarpedia 10(5):12390, 2015). [`TendonDynamics`] steps that model exactly
-//!   for a force held over the step: checked against the step response, against composition of
-//!   steps, and against superposition.
+//!   static gain `K` — as summarised by Loeb and Mileusnic in *Proprioceptors and Models of
+//!   Transduction* (Scholarpedia 10(5):12390, 2015; doi:10.4249/scholarpedia.12390).
+//!   [`TendonDynamics`] steps that model exactly for a force held over the step: checked against
+//!   the step response, against composition of steps, and against superposition.
+//!
+//!   **Correction:** this doc used to credit the review to "Mileusnic and Loeb". The review's own
+//!   citation line reads "Gerald E. Loeb and Milana Mileusnic (2015), Scholarpedia,
+//!   10(5):12390", and Crossref's record of that DOI lists the authors in the same order. Only
+//!   the attribution changed; no constant, formula or test did.
 //! - **The encoder is exact.** Over any run the spikes emitted number `⌊∫ rate dt⌋`, and at a
 //!   constant rate the intervals are `1/rate`.
 //! - **The delayed loop.** For `ẋ = −K x(t − τ)` the largest stable gain is `K_c = π/(2τ)`, and at
@@ -126,8 +131,8 @@
 //!   carries the term and one step of it is checked against arithmetic; how `γ_d` moves the
 //!   clonus threshold is not claimed.
 //! - Fitted constants for the tendon organ's dynamics. [`TendonDynamics`] is the linear model's
-//!   FORM, with its five parameters supplied by the caller: the source read for it (Mileusnic
-//!   and Loeb's review, above) reports that they were fitted receptor by receptor and does not
+//!   FORM, with its five parameters supplied by the caller: the source read for it (Loeb and
+//!   Mileusnic's review, above) reports that they were fitted receptor by receptor and does not
 //!   tabulate them.
 //! - A muscle, or a limb with inertia. The reflex loops here are first order.
 

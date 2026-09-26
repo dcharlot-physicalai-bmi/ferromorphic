@@ -1851,11 +1851,20 @@ impl EarlyFusion {
 /// Each modality gets its own [`NearestCentroid`] on its own block. Their per-class scores are
 /// centred, divided by a **per-branch scale measured once on the training set**, and summed with a
 /// **log-odds vote weight** `ln(p / (1 - p))` taken from the branch's own training accuracy `p`.
-/// That is the classical weighted-majority weight — Nitzan & Paroush, Econometrica 50(3):683–688,
-/// 1982, and Shapley & Grofman, Public Choice 43:329–343, 1984, with the derivation set out in
-/// Kuncheva, *Combining Pattern Classifiers*, Wiley 2004 — and it is the Bayes-optimal gain for
-/// independent binary voters. It is [`PrecisionGate`]'s rule in the discrete case: trust a sense in
-/// proportion to the evidence it carries, which for a coin-flip branch is none.
+/// That is the classical weighted-majority weight — Nitzan & Paroush, *Optimal Decision Rules in
+/// Uncertain Dichotomous Choice Situations*, International Economic Review 23(2):289–297 (1982),
+/// doi:10.2307/2526438, and Shapley & Grofman, Public Choice 43:329–343, 1984, with the derivation
+/// set out in Kuncheva, *Combining Pattern Classifiers*, Wiley 2004 — and it is the Bayes-optimal
+/// gain for independent binary voters. It is [`PrecisionGate`]'s rule in the discrete case: trust a
+/// sense in proportion to the evidence it carries, which for a coin-flip branch is none.
+///
+/// **Correction to the citation above:** an earlier revision of this doc gave the Nitzan & Paroush
+/// paper as "Econometrica 50(3):683–688, 1982". That venue is wrong. Crossref's record for
+/// doi:10.2307/2526438 places the paper in International Economic Review, volume 23, issue 2, June
+/// 1982, first page 289, and `OpenAlex` agrees; the last page, 297, is from Semantic Scholar alone.
+/// This review did not locate a Nitzan–Paroush article in Econometrica: Crossref's listing of
+/// Econometrica 50(3) runs from Reinganum at p. 671 to Amemiya at p. 689 with nothing between. Only
+/// the reference changed — the weight `ln(p / (1 - p))`, its constants and its tests are as before.
 ///
 /// ⚠ The log-odds derivation is a **binary** result. With more than two classes it is applied here
 /// as a scalar gain on the score vector, which is a heuristic rather than a theorem, and this

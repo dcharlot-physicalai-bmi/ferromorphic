@@ -405,5 +405,15 @@
   "label": "the unsigned message drops the count",
   "old": "write!(f, \"binary coding cannot represent the negative count {count}\")",
   "new": "write!(f, \"binary coding cannot represent a negative count\")"
+ },
+ {
+  "label": "the energy model's source drops the paper version its section and equation numbers belong to",
+  "old": "Spiking Brain-inspired Large Models, arXiv:2509.05276v4 (8 May 2026;",
+  "new": "Spiking Brain-inspired Large Models, arXiv:2509.05276 (8 May 2026;"
+ },
+ {
+  "label": "the energy model's source drops the equation it transcribes",
+  "old": "section 5.5, Eq. 24: 'based on published hardware",
+  "new": "section 5.5: 'based on published hardware"
  }
 ]

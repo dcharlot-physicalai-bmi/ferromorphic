@@ -65,8 +65,15 @@
 //!
 //! - Any hardware oscillator's waveform, noise or coupling non-ideality. The phase model is the
 //!   weak-coupling limit and says nothing about amplitude death or harmonic content.
-//! - The benchmark results of the OIM paper (G-set graphs of 800–2000 vertices). The check here is
-//!   against brute force, which stops at [`crate::optimise::MAX_BRUTE_FORCE`] vertices.
+//! - The benchmark results of the OIM paper (all 54 G-set MAX-CUT graphs, G1–G54, of 800 to 3000
+//!   vertices). The check here is against brute force, which stops at
+//!   [`crate::optimise::MAX_BRUTE_FORCE`] vertices. ⚠ CORRECTED against the paper: this line used
+//!   to say "G-set graphs of 800–2000 vertices", which drops the largest size the paper ran. Its
+//!   Sec. 4.2 says "we have run simulations on all the problems in a widely used set of MAX-CUT
+//!   benchmarks known as the G-set" and "Problem sizes range from 800 to 3000"; footnote 8 gives
+//!   "G48∼50 are of size 3000", and Table 1 has rows for G48, G49 and G50 (Wang and Roychowdhury,
+//!   *OIM: oscillator-based Ising machines for solving combinatorial optimisation problems*, UCNC
+//!   2019, LNCS 11493:232–256, doi:10.1007/978-3-030-19311-9_19, arXiv:1903.07163).
 //! - The salamander's limb oscillators and its swim–walk transition by drive saturation; the chain
 //!   here is the body axis alone.
 

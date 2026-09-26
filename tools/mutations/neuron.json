@@ -466,13 +466,48 @@
  },
  {
   "label": "the paper's initial recovery state drops its sensitivity factor",
-  "old": "        Self { a, b, c, d, v: c, u: b * c, substeps: 2 }\n",
-  "new": "        Self { a, b, c, d, v: c, u: c, substeps: 2 }\n"
+  "old": "        Self { a, b, c, d, v: Self::V_INIT, u: b * Self::V_INIT, substeps: 2 }\n",
+  "new": "        Self { a, b, c, d, v: Self::V_INIT, u: Self::V_INIT, substeps: 2 }\n"
  },
  {
   "label": "the model takes one forward-Euler step of the whole tick rather than the paper's two half-steps",
-  "old": "        Self { a, b, c, d, v: c, u: b * c, substeps: 2 }\n",
-  "new": "        Self { a, b, c, d, v: c, u: b * c, substeps: 1 }\n"
+  "old": "        Self { a, b, c, d, v: Self::V_INIT, u: b * Self::V_INIT, substeps: 2 }\n",
+  "new": "        Self { a, b, c, d, v: Self::V_INIT, u: b * Self::V_INIT, substeps: 1 }\n"
+ },
+ {
+  "label": "a new cell starts at its reset value c, as it used to, rather than the paper's −65 mV",
+  "old": "        Self { a, b, c, d, v: Self::V_INIT, u: b * Self::V_INIT, substeps: 2 }\n",
+  "new": "        Self { a, b, c, d, v: c, u: b * Self::V_INIT, substeps: 2 }\n"
+ },
+ {
+  "label": "a new cell's recovery starts at b·c, as it used to, rather than the paper's b·(−65)",
+  "old": "        Self { a, b, c, d, v: Self::V_INIT, u: b * Self::V_INIT, substeps: 2 }\n",
+  "new": "        Self { a, b, c, d, v: Self::V_INIT, u: b * c, substeps: 2 }\n"
+ },
+ {
+  "label": "the initial potential is the b = 0.2 rest, −70 mV, rather than the paper's −65",
+  "old": "    pub const V_INIT: f64 = -65.0;\n",
+  "new": "    pub const V_INIT: f64 = -70.0;\n"
+ },
+ {
+  "label": "reset returns to v = c, u = b·c, as it used to, rather than to the state new builds",
+  "old": "        self.v = Self::V_INIT;\n        self.u = self.b * Self::V_INIT;\n",
+  "new": "        self.v = self.c;\n        self.u = self.b * self.c;\n"
+ },
+ {
+  "label": "reset leaves the membrane potential where the drive put it",
+  "old": "        self.v = Self::V_INIT;\n",
+  "new": ""
+ },
+ {
+  "label": "reset leaves the recovery variable where the drive put it",
+  "old": "        self.u = self.b * Self::V_INIT;\n",
+  "new": ""
+ },
+ {
+  "label": "reset drops the recovery variable's sensitivity factor",
+  "old": "        self.u = self.b * Self::V_INIT;\n",
+  "new": "        self.u = Self::V_INIT;\n"
  },
  {
   "label": "the tick is not converted from seconds to milliseconds",

@@ -657,6 +657,71 @@
   "new": "        Some(self.retained(j)? - self.learned(j)?)"
  },
  {
+  "label": "Chaudhry's range runs into the last row, so the last task reports 0 where Eq. (3) is undefined and a task at its best at the end reports nothing forgotten",
+  "old": "        let (last, earlier) = self.r.split_last()?;",
+  "new": "        let (last, earlier) = (self.r.last()?, &self.r[..]);"
+ },
+ {
+  "label": "Chaudhry's forgetting reads the FIRST row as the current accuracy",
+  "old": "        let (last, earlier) = self.r.split_last()?;",
+  "new": "        let (last, earlier) = self.r.split_first()?;"
+ },
+ {
+  "label": "Chaudhry's maximum starts at the first row, counting accuracies from before task j was trained, which Eq. (3)'s a_{l,j} (j <= l) does not define",
+  "old": "        let (trained, after) = earlier.get(j..)?.split_first()?;",
+  "new": "        let (trained, after) = earlier.split_first()?;"
+ },
+ {
+  "label": "Chaudhry's maximum starts one row after the one that trained task j, leaving out the accuracy it was learned at",
+  "old": "        let (trained, after) = earlier.get(j..)?.split_first()?;",
+  "new": "        let (trained, after) = earlier.get(j + 1..)?.split_first()?;"
+ },
+ {
+  "label": "Chaudhry's maximum leaves out the row that trained task j",
+  "old": "        let mut peak = *trained.get(j)?;",
+  "new": "        let _ = trained;\n        let mut peak = f64::NEG_INFINITY;"
+ },
+ {
+  "label": "a training row too short to hold column j is passed over rather than refused",
+  "old": "        let mut peak = *trained.get(j)?;",
+  "new": "        let mut peak = trained.get(j).copied().unwrap_or(f64::NEG_INFINITY);"
+ },
+ {
+  "label": "Chaudhry's peak is the accuracy when the task was learned, which is Lopez-Paz & Ranzato's a_jj",
+  "old": "        for row in after {\n            let a = *row.get(j)?;",
+  "new": "        for row in after.iter().take(0) {\n            let a = *row.get(j)?;"
+ },
+ {
+  "label": "a later row too short to hold column j is skipped by Chaudhry's maximum rather than refused",
+  "old": "        for row in after {\n            let a = *row.get(j)?;",
+  "new": "        for row in after.iter().filter(|row| row.len() > j) {\n            let a = *row.get(j)?;"
+ },
+ {
+  "label": "Chaudhry's forgetting takes the worst earlier accuracy rather than the best",
+  "old": "            if a.is_nan() || a > peak {",
+  "new": "            if a.is_nan() || a < peak {"
+ },
+ {
+  "label": "a NaN accuracy after the training row is passed over by Chaudhry's maximum",
+  "old": "            if a.is_nan() || a > peak {",
+  "new": "            if a > peak {"
+ },
+ {
+  "label": "Chaudhry's maximum is f64::max, which passes over a NaN on the training row too",
+  "old": "            if a.is_nan() || a > peak {\n                peak = a;\n            }",
+  "new": "            peak = peak.max(a);"
+ },
+ {
+  "label": "Chaudhry's forgetting is reported as a gain",
+  "old": "        Some(peak - last.get(j)?)",
+  "new": "        Some(last.get(j)? - peak)"
+ },
+ {
+  "label": "Chaudhry's forgetting subtracts the accuracy at training rather than the accuracy now",
+  "old": "        Some(peak - last.get(j)?)",
+  "new": "        Some(peak - trained.get(j)?)"
+ },
+ {
   "label": "the accuracy matrix is scored on the training split",
   "old": "    curriculum.tasks.iter().map(|t| model.accuracy(&t.test)).collect()",
   "new": "    curriculum.tasks.iter().map(|t| model.accuracy(&t.train)).collect()"
@@ -861,6 +926,11 @@
   "label": "the flip probability is evaluated one level too deep",
   "old": "        (level < self.depth).then(|| self.q0 * self.x.powi(level as i32))",
   "new": "        (level < self.depth).then(|| self.q0 * self.x.powi(level as i32 + 1))"
+ },
+ {
+  "label": "the deepest level's flip rate takes the boundary compensation of the paper's Model section, x^(n-1)/(1-x), instead of its Results' 2^(-n+1)",
+  "old": "        (level < self.depth).then(|| self.q0 * self.x.powi(level as i32))",
+  "new": "        (level < self.depth).then(|| {\n            let q = self.q0 * self.x.powi(level as i32);\n            if level + 1 == self.depth { q / (1.0 - self.x) } else { q }\n        })"
  },
  {
   "label": "the deepest level can still go deeper",

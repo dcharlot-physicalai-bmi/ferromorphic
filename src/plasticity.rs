@@ -23,11 +23,20 @@
 //!    dividing by the norm, so the weight vector converges to **unit length** and to the
 //!    **principal eigenvector of the input correlation matrix** — Hebbian learning is principal
 //!    component analysis, and Oja's is the line of algebra that proves it.
-//! 2. **Move the goalposts.** [`Bcm`] (Bienenstock, Cooper & Munro, J. Neurosci. 2:32–48, 1982)
-//!    keeps a *sliding threshold* `theta` that tracks the recent mean-square output. Output above
-//!    `theta` potentiates, below it depresses, and `theta` chases `y^2` — so a cell that is too
-//!    active raises its own bar. This is what produces **selectivity**: presented with several
-//!    patterns, a `BCM` cell ends up responding to exactly one.
+//! 2. **Move the goalposts.** [`Bcm`] keeps a *sliding threshold* `theta`. Output above `theta`
+//!    potentiates, below it depresses, and `theta` rises with the cell's recent activity — so a
+//!    cell that is too active raises its own bar. This is what produces **selectivity**: presented
+//!    with several patterns, a `BCM` cell ends up responding to exactly one. Bienenstock, Cooper &
+//!    Munro, *Theory for the development of neuron selectivity: orientation specificity and
+//!    binocular interaction in visual cortex*, J. Neurosci. 2:32–48 (1982), make the threshold a
+//!    superlinear function of the time-averaged output `c_bar`: `theta_M = (c_bar / c_0)^p * c_bar`
+//!    (their eq. 7), which at `p = 1` is `c_bar^2 / c_0`, the square of the mean. The threshold
+//!    implemented here tracks the mean of the square instead, `theta -> E[y^2] / y_0`. That is the
+//!    reformulation of Intrator & Cooper (Neural Networks 5:3–17, 1992), and the selective fixed
+//!    point `n_patterns * y_0` this module checks belongs to it. This paragraph used to credit the
+//!    mean-square threshold to the 1982 paper. That paper builds its threshold from "the average
+//!    value of the postsynaptic firing rate" (p. 35), and the only mean square this review located
+//!    in it is the norm of the noise in its Appendix C.
 //! 3. **Rescale everything, slowly.** [`SynapticScaling`] (Turrigiano, Leslie, Desai, Rutherford &
 //!    Nelson, Nature 391:892–896, 1998) multiplies *all* of a cell's inputs by one common factor
 //!    driven by the difference between its firing rate and a target. Because it is
@@ -40,14 +49,23 @@
 //!
 //! Hebb, Oja and `BCM` are written in firing *rates*. Real synapses see spike *times*, and the
 //! order matters: Bi & Poo (J. Neurosci. 18:10464–10472, 1998) showed that a presynaptic spike a
-//! few milliseconds *before* a postsynaptic one potentiates, and the same pair in the other order
-//! depresses, with the size of the change falling off exponentially in the lag. That is
-//! **spike-timing-dependent plasticity**, and [`PairStdp`] is it:
+//! few milliseconds *before* a postsynaptic one potentiates and the same pair in the other order
+//! depresses, each inside "a time window of 20 msec", with an effect that "decreases rapidly as
+//! the absolute value of spike timing increases". That is **spike-timing-dependent plasticity**,
+//! and [`PairStdp`] is it, in the exponential form fitted to those data afterwards:
 //!
 //! ```text
 //! dw = +A_plus  * exp(-lag / tau_plus)     for lag > 0  (pre before post)
 //! dw = -A_minus * exp( lag / tau_minus)    for lag < 0  (post before pre)
 //! ```
+//!
+//! The two widths, `tau_plus = 16.8 ms` and `tau_minus = 33.7 ms`, come from a later fit.
+//! Pfister & Gerstner (2006) take them "from Bi and Poo (2001)" (Table 4 caption), which is Bi &
+//! Poo, *Synaptic Modification by Correlated Activity: Hebb's Postulate Revisited*, Annu. Rev.
+//! Neurosci. 24:139–166 (2001), doi:10.1146/annurev.neuro.24.1.139. This paragraph used to say the
+//! 1998 paper found the change "falling off exponentially in the lag". Its Fig. 7 is a scatter of
+//! single experiments with no curve through it, and this review did not locate an exponential or
+//! a time constant anywhere in its text.
 //!
 //! The exponential is not decoration — it is what the rule *is*, so a single isolated pair at a
 //! known lag must reproduce it to the last bit. That is the sharpest test in this module and it
@@ -337,9 +355,14 @@ impl Bounds {
 /// Which spike pairs a trace-based rule lets interact.
 ///
 /// Morrison, Diesmann & Gerstner (Biol. Cybern. 98:459–478, 2008) catalogue several inequivalent
-/// nearest-neighbour schemes; the one here is the symmetric reduction, where a spike **resets** its
-/// own side's traces to one rather than incrementing them. The choice changes the high-frequency
-/// behaviour of every rule in this module and is therefore explicit rather than implied.
+/// nearest-neighbour schemes. The one here is their **symmetric** scheme (Fig. 7a), where a spike
+/// **resets** its own side's trace to one rather than incrementing it: it "can be implemented by
+/// pre- and postsynaptic traces that reset to 1, rather than incrementing by 1". It is not their
+/// *reduced* symmetric interpretation (Fig. 7c), which pairs only immediate neighbours and needs
+/// "doubly resetting" traces. This line used to call the scheme here "the symmetric reduction",
+/// which reads as Fig. 7c; the mechanism it described and the code implement are Fig. 7a's. The
+/// choice changes the high-frequency behaviour of every rule in this module and is therefore
+/// explicit rather than implied.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pairing {
     /// Every presynaptic spike interacts with every postsynaptic spike: traces **accumulate**.
@@ -512,8 +535,10 @@ impl Trace {
 
 /// Pair-based spike-timing-dependent plasticity.
 ///
-/// Bi & Poo, J. Neurosci. 18:10464–10472, 1998. One presynaptic spike and one postsynaptic spike
-/// separated by `lag = t_post - t_pre` change the weight by
+/// The experiment is Bi & Poo, J. Neurosci. 18:10464–10472, 1998; the exponential window and its
+/// two widths are the later fit that Pfister & Gerstner (2006) credit to Bi & Poo (2001), see
+/// [`PairStdp::bi_poo_2001`]. One presynaptic spike and one postsynaptic spike separated by
+/// `lag = t_post - t_pre` change the weight by
 ///
 /// ```text
 /// dw = +A_plus  * exp(-lag / tau_plus)     lag > 0,  pre before post  -> potentiation
@@ -548,10 +573,10 @@ pub struct PairStdp {
     /// Depression amplitude at zero lag, same unit, stored as a **positive** magnitude; the sign is
     /// applied by the rule, so a caller cannot accidentally make depression potentiate.
     pub a_minus: f64,
-    /// Potentiation window width, seconds. Bi & Poo's fit is 16.8 ms.
+    /// Potentiation window width, seconds. Bi & Poo's (2001) fit is 16.8 ms.
     pub tau_plus: f64,
-    /// Depression window width, seconds. Bi & Poo's fit is 33.7 ms — wider than potentiation, which
-    /// is why the rule can be depression-dominated with comparable amplitudes.
+    /// Depression window width, seconds. Bi & Poo's (2001) fit is 33.7 ms — wider than
+    /// potentiation, which is why the rule can be depression-dominated with comparable amplitudes.
     pub tau_minus: f64,
     /// How the step scales with the current weight.
     pub rule: WeightRule,
@@ -599,18 +624,33 @@ impl PairStdp {
     /// Bi & Poo's time constants — 16.8 ms potentiation, 33.7 ms depression — with amplitudes the
     /// caller supplies.
     ///
-    /// The time constants are the widely reproduced fit from Bi & Poo (J. Neurosci.
-    /// 18:10464–10472, 1998) and are reused unchanged by Pfister & Gerstner (2006). **The
-    /// amplitudes are not supplied here on purpose**: the paper reports them as percentage changes
-    /// in `EPSC` amplitude with large scatter across synapses, so a single number presented as
-    /// "Bi & Poo's `A_plus`" would be a figure this implementation could not defend. Choose them for
-    /// the weight unit you are using, and check
+    /// The time constants are the exponential fit that Pfister & Gerstner (J. Neurosci.
+    /// 26:9673–9682, 2006) attribute to Bi & Poo, *Synaptic Modification by Correlated Activity:
+    /// Hebb's Postulate Revisited*, Annu. Rev. Neurosci. 24:139–166 (2001),
+    /// doi:10.1146/annurev.neuro.24.1.139, and reuse unchanged in every row of their tables:
+    /// "The additional parameters τ+ = 16.8 ms and τ− = 33.7 ms are taken from Bi and Poo (2001)
+    /// and kept fixed for all models and data sets" (Table 4 caption). The 2001 review itself was
+    /// not read for this correction, so the attribution is Pfister & Gerstner's.
+    ///
+    /// **The amplitudes are not supplied here on purpose**: the 1998 experiment reports its changes
+    /// as percentages of the `EPSC` amplitude with large scatter across synapses, so a single
+    /// number presented as "Bi & Poo's `A_plus`" would be a figure this implementation could not
+    /// defend. Choose them for the weight unit you are using, and check
     /// [`PairStdp::is_depression_dominated`] afterwards.
+    ///
+    /// # Called `bi_poo_1998` through version 0.22.0
+    ///
+    /// That name, and this doc, credited the two widths to the 1998 experiment (J. Neurosci.
+    /// 18:10464–10472) as "the widely reproduced fit" from it. That paper's Fig. 7 plots each
+    /// experiment's change in `EPSC` amplitude against spike timing with no curve through it, the
+    /// text reports "a time window of 20 msec" on both sides, and this review did not locate 16.8,
+    /// 33.7, an exponential or a time constant anywhere in it. The numbers are unchanged; the name
+    /// and the citation moved to the source the numbers are credited to.
     ///
     /// # Errors
     ///
     /// As [`PairStdp::new`].
-    pub fn bi_poo_1998(
+    pub fn bi_poo_2001(
         a_plus: f64,
         a_minus: f64,
         rule: WeightRule,
@@ -784,9 +824,17 @@ impl PairStdp {
     /// Play one isolated pre/post pair at lag `lag` seconds on a synapse at weight `w`, from a
     /// cleared state, and return the new weight.
     ///
-    /// This is the protocol the 1998 experiment ran, and with [`WeightRule::Additive`] and a weight
-    /// away from its bounds the change it produces is [`PairStdp::window`] to the last bit — the
-    /// two paths compute the same product of the same amplitude and the same exponential.
+    /// With [`WeightRule::Additive`] and a weight away from its bounds the change it produces is
+    /// [`PairStdp::window`] to the last bit — the two paths compute the same product of the same
+    /// amplitude and the same exponential.
+    ///
+    /// One pair is the per-pair reduction of the 1998 protocol, not the protocol. Bi & Poo applied
+    /// "60 pulses at 1 Hz" (Fig. 7 caption), and Morrison, Diesmann & Gerstner (2008) note that in
+    /// such experiments "a single pair has no effect". At 1 Hz almost nothing of one pairing's
+    /// traces survives to the next — `exp(-1 s / 33.7 ms)` is about 1e-13 — so under
+    /// [`WeightRule::Additive`] the 60-pairing protocol is, to that precision, sixty independent
+    /// copies of this change. This paragraph used to call a single pair "the protocol the 1998
+    /// experiment ran".
     ///
     /// **At exactly `lag = 0` this returns `w + A_plus`, not `w`.** Two spikes with no time between
     /// them are delivered pre-then-post here, so the pre trace is at one when the post spike reads
@@ -857,15 +905,15 @@ impl PairStdp {
 ///
 /// # On the constants
 ///
-/// `tau_plus = 16.8 ms` and `tau_minus = 33.7 ms` are inherited from Bi & Poo and held fixed for
-/// every row of both fitted tables. Everything else is fitted per data set **and per pairing
-/// scheme**, and the four named constructors below are four different rows, transcribed from the
-/// printed Table 3 and Table 4:
+/// `tau_plus = 16.8 ms` and `tau_minus = 33.7 ms` are inherited from Bi & Poo (2001, see
+/// [`PairStdp::bi_poo_2001`]) and held fixed for every row of both fitted tables. Everything else
+/// is fitted per data set **and per pairing scheme**, and the four named constructors below are
+/// four different rows, transcribed from the printed Table 3 and Table 4:
 ///
 /// | constructor | data set | scheme | `A2+` | `A3+` | `A2-` | `A3-` | `tau_x` | `tau_y` |
 /// |---|---|---|---|---|---|---|---|---|
 /// | [`TripletStdp::visual_cortex_minimal`] | visual cortex | all-to-all | 0 | 6.5e-3 | 7.1e-3 | 0 | (inert) | 114 ms |
-/// | [`TripletStdp::visual_cortex_full`] | visual cortex | all-to-all | 5e-10 | 6.2e-3 | 7e-3 | 2.3e-4 | 101 ms | 125 ms |
+/// | [`TripletStdp::visual_cortex_full`] | visual cortex | all-to-all | 5e-10 | 6.2e-3 | 7e-3 | 2.3e-4 | (101 ms) | 125 ms |
 /// | [`TripletStdp::hippocampal_full`] | hippocampal culture | all-to-all | 6.1e-3 | 6.7e-3 | 1.6e-3 | 1.4e-3 | 946 ms | 27 ms |
 /// | [`TripletStdp::hippocampal_full_nearest_spike`] | hippocampal culture | nearest-spike | 4.6e-3 | 9.1e-3 | 3e-3 | 7.5e-9 | 575 ms | 47 ms |
 ///
@@ -876,10 +924,13 @@ impl PairStdp {
 /// why the table above is printed here and why a test compares every field of every constructor
 /// against it.
 ///
-/// The parentheses on the visual-cortex minimal `tau_x` are the paper's own convention, extended:
-/// the fit is insensitive to `tau_x` wherever `A3-` is zero, because zero multiplies the slow pre
-/// trace away. See [`TripletStdp::visual_cortex_minimal`] for what this implementation puts there
-/// and for the test that shows the choice cannot change an answer.
+/// Parentheses in the `tau_x` column are the paper's own notation, "to indicate that the error
+/// function is insensitive to the exact value of τx in those cases". It prints the full
+/// visual-cortex fit's 101 ms that way, and this table extends the notation to the minimal row,
+/// whose cell the paper leaves blank: the fit is insensitive to `tau_x` wherever `A3-` is zero,
+/// because zero multiplies the slow pre trace away. See [`TripletStdp::visual_cortex_minimal`] for
+/// what this implementation puts there and for the test that shows the choice cannot change an
+/// answer.
 ///
 /// Source: Pfister & Gerstner, J. Neurosci. 26:9673–9682, 2006, Tables 3 and 4, read from the
 /// published article rather than from a secondary account of it.
@@ -898,7 +949,8 @@ pub struct TripletStdp {
     /// Fast presynaptic trace `r1`, time constant `tau_plus`, 16.8 ms in every fitted row.
     pub r1: Trace,
     /// Slow presynaptic trace `r2`, time constant `tau_x`: 101 ms in the full visual-cortex fit,
-    /// 946 ms in the full hippocampal one, and unidentifiable wherever `A3_minus` is zero.
+    /// which prints it in parentheses because the fit is insensitive to it, 946 ms in the full
+    /// hippocampal one, and unidentifiable wherever `A3_minus` is zero.
     pub r2: Trace,
     /// Fast postsynaptic trace `o1`, time constant `tau_minus`, 33.7 ms in every fitted row.
     pub o1: Trace,
@@ -999,10 +1051,17 @@ impl TripletStdp {
     /// `A2_plus = 5e-10`, `A3_plus = 6.2e-3`, `A2_minus = 7e-3`, `A3_minus = 2.3e-4`,
     /// `tau_x = 101 ms`, `tau_y = 125 ms`. Table 3, "All-to-All / Full" row.
     ///
-    /// This is where 101 ms and 125 ms come from, and the only visual-cortex row where either is
-    /// identifiable. `A2_plus = 5e-10` is the fit's way of saying "zero": the optimiser put the
-    /// pair potentiation term at the floor of its search range, which is the observation the
-    /// minimal model turns into a structural assumption.
+    /// This is where 101 ms and 125 ms come from, but only 125 ms is identified by this fit.
+    /// Table 3 prints the `tau_x` as "(101)", and the paper's parentheses mark "that the error
+    /// function is insensitive to the exact value of τx in those cases" (caption on p. 9677). The
+    /// visual-cortex row with an identified `tau_x` is the nearest-spike full fit, `tau_x = 714 ms`
+    /// and `tau_y = 40 ms`, which has no constructor here. This paragraph used to call the
+    /// all-to-all full row "the only visual-cortex row where either is identifiable"; 101 ms is the
+    /// printed value and is kept, but nothing should lean on it as a measured time constant.
+    ///
+    /// `A2_plus = 5e-10` is the fit's way of saying "zero": the optimiser put the pair potentiation
+    /// term at the floor of its search range, which is the observation the minimal model turns into
+    /// a structural assumption.
     ///
     /// # Errors
     ///
@@ -1027,7 +1086,9 @@ impl TripletStdp {
     /// slow time constants `tau_x = 946 ms` and `tau_y = 27 ms`. Table 4, "All-to-All / Full" row.
     ///
     /// Note how different the slow constants are from the visual-cortex fit — 946 ms against
-    /// 101 ms, 27 ms against 125 ms, and the two swapped in rank. The triplet model is not one
+    /// 101 ms, 27 ms against 125 ms, and the two swapped in rank. The post side is the firmer half
+    /// of that comparison: the visual-cortex 101 ms is printed in parentheses, a value the fit is
+    /// insensitive to (see [`TripletStdp::visual_cortex_full`]). The triplet model is not one
     /// model with one parameter set; it is a form that two preparations fill in differently, and
     /// reporting a result with the wrong preparation's numbers is a category error the shared
     /// function name makes easy.
@@ -1365,7 +1426,9 @@ impl Oja {
 ///
 /// Output above `theta` potentiates, below it depresses, and `theta` chases the recent mean square
 /// of the output — so a cell that fires too much raises its own bar and stops potentiating. That
-/// feedback is what makes the rule stable *and* what makes it selective.
+/// feedback is what makes the rule stable *and* what makes it selective. The mean square is
+/// Intrator & Cooper's; the 1982 threshold is a power of the time-averaged output,
+/// `(c_bar / c_0)^p * c_bar` (its eq. 7), and the fixed point below is derived for the form here.
 ///
 /// # The selective fixed point, in closed form
 ///
@@ -1915,7 +1978,10 @@ mod tests {
         // failed on the depression side alone -- which reads as an asymmetry bug and is not one.
         assert!((s.window(s.tau_plus) - s.a_plus / e).abs() < 1e-15 * s.a_plus);
         assert!((s.window(-s.tau_minus) + s.a_minus / e).abs() < 1e-15 * s.a_minus);
-        // And the two sides are genuinely different widths, which is the asymmetry Bi & Poo saw.
+        // And the two sides are genuinely different widths, as in Bi & Poo's 2001 exponential fit
+        // (33.7 ms against 16.8 ms). The 1998 paper reports a 20-ms window on each side, and the
+        // asymmetry it describes is the sign flip with spike order. This comment used to call the
+        // width difference "the asymmetry Bi & Poo saw".
         assert!(s.tau_minus > s.tau_plus);
     }
 
@@ -3060,7 +3126,7 @@ mod tests {
             assert_eq!(t.r2.tau, tx, "{name}: tau_x");
             assert_eq!(t.o2.tau, ty, "{name}: tau_y");
             assert_eq!(t.pairing, pairing, "{name}: pairing scheme");
-            // tau_plus and tau_minus are Bi & Poo's and are held FIXED for every row of both
+            // tau_plus and tau_minus are Bi & Poo's (2001) and are held FIXED for every row of both
             // tables — the paper says so in the caption, and that is why they are not swept.
             assert_eq!(t.r1.tau, 16.8e-3, "{name}: tau_plus");
             assert_eq!(t.o1.tau, 33.7e-3, "{name}: tau_minus");
@@ -3117,7 +3183,9 @@ mod tests {
             assert_ne!(l, r, "{what} is the same in both hippocampal rows, which it is not");
         }
         // And the two preparations are not the same model either: 946 ms against 101 ms on the pre
-        // side, 27 ms against 125 ms on the post side, with the rank of the two REVERSED.
+        // side, 27 ms against 125 ms on the post side, with the rank of the two REVERSED. The pre
+        // side compares printed values only: Table 3 prints the 101 ms in parentheses, its mark
+        // for a time constant the fit is insensitive to.
         assert!(hall.r2.tau > 9.0 * vfull.r2.tau);
         assert!(hall.o2.tau < vfull.o2.tau / 4.0);
         assert!(vfull.r2.tau < vfull.o2.tau && hall.r2.tau > hall.o2.tau);
@@ -3927,12 +3995,12 @@ mod tests {
         ));
     }
 
-    /// `PairStdp::bi_poo_1998` CARRIES THE TIME CONSTANTS AND NOT THE AMPLITUDES, on purpose, and
+    /// `PairStdp::bi_poo_2001` CARRIES THE TIME CONSTANTS AND NOT THE AMPLITUDES, on purpose, and
     /// nothing checked either half of that.
     #[test]
     fn the_bi_poo_constructor_carries_the_published_widths_and_the_callers_amplitudes() {
         let b = Bounds::normalised();
-        let s = PairStdp::bi_poo_1998(0.008, 0.009, WeightRule::Additive, b).unwrap();
+        let s = PairStdp::bi_poo_2001(0.008, 0.009, WeightRule::Additive, b).unwrap();
         assert_eq!(s.tau_plus, 16.8e-3);
         assert_eq!(s.tau_minus, 33.7e-3);
         assert_eq!(s.a_plus, 0.008, "the amplitudes are the caller's, unchanged");
@@ -3941,8 +4009,11 @@ mod tests {
         assert_eq!(s.post_trace.tau, 33.7e-3);
         assert_eq!(s.pairing, Pairing::AllToAll, "all-to-all is the documented default");
         assert_eq!((s.pre_trace.x, s.post_trace.x), (0.0, 0.0));
-        // Depression is the WIDER window — the asymmetry Bi & Poo measured, and the reason a rule
-        // with nearly equal amplitudes can still be depression-dominated.
+        // Depression is the WIDER window in Bi & Poo's 2001 exponential fit, and that is the
+        // reason a rule with nearly equal amplitudes can still be depression-dominated. The 1998
+        // paper reports 20-ms windows on both sides, and its "asymmetry" is the sign flip with the
+        // order of the spikes. This comment used to call the width "the asymmetry Bi & Poo
+        // measured".
         assert!(s.tau_minus > s.tau_plus);
         assert!(s.is_depression_dominated(), "area {}", s.total_window_area());
         // The same two constants are what every row of both Pfister & Gerstner tables inherits.
@@ -3950,7 +4021,7 @@ mod tests {
         assert_eq!((t.r1.tau, t.o1.tau), (s.tau_plus, s.tau_minus));
         // A negative amplitude is refused rather than silently made positive by the sign convention.
         assert!(matches!(
-            PairStdp::bi_poo_1998(0.008, -0.009, WeightRule::Additive, b),
+            PairStdp::bi_poo_2001(0.008, -0.009, WeightRule::Additive, b),
             Err(PlasticityError::Negative { what: "A_minus", .. })
         ));
     }

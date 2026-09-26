@@ -30,6 +30,11 @@
   "new": "pub const PATTERSON_B: f64 = 1.19;"
  },
  {
+  "label": "Patterson's bandwidth factor is Annex B's rounded 1.02 rather than Annex C's 1.019",
+  "old": "pub const PATTERSON_B: f64 = 1.019;",
+  "new": "pub const PATTERSON_B: f64 = 1.02;"
+ },
+ {
   "label": "the order ceiling is lowered to four",
   "old": "pub const MAX_ORDER: usize = 8;",
   "new": "pub const MAX_ORDER: usize = 4;"
@@ -553,7 +558,7 @@
   "label": "the finiteness guard is dropped from the probability check",
   "old": "        if p.is_finite() && (0.0..=1.0).contains(&p) {",
   "new": "        if (0.0..=1.0).contains(&p) {",
-  "equivalent": "`RangeInclusive::contains` is `p >= 0.0 && p <= 1.0`, and both comparisons are FALSE for every non-finite p: a NaN compares false against everything, +inf fails p <= 1.0 and -inf fails p >= 0.0. So the range test already returns false on exactly the values `is_finite` excludes, and the conjunction has the same truth table with or without it. `spike_probability(f64::NAN)` still returns None, as its test asserts. The guard is defensive documentation, not a branch, and no test could tell it apart from its absence."
+  "equivalent": "`RangeInclusive::contains` is `p >= 0.0 && p <= 1.0`, and both comparisons are FALSE for every non-finite p: a NaN compares false against everything, +inf fails p <= 1.0 and -inf fails p >= 0.0. So the range test already returns false on exactly the values `is_finite` excludes, and the conjunction has the same truth table with or without it. `spike_probability(f64::NAN)` still returns None, as its test asserts. The guard is defensive documentation, not a branch, and no test could tell it apart from its absence. Fixture built and both versions run side by side (2026-09-25, the unmutated and the mutated crate each compiled from its slim copy, called through `Meddis::spike_probability` with the public fields `h = c = 1` so that p = dt exactly): 4,334,971,318 values of p, namely 22 special values (both zeros, both infinities, NaNs of both signs and several payloads, the extremes, the smallest subnormals, 1.0 and its two neighbours), the 1,000 floats either side of 0 and of 1, every one of the 2^32 sign/exponent/top-mantissa patterns with a random low half, and 40,000,000 random (h, c, dt) triples, half of them raw bit patterns and half drawn to land near [0, 1]: 0 of 4,334,971,318 differed in any bit, and 1,089,601,402 of them returned Some. The same harness run against a control predicate that excludes p = 1.0 disagreed on exactly 1 value, so it sees a one-value difference."
  },
  {
   "label": "a draw fires when the random number is ABOVE the probability",
@@ -709,7 +714,7 @@
   "label": "the change detectors are zeroed rather than primed with their resting input",
   "old": "        for o in &mut self.onset {\n            o.prime(rest);\n        }",
   "new": "        for o in &mut self.onset {\n            o.reset();\n        }",
-  "equivalent": "`rest` is `self.envelope_compression.apply(0.0)`, and every compression law in this module maps 0.0 to exactly 0.0: `Linear` returns x, `Power` returns 0.0.powf(e) = 0.0 for the e in (0, 1] that `validate` admits, and `Log` returns (1.0 + 0.0/knee).ln() = 1.0.ln() = 0.0 exactly. So `prime(0.0)` sets fast = 0.0 and slow = 0.0, which is bit-for-bit what `reset()` does. The distinction the doc draws is real but lives OUTSIDE this call: `prime` is what a caller running a detector on a Meddis channel's own output needs, where the resting value is the spontaneous rate. Inside `Filterbank::reset` the argument is always zero and no test could tell the two apart."
+  "equivalent": "`rest` is `self.envelope_compression.apply(0.0)`, and every compression law in this module maps 0.0 to exactly 0.0: `Linear` returns x, `Power` returns 0.0.powf(e) = 0.0 for the e in (0, 1] that `validate` admits, and `Log` returns (1.0 + 0.0/knee).ln() = 1.0.ln() = 0.0 exactly. So `prime(0.0)` sets fast = 0.0 and slow = 0.0, which is bit-for-bit what `reset()` does. The distinction the doc draws is real but lives OUTSIDE this call: `prime` is what a caller running a detector on a Meddis channel's own output needs, where the resting value is the spontaneous rate. Inside `Filterbank::reset` the argument is always zero and no test could tell the two apart. Fixture built and both versions run side by side (2026-09-25, through the public `Filterbank` API of the two compiled crates): 63,177 laws `validate` may admit (`Linear`; `Power` at every exponent from 1 halving down to the smallest subnormal, 1 minus one ulp, and 40,000 random; `Log` at every power of two from 2^-1074 to 2^1023, the largest finite knee, and 20,000 random finite positive knees), each installed with `with_envelope_compression` on a two-channel bank under both transductions, then run through `onset_signal`, `reset` and, for every eighth law, `spike_train`. 126,354 banks built, 20 refused identically (the 10 laws `validate` must refuse, under both transductions), 16,173,312 onset outputs compared bit for bit, the bank's full Debug state compared after construction, after the run and after `reset`, and 15,796 spike trains compared: 0 disagreements, and `apply(0.0)` returned +0.0 for every admitted law. Control: the same harness against `o.prime(rest + 0.25)` disagreed on 16,162,212 of the 16,173,312 onset outputs, so the observables do see the detectors' starting state."
  },
  {
   "label": "a reset leaves the gammatone states where the last run left them",
@@ -945,7 +950,7 @@
   "label": "the single-bin transform's kernel rotates the wrong way",
   "old": "        im -= x * p.sin();",
   "new": "        im += x * p.sin();",
-  "equivalent": "the sign of the imaginary accumulator conjugates the kernel: with e^{+iωn} in place of e^{-iωn} the sum becomes the complex conjugate of the original, term by term, because every sample x is real. The function returns 2·|re + i·im|/N, and |z| = |conj(z)| exactly in IEEE arithmetic, so the returned amplitude is bit-for-bit identical. Nothing in this module reads the phase of the bin — `bin_amplitude` is the whole interface — so no test could tell. It would matter to a caller measuring a phase or a group delay, which is why the sign is written the way the transform is defined rather than either way."
+  "equivalent": "the sign of the imaginary accumulator conjugates the kernel: with e^{+iωn} in place of e^{-iωn} the sum becomes the complex conjugate of the original, term by term, because every sample x is real. The function returns 2·|re + i·im|/N, and |z| = |conj(z)| exactly in IEEE arithmetic, so the returned amplitude is bit-for-bit identical. Nothing in this module reads the phase of the bin — `bin_amplitude` is the whole interface — so no test could tell. It would matter to a caller measuring a phase or a group delay, which is why the sign is written the way the transform is defined rather than either way. Fixture built and both versions run side by side (2026-09-25, `bin_amplitude` of the two compiled crates): 20,512 calls, namely 20,000 random signals of 1 to 2,048 samples at 8, 16, 44.1 and 48 kHz with frequencies from -fs/4 to 3fs/4 and amplitudes from 1e-10 to 1e9, plus pure tones, silence of both signs, DC, Nyquist and frequencies past fs at six lengths, plus eight inputs both must refuse: 0 of 20,504 amplitudes differed in any bit, and the 8 refusals were identical. Control: dropping the imaginary part (`2|re|/N`) disagreed with the crate on 20,056 of the 20,504."
  },
  {
   "label": "the root-mean-square is a mean absolute value",

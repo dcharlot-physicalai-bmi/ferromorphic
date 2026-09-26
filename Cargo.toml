@@ -23,7 +23,7 @@ documentation = "https://docs.rs/ferromorphic"
 readme = "README.md"
 keywords = ["neuromorphic", "spiking", "snn", "event-driven", "energy"]
 categories = ["science", "algorithms", "simulation", "wasm", "embedded"]
-exclude = ["target/", "web/", "docs/"]
+exclude = ["target/", "web/", "docs/", "papers/"]
 
 [lib]
 crate-type = ["rlib", "cdylib"]

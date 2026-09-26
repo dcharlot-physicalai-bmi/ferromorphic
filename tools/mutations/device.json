@@ -686,6 +686,16 @@
   "new": "             split is this crate's convention. Replace with your array's measured map.\",\n    evidence: Evidence::Measured,"
  },
  {
+  "label": "the stuck-at placeholder's source string goes back to the byline it used to carry, with an author named Lin who is not on the paper",
+  "old": "(Chen, Li, Chen et al., DATE 2017, \\",
+  "new": "(Chen, Lin, Li et al., DATE 2017, \\"
+ },
+ {
+  "label": "the stuck-at placeholder's source string carries a DOI with two digits transposed, so the cited work cannot be found from it",
+  "old": "             doi:10.23919/DATE.2017.7926952); the \\",
+  "new": "             doi:10.23919/DATE.2017.7926925); the \\"
+ },
+ {
   "label": "the Johnson-Nyquist reference is evaluated at the ice point rather than at 300 K",
   "old": "    temp_k: 300.0,\n    bandwidth_hz: 1e6,",
   "new": "    temp_k: 273.15,\n    bandwidth_hz: 1e6,"

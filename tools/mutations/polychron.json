@@ -85,8 +85,8 @@
   "new": ""
  },
  {
-  "label": "groups shorter than the minimum are kept",
-  "old": "                    && group.len() >= min_length\n",
+  "label": "groups smaller than the minimum are kept",
+  "old": "                    && group.len() >= min_size\n",
   "new": "                    && group.len() >= 0\n"
  },
  {
@@ -120,8 +120,8 @@
   "new": ""
  },
  {
-  "label": "a zero minimum length is accepted",
-  "old": "        if min_length == 0 {\n            return Err(PolyError::OutOfRange { what: \"min_length\", value: 0.0 });\n        }\n",
+  "label": "a zero minimum size is accepted",
+  "old": "        if min_size == 0 {\n            return Err(PolyError::OutOfRange { what: \"min_size\", value: 0.0 });\n        }\n",
   "new": ""
  },
  {

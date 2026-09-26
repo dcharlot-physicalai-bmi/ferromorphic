@@ -23,10 +23,25 @@
 //!
 //! # Address-event representation
 //!
-//! The `(time, address, polarity)` triple is the format neuromorphic sensors and chips actually
-//! speak — Mahowald's address-event representation, 1992, and every event camera since. [`Event`]
-//! is that triple, and [`Spike`] is the same thing without a polarity for the many places inside a
-//! network where there is only one kind.
+//! The address-event representation is Misha Mahowald's (M. Mahowald, *VLSI analogs of neuronal
+//! visual processing: a synthesis of form and function*, doctoral dissertation, California
+//! Institute of Technology (1992), §3.3 "The Address-Event Representation", p. 84,
+//! doi:10.7907/4bdw-fg34; the same text was also issued as Caltech technical report CS-TR-92-15,
+//! doi:10.7907/Z9CZ35CD). In her scheme a spike is its address and nothing more: "Whenever a neuron
+//! signals an event, the multiplexing circuitry broadcasts that neuron's address on the inter-chip
+//! data bus", and "I have chosen to transmit only the neuron address, which corresponds to a
+//! digital amplitude event". Time is not a field. It is the moment the address appears on the bus,
+//! and "the detailed timing of the events is preserved" (Figure 3.1). This review did not locate a
+//! polarity field in §3.3. The explicit `(time, address, polarity)` triple is the form event
+//! cameras record: the time written down, and a sign for a sensor that reports a change in either
+//! direction. [`Event`] is that triple, and [`Spike`] is the same thing without a polarity for the
+//! many places inside a network where there is only one kind. [`crate::aer`] reads and writes the
+//! file formats.
+//!
+//! This section used to call the `(time, address, polarity)` triple "Mahowald's address-event
+//! representation, 1992, and every event camera since", with no title or identifier. The author and
+//! the year were right. The work went unnamed, and the sentence credited Mahowald with the whole
+//! triple, polarity included.
 
 /// One spike: a neuron fired at a tick.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]

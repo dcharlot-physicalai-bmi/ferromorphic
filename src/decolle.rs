@@ -4,10 +4,13 @@
 //! # What the mechanism is
 //!
 //! Kaiser, Mostafa and Neftci (*Synaptic plasticity dynamics for deep continuous local learning
-//! (DECOLLE)*, Frontiers in Neuroscience 14:424, 2020) attach to each layer of a spiking network
-//! a small linear readout `Y = G S` whose weights `G` are random and never trained, and ask each
-//! layer to make ITS readout match the target at every time step. The layer's neurons are
-//! leaky integrators written so that everything the gradient needs is already a state variable:
+//! (DECOLLE)*, Frontiers in Neuroscience 14:424 (2020), doi:10.3389/fnins.2020.00424) attach to
+//! each layer of a spiking network a small linear readout `Y = G S` whose weights `G` are random
+//! and never trained, and ask each layer to make ITS readout match the target at every time step.
+//! The layer's neurons are leaky integrators written so that everything the gradient needs is
+//! already a state variable. This module runs them in the UNNORMALISED form below, which is not
+//! the form that journal paper prints; the next section says whose form it is and how the two
+//! convert:
 //!
 //! ```text
 //! U_i[t] = Σ_j W_ij P_j[t] − ρ R_i[t] + b_i          S_i[t] = Θ(U_i[t])
@@ -27,6 +30,40 @@
 //! the eligibility), and nothing comes from the layer above. As in the paper, the dependence of
 //! `U` on the refractory trace `R` is left out of the gradient.
 //!
+//! # Whose equations these are
+//!
+//! Until this correction the module presented the recursions above as the cited paper's, and they
+//! are not; the code has not changed, only what it says it follows. The journal's Eq. (4) reads
+//!
+//! ```text
+//! P_j[t+Δt] = α P_j[t] + (1 − α) Q_j[t]    Q_j[t+Δt] = β Q_j[t] + (1 − β) S_j^{l−1}[t]    R_i[t+Δt] = γ R_i[t] + (1 − γ) S_i[t]
+//! ```
+//!
+//! with every trace normalised to unit gain. The form used here is the authors' earlier one: the
+//! preprint (Kaiser, Mostafa and Neftci, *Synaptic plasticity dynamics for deep continuous local
+//! learning (DECOLLE)*, `arXiv`:1811.10766v3 (2019), Eq. (1)) writes
+//! `P_j^l[n+1] = α P_j^l[n] + Q_j^l[n]` and `Q_j^l[n+1] = β Q_j^l[n] + S_j^{l−1}[n]`, and the
+//! authors' code (`nmi-lab/decolle-public`, `decolle/base_model.py`) keeps it as the class
+//! `LIFLayerNonorm`, whose `Q = self.beta * state.Q + Sin_t*self.gain` and
+//! `P = self.alpha * state.P + state.Q` drop the factors their default `LIFLayer` carries. The
+//! preprint typesets its `R` line with the layer's input `S_j^{l−1}`, while its text calls `R`
+//! the state that "resets and inhibits the neuron after it has emitted a spike"; `R` here filters
+//! the neuron's own spikes, as the journal's Eq. (4) and both of those classes do.
+//!
+//! The two forms are one model in two coordinate systems. Each trace is linear in its input and
+//! starts from zero, so the journal's `Q`, `P` and `R` are the ones here times `(1 − β)`,
+//! `(1 − α)(1 − β)` and `(1 − γ)`, and a layer here with `W = (1 − α)(1 − β) W_paper` and
+//! `ρ = (1 − γ) ρ_paper` has the journal layer's potentials, output and readout at every step.
+//! The update keeps its three factors and only its scale moves,
+//! `∂L/∂W_paper = (1 − α)(1 − β) ∂L/∂W`, so a descent step of rate `η` in the journal's
+//! coordinates is a weight step here of rate `((1 − α)(1 − β))² η`; the biases, which neither
+//! form rescales, keep the rate `η`.
+//! [`Layer::apply`] takes one rate for both, so following a journal-normalised run exactly means
+//! applying the bias part of the update on its own. At `α = 0.9` and `β = 0.8` the factor is
+//! 0.02: a weight here is a fiftieth of the journal weight that gives the same potential, and
+//! the weight rate is 1/2500 of the journal's. A weight, refractory weight or learning rate taken
+//! from that paper or from `LIFLayer` has to be converted before it is used here.
+//!
 //! # Why it is in a neuromorphic crate
 //!
 //! It is the learning rule built for the hardware: memory that does not grow with the length of
@@ -37,7 +74,13 @@
 //! # The closed forms this module is checked against
 //!
 //! - **The traces.** One input spike at step 0 gives `Q[t] = β^{t−1}` and
-//!   `P[t] = (α^{t−1} − β^{t−1})/(α − β)`; a neuron's own spike enters `R` as `γ^{t−1}`.
+//!   `P[t] = (α^{t−1} − β^{t−1})/(α − β)`; a neuron's own spike enters `R` as `γ^{t−1}`. The
+//!   journal's Eq. (4) would put `(1 − β)`, `(1 − α)(1 − β)` and `(1 − γ)` in front of these.
+//! - **The journal's normalisation is a change of coordinates.** Eq. (4), run as a recursion of
+//!   its own beside a layer here converted as above, gives the traces here times those factors,
+//!   the same potentials and output, a weight gradient `(1 − α)(1 − β)` times this one, and, with
+//!   the rates converted, the same descent step: bit for bit at `α = 3/4` and `β = γ = 1/2`,
+//!   where every factor is a power of two, and to 1e-12 at `α = 0.9`, `β = 0.8`, `γ = 0.7`.
 //! - **The update is the gradient of the layer's own loss.** With graded output `S = σ(U)`
 //!   ([`Output::Graded`]) the loss is differentiable and the update — weights and biases — is
 //!   checked against central finite differences. With spiking output the same three factors are
@@ -53,6 +96,8 @@
 //! - The paper's benchmarks (N-MNIST, DVS-Gesture), convolutional layers, its regularisers, and
 //!   its smooth-L1 loss; the loss here is the squared error the derivation above uses.
 //! - The `R` term of the gradient, which the paper also drops.
+//! - The journal's normalised traces as a mode of the layer. Only the unnormalised form runs
+//!   here; the conversion above is checked by a test, not offered as an option.
 
 use crate::rng::Rng;
 use core::fmt;
@@ -429,6 +474,92 @@ mod tests {
         }
         layer.reset();
         assert!(layer.p.iter().chain(&layer.q).chain(&layer.r).chain(&layer.u).chain(&layer.s).all(|&x| x == 0.0));
+    }
+
+    #[test]
+    fn the_journal_normalisation_is_this_layer_reparametrised() {
+        // Referee: Eq. (4) of Kaiser, Mostafa and Neftci, Frontiers in Neuroscience 14:424 (2020),
+        // with its (1 − α), (1 − β), (1 − γ) factors, run as its own recursion on the journal's
+        // weights, beside a layer here whose weights and refractory weight are the journal's times
+        // (1 − α)(1 − β) and (1 − γ). At the first dynamics every factor is a power of two, so the
+        // scaling commutes with rounding and the two must agree BIT FOR BIT; the second is the
+        // decimal set the other tests use.
+        let binary = Dynamics { alpha: 0.75, beta: 0.5, gamma: 0.5, rho: 0.0, steepness: 4.0 };
+        let (n_in, n, rho_paper, eta, target) = (6usize, 4usize, 2.0, 0.25, [0.25, -0.5]);
+        for (dynamics, tol) in [(binary, 0.0), (DYNAMICS, 1e-12)] {
+            let (al, be, ga) = (dynamics.alpha, dynamics.beta, dynamics.gamma);
+            let (c, cr) = ((1.0 - al) * (1.0 - be), 1.0 - ga);
+            let close = |x: f64, y: f64| (x - y).abs() <= tol * (1.0 + y.abs());
+            for output in [Output::Graded, Output::Spiking] {
+                let mut rng = Rng::new(21);
+                let mut layer = Layer::random(n_in, n, 2, Dynamics { rho: cr * rho_paper, ..dynamics }, output, 1.0, &mut rng).unwrap();
+                let w_paper: Vec<f64> = (0..n * n_in).map(|_| 1.5 * (2.0 * rng.next_f64() - 1.0)).collect();
+                layer.w = w_paper.iter().map(|w| c * w).collect();
+                layer.b = (0..n).map(|_| rng.next_f64() - 0.5).collect();
+                let sigmoid = |u: f64| 1.0 / (1.0 + (-dynamics.steepness * u).exp());
+                let (mut pj, mut qj, mut ri) = (vec![0.0; n_in], vec![0.0; n_in], vec![0.0; n]);
+                let (mut fired, mut quiet) = (0, 0);
+                for t in 0..40 {
+                    let input: Vec<f64> = (0..n_in).map(|_| f64::from(u8::from(rng.next_f64() < 0.4))).collect();
+                    // The journal's step, from its own traces.
+                    let u: Vec<f64> = (0..n).map(|i| (0..n_in).map(|j| w_paper[i * n_in + j] * pj[j]).sum::<f64>() - rho_paper * ri[i] + layer.b[i]).collect();
+                    let s: Vec<f64> = u
+                        .iter()
+                        .map(|&u| match output {
+                            Output::Spiking => f64::from(u8::from(u >= 0.0)),
+                            Output::Graded => sigmoid(u),
+                        })
+                        .collect();
+                    let trace_paper = pj.clone();
+                    for j in 0..n_in {
+                        pj[j] = al * pj[j] + (1.0 - al) * qj[j];
+                        qj[j] = be * qj[j] + (1.0 - be) * input[j];
+                    }
+                    for i in 0..n {
+                        ri[i] = ga * ri[i] + (1.0 - ga) * s[i];
+                    }
+                    // This module's step, on the converted parameters.
+                    let trace = layer.p.clone();
+                    layer.step(&input).unwrap();
+                    for i in 0..n {
+                        assert!(close(layer.u[i], u[i]), "{output:?} at α = {al}, t = {t}: U[{i}] = {} here, {} by Eq. (4)", layer.u[i], u[i]);
+                        assert!(output == Output::Graded || u[i].abs() > 1e-9, "U[{i}] = {} sits on the threshold, so the spike comparison is a coin flip", u[i]);
+                        assert!(close(layer.s[i], s[i]), "{output:?} at α = {al}, t = {t}: S[{i}] = {} here, {} by Eq. (4)", layer.s[i], s[i]);
+                        assert!(close(cr * layer.r[i], ri[i]), "R[{i}]: (1 − γ) · {} against {}", layer.r[i], ri[i]);
+                        fired += usize::from(s[i] >= 0.5);
+                        quiet += usize::from(s[i] < 0.5);
+                    }
+                    for j in 0..n_in {
+                        assert!(close(c * layer.p[j], pj[j]), "P[{j}]: (1 − α)(1 − β) · {} against {}", layer.p[j], pj[j]);
+                        assert!(close((1.0 - be) * layer.q[j], qj[j]), "Q[{j}]: (1 − β) · {} against {}", layer.q[j], qj[j]);
+                    }
+                    if t < 39 {
+                        continue;
+                    }
+                    // The readout, the gradient in the journal's coordinates, and one descent step.
+                    let y: Vec<f64> = (0..2).map(|k| (0..n).map(|i| layer.g[k * n + i] * s[i]).sum::<f64>()).collect();
+                    assert!(y.iter().zip(layer.readout()).all(|(&y, here)| close(here, y)), "the readouts differ");
+                    let error: Vec<f64> = y.iter().zip(&target).map(|(y, t)| y - t).collect();
+                    let update = layer.update_from_error(&error, &trace).unwrap();
+                    assert!(update.w.iter().any(|g| g.abs() > 1e-6), "the gradient checked was all but zero");
+                    let mut stepped = layer.clone();
+                    stepped.apply(&Update { w: update.w.clone(), b: vec![0.0; n] }, c * c * eta).unwrap();
+                    stepped.apply(&Update { w: vec![0.0; n * n_in], b: update.b.clone() }, eta).unwrap();
+                    for i in 0..n {
+                        let sg = sigmoid(u[i]);
+                        let delta = (0..2).map(|k| layer.g[k * n + i] * error[k]).sum::<f64>() * (dynamics.steepness * sg * (1.0 - sg));
+                        assert!(close(update.b[i], delta), "∂L/∂b[{i}]: {} against {delta}", update.b[i]);
+                        assert!(close(stepped.b[i], layer.b[i] - eta * delta), "b[{i}] after the step");
+                        for j in 0..n_in {
+                            let (k, g_paper) = (i * n_in + j, delta * trace_paper[j]);
+                            assert!(close(c * update.w[k], g_paper), "∂L/∂W_paper[{k}]: (1 − α)(1 − β) · {} against {g_paper}", update.w[k]);
+                            assert!(close(stepped.w[k], c * (w_paper[k] - eta * g_paper)), "W[{k}] after the step");
+                        }
+                    }
+                }
+                assert!(fired > 0 && quiet > 0 && layer.r.iter().any(|&r| r > 0.1), "{output:?} at α = {al}: {fired} fired, {quiet} quiet");
+            }
+        }
     }
 
     /// A graded layer driven for a few steps, its traces warm and its refractory trace non-zero.

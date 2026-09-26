@@ -278,15 +278,33 @@ mod tests {
     use super::{Plif, PlifError, Reset};
     use crate::surrogate::{SigmoidDeriv, SpikeFn, Surrogate};
 
-    /// `w = −ln(τ − 1)` gives `sigmoid(w) = 1/τ` exactly, for the time constants the paper starts
-    /// from; one or less is refused, as `SpikingJelly` asserts.
+    /// `w = −ln(τ − 1)`, `SpikingJelly`'s `init_w`, gives `sigmoid(w) = 1/τ` in exact arithmetic:
+    /// at the two initial values the paper trains from, `τ₀ = 2` and `τ₀ = 16`, and at three other
+    /// values above one. One or less is refused, as `SpikingJelly` asserts.
+    ///
+    /// Corrected. This comment used to say the loop covered "the time constants the paper starts
+    /// from" while it ran over 2, 1.5, 4 and 10, and 16 was not tested. Fang et al. (ICCV 2021,
+    /// read here as arXiv:2007.05785v5) start PLIF from `τ₀ = 2` and `τ₀ = 16` only: the PLIF rows
+    /// of Table 4 are "PLIF(τ₀=2)" and "PLIF(τ₀=16)", each beside LIF at the same `τ`; the legend
+    /// of Fig. 7 has the same two, "PLIF, τ₀ = 2" and "PLIF, τ₀ = 16"; and the supplement says "We
+    /// set τ₀ = 2 for all PLIF neurons." The paper defines `k(a) = 1/(1 + exp(−a))` and
+    /// `τ = 1/k(a)`, and this review did not locate the inverse `w = −ln(τ₀ − 1)` in it. That
+    /// inverse is `SpikingJelly`'s `init_w = -math.log(init_tau - 1.0)` in
+    /// `activation_based/neuron/plif.py`, with a default `init_tau` of 2.
+    ///
+    /// In `f64`, on the machine this was measured on, 2, 16, 1.5 and 4 come back to the bit, while
+    /// 10 does not: `1/k` is `10.000000000000002`, 1.8e-15 above it. Hence a tolerance for the
+    /// loop, and equality only at `τ = 2`, where `w = −ln 1 = 0` and `sigmoid(0) = 1/2` whatever
+    /// the platform's `exp` and `ln` round to.
     #[test]
     fn the_initial_tau_is_exact() {
-        for tau in [2.0, 1.5, 4.0, 10.0] {
+        // The paper's two initial values, then three other values above one.
+        for tau in [2.0, 16.0, 1.5, 4.0, 10.0] {
             let p = Plif::with_tau(tau).unwrap();
             assert!((p.leak() - 1.0 / tau).abs() < 1e-15 && (p.tau() - tau).abs() < 1e-13, "{tau}");
         }
         let p = Plif::with_tau(2.0).unwrap();
+        assert_eq!((p.leak(), p.tau()), (0.5, 2.0));
         assert_eq!((p.w, p.v_threshold, p.reset, p.decay_input, p.detach_reset), (0.0, 1.0, Reset::Hard { v_reset: 0.0 }, true, false));
         for tau in [1.0, 0.5, f64::NAN, f64::INFINITY] {
             assert!(matches!(Plif::with_tau(tau), Err(PlifError::Tau { .. })), "{tau}");

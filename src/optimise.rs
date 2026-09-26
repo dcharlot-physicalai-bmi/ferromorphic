@@ -12,13 +12,29 @@
 //! E(x) = Σ_i q_ii x_i + Σ_{i<j} q_ij x_i x_j,      x ∈ {0, 1}^n
 //! ```
 //!
-//! is a QUBO — the form every NP-hard combinatorial problem has been written in (Lucas, *Ising
-//! formulations of many NP problems*, Frontiers in Physics 2:5, 2014). Let the network run at a
-//! temperature and it samples the low-energy states more often; raise `β` slowly and it settles
-//! into one of them. That is simulated annealing done by neurons: each unit's flip probability is
-//! the logistic of `β` times its local field, which is exactly the membrane-to-firing map of
-//! [`crate::bayes`]'s neural sampler, and this module builds on that module's [`Boltzmann`] so
-//! the two agree on what a field is.
+//! is a QUBO — the form into which many NP-complete and NP-hard problems, including all of Karp's
+//! 21 NP-complete problems, have been written, each with at most cubically many spins (Lucas,
+//! *Ising formulations of many NP problems*, Frontiers in Physics 2:5, 2014,
+//! doi:10.3389/fphy.2014.00005); any NP-complete problem reduces to one in polynomial time. Let
+//! the network run at a temperature and it samples the low-energy states more often; raise `β`
+//! slowly and it settles into one of them. That is simulated annealing done by neurons: each
+//! unit's flip probability is the logistic of `β` times its local field, which is exactly the
+//! membrane-to-firing map of [`crate::bayes`]'s neural sampler, and this module builds on that
+//! module's [`Boltzmann`] so the two agree on what a field is.
+//!
+//! ⚠ CORRECTED, against the paper. The first sentence above used to call QUBO "the form every
+//! NP-hard combinatorial problem has been written in", citing the same paper, which claims less.
+//! Its abstract: "We provide Ising formulations for many NP-complete and NP-hard problems,
+//! including all of Karp's 21 NP-complete problems. [...] In each case, the required number of
+//! spins is at most cubic in the size of the problem." Its general argument (§1.3) is for
+//! NP-complete decision problems only, by polynomial reduction — "we can get from any NP-complete
+//! problem to the Hamiltonian of an Ising spin glass" — and it adds that "for generic problems,
+//! this is a very inefficient procedure". "Every NP-hard" also fails on its own terms: NP-hard
+//! includes problems outside NP, PSPACE-hard ones among them, while asking whether a
+//! polynomial-size QUBO has a state with `E(x) ≤ k` is itself a question in NP, so a
+//! polynomial-time construction of such a form for a PSPACE-hard problem would put PSPACE inside
+//! NP. This review did not locate such a construction. The citation was right and only its
+//! characterisation was wrong; no constant, formula or test depended on the wording.
 //!
 //! # Why it is in a neuromorphic crate
 //!

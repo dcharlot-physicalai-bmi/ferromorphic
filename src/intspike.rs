@@ -12,7 +12,10 @@
 //! by expanding the integer over "virtual" time steps.
 //!
 //! `SpikingBrain` (Pan, Feng, Zhuang, Ding, Xu, … Xu and Li, *`SpikingBrain`: Spiking Brain-inspired
-//! Large Models*, `arXiv`:2509.05276, September 2025, §3.3) states the version implemented here:
+//! Large Models*, `arXiv`:2509.05276v4, 8 May 2026, first submitted 5 September 2025, §3.3) states the
+//! version implemented here. Every equation number in this module is v4's, which v3 (1 December 2025)
+//! shares; v1 and v2 number the same equations differently — the adaptive threshold is v1's Eq. 22
+//! and v2's Eq. 23 — so a citation without the version points at the wrong equation.
 //!
 //! - an **adaptive threshold** set by the input itself, `V_th(x) = mean(|x|) / k` (its Eq. 19), where
 //!   the hyperparameter `k` sets the firing rate;
@@ -21,8 +24,9 @@
 //!   accumulation made of additions;
 //! - three ways to spend the count as spikes. **Binary**, `{0, 1}`, one spike per unit of count, which
 //!   the paper says "only supports positive integers". **Ternary**, `{−1, 0, 1}`, one signed spike per
-//!   unit. **Bitwise**, `s_INT = Σ_t 2^(t−1) s_t` (its Eq. 23), one time step per bit, with "two's
-//!   complement encoding" carrying the sign "in the highest bit".
+//!   unit. **Bitwise**, one time step per bit, in the third of the paper's three bitwise forms: "Two's
+//!   complement encoding incorporates sign information into the highest bit". Over `b` bits this
+//!   module reads a train as `s_INT = −2^(b−1)·s_b + Σ_{t<b} 2^(t−1)·s_t`, least significant bit first.
 //!
 //! The integer-training line it builds on is Luo, Yao, Chou, Xu and Li, *Integer-Valued Training and
 //! Spike-Driven Inference Spiking Neural Network for High-performance and Energy-efficient Object
@@ -31,6 +35,24 @@
 //! *Scaling Spike-driven Transformer with Efficient Spike Firing Approximation Training* (IEEE TPAMI,
 //! 2025, `arXiv`:2411.16061). This module transcribes only the `SpikingBrain` equations, which are
 //! the ones this review read.
+//!
+//! # ⚠ Two citations this module used to get wrong
+//!
+//! - **The version.** The citation above used to read "`arXiv`:2509.05276, September 2025" — the date
+//!   of v1, in whose numbering no equation number given here names the same equation: v1's threshold,
+//!   count and output are its Eqs. 22, 25 and 26, and this review located no formula in its bitwise
+//!   text.
+//! - **The bitwise formula.** This module used to give the bitwise coding as `s_INT = Σ_t 2^(t−1) s_t`,
+//!   "its Eq. 23". Eq. 23 is the paper's formula for its SECOND bitwise form, which "uses ±1 to
+//!   represent each bit", and the text introduces it as such: "Taking Bidirectional bitwise encoding
+//!   as an example, its encoding formula ... can be expressed as". Every weight in it is positive, so
+//!   it is not the code implemented here. This review did not locate a formula for the two's
+//!   complement form in §3.3.2. The one instance of it this review found is Figure 4(c), which draws
+//!   −5 as `1 0 1 1`, most significant bit first; this module emits the same code least significant
+//!   first, `1, 1, 0, 1`, the order Eq. 23's weights `2^(t−1)` imply. What the code shares with Eq. 23
+//!   is a positional sum; the negative top-bit weight is this module's own, the standard two's
+//!   complement one. Docs only: the top bit has always weighed `−2^(b−1)` here, and a test now reads
+//!   one train both ways.
 //!
 //! # What this module checks, and against what
 //!
@@ -65,18 +87,35 @@
 //! spikes fired on average per channel. [`SPIKINGBRAIN_45NM`] carries those numbers. Three things
 //! about the claim are this crate's business:
 //!
-//! 1. **It is arithmetic only.** The model is spikes times the energy of an addition; memory access
-//!    and data movement are not in it, and nothing was measured, so it is graded
-//!    [`Evidence::Derived`].
-//! 2. **Once a weight read is priced, the answer depends on the dataflow, and the paper does not say
-//!    which.** A spike adds one column of `W` to the accumulator. If that column is fetched once per
-//!    SPIKE, 1.13 spikes per activation reads 13% more weights than a dense pass, and past a fetch
-//!    energy the paper's own figures determine — [`ArithmeticModel::break_even_fetch_pj`], 1.508 pJ
-//!    against INT8 — the dense layer is cheaper. If the column is HELD while all of one input's spikes
-//!    are applied, it is read once per active input, and with 18.4% of channels silent that is fewer
-//!    reads than a dense pass, so the spiking layer wins at any fetch energy. Same arithmetic, opposite
-//!    verdicts. That is the crossover argument this crate is built on (see [`crate::crossover`]),
-//!    arriving from the other direction.
+//! 1. **It is arithmetic only.** The model is spikes times the energy of an addition, its Eq. 24,
+//!    `E = Average Spikes × E_INT8Add`; memory access and data movement are not in it, and nothing was
+//!    measured, so it is graded [`Evidence::Derived`].
+//! 2. **Once a weight read is priced, the answer depends on the dataflow.** A spike adds one column of
+//!    `W` to the accumulator. If that column is fetched once per SPIKE, 1.13 spikes per activation
+//!    reads 13% more weights than a dense pass, and past a fetch energy the paper's own figures
+//!    determine — [`ArithmeticModel::break_even_fetch_pj`], 1.508 pJ against INT8 — the dense layer is
+//!    cheaper. If the column is HELD while all of one input's spikes are applied, it is read once per
+//!    active input, and with 18.4% of channels silent that is fewer reads than a dense pass, so the
+//!    spiking layer wins at any fetch energy. Same arithmetic, opposite verdicts. That is the
+//!    crossover argument this crate is built on (see [`crate::crossover`]), arriving from the other
+//!    direction.
+//!
+//!    The paper's own memory claim is the held case. Its §5.5 says the weight fetches of the silent
+//!    channels "are skipped (including data transfer from off-chip DRAM to on-chip SRAM and from SRAM
+//!    to compute units), thereby proportionally reducing memory access overhead", and v4's Appendix
+//!    C.2 adds "The analysis assumes channel-level skipping." Reads that fall in proportion to the
+//!    silent fraction need an active channel's column read once, [`Dataflow::HoldPerInput`]; fetched
+//!    per spike, 1.13 spikes a channel read more than a dense pass, not fewer. Skipping a silent
+//!    channel does not by itself pick between the two, since a silent channel fetches nothing under
+//!    either. This review did not locate a statement of whether an active channel carrying several
+//!    spikes has its column re-read at each one, and neither dataflow is priced: the §5.5 figures are
+//!    additions alone.
+//!
+//!    **Correction.** This item used to say the verdict depends on the dataflow "and the paper does
+//!    not say which". The paper is not silent: its "proportionally" implies the held dataflow, under
+//!    which the spiking layer wins at any fetch energy, though it never names one. The fetch-per-spike
+//!    break-even stands as what the claim costs if an active channel's column is re-read per spike.
+//!    Docs only; a test now counts both reads on one layer.
 //! 3. **Its two ratios imply two different spike energies.** The text gives "about 0.034 pJ" per
 //!    MAC-equivalent, and 0.23 / 0.034 is the paper's 6.76×. But 1.5 / 0.034 is 44.1×, and the
 //!    paper's 43.48× against FP16 needs 0.0345 pJ — 1.15 spikes rather than 1.13. Small, and recorded
@@ -201,7 +240,8 @@ pub enum Coding {
     /// `{−1, 0, 1}`: one signed spike per unit of count.
     Ternary,
     /// One time step per bit of a two's complement code of `bits` bits, least significant first;
-    /// the top bit carries weight `−2^(bits−1)`.
+    /// the top bit carries weight `−2^(bits−1)`. `SpikingBrain`'s third bitwise form, for which this
+    /// review did not locate a formula in the paper; its Eq. 23 is the bidirectional form.
     Bitwise {
         /// The code width, `2..=32`.
         bits: u32,
@@ -348,7 +388,7 @@ fn twos_complement(count: i64, bits: u32) -> u64 {
     (count as u64) & ((1u64 << bits) - 1)
 }
 
-/// The adaptive threshold `V_th(x) = mean(|x|) / k` — `SpikingBrain`'s Eq. 19.
+/// The adaptive threshold `V_th(x) = mean(|x|) / k` — `SpikingBrain`'s Eq. 19 (v4 numbering).
 ///
 /// # Errors
 ///
@@ -379,7 +419,7 @@ pub struct Encoded {
     pub counts: Vec<i64>,
 }
 
-/// Encode activations as integer spike counts: `s_INT = round(x / V_th(x))`, `SpikingBrain`'s Eq. 21.
+/// Encode activations as integer spike counts: `s_INT = round(x / V_th(x))`, `SpikingBrain`'s Eq. 21 (v4).
 ///
 /// **The tie rule is stated because the paper does not state one.** It writes `round(·)`. This uses
 /// round-half-to-even, which is IEEE 754's default rounding and the rule `torch.round` applies; at an
@@ -499,8 +539,10 @@ pub fn dense(w: &[i8], rows: usize, cols: usize, counts: &[i64]) -> Result<Vec<i
     Ok(y)
 }
 
-/// The accumulate-only product `Σ_i Σ_t W[r][i] · w_t · s_{i,t}` — `SpikingBrain`'s Eq. 22 before the
-/// threshold scale, and Eq. 23 for bitwise.
+/// The accumulate-only product `Σ_i Σ_t W[r][i] · w_t · s_{i,t}` — `SpikingBrain`'s Eq. 22 (v4) before
+/// the threshold scale and, for bitwise, the two's complement form of its bitwise coding. This line
+/// used to say "Eq. 23 for bitwise"; Eq. 23 is the paper's bidirectional form, whose weights are all
+/// positive (see the module documentation).
 ///
 /// Written with additions, subtractions and shifts only: a spike of `+1` adds the weight, a spike of
 /// `−1` subtracts it, and a bitwise spike at position `t` shifts it left by `t` first (and subtracts
@@ -554,7 +596,7 @@ pub fn spike_driven(
     Ok((y, ops))
 }
 
-/// Apply the threshold once, at the end: `y = V_th · Σ`, `SpikingBrain`'s Eq. 22.
+/// Apply the threshold once, at the end: `y = V_th · Σ`, `SpikingBrain`'s Eq. 22 (v4).
 #[must_use]
 pub fn scale(accumulated: &[i64], threshold: f64) -> Vec<f64> {
     accumulated.iter().map(|&a| threshold * a as f64).collect()
@@ -566,7 +608,8 @@ pub enum Dataflow {
     /// A column of `W` is fetched for every non-zero spike: reads scale with SPIKES.
     FetchPerSpike,
     /// A column is fetched once per active input and held while all that input's spikes are
-    /// applied: reads scale with ACTIVE INPUTS.
+    /// applied: reads scale with ACTIVE INPUTS. The dataflow `SpikingBrain`'s §5.5 memory claim
+    /// implies, since only here do reads fall "proportionally" with the silent channels.
     HoldPerInput,
 }
 
@@ -585,7 +628,7 @@ pub struct ArithmeticModel {
     pub evidence: Evidence,
 }
 
-/// `SpikingBrain`'s energy model, §5.5, as the paper states it.
+/// `SpikingBrain`'s energy model, §5.5 and Eq. 24 of v4, as the paper states it.
 ///
 /// Graded [`Evidence::Derived`]: the figures are "published hardware energy consumption data at
 /// 45nm technology", combined analytically, and nothing was measured on the system the model
@@ -594,7 +637,8 @@ pub const SPIKINGBRAIN_45NM: ArithmeticModel = ArithmeticModel {
     fp16_mac_pj: 1.5,
     int8_mac_pj: 0.23,
     int8_add_pj: 0.03,
-    source: "Pan et al., SpikingBrain, arXiv:2509.05276, 2025, section 5.5: 'based on published hardware \
+    source: "Pan et al., SpikingBrain: Spiking Brain-inspired Large Models, arXiv:2509.05276v4 (8 May 2026; \
+             first submitted 5 Sep 2025), section 5.5, Eq. 24: 'based on published hardware \
              energy consumption data at 45nm technology'. Arithmetic only: memory access and data \
              movement are not in the model, and nothing was measured.",
     evidence: Evidence::Derived,
@@ -928,6 +972,8 @@ mod tests {
         let m = SPIKINGBRAIN_45NM;
         assert_eq!(m.evidence, Evidence::Derived);
         assert!(m.source.contains("Arithmetic only"));
+        // Pinned to the version whose section and equation it names: v1 numbers the model Eq. 27.
+        assert!(m.source.contains("arXiv:2509.05276v4") && m.source.contains("Eq. 24"), "{}", m.source);
         let pct = |v: f64| (v * 1000.0).round() / 10.0;
         let spikes = SPIKINGBRAIN_SPIKE_PJ / m.int8_add_pj;
         assert_eq!(pct(m.reduction(m.fp16_mac_pj, spikes)), 97.7);
@@ -942,7 +988,8 @@ mod tests {
         assert_eq!((m.spike_pj(SPIKINGBRAIN_SPIKES_PER_CHANNEL) * 10_000.0).round() / 10_000.0, 0.0339);
     }
 
-    /// Price the weight reads and the verdict turns on the dataflow the paper does not state.
+    /// Price the weight reads and the verdict turns on the dataflow, which the paper implies through
+    /// "proportionally" and never names.
     ///
     /// At 1.13 spikes per channel, fetching a column per SPIKE reads 13% more weights than a dense
     /// pass: against INT8 the dense layer becomes cheaper once a read costs more than
@@ -969,6 +1016,55 @@ mod tests {
         // And with no spare arithmetic there is nothing to trade against the extra reads.
         let flat = ArithmeticModel { int8_add_pj: 1.0, ..m };
         assert_eq!(flat.break_even_fetch_pj(0.23, 1.13, 0.816, Dataflow::FetchPerSpike), None);
+    }
+
+    /// The paper's memory claim, that skipping silent channels cuts memory access "proportionally",
+    /// holds for held columns and fails for columns fetched per spike.
+    ///
+    /// A ternary layer of eight channels with counts `0, 1, −2, 1, 0, 3, 1, 1`: a quarter of them
+    /// silent and 9/8 = 1.125 spikes a channel, the eighths fraction nearest the paper's 1.13. A dense
+    /// pass reads all eight columns. Held, the layer reads six, `8 × (1 − 1/4)`, so the saving is
+    /// exactly the silent quarter. Fetched per spike it reads nine, one MORE than dense, though the
+    /// same two channels are skipped. Skipping silent channels does not pick the dataflow;
+    /// "proportionally" does. The same holds at the paper's own statistics once the arithmetic is
+    /// zeroed and a read costs 1: held, `1 − 0.184` of a dense read; per spike, 1.13.
+    #[test]
+    fn the_papers_proportional_memory_saving_is_the_held_dataflow() {
+        let counts = [0i64, 1, -2, 1, 0, 3, 1, 1];
+        let trains: Vec<Vec<i8>> = counts.iter().map(|&c| Coding::Ternary.expand(c).unwrap()).collect();
+        let w = vec![1i8; 3 * counts.len()];
+        let (_, ops) = spike_driven(&w, 3, counts.len(), &trains, Coding::Ternary).unwrap();
+        let dense_reads = counts.len() as u64;
+        let silent = counts.iter().filter(|&&c| c == 0).count() as u64;
+        assert_eq!((dense_reads, silent), (8, 2));
+        assert_eq!(ops.reads_held, dense_reads - silent, "held: the saving is the silent quarter");
+        assert_eq!(ops.reads_per_spike, 9, "per spike: one read more than the dense pass");
+        let reads_only = ArithmeticModel { int8_add_pj: 0.0, ..SPIKINGBRAIN_45NM };
+        let (s, active) = (SPIKINGBRAIN_SPIKES_PER_CHANNEL, 1.0 - SPIKINGBRAIN_SILENT_FRACTION);
+        assert_eq!(reads_only.with_fetch(0.0, s, active, 1.0, Dataflow::HoldPerInput), (1.0, active));
+        assert_eq!(reads_only.with_fetch(0.0, s, active, 1.0, Dataflow::FetchPerSpike), (1.0, 1.13));
+    }
+
+    /// The paper's Eq. 23 is its BIDIRECTIONAL bitwise form, and this module implements its two's
+    /// complement form: the same train reads differently under the two.
+    ///
+    /// Eq. 23 weights step `t`, counted from 1, by `2^(t−1)`, every weight positive, and its spikes
+    /// are `±1` ("uses ±1 to represent each bit"). The 4-bit two's complement code of −5, least
+    /// significant bit first, is `1, 1, 0, 1`: Figure 4(c)'s `1 0 1 1`, which the figure draws most
+    /// significant bit first, reversed. Read with Eq. 23's weights that train is `1 + 2 + 8 = 11`; read
+    /// with [`Coding::step_weight`] it is `1 + 2 − 8 = −5`. Eq. 23 holds −5 as the figure's
+    /// bidirectional train `−1 0 −1` instead.
+    #[test]
+    fn the_papers_eq_23_is_the_bidirectional_form_not_the_twos_complement_code_implemented_here() {
+        let b4 = Coding::Bitwise { bits: 4 };
+        let train = b4.expand(-5).unwrap();
+        assert_eq!(train, vec![1, 1, 0, 1]);
+        let figure_4c: Vec<i8> = vec![1, 0, 1, 1];
+        assert_eq!(train.iter().rev().copied().collect::<Vec<i8>>(), figure_4c, "the figure's order, reversed");
+        let eq23 = |s: &[i8]| s.iter().enumerate().map(|(t, &b)| i64::from(b) << t).sum::<i64>();
+        assert_eq!(eq23(&train), 11, "Eq. 23's all-positive weights misread the two's complement code");
+        assert_eq!(b4.reconstruct(&train).unwrap(), -5);
+        assert_eq!(eq23(&[-1, 0, -1]), -5, "Eq. 23 holds -5 as signed bits");
     }
 
     /// Encoded values are exactly what was stored: the struct round-trips through its own fields.

@@ -1,3 +1,5 @@
 /target
 **/*.rs.bk
 .DS_Store
+# Primary sources supplied for verification. Copyrighted: never committed, never packaged.
+/papers

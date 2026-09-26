@@ -88,12 +88,34 @@
 //! # Burst: a small integer, sent robustly and read back exactly
 //!
 //! A burst is several spikes close together followed by a gap. Treating the **count** as the
-//! message gives a short, quantised, easily detected symbol: bursts cross unreliable synapses far
-//! better than single spikes, and the receiver only has to count (Izhikevich, Desai, Walcott &
-//! Hoppensteadt, *Trends in Neurosciences* 26:161-167, 2003; Kepecs & Lisman, *Network:
-//! Computation in Neural Systems* 14, 2003). The honest limit is in the same sentence: the code is
-//! `log2(max_spikes + 1)` bits, a single lost spike is a full quantum of error, and a value of zero
-//! is *silence*, which is indistinguishable from a cell that was never asked.
+//! message gives a short, quantised, easily detected symbol. The case for sending bursts at all
+//! is Lisman's: many central synapses often fail to signal a single spike, "however, bursts are
+//! reliably signaled because transmitter release is facilitated", so "these synapses can be
+//! viewed as filters that transmit bursts, but filter out single spikes" (Lisman, *Bursts as a
+//! unit of neural information: making unreliable synapses reliable*, Trends in Neurosciences
+//! 20:38-43 (1997), doi:10.1016/S0166-2236(96)10070-9). The case for the count as a symbol is on
+//! the sender's side: in a simulated bursting neuron driven by a random current with noise added,
+//! "the number of spikes per burst is highly robust to noise" (Kepecs & Lisman, *Information
+//! encoding and computation with spikes and bursts*, Network: Computation in Neural Systems
+//! 14:103-118 (2003), doi:10.1080/net.14.1.103.118). That is a property of the encoder. It says
+//! nothing about synapses or about a receiver that counts.
+//!
+//! This module used to say that "bursts cross unreliable synapses far better than single spikes,
+//! and the receiver only has to count", and cited Izhikevich, Desai, Walcott & Hoppensteadt
+//! (*Bursts as a unit of neural information: selective communication via resonance*, Trends in
+//! Neurosciences 26:161-167 (2003), doi:10.1016/S0166-2236(03)00034-1) for it. That paper makes
+//! neither claim. It grants the reliability argument, which it calls the classical view and
+//! credits to Lisman, and calls that view "only half of the story". It gives no "far better"
+//! figure. Its own thesis runs against the counting half: the interspike frequency inside a burst
+//! decides which receivers respond, through resonance, and "The number of spikes within the
+//! burst does not play a significant role here because adding more spikes to a non-resonant
+//! burst does not increase the voltage response in postsynaptic cells." It is kept here as the
+//! counterpoint. A receiver that only counts, as [`BurstCode`] does, throws away the selective
+//! channel that paper describes.
+//!
+//! The honest limit of the count code: it is `log2(max_spikes + 1)` bits, a single lost spike is
+//! a full quantum of error, and a value of zero is *silence*, which is indistinguishable from a
+//! cell that was never asked.
 //!
 //! # `BSA` and `HSA`: encoding by deconvolution
 //!
@@ -137,21 +159,38 @@
 //! # Temporal contrast, and what [`crate::encode::DeltaEncoder`] already is
 //!
 //! Threshold-based encoding sends an event when the signal moves past a threshold from a
-//! reference, and nothing otherwise. Petro, Kasabov & Whittington (*IEEE Transactions on Neural
-//! Networks and Learning Systems*, 2020) name three variants, and all three are here:
-//! **step-forward** (the reference moves by one threshold on each event), **moving window** (the
-//! reference is the mean of the last `w` samples) and **threshold-based representation** (fire on
-//! the derivative, against a threshold derived from the signal's own statistics — which is
-//! *non-causal*, since it needs the whole signal before it can encode the first sample, and that
-//! is said in [`TemporalContrast::threshold_by_statistics`] rather than left to be discovered).
+//! reference, and nothing otherwise. Petro, Kasabov & Kiss (*Selection and Optimization of
+//! Temporal Spike Encoding Methods for Spiking Neural Networks*, IEEE Transactions on Neural
+//! Networks and Learning Systems 31:358-370 (2020), doi:10.1109/TNNLS.2019.2906158) name three
+//! variants, and all three are here: **step-forward** (the reference moves by one threshold on
+//! each event), **moving window** (the reference is a moving average of the samples before the
+//! current one) and **threshold-based representation** (fire on the derivative, against a
+//! threshold derived from the signal's own statistics — which is *non-causal*, since it needs the
+//! whole signal before it can encode the first sample, and that is said in
+//! [`TemporalContrast::threshold_by_statistics`] rather than left to be discovered). This module
+//! used to name the paper's third author as Whittington. The Crossref record for that DOI, and
+//! the accepted manuscript, name Rita M. Kiss.
+//!
+//! The paper's Appendix gives each rule as pseudocode, and this module does not follow all of it.
+//! The three departures below are the ones this correction documents, and each is also written
+//! at the item it changes. Step-forward fires on `>=` where Algorithm 2 writes a strict `>` (see
+//! [`ContrastMode::StepForward`]). The moving-window baseline is causal, and its window is one
+//! sample shorter than Algorithm 3's for the same parameter (see [`ContrastMode::MovingWindow`]).
+//! The moving-window decoder rebuilds that baseline where Algorithm 5 accumulates (see
+//! [`TemporalContrast::decode`]). The statistical threshold, by contrast, now follows Algorithm 1.
+//! It used to be computed on absolute differences.
 //!
 //! [`crate::encode::DeltaEncoder`] is **already** step-forward encoding, with one addition: it may
 //! emit several events for one sample so a large jump is reported in full.
-//! [`TemporalContrast`] in [`ContrastMode::StepForward`] emits at most one event per sample, which
-//! is the published algorithm, and
+//! [`TemporalContrast`] in [`ContrastMode::StepForward`] emits at most one event per sample, as
+//! the published Algorithm 2 does, and
 //! `step_forward_is_the_existing_delta_encoder_capped_at_one_event` asserts the two produce
 //! event-for-event identical output when the delta encoder's cap is set to one. They are the same
-//! mechanism and this crate now says so in a test rather than in a comment.
+//! mechanism and this crate now says so in a test rather than in a comment. This module used to
+//! call its step-forward rule "the published algorithm" without qualification. The event cap
+//! matches Algorithm 2, but the comparison does not: the paper fires only when
+//! `s(t) > base + threshold`, so a change of exactly one threshold emits nothing there and one
+//! event here.
 //!
 //! # A worked example
 //!
@@ -1645,10 +1684,24 @@ pub struct Burst {
 
 /// Burst coding: the message is the number of spikes in the burst.
 ///
-/// Bursts cross unreliable synapses far better than isolated spikes, and a receiver that only has
-/// to *count* is cheap and robust to the exact timing inside the burst (Izhikevich, Desai, Walcott
-/// & Hoppensteadt, *Trends in Neurosciences* 26:161-167, 2003; Kepecs & Lisman, *Network:
-/// Computation in Neural Systems* 14, 2003).
+/// A burst gets across a synapse that often fails on a single spike, because transmitter release
+/// is facilitated during the burst (Lisman, *Bursts as a unit of neural information: making
+/// unreliable synapses reliable*, Trends in Neurosciences 20:38-43 (1997),
+/// doi:10.1016/S0166-2236(96)10070-9). On the sending side, "the number of spikes per burst is
+/// highly robust to noise" in a simulated bursting neuron (Kepecs & Lisman, *Information encoding
+/// and computation with spikes and bursts*, Network: Computation in Neural Systems 14:103-118
+/// (2003), doi:10.1080/net.14.1.103.118).
+///
+/// This comment used to say that bursts cross unreliable synapses "far better than isolated
+/// spikes" and that a receiver that only counts is "robust to the exact timing inside the burst",
+/// and cited Izhikevich, Desai, Walcott & Hoppensteadt (*Bursts as a unit of neural information:
+/// selective communication via resonance*, Trends in Neurosciences 26:161-167 (2003),
+/// doi:10.1016/S0166-2236(03)00034-1) for both. That paper grants the reliability argument as
+/// Lisman's classical view, gives no "far better" figure, and argues the opposite on timing: the
+/// interspike frequency inside a burst selects, by resonance, which receivers respond, and
+/// "adding more spikes to a non-resonant burst does not increase the voltage response in
+/// postsynaptic cells". A counting receiver is indifferent to the timing inside the burst because
+/// it discards that channel. The timing still matters to the receivers that paper describes.
 ///
 /// `x` in `[0, 1]` becomes `round(x · max_spikes)` spikes, `intra_ticks` apart, and the value is
 /// read back by counting. The code carries `log2(max_spikes + 1)` bits
@@ -2152,8 +2205,10 @@ impl Hsa {
 // TEMPORAL CONTRAST
 // ---------------------------------------------------------------------------------------------
 
-/// Which temporal-contrast rule to apply. The three variants named by Petro, Kasabov &
-/// Whittington (*IEEE Transactions on Neural Networks and Learning Systems*, 2020).
+/// Which temporal-contrast rule to apply. The three variants named by Petro, Kasabov & Kiss
+/// (*Selection and Optimization of Temporal Spike Encoding Methods for Spiking Neural Networks*,
+/// IEEE Transactions on Neural Networks and Learning Systems 31:358-370 (2020),
+/// doi:10.1109/TNNLS.2019.2906158). This comment used to name the third author as Whittington.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContrastMode {
     /// Step-forward (SF): a baseline that advances by exactly one threshold per event.
@@ -2162,14 +2217,49 @@ pub enum ContrastMode {
     /// `max_events_per_sample` set to 1 the two produce identical events. Its reconstruction error
     /// is bounded by the threshold whenever the signal moves by no more than one threshold per
     /// sample — the only bounded-error member of this family.
+    ///
+    /// It follows Algorithm 2 of Petro, Kasabov & Kiss, with one exception. The baseline starts
+    /// at the first sample, moves one threshold per event, and fires at most once per sample.
+    /// The exception is that it fires on `>=` and `<=`, where the paper writes
+    /// `if s(t) > base + threshold` and `elseif s(t) < base - threshold`. The non-strict
+    /// comparison keeps this rule bit-identical to [`crate::encode::DeltaEncoder`]. In exact
+    /// arithmetic the two rules part only when a change lands exactly on a threshold. On the ramp
+    /// `0, 0.25, …, 2.0` at a threshold of 0.25, this rule emits 8 events and reconstructs the
+    /// ramp exactly. The published rule emits 7, each one sample later than this rule's, and ends
+    /// at 1.75. In `f64` there is a second, smaller source of disagreement near a landing: this
+    /// rule tests `s − base` against the threshold, and the paper tests `s` against
+    /// `base ± threshold`, and the two round differently. Neither is an error of the other.
+    /// `a_step_forward_event_fires_on_a_change_of_exactly_one_threshold` runs both rules and
+    /// shows each case.
     StepForward,
-    /// Moving window (MW): the baseline is the mean of the last `window` samples.
+    /// Moving window (MW): the baseline is the mean of the `window` samples before the current
+    /// one, or of all of them while fewer than `window` exist.
     ///
     /// Tracks a drifting baseline without emitting events for the drift itself, at the cost of a
-    /// reconstruction whose error is **not** bounded by the threshold; the decoder must rebuild
-    /// the same moving average from its own output, so its errors feed back.
+    /// reconstruction whose error is **not** bounded by the threshold. This comment used to add
+    /// that "the decoder must rebuild the same moving average from its own output". It need not.
+    /// The paper decodes this rule with the plain accumulator it uses for the other two, and
+    /// reports drift from that decoder too. Rebuilding the average is this crate's choice.
+    /// [`TemporalContrast::decode`] quotes what the paper reports about its own decoder's error.
+    ///
+    /// This is a causal variant of Algorithm 3 of Petro, Kasabov & Kiss, not that pseudocode.
+    /// This comment used to call it "the mean of the last `window` samples" and name the paper,
+    /// which reads as if the two agree. They differ in two ways. First, the paper's steady-state
+    /// baseline is `mean(s(t-window−1:t-1))`, which is `window + 1` preceding samples, so this
+    /// crate's `window: w + 1` is the paper's `window = w`. From sample `w + 1` onward the two
+    /// fire on the same samples, except at or within rounding of an exact landing on the
+    /// threshold (the pseudocode's comparisons are strict here too), and
+    /// `the_moving_window_matches_algorithm_3_one_sample_wider_once_its_start_up_is_over` checks
+    /// that against a transcription of the pseudocode. Second, the paper compares its first
+    /// `window + 1` samples against `mean(s(1:window + 1))`. That average includes the current
+    /// sample and later ones, so it is non-causal, and the paper can fire on the first sample.
+    /// Here the window grows from the start of the record, and sample 0 never fires. The paper's
+    /// own prose leaves room for this choice. Section III-C describes "the mean of the preceding
+    /// signal values in a time window". Section V-D introduces the non-causal start-up as "a
+    /// slight modification of the algorithm: for the first M points, the baseline can be set to
+    /// the mean of these M points".
     MovingWindow {
-        /// Samples averaged for the baseline. At least 1.
+        /// Samples averaged for the baseline. At least 1. The paper's `window` is this minus one.
         window: usize,
     },
     /// Threshold-based representation (TBR): fire on the first difference of the signal.
@@ -2216,8 +2306,37 @@ impl TemporalContrast {
         Ok(Self { threshold, mode })
     }
 
-    /// The threshold Petro, Kasabov & Whittington derive from the signal itself:
-    /// `mean|Δs| + factor · std|Δs|`.
+    /// The threshold Petro, Kasabov & Kiss derive from the signal itself, as in their
+    /// Algorithm 1: `mean(Δs) + factor · std(Δs)` over the SIGNED first differences
+    /// `Δs(t) = s(t+1) − s(t)`, with the last difference repeated so there is one per sample.
+    ///
+    /// The paper's pseudocode, lines 3 to 8, reads: `diff = zeros(length(s))`, then
+    /// `diff(t) = s (t+1) – s(t)` for `t = 1:(length(s)-1)`, then `diff(end) = diff(end-1)`,
+    /// then `threshold = mean(diff) + f∗ std(diff)`. Its prose in
+    /// Section III-A says the same: "The first derivative is calculated; then, the standard
+    /// deviation of this derivative is multiplied by a factor to obtain the encoding threshold."
+    /// The pseudocode is written in MATLAB's notation, and Section VI says the authors' own tool
+    /// is "Custom MATLAB software", so `std` is read as MATLAB's default, which divides by
+    /// `N − 1`. On the 600-sample test sinusoid that reading and a division by `N` differ by
+    /// 0.08%.
+    ///
+    /// **This used to be a different rule.** Until this correction the function returned
+    /// `mean|Δs| + factor · std|Δs|` over ABSOLUTE differences, and credited it to the same paper.
+    /// That paper takes no absolute value before the statistics. In its description of this rule
+    /// the word "absolute" appears once, in the firing comparison: "The absolute value change
+    /// between consecutive signal values is compared to a threshold". On
+    /// `0.5 + 0.4·sin(2π·0.01·t)` over 600 samples at `factor = 1`, the old rule gave 0.023710,
+    /// a third more than this one's 0.017783. For a signal with no net slope, `mean(Δs)` is close
+    /// to zero, so the threshold is close to `factor · std(Δs)`. For a sinusoid of amplitude `A`
+    /// at `f` cycles per sample that is `factor · 2A·sin(πf)/√2`.
+    ///
+    /// Two consequences of the published rule, neither of which the old one had. The threshold
+    /// is not symmetric under `s → −s`, because the signed mean changes sign. `[0, 2, 1, 0]` gets
+    /// 1.25 at `factor = 1` and its negation gets 1.75. And `factor = 0` leaves only
+    /// `mean(Δs)`, which is the record's net change plus the repeated last difference, divided by
+    /// the number of samples. That is near zero for a record that ends near where it started. A
+    /// threshold near zero fires on almost every change, and at or below zero this function
+    /// refuses.
     ///
     /// **This rule is non-causal.** It needs the entire record before it can encode the first
     /// sample, so it cannot be used by a sensor and can only be used offline, on a dataset. That is
@@ -2227,21 +2346,27 @@ impl TemporalContrast {
     /// # Errors
     ///
     /// [`CodeError::Empty`] for a signal shorter than two samples; [`CodeError::NotFinite`] for a
-    /// non-finite sample; [`CodeError::NoEvidence`] for a constant signal, whose differences are
-    /// all zero and which therefore suggests a threshold of zero — a threshold that would fire on
-    /// every sample of any other signal.
+    /// non-finite sample; [`CodeError::NoEvidence`] when the rule does not give a positive
+    /// threshold. That covers a constant signal, whose differences are all zero, and any signal
+    /// whose net slope outweighs `factor` standard deviations of its differences. A threshold of
+    /// zero or below would fire on every sample.
     pub fn threshold_by_statistics(signal: &[f64], factor: f64) -> Result<f64, CodeError> {
         if signal.len() < 2 {
             return Err(CodeError::Empty { what: "signal (need at least two samples)" });
         }
         check_finite("signal sample", signal)?;
         check_finite("factor", &[factor])?;
-        let d: Vec<f64> = signal.windows(2).map(|w| (w[1] - w[0]).abs()).collect();
-        let mean = d.iter().sum::<f64>() / d.len() as f64;
-        let var = d.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / d.len() as f64;
+        let mut d: Vec<f64> = signal.windows(2).map(|w| w[1] - w[0]).collect();
+        let last = d[d.len() - 1];
+        d.push(last);
+        let n = d.len() as f64;
+        let mean = d.iter().sum::<f64>() / n;
+        let var = d.iter().map(|x| (x - mean) * (x - mean)).sum::<f64>() / (n - 1.0);
         let th = mean + factor * var.sqrt();
         if !(th > 0.0) {
-            return Err(CodeError::NoEvidence { what: "a usable threshold (the signal does not change)" });
+            return Err(CodeError::NoEvidence {
+                what: "a positive threshold (mean + factor * std of the signed differences is not above zero)",
+            });
         }
         Ok(th)
     }
@@ -2251,6 +2376,9 @@ impl TemporalContrast {
     /// Sample 0 never emits: step-forward and moving-window both need a baseline first, and
     /// threshold-based needs a previous sample to difference against. This matches
     /// [`crate::encode::DeltaEncoder`], whose first sample sets the reference and emits nothing.
+    /// The paper's moving-window pseudocode can fire on its first sample, because its start-up
+    /// baseline averages samples that come later. [`ContrastMode::MovingWindow`] says why this
+    /// one does not.
     ///
     /// # Errors
     ///
@@ -2266,8 +2394,9 @@ impl TemporalContrast {
                 let mut base = signal[0];
                 for t in 1..signal.len() {
                     // `>=`, not `>`, so this is bit-identical to `DeltaEncoder`'s test. The
-                    // difference shows up only on a signal that lands exactly on a threshold, which
-                    // is exactly what a synthetic test signal does.
+                    // paper's Algorithm 2 writes a strict `>` and `<`, so this is a departure from
+                    // it. The difference shows up only on a signal that lands exactly on a
+                    // threshold, which is exactly what a synthetic test signal does.
                     if signal[t] - base >= self.threshold {
                         base += self.threshold;
                         out.push(Event { t: t as u64, address, polarity: Polarity::On });
@@ -2305,8 +2434,20 @@ impl TemporalContrast {
     /// Reconstruct `samples` samples from `events` on `address`, starting from `start`.
     ///
     /// Step-forward and threshold-based share one accumulator: the reconstruction moves by one
-    /// threshold per event and holds otherwise. Moving-window rebuilds its own baseline from its
-    /// own output, which is the only way a receiver without the original signal can invert it.
+    /// threshold per event and holds otherwise. Moving-window rebuilds the encoder's moving-average
+    /// baseline from its own output and adds one threshold per event to that.
+    ///
+    /// That moving-window decoder is this crate's design, not the paper's. This comment used to
+    /// call it "the only way a receiver without the original signal can invert" the encoder. Petro,
+    /// Kasabov & Kiss decode moving-window with the same accumulator as the other two. Section
+    /// III-C says "Decoding is essentially the same as for TBR or SF (see Algorithm 5 in the
+    /// Appendix)", and adds that "an additional moving average filter could be applied to make the
+    /// reconstructed signal smoother". Neither decoder's error is bounded by the threshold. Here
+    /// the error comes from the baseline feeding back
+    /// (`the_moving_window_reconstruction_error_is_not_bounded_by_the_threshold`). For the paper's
+    /// accumulator, Section V-D reports that "overshoot-type errors often appear" and that the
+    /// "1/f (pink) noise also appears during signal reconstruction … For longer signals, this may
+    /// cause the reconstructed signal to drift away."
     ///
     /// `start` should be the first sample of the original record. It is the one piece of side
     /// information every threshold code needs and none of them transmits — an absolute level. A
@@ -4457,14 +4598,23 @@ mod tests {
     /// Step-forward fires at `>=` its threshold, and the only signal that can tell is one that
     /// lands exactly on it.
     ///
-    /// The comment on that line already says so; nothing tested it. Every fixture in this module
-    /// is a sine sampled at phases that are irrational multiples of the sample period, where a
-    /// difference landing exactly on a threshold has probability zero — so `>=` and `>` produce
-    /// the same event stream on all of them, including the fixture that compares this encoder to
-    /// `DeltaEncoder` event for event, which is the assertion the `>=` exists to keep true.
+    /// The comment on that line already says so; nothing tested it. On a sine, a computed
+    /// difference `s − base` lands exactly on a threshold only by coincidence, so `>=` and `>`
+    /// produce the same event stream on the sine fixtures, including all nine sines of the
+    /// fixture that compares this encoder to `DeltaEncoder` event for event, which is the
+    /// assertion the `>=` exists to keep true. This paragraph used to say those sines are sampled
+    /// at phases that are irrational multiples of the sample period. One is not: at f = 0.002,
+    /// sample 250 is exactly half a period. The end of this test shows why the streams still
+    /// agree there.
     ///
-    /// A ramp of exactly one threshold per sample is that signal, and with a threshold of 0.25
-    /// every difference in it is exact in `f64`.
+    /// A ramp of exactly one threshold per sample is the signal that lands, and with a threshold
+    /// of 0.25 every difference in it is exact in `f64`.
+    ///
+    /// The test also runs a transcription of the paper's Algorithm 2, which writes a strict `>`,
+    /// on the same ramp. It fires 7 times to this encoder's 8. On three sines the transcription
+    /// and this encoder agree event for event, which is what shows the transcription is faithful.
+    /// On the `DeltaEncoder` fixture at f = 0.002 they part by one sample, and the cause there is
+    /// rounding rather than the strict comparison.
     #[test]
     fn a_step_forward_event_fires_on_a_change_of_exactly_one_threshold() {
         let th = 0.25f64;
@@ -4489,6 +4639,145 @@ mod tests {
         assert_eq!(up, theirs, "the two encoders part company on an exact landing");
         // The reconstruction is then exact, not merely inside one threshold.
         assert_eq!(tc.decode(&up, 0, rising.len(), rising[0]), rising);
+
+        // The paper's Algorithm 2 writes strict `>` and `<`, and this ramp is where that departure
+        // shows. Transcribed, the published rule does not fire at t = 1, because 0.25 > 0.25 is
+        // false. It then fires at t = 2 through 8: seven events, each one sample after this
+        // encoder's, and a reconstruction that ends a threshold short, at 1.75.
+        let published = petro_algorithm_2(&rising, th);
+        assert_eq!(
+            published.iter().map(|&(t, _)| t).collect::<Vec<_>>(),
+            (2..9).collect::<Vec<usize>>(),
+            "the published strict rule on an exact ramp"
+        );
+        assert!(published.iter().all(|&(_, sign)| sign == 1));
+        let ends_at = rising[0] + published.iter().map(|&(_, sign)| f64::from(sign) * th).sum::<f64>();
+        assert_eq!(ends_at, 1.75);
+        // Away from a landing the transcription and this encoder are the same rule, event for
+        // event, on these three sines. That is what makes the ramp's difference the comparison
+        // alone, not a transcription error.
+        for &(f, th) in &[(0.0037f64, 0.03f64), (0.0093, 0.05), (0.031, 0.2)] {
+            let s = sine(500, f, 0.4, 0.5);
+            let tc = TemporalContrast::new(th, ContrastMode::StepForward).expect("valid");
+            let ours = as_signed(&tc.encode(&s, 0).expect("finite"));
+            assert!(ours.len() > 50, "f {f}, th {th}: too few events to compare");
+            assert_eq!(ours, petro_algorithm_2(&s, th), "f {f}, th {th}: off an exact landing");
+        }
+        // Near a landing, the two ways of writing the test round differently. On the
+        // `DeltaEncoder` fixture at f = 0.002 and a threshold of 0.01, sample 250 is half a
+        // period and exactly 0.5. The baseline this encoder carries into it is the `f64` nearest
+        // 0.51, which is 8.9e-18 above 0.51. This encoder computes `0.5 − base`, which is
+        // −0.010000000000000009, below −0.01, so it fires under `<=` and would under `<` too. The
+        // paper's form computes `base − 0.01`, which rounds to exactly 0.5, and `0.5 < 0.5` is
+        // false, so it fires one sample later. The decoder retraces the baseline with the same
+        // additions in the same order, so its sample 249 is that baseline.
+        let s = sine(500, 0.002, 0.4, 0.5);
+        let tc = TemporalContrast::new(0.01, ContrastMode::StepForward).expect("valid");
+        let events = tc.encode(&s, 0).expect("finite");
+        let base = tc.decode(&events, 0, s.len(), s[0])[249];
+        assert_eq!(s[250], 0.5);
+        assert_eq!(base, 0.51);
+        assert!(s[250] - base < -0.01, "this encoder's difference {}", s[250] - base);
+        assert_eq!(base - 0.01, 0.5);
+        let ours = as_signed(&events);
+        let theirs = petro_algorithm_2(&s, 0.01);
+        let first = ours.iter().zip(&theirs).position(|(a, b)| a != b).expect("the rules part");
+        assert_eq!((ours[first], theirs[first]), ((250, -1), (251, -1)));
+    }
+
+    /// Events as `(sample index, ±1)`, the form the paper's pseudocode writes into `out(t)`.
+    fn as_signed(events: &[Event]) -> Vec<(usize, i8)> {
+        events
+            .iter()
+            .map(|e| (usize::try_from(e.t).expect("a sample index"), if e.polarity == Polarity::On { 1 } else { -1 }))
+            .collect()
+    }
+
+    /// Algorithm 2 (SF Encoding) of Petro, Kasabov & Kiss, *Selection and Optimization of Temporal
+    /// Spike Encoding Methods for Spiking Neural Networks*, IEEE Transactions on Neural Networks
+    /// and Learning Systems 31:358-370 (2020), doi:10.1109/TNNLS.2019.2906158, as the Appendix of
+    /// the accepted manuscript prints it, with MATLAB's 1-based `t` moved to 0-based `i`:
+    /// `base = s(1)`; for `t = 2:length(s)`, `if s(t) > base + threshold` fire +1 and raise the
+    /// base by one threshold, `elseif s(t) < base - threshold` fire −1 and lower it.
+    fn petro_algorithm_2(s: &[f64], threshold: f64) -> Vec<(usize, i8)> {
+        let mut out = Vec::new();
+        let mut base = s[0];
+        for i in 1..s.len() {
+            if s[i] > base + threshold {
+                out.push((i, 1));
+                base += threshold;
+            } else if s[i] < base - threshold {
+                out.push((i, -1));
+                base -= threshold;
+            }
+        }
+        out
+    }
+
+    /// Algorithm 3 (MW Encoding) of the same paper, transcribed the same way. The first
+    /// `window + 1` samples are compared against `mean(s(1:window + 1))`, which includes the
+    /// sample being encoded and later ones. Every later sample `t` is compared against
+    /// `mean(s(t-window−1:t-1))`, the `window + 1` samples before it.
+    fn petro_algorithm_3(s: &[f64], threshold: f64, window: usize) -> Vec<(usize, i8)> {
+        let mut out = Vec::new();
+        let mut fire = |i: usize, base: f64| {
+            if s[i] > base + threshold {
+                out.push((i, 1));
+            } else if s[i] < base - threshold {
+                out.push((i, -1));
+            }
+        };
+        let head = (window + 1).min(s.len());
+        let start_base = s[..head].iter().sum::<f64>() / head as f64;
+        for i in 0..head {
+            fire(i, start_base);
+        }
+        for i in window + 1..s.len() {
+            fire(i, s[i - window - 1..i].iter().sum::<f64>() / (window + 1) as f64);
+        }
+        out
+    }
+
+    /// This crate's moving window is a causal variant of Algorithm 3, and the mapping between the
+    /// two is exact once the paper's start-up is over: `MovingWindow { window: w + 1 }` fires on
+    /// the same samples as the paper's `window = w`, from sample `w + 1` on.
+    ///
+    /// The steady-state baselines are the same `w + 1` samples summed in the same order and
+    /// divided by the same count, so they are bit-identical. The comparisons differ, `>=` here
+    /// and `>` in the paper, and so does their rounding (`s − base` against `threshold` here,
+    /// `s` against `base ± threshold` there), but on these three sines nothing lands close
+    /// enough to a threshold for either to matter, and the equality below is that measurement.
+    /// The start-up is where the two really differ. The paper averages samples that have not
+    /// arrived yet and can fire on sample 0. This crate cannot fire there.
+    #[test]
+    fn the_moving_window_matches_algorithm_3_one_sample_wider_once_its_start_up_is_over() {
+        for &(w, f, th) in &[(4usize, 0.0093f64, 0.02f64), (8, 0.0037, 0.01), (15, 0.013, 0.05)] {
+            let s = sine(600, f, 0.4, 0.5);
+            let mw = TemporalContrast::new(th, ContrastMode::MovingWindow { window: w + 1 }).expect("valid");
+            let ours: Vec<(usize, i8)> =
+                as_signed(&mw.encode(&s, 0).expect("finite")).into_iter().filter(|&(t, _)| t > w).collect();
+            let theirs: Vec<(usize, i8)> =
+                petro_algorithm_3(&s, th, w).into_iter().filter(|&(t, _)| t > w).collect();
+            assert!(
+                ours.iter().any(|&(_, p)| p == 1) && ours.iter().any(|&(_, p)| p == -1),
+                "w {w}: the comparison needs events of both signs, got {}",
+                ours.len()
+            );
+            assert_eq!(ours, theirs, "w {w}, f {f}, th {th}: steady state differs from Algorithm 3");
+            // The same parameter value is NOT the same window: `window: w` averages one sample
+            // fewer, and on these signals that moves events.
+            let short = TemporalContrast::new(th, ContrastMode::MovingWindow { window: w }).expect("valid");
+            let same_number: Vec<(usize, i8)> =
+                as_signed(&short.encode(&s, 0).expect("finite")).into_iter().filter(|&(t, _)| t > w).collect();
+            assert_ne!(same_number, theirs, "w {w}: the off-by-one did not show");
+        }
+        // The start-up. A record that starts low and then steps up: the paper's opening baseline
+        // is mean(0, 1, 1) = 2/3, so its sample 0 sits 2/3 below and fires. Here sample 0 has no
+        // past and cannot fire.
+        let s = [0.0f64, 1.0, 1.0, 1.0];
+        assert_eq!(petro_algorithm_3(&s, 0.5, 2).first(), Some(&(0, -1)));
+        let mw = TemporalContrast::new(0.5, ContrastMode::MovingWindow { window: 3 }).expect("valid");
+        assert!(mw.encode(&s, 0).expect("finite").iter().all(|e| e.t > 0));
     }
 
     /// Several events on one sample SUM, and the only producer of such a stream is the uncapped
@@ -4553,28 +4842,62 @@ mod tests {
         assert_eq!(wide.decode(&one, 0, 4, 4.0), vec![4.0, 5.0, 4.5, 4.5]);
     }
 
+    /// Algorithm 1 of Petro, Kasabov & Kiss, pinned exactly on a four-sample dyadic record.
+    ///
+    /// `[0, 2, 1, 0]` has differences `[2, −1, −1]`, and with the last one repeated they are
+    /// `[2, −1, −1, −1]`. Their mean is −0.25, their squared deviations sum to 6.75, and
+    /// `sqrt(6.75 / 3) = 1.5`. So the threshold is 1.25 at factor 1 and 2.75 at factor 2, and
+    /// every one of those values is exact in `f64`. Each plausible misreading of the pseudocode
+    /// moves the factor-1 value. Absolute differences give 1.75. Dropping the repeated difference
+    /// gives 1.732. Repeating the first difference instead gives 2.232. Dividing by `N` gives
+    /// 1.049. The rule this function used to compute, absolute differences with neither the
+    /// repeat nor `N − 1`, gives 1.805.
+    #[test]
+    fn the_statistical_threshold_is_algorithm_1_over_signed_differences() {
+        let s = [0.0f64, 2.0, 1.0, 0.0];
+        let at = TemporalContrast::threshold_by_statistics;
+        assert_eq!(at(&s, 1.0).expect("positive"), 1.25);
+        assert_eq!(at(&s, 2.0).expect("positive"), 2.75);
+        // Factor 0 leaves the mean alone, −0.25, and a threshold below zero is refused.
+        assert!(matches!(at(&s, 0.0), Err(CodeError::NoEvidence { .. })));
+        // The negated record has the same spread and the opposite net slope, so the published
+        // rule gives it a different threshold. The old absolute-difference rule could not.
+        let neg: Vec<f64> = s.iter().map(|x| -x).collect();
+        assert_eq!(at(&neg, 1.0).expect("positive"), 1.75);
+        assert_eq!(at(&neg, 0.0).expect("positive"), 0.25);
+    }
+
+    /// The statistical threshold on a sinusoid against its closed form, and the refusals.
+    ///
+    /// This test used to pin the crate's old absolute-difference rule, `mean|Δ| + std|Δ|`, to that
+    /// rule's own closed form, 0.023731 (measured 0.023710). The published rule works on SIGNED
+    /// differences. For `A·sin(2πft)` sampled at integer t the first difference is
+    /// `2A·sin(πf)·cos(2πf(t + ½))`. Over a whole number of cycles its mean is zero and its
+    /// standard deviation is `2A·sin(πf)/√2`, which is 0.017769 here. With `std` dividing by
+    /// `N − 1` over N = 600 differences, that becomes `2A·sin(πf)/√2 · sqrt(600/599)`. The
+    /// measured 0.017783 is 2.2e-5 from it, relative. A division by `N` would be 8.6e-4 away,
+    /// outside this test's relative 1e-4.
     #[test]
     fn the_statistical_threshold_is_refused_where_it_has_nothing_to_measure() {
         let s = sine(600, 0.01, 0.4, 0.5);
         let th = TemporalContrast::threshold_by_statistics(&s, 1.0).expect("a varying signal");
-        // The closed form, not a 50%-wide bracket. For `A·sin(2πft)` sampled at integer t the
-        // first difference is `2A·sin(πf)·cos(2πf(t + ½))`, so over a whole number of cycles
-        // `mean|Δ| = 2A·sin(πf)·(2/π)` and `std|Δ| = 2A·sin(πf)·sqrt(1/2 − 4/π²)`, and the rule's
-        // `mean + 1·std` is their sum. Measured 0.023710 against 0.023731: 0.09% apart, which is
-        // the 600-sample average of a continuum quantity and nothing else.
         let (amp, f) = (0.4f64, 0.01f64);
-        let closed = 2.0 * amp * (PI * f).sin() * (2.0 / PI + (0.5 - 4.0 / (PI * PI)).sqrt());
-        assert!((closed - 0.023_731).abs() < 1e-6, "the closed form itself moved: {closed}");
-        assert!(
-            (th / closed - 1.0).abs() < 2e-3,
-            "statistical threshold {th} against its closed form {closed}"
-        );
-        // The factor is a multiplier on the standard deviation, and it must act like one.
-        let th0 = TemporalContrast::threshold_by_statistics(&s, 0.0).expect("a varying signal");
+        let closed = 2.0 * amp * (PI * f).sin() / 2.0f64.sqrt();
+        assert!((closed - 0.017_769).abs() < 1e-6, "the closed form itself moved: {closed}");
+        let n = s.len() as f64; // one difference per sample, the last one repeated
+        let want = closed * (n / (n - 1.0)).sqrt();
+        assert!((th / want - 1.0).abs() < 1e-4, "statistical threshold {th} against {want}");
+        assert!((th - 0.017_783).abs() < 1e-6, "statistical threshold {th}");
+        // The factor multiplies the spread. The mean here is -1.65e-7, so factor 2 is twice
+        // the spread to within that.
         let th2 = TemporalContrast::threshold_by_statistics(&s, 2.0).expect("a varying signal");
-        let mean_only = 2.0 * amp * (PI * f).sin() * 2.0 / PI;
-        assert!((th0 / mean_only - 1.0).abs() < 2e-3, "factor 0 must leave mean|delta|: {th0}");
-        assert!((th2 - (2.0 * th - th0)).abs() < 1e-12, "the factor is not linear in std");
+        assert!((th2 / (2.0 * want) - 1.0).abs() < 1e-4, "factor 2 gave {th2}");
+        // Factor 0 leaves only the net slope, which for six whole cycles is a hair below zero:
+        // refused, not returned as a threshold that would fire on every sample.
+        assert!(matches!(
+            TemporalContrast::threshold_by_statistics(&s, 0.0),
+            Err(CodeError::NoEvidence { .. })
+        ));
         assert!(matches!(
             TemporalContrast::threshold_by_statistics(&[1.0, 1.0, 1.0], 1.0),
             Err(CodeError::NoEvidence { .. })

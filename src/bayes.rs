@@ -93,10 +93,12 @@
 //! distance move from 0.0038 to 0.359, a factor of 93, so the threshold is known to discriminate.
 //!
 //! What is **not** re-derived here is the paper's general proof. Buesing et al. state the
-//! discrete-time theorem for the serial update; the `−ln tau` correction is derived from scratch in
-//! [`NeuralSampler`]'s documentation for the single-unit case, where it is elementary, and
-//! confirmed numerically for the coupled case. That is an empirical confirmation of a published
-//! theorem, not a proof, and it is described that way.
+//! discrete-time theorem (their Theorem 1) for a fixed-order serial sweep, which is not the
+//! [`Scan::Random`] update this module samples with; the paper's remark that any mixture of its
+//! per-unit operators keeps the target invariant is what covers the random scan. The `−ln tau`
+//! correction is derived from scratch in [`NeuralSampler`]'s documentation for the single-unit
+//! case, where it is elementary, and confirmed numerically for the coupled case. That is an
+//! empirical confirmation of a published result, not a proof, and it is described that way.
 //!
 //! # Quickstart
 //!
@@ -757,11 +759,21 @@ impl PairwiseFit {
 pub enum Scan {
     /// One unit, drawn uniformly, updates per tick.
     ///
-    /// **This is the mode that samples the target.** It is the serial update Buesing et al. state
-    /// their discrete-time theorem for, and
+    /// **This is the mode that samples the target.** It is a random-scan form of the serial update.
+    /// Buesing et al. prove their discrete-time theorem (Theorem 1) for a fixed-order sequential
+    /// sweep `T = T_K∘…∘T_1`, "the neurons are updated sequentially in the same order", and note
+    /// that because each `T_k` leaves `p` invariant, "any composition or mixture of these operators
+    /// also leaves `p` invariant". One uniformly drawn unit per tick is such a mixture, so its
+    /// invariance follows from that remark; its convergence to the target is confirmed here
+    /// numerically rather than taken from the paper's proof.
     /// `the_sampled_distribution_matches_the_exact_boltzmann_distribution` measures a
     /// total-variation distance of 0.0014 to 0.0040 against the enumerated answer, over refractory
     /// windows of 1, 2, 5 and 20 ticks and 1.8 million post-burn-in samples each.
+    ///
+    /// This paragraph used to call this mode "the serial update Buesing et al. state their
+    /// discrete-time theorem for". The theorem's operator is the fixed-order sweep above, which
+    /// this module does not implement; the paper's "different order" at each time step re-orders a
+    /// full sweep, which is not one unit drawn per tick either. Nothing in the sampler changed.
     ///
     /// Its cost is that a unit's refractory countdown advances only on the ticks where that unit is
     /// selected, so `z_k` stays high for a random number of ticks — negative binomial, mean
@@ -808,9 +820,16 @@ pub enum Scan {
 /// total-variation distance of 0.0038 off the target to 0.359 off it — a factor of 93 — measured
 /// in `dropping_the_log_tau_correction_moves_the_distribution_a_hundredfold`.
 ///
-/// The derivation above is elementary for one unit. For coupled units it is Theorem 3 of Buesing et
-/// al. (2011); this implementation confirms it numerically against the enumerated distribution
+/// The derivation above is elementary for one unit. For coupled units it is Theorem 1 of Buesing et
+/// al. (2011), proved in their Methods by Lemmata 1–3 (each `T_k` leaves `p` invariant; the
+/// fixed-order composition `T = T_K∘…∘T_1` is irreducible and aperiodic). The theorem is stated
+/// for that fixed-order sweep, not for [`Scan::Random`]; see there for why the random scan still
+/// samples `p`. This implementation confirms it numerically against the enumerated distribution
 /// rather than reproving it, and says so.
+///
+/// This doc used to cite "Theorem 3". The paper's Methods read "The following Lemmata 1 – 3
+/// provide a proof of Theorem 1", and this review did not locate a Theorem 2 or a Theorem 3
+/// anywhere in its full text (Europe PMC, PMCID PMC3207943, PMID 22096452).
 ///
 /// # Provenance of the shape
 ///

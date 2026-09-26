@@ -40,12 +40,28 @@
 //!
 //! # Why they are in a neuromorphic crate
 //!
-//! Both are the state-space family that currently holds the spiking benchmarks on temporal tasks:
-//! resonate-and-fire cells and their balanced variant (Higuchi, Kairat, Bohté and Otte, *Balanced
-//! resonate-and-fire neurons*, ICML 2024) on the Spiking Heidelberg Digits, and the LMU as the
-//! recurrence inside spiking networks deployed on Loihi by its authors' company. What they buy is
-//! the thing this crate prices: a resonator detects a frequency with two state variables and no
-//! filter bank, and an LMU holds a `θ`-second window in `d` state variables instead of `θ/dt` —
+//! Both belong to the state-space family that spiking networks use for temporal tasks. The
+//! resonate-and-fire cell and its balanced variant (Higuchi, Kairat, Bohte and Otte, *Balanced
+//! resonate-and-fire neurons*, ICML 2024, PMLR 235:18305–18323 (2024), arXiv:2402.14603) reach
+//! 91.7% (BRF) and 92.7% (BHRF) on the Spiking Heidelberg Digits. That is below both states of the
+//! art the paper's own Table 1 marks: DCLS-Delays at 95.1% for spiking networks, and `RadLIF` at
+//! 94.62% for recurrent ones. What the balanced cells win in that table is thrift: 108,820
+//! parameters, and 14% (BRF) or 17% (BHRF) of the average spike operations of the table's ALIF
+//! network. The LMU is the recurrence inside spiking networks deployed on Loihi by its authors'
+//! company.
+//!
+//! This paragraph used to say that the family "currently holds the spiking benchmarks on temporal
+//! tasks", citing the ICML paper on the Spiking Heidelberg Digits. Table 1 of that paper does not
+//! support it, for the reason above. The one leadership claim for resonate-and-fire networks this
+//! review located is narrower: S5-RF reports 78.8% on Spiking Speech Commands, "a new
+//! state-of-the-art result for recurrent SNNs" (Huber, Lecomte, Polovnikov and von Arnim, *Scaling
+//! up resonate-and-fire networks for fast deep learning*, arXiv:2504.00719 (2025)). That is a
+//! different dataset, a restricted class and a different paper. The third author's name was also
+//! spelled "Bohté" here; the paper's metadata spells it "Sander M. Bohte".
+//!
+//! What these cells buy is the thing this crate prices: a resonator detects a frequency with two
+//! state variables and no filter bank, and an LMU holds a `θ`-second window in `d` state variables
+//! instead of `θ/dt` —
 //! [`Lmu::delay_line_taps`] is the count it replaces. Fewer state variables is fewer membrane
 //! updates on every tick, which [`crate::ledger`] counts and which the `28x` argument in
 //! [`crate::spikeconv`] is about.
@@ -171,14 +187,29 @@ impl ResonateAndFire {
         Ok(Self { b, omega, threshold, z_reset, t_ref, x: z_reset.0, y: z_reset.1, refractory: 0.0 })
     }
 
-    /// The paper's illustrative resonator: `b = −1`, `ω = 2π · 10 Hz`, threshold `1`, reset to
-    /// the origin, no refractory period.
+    /// The paper's illustrative resonator: `b = −1`, `ω = 10`, threshold `y = 1`, reset to
+    /// `i` (the point `(0, 1)`), no refractory period, starting at the rest state `z = 0`.
+    ///
+    /// The paper states these in its own dimensionless time: "We use b = −1 and ω = 10 in most of
+    /// our illustrations" (Izhikevich, *Resonate-and-fire neurons*, Neural Networks
+    /// 14(6–7):883–894 (2001), p. 886), and the eigenperiod is "T = 2π/ω" (p. 887). Read with that
+    /// time unit as a second, as this type reads it, `ω = 10` rad/s has a period of
+    /// `2π/10 ≈ 0.628` s, about 1.59 Hz. On reset it says "We reset it to i ∈ ℂ (see bottom of
+    /// Fig. 5)" (p. 887). That point lies on the threshold line. The rest state is `z = 0`: "Any
+    /// solution starting in the white area will converge to the rest state z = 0 without crossing
+    /// the threshold" (p. 887).
+    ///
+    /// This preset used to be `ω = 2π · 10` (a 0.1 s period, 2π times the paper's frequency) with
+    /// its reset at the origin, and its documentation attributed both to the paper. It now carries
+    /// the paper's `ω = 10` and reset `i`. Because [`ResonateAndFire::new`] starts a cell at its
+    /// reset state, which here would mean at the threshold, this preset then moves the cell to the
+    /// paper's rest state `z = 0`. [`ResonateAndFire::reset`] still returns it to `i`.
     ///
     /// # Errors
     ///
     /// Never in practice; the signature is `Result` because [`ResonateAndFire::new`]'s is.
     pub fn textbook() -> Result<Self, ResonateError> {
-        Self::new(-1.0, core::f64::consts::TAU * 10.0, 1.0, (0.0, 0.0), 0.0)
+        Ok(Self { x: 0.0, y: 0.0, ..Self::new(-1.0, 10.0, 1.0, (0.0, 1.0), 0.0)? })
     }
 
     /// The natural period `2π/ω`, seconds.
@@ -585,8 +616,10 @@ mod tests {
         for _ in 0..10_000 {
             assert!(!quiet.step(1e-4, 0.0).unwrap());
         }
+        assert_eq!((quiet.x, quiet.y), (0.0, 0.0), "an undriven cell at rest stays at rest");
+        // `reset` returns to the paper's reset point `i`, not to the rest state the preset starts in.
         quiet.reset();
-        assert_eq!((quiet.x, quiet.y, quiet.refractory), (0.0, 0.0, 0.0));
+        assert_eq!((quiet.x, quiet.y, quiet.refractory), (0.0, 1.0, 0.0));
     }
 
     // ---- the Legendre Memory Unit ----
@@ -793,22 +826,49 @@ mod tests {
         assert_ne!((fresh.x, fresh.y), (0.25, -0.75), "the first tick was swallowed by a refractory period");
     }
 
-    /// The textbook preset is the cell the paper illustrates: damping `−1`, natural frequency
-    /// `2π · 10 Hz`, threshold `1`, reset to the origin, no refractory period.
+    /// The textbook preset is the cell the paper illustrates. Izhikevich, *Resonate-and-fire
+    /// neurons*, Neural Networks 14(6–7):883–894 (2001): "We use b = −1 and ω = 10 in most of our
+    /// illustrations" (p. 886); "eigenperiod T = 2π/ω" (p. 887); "the threshold value y = 1"
+    /// (p. 887); "We reset it to i ∈ ℂ" (p. 887); and Eq. (2) has no refractory term. The cell starts
+    /// at the paper's rest state `z = 0`, not at its reset point.
     ///
     /// Why the suite could not see it: `textbook()` is used as a convenient stable resonator and
     /// every assertion made through it is a RELATION that holds for any stable resonator — that
     /// the exact step composes, that an undriven cell never fires — so a preset ten times too fast
     /// or ten times too damped passed all of them. Nothing read the preset's own numbers.
+    ///
+    /// Correction: this test used to pin `ω = 2π · 10`, a reset at the origin and a period of
+    /// `0.1`, under a name saying the paper prints them. The paper prints `ω = 10`, so the period is
+    /// `2π/10 ≈ 0.628`, and a reset at `i`. The preset and these expectations now carry the
+    /// paper's values.
     #[test]
     fn the_textbook_preset_carries_the_parameters_its_paper_prints() {
         let c = ResonateAndFire::textbook().unwrap();
-        assert_eq!(c.b, -1.0, "damping");
-        assert_eq!(c.omega, TAU * 10.0, "natural frequency");
-        assert_eq!(c.threshold, 1.0);
-        assert_eq!(c.z_reset, (0.0, 0.0));
-        assert_eq!(c.t_ref, 0.0);
-        assert_eq!(c.period(), 0.1, "ten hertz is a tenth of a second");
+        assert_eq!(c.b, -1.0, "damping, p. 886");
+        assert_eq!(c.omega, 10.0, "natural frequency, p. 886: ω = 10, not 2π · 10");
+        assert_eq!(c.threshold, 1.0, "threshold y = 1, p. 887");
+        assert_eq!(c.z_reset, (0.0, 1.0), "reset to i ∈ ℂ, p. 887");
+        assert_eq!(c.t_ref, 0.0, "Eq. (2) has no refractory period");
+        assert_eq!((c.x, c.y), (0.0, 0.0), "born at the rest state z = 0, not on the threshold line");
+        assert_eq!(c.refractory, 0.0);
+        // T = 2π/ω = 0.6283185307179586: the eigenperiod of p. 887, written out rather than
+        // recomputed from the same expression `period` uses.
+        assert!((c.period() - 0.628_318_530_717_958_6).abs() < 1e-15, "eigenperiod {}", c.period());
+    }
+
+    /// The paper's cell fires and resets where the paper says. It starts at rest; a pulse of `2`
+    /// along the imaginary axis puts it at `(0, 2)`, beyond the threshold line, so the first tick
+    /// fires and resets the cell to `i`. That point sits ON the threshold line, and the cell does
+    /// not fire from it undriven, because the next tick takes `y` to `e^{−dt}·cos(10·dt) < 1`.
+    #[test]
+    fn the_textbook_cell_fires_from_a_supra_threshold_pulse_and_resets_to_i() {
+        let mut c = ResonateAndFire::textbook().unwrap();
+        c.kick(0.0, 2.0);
+        assert!(c.step(1.0 / 1024.0, 0.0).unwrap(), "a state at (0, 2) is still past y = 1 when the first tick checks it");
+        assert_eq!((c.x, c.y), (0.0, 1.0), "the reset point is i");
+        assert!(!c.step(1.0 / 1024.0, 0.0).unwrap(), "the reset point i fired again undriven");
+        let want = (-1.0f64 / 1024.0).exp() * (10.0f64 / 1024.0).cos();
+        assert!((c.y - want).abs() < 1e-15, "y {} vs e^(-dt)·cos(ω dt) {want}", c.y);
     }
 
     /// `reset` clears a refractory period a spike left pending — that is what distinguishes it
