@@ -26,6 +26,16 @@
 //!   the cosine between two trains filtered by a Gaussian of width `σ`, which in the spike times is
 //!   the closed form `Σ e^{−(aᵢ − bⱼ)²/4σ²}` over the square root of the two self-terms —
 //!   [`schreiber`], and its mean over pairs of trials, [`schreiber_reliability`].
+//! - **The spike time tiling coefficient** (Cutts and Eglen, *Detecting pairwise correlations in
+//!   spike trains: an objective comparison of methods and application to the study of retinal
+//!   waves*, Journal of Neuroscience 34:14288–14303, 2014): `T_A` is the fraction of the recording
+//!   within `dt` of a spike of A, `P_A` the fraction of A's spikes within `dt` of a spike of B, and
+//!   `STTC = ½[(P_A − T_B)/(1 − P_A T_B) + (P_B − T_A)/(1 − P_B T_A)]` — 1 for trains that tile each
+//!   other, 0 in expectation for independent trains whatever their rates, negative for trains that
+//!   avoid each other: [`sttc`], [`tiled_fraction`]. Checked against the authors' own C
+//!   (`spike_time_tiling_coefficient.c`, github.com/CCutts, commit `5f18868`) on 3,000 random pairs,
+//!   to 2.8 × 10⁻¹³ wherever that code's answer is defined. The paper itself was not read here; the
+//!   definition is the authors' code's.
 //!
 //! # Against the reference, and three things the reference does
 //!
@@ -59,6 +69,26 @@
 //! (`F = −1`) plus two silent trains give `F = −0.28`, where the ratio the paper defines is `−8/24`.
 //! [`synfire_indicator`] adds nothing for a pair with no spikes, and refuses a population with none
 //! at all rather than calling it synchronous.
+//!
+//! # Where the STTC's reference implementations disagree with each other
+//!
+//! ⚠ **A train whose tiles cover the whole recording makes half the formula `0/0`.** The authors'
+//! C computes `T` by subtracting overlaps from `2·N·dt`, lands a hair either side of 1, and so
+//! returns NaN or a number decided by rounding: of the 205 saturated pairs in the 3,000 checked,
+//! 12 came back NaN and 193 as numbers from 0.19 to 1. `Elephant` sets that half-index to 1 by
+//! fiat. [`sttc`] decides coverage by the geometry (the first tile reaches the start, the last the
+//! end, no gap wider than `2·dt`), also treats a gap too narrow for the sum to see as coverage, and
+//! refuses both with [`SyncError::Saturated`].
+//!
+//! ⚠ **The authors' C misses one edge of a lone spike.** A single spike within `dt` of BOTH ends of
+//! the window gets only the start correction (an `if … else if`): a spike at 4 in `[0, 8]` with
+//! `dt` = 5 gets `T` = 1.125. [`tiled_fraction`] clips the tile at both ends and gives 1.
+//!
+//! ⚠ **`Elephant` widens the window with the spike time.** Its `P` uses
+//! `numpy.isclose(a, b, atol=dt)`, whose default `rtol = 1e-5` adds `10⁻⁵·|b|` to `dt`: at
+//! `dt` = 5 ms a spike 11 ms from its partner counts as tiled 600 s into a recording (read in
+//! `elephant/spike_train_correlation.py`, commit `32f1b56`). [`sttc`] uses the authors' test,
+//! `|aᵢ − bⱼ| ≤ dt`, and nothing else.
 //!
 //! # Trains
 //!
@@ -122,6 +152,19 @@ pub enum SyncError {
     },
     /// A histogram with no bins.
     NoBins,
+    /// A measure of a pair given a train with no spikes.
+    EmptyTrain {
+        /// Which train.
+        train: usize,
+    },
+    /// A train within `dt` of a spike everywhere in the window, so its tiling covers the whole
+    /// recording and leaves the other train nothing to be compared against.
+    Saturated {
+        /// Which train.
+        train: usize,
+        /// The tiling half-width.
+        dt: f64,
+    },
 }
 
 impl fmt::Display for SyncError {
@@ -135,6 +178,10 @@ impl fmt::Display for SyncError {
             Self::TooFewTrains { got } => write!(f, "a population measure needs two trains or more, not {got}"),
             Self::NotPositive { what, value } => write!(f, "{what} = {value} must be finite and positive"),
             Self::NoBins => write!(f, "a histogram needs at least one bin"),
+            Self::EmptyTrain { train } => write!(f, "train {train} has no spikes, so there is nothing to tile"),
+            Self::Saturated { train, dt } => {
+                write!(f, "train {train} is within dt = {dt} of a spike everywhere in the window, so its tiling covers the whole recording")
+            }
         }
     }
 }
@@ -483,11 +530,110 @@ pub fn schreiber_reliability(trials: &[&[f64]], sigma: f64) -> Result<f64, SyncE
     Ok(sum / pairs as f64)
 }
 
+/// The length of `[start, end]` lying within `dt` of a spike of `t`: the union of the tiles
+/// `[tᵢ − dt, tᵢ + dt]`, clipped to the window. `t` is increasing and inside the window.
+fn tiled(t: &[f64], start: f64, end: f64, dt: f64) -> f64 {
+    let mut covered = 0.0;
+    let mut reach = start;
+    // Never negative: the spikes are increasing and inside the window, so each tile's end reaches
+    // at least as far as the last one's (`reach`) and at least as far as `start`.
+    for &x in t {
+        let lo = (x - dt).max(reach);
+        let hi = (x + dt).min(end);
+        covered += hi - lo;
+        reach = reach.max(hi);
+    }
+    covered
+}
+
+/// Whether the tiles of `t` cover all of `[start, end]`, decided by the geometry — the first tile
+/// reaches the start, the last the end, and no two neighbours are more than `2·dt` apart — rather
+/// than by whether a sum of lengths rounds to the window's.
+fn covers(t: &[f64], start: f64, end: f64, dt: f64) -> bool {
+    match (t.first(), t.last()) {
+        (Some(&first), Some(&last)) => first - dt <= start && last + dt >= end && t.windows(2).all(|w| w[1] - w[0] <= 2.0 * dt),
+        _ => false,
+    }
+}
+
+/// How many spikes of `a` have a spike of `b` within `dt`, by the authors' own test,
+/// `|aᵢ − bⱼ| ≤ dt`. Both increasing; `b` is walked once.
+fn near(a: &[f64], b: &[f64], dt: f64) -> usize {
+    let (mut j, mut n) = (0usize, 0usize);
+    for &x in a {
+        while j < b.len() && x - b[j] > dt {
+            j += 1;
+        }
+        if j < b.len() && (x - b[j]).abs() <= dt {
+            n += 1;
+        }
+    }
+    n
+}
+
+/// Cutts and Eglen's `T`: the fraction of `[start, end]` within `dt` of a spike of `t`, the tiles
+/// merged where they overlap and clipped at the window's edges.
+///
+/// # Errors
+///
+/// [`SyncError::Window`], [`SyncError::NotPositive`] for `dt`, and a train that is not finite,
+/// increasing and inside the window.
+pub fn tiled_fraction(t: &[f64], start: f64, end: f64, dt: f64) -> Result<f64, SyncError> {
+    let length = window(start, end)?;
+    let dt = positive("dt", dt)?;
+    inside(0, t, start, end)?;
+    Ok(if covers(t, start, end, dt) { 1.0 } else { tiled(t, start, end, dt) / length })
+}
+
+/// The spike time tiling coefficient of Cutts and Eglen (2014):
+///
+/// ```text
+/// STTC = ½ [ (P_A − T_B)/(1 − P_A T_B) + (P_B − T_A)/(1 − P_B T_A) ]
+/// ```
+///
+/// where `T_A` is [`tiled_fraction`] of `a` and `P_A` the fraction of `a`'s spikes within `dt` of a
+/// spike of `b`. 1 for trains that tile each other completely, 0 in expectation for independent
+/// ones whatever their rates, negative for trains that avoid each other.
+///
+/// # Errors
+///
+/// As [`tiled_fraction`] for either train; [`SyncError::EmptyTrain`] for a train with no spikes;
+/// [`SyncError::Saturated`] for a train whose tiling covers the whole window, where a half of the
+/// formula is `0/0`.
+pub fn sttc(a: &[f64], b: &[f64], start: f64, end: f64, dt: f64) -> Result<f64, SyncError> {
+    let length = window(start, end)?;
+    let dt = positive("dt", dt)?;
+    inside(0, a, start, end)?;
+    inside(1, b, start, end)?;
+    for (k, t) in [a, b].into_iter().enumerate() {
+        if t.is_empty() {
+            return Err(SyncError::EmptyTrain { train: k });
+        }
+    }
+    for (k, t) in [a, b].into_iter().enumerate() {
+        if covers(t, start, end, dt) {
+            return Err(SyncError::Saturated { train: k, dt });
+        }
+    }
+    let t_a = tiled(a, start, end, dt) / length;
+    let t_b = tiled(b, start, end, dt) / length;
+    // A gap narrower than the rounding of the sum is a tiling of 1 to the arithmetic, and a
+    // half of the formula is 0/0 there just the same.
+    for (k, t) in [t_a, t_b].into_iter().enumerate() {
+        if t >= 1.0 {
+            return Err(SyncError::Saturated { train: k, dt });
+        }
+    }
+    let p_a = near(a, b, dt) as f64 / a.len() as f64;
+    let p_b = near(b, a, dt) as f64 / b.len() as f64;
+    Ok(0.5 * (p_a - t_b) / (1.0 - p_a * t_b) + 0.5 * (p_b - t_a) / (1.0 - p_b * t_a))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         Psth, SyncError, correlogram_expectation, cross_correlogram, psth, schreiber, schreiber_reliability, spike_order,
-        spike_sync, spike_sync_multi, spike_sync_within, synfire_indicator,
+        spike_sync, spike_sync_multi, spike_sync_within, sttc, synfire_indicator, tiled_fraction,
     };
     use crate::rng::Rng;
 
@@ -795,5 +941,176 @@ mod tests {
         assert_eq!(cross_correlogram(&[0.1], &[0.2], 0.0, 0.1, 0).unwrap_err().to_string(), "a histogram needs at least one bin");
         assert_eq!(cross_correlogram(&[0.1], &[0.2], f64::NAN, 0.1, 3).unwrap_err().to_string(), "[NaN, NaN] is not a window of positive length");
         assert_eq!(cross_correlogram(&[f64::NAN], &[0.2], 0.0, 0.1, 3).unwrap_err().to_string(), "train 0, spike 0 is NaN");
+    }
+
+    /// The pair in `Elephant`'s documentation of its STTC (train 1 = 1.3, 7.56, 15.87, 28.23, 30.9,
+    /// 34.2, 38.2, 43.2 ms; train 2 = 1.02, 2.71, 18.82, 28.46, 28.79, 43.6 ms; a 50 ms window;
+    /// `dt` = 5 ms), whose value the authors' own C (`spike_time_tiling_coefficient.c`, commit
+    /// `5f18868`) also gives to the last digit: 0.4958601655933762. `T_A` = 0.9168 and `T_B` =
+    /// 0.7536 are the same C's `run_T` over the window.
+    #[test]
+    fn the_sttc_of_the_documented_pair_is_the_authors_number() {
+        let a = [1.3, 7.56, 15.87, 28.23, 30.9, 34.2, 38.2, 43.2];
+        let b = [1.02, 2.71, 18.82, 28.46, 28.79, 43.6];
+        let x = sttc(&a, &b, 0.0, 50.0, 5.0).unwrap();
+        assert!((x - 0.495_860_165_593_376_2).abs() < 1e-15, "{x}");
+        assert!((tiled_fraction(&a, 0.0, 50.0, 5.0).unwrap() - 0.9168).abs() < 1e-15);
+        assert!((tiled_fraction(&b, 0.0, 50.0, 5.0).unwrap() - 0.7536).abs() < 1e-15);
+        // Symmetric in its two trains.
+        assert!((sttc(&b, &a, 0.0, 50.0, 5.0).unwrap() - x).abs() < 1e-15);
+    }
+
+    /// Three random pairs from a sweep of 3,000 run through the authors' C (`run_sttc`, commit
+    /// `5f18868`, compiled with a two-line `R.h` stub). Over the whole sweep the two agree to
+    /// 2.8e-13 wherever the C's answer is defined — `T` is summed in a different order here — and
+    /// the 205 pairs they do not share are the saturated ones, which
+    /// `a_train_that_tiles_the_whole_window_is_refused_where_the_authors_c_returns_noise` covers.
+    #[test]
+    fn the_sttc_is_the_authors_c_on_random_pairs() {
+        // dt, window start and end, the two trains, and the C's STTC.
+        type Case<'a> = (f64, f64, f64, &'a [f64], &'a [f64], f64);
+        let cases: [Case; 3] = [
+            (
+                0.001,
+                -3.0,
+                7.0,
+                &[-2.92619, -2.170546, -1.377623, 0.80246, 1.725056, 3.716438, 3.988784, 4.045382, 4.34728, 6.723101],
+                &[-2.924797, -2.247494, -2.170866, -1.37689, 0.802904, 1.726634, 3.716156, 3.989263, 4.044752, 4.345437, 5.52675, 6.722988],
+                0.640_393_143_979_298_9,
+            ),
+            (
+                0.1,
+                -3.0,
+                7.0,
+                &[-1.654725, -1.488358, -1.25249, -0.470439, 0.058956, 2.099415, 3.096051, 5.168832, 6.375943, 6.901969],
+                &[-2.997313, -2.845982, 0.906318, 2.667314, 2.979884, 3.563851, 3.863408, 4.43257, 4.629185, 6.651991],
+                -0.190_751_55,
+            ),
+            (
+                0.5,
+                -3.0,
+                47.0,
+                &[2.015211, 3.511205, 11.205389, 13.678555, 16.061985, 19.084735, 28.537784, 34.865488, 35.027835, 44.490748],
+                &[1.271584, 4.415861, 4.950109, 11.934593, 13.420811, 16.283233, 18.304414, 28.86067, 34.274559, 34.841615, 44.565667],
+                0.374_409_014_725_058_66,
+            ),
+        ];
+        for (dt, start, end, a, b, c) in cases {
+            let x = sttc(a, b, start, end, dt).unwrap();
+            assert!((x - c).abs() < 1e-13, "dt {dt}: {x} against the C's {c}");
+        }
+    }
+
+    /// Closed forms. Identical trains tile each other exactly: `P = 1` on both sides and each half is
+    /// `(1 − T)/(1 − T)`, so the STTC is 1 to the bit. Trains that never come within `dt` of each
+    /// other have `P = 0`, and the STTC is `−(T_A + T_B)/2` exactly — negative, as an index of
+    /// avoidance should be. And the within-`dt` test is the authors' `|a − b| ≤ dt`, inclusive: at a
+    /// gap of exactly `dt` (0.25, binary) a spike counts, one ulp further it does not.
+    #[test]
+    fn the_sttc_meets_its_closed_forms() {
+        let a = [0.5, 1.75, 3.0, 6.125];
+        assert_eq!(sttc(&a, &a, 0.0, 8.0, 0.25).unwrap(), 1.0);
+        let apart = [1.0, 2.0, 4.0];
+        let other = [1.5, 3.0, 5.0];
+        let (t_a, t_b) = (tiled_fraction(&apart, 0.0, 8.0, 0.25).unwrap(), tiled_fraction(&other, 0.0, 8.0, 0.25).unwrap());
+        assert_eq!((t_a, t_b), (0.1875, 0.1875), "three whole half-second tiles in eight seconds");
+        assert_eq!(sttc(&apart, &other, 0.0, 8.0, 0.25).unwrap(), -(t_a + t_b) / 2.0);
+        // P at the boundary: one spike each, 0.25 apart, is half-tiled on each side.
+        let on = sttc(&[1.0], &[1.25], 0.0, 8.0, 0.25).unwrap();
+        let t = 0.0625;
+        assert_eq!(on, (1.0 - t) / (1.0 - t), "exactly dt apart counts: {on}");
+        let off = sttc(&[1.0], &[1.25f64.next_up()], 0.0, 8.0, 0.25).unwrap();
+        assert!(off < 0.0, "one ulp beyond dt does not count: {off}");
+        // Tiles merge where they overlap and are clipped at the edges: spikes at 0.125 and 0.375
+        // with dt = 0.25 cover [0, 0.625] once, not 0.5 + 0.5 − 0.125.
+        assert_eq!(tiled_fraction(&[0.125, 0.375], 0.0, 8.0, 0.25).unwrap(), 0.625 / 8.0);
+        assert_eq!(tiled_fraction(&[7.875], 0.0, 8.0, 0.25).unwrap(), 0.375 / 8.0);
+    }
+
+    /// Cutts and Eglen's point against the correlation index: for independent trains the STTC is 0
+    /// in expectation WHATEVER THE RATES. Two hundred pairs of independent Poisson trains, 5 Hz
+    /// against 50 Hz over 20 s with `dt` = 5 ms, seeded: the mean is within three standard errors
+    /// of zero. Measured: mean 0.0035, standard error 0.0024 (1.46 standard errors).
+    #[test]
+    fn independent_trains_have_an_sttc_of_zero_whatever_their_rates() {
+        let mut rng = Rng::new(20_140_919);
+        let mut poisson = |rate: f64| {
+            let (mut t, mut out) = (0.0f64, Vec::new());
+            for _ in 0..100_000 {
+                t += -(1.0 - rng.next_f64()).ln() / rate;
+                if t > 20.0 {
+                    break;
+                }
+                out.push(t);
+            }
+            out
+        };
+        let xs: Vec<f64> = (0..200).map(|_| sttc(&poisson(5.0), &poisson(50.0), 0.0, 20.0, 5e-3).unwrap()).collect();
+        let n = xs.len() as f64;
+        let mean = xs.iter().sum::<f64>() / n;
+        let se = (xs.iter().map(|x| (x - mean).powi(2)).sum::<f64>() / (n - 1.0) / n).sqrt();
+        assert!(mean.abs() < 3.0 * se && se < 0.01, "mean {mean}, standard error {se}");
+    }
+
+    /// ⚠ The authors' C decides a saturated train by rounding. A train whose tiles cover the whole
+    /// window makes a half of the formula `0/0` in exact arithmetic; the C computes `T` by
+    /// subtracting overlaps from `2·N·dt`, lands a hair either side of 1, and returns NaN (12 of the
+    /// sweep's 205 such pairs) or a number anywhere from 0.19 to 1 (the other 193). Its lone-spike
+    /// branch also misses one edge: a single spike at 4 in `[0, 8]` with `dt` = 5 gets `T` = 1.125
+    /// and an STTC of 1. This module decides coverage by the geometry — the first tile reaches the
+    /// start, the last the end, no gap wider than `2·dt` — gives that spike `T` = 1, and refuses;
+    /// it also refuses a tiling whose gap is too narrow for the sum of lengths to see.
+    #[test]
+    fn a_train_that_tiles_the_whole_window_is_refused_where_the_authors_c_returns_noise() {
+        assert_eq!(tiled_fraction(&[4.0], 0.0, 8.0, 5.0).unwrap(), 1.0);
+        assert_eq!(sttc(&[4.0], &[4.0], 0.0, 8.0, 5.0), Err(SyncError::Saturated { train: 0, dt: 5.0 }));
+        // Spikes exactly 2·dt apart from dt to end − dt tile everything; widen one gap by an ulp
+        // and they do not.
+        let full = [0.25, 0.75, 1.25, 1.75];
+        assert_eq!(tiled_fraction(&full, 0.0, 2.0, 0.25).unwrap(), 1.0);
+        assert_eq!(sttc(&[1.0], &full, 0.0, 2.0, 0.25), Err(SyncError::Saturated { train: 1, dt: 0.25 }));
+        let e = 1.0 / 1_048_576.0;
+        let gap = [0.25, 0.75, 1.25 + e, 1.75];
+        assert!(tiled_fraction(&gap, 0.0, 2.0, 0.25).unwrap() < 1.0);
+        assert!(sttc(&[1.0], &gap, 0.0, 2.0, 0.25).is_ok());
+        // Each edge on its own: a first tile short of the start, a last short of the end.
+        assert!(tiled_fraction(&[0.25 + e, 0.75, 1.25, 1.75], 0.0, 2.0, 0.25).unwrap() < 1.0);
+        assert!(tiled_fraction(&[0.25, 0.75, 1.25, 1.75 - e], 0.0, 2.0, 0.25).unwrap() < 1.0);
+        // And a gap of one ulp at the start is real to the geometry but invisible to the sum, which
+        // comes to the whole window: refused too, rather than handed to a 0/0.
+        // The other way round: spikes at 0.5 and 0.7 tile `[0.3, 0.9]` at `dt` = 0.3 by the geometry,
+        // while the sum of their tile lengths comes to 0.9999999999999998 of the window. Coverage is
+        // reported as exactly 1, and refused, rather than left to that rounding.
+        assert_eq!(tiled_fraction(&[0.5, 0.7], 0.3, 0.9, 0.3).unwrap(), 1.0);
+        assert_eq!(sttc(&[0.6], &[0.5, 0.7], 0.3, 0.9, 0.3), Err(SyncError::Saturated { train: 1, dt: 0.3 }));
+        // A window that does not start at zero divides by its length, not its end: half a second of
+        // tile in a two-second window.
+        assert_eq!(tiled_fraction(&[1.0], 0.5, 2.5, 0.25).unwrap(), 0.25);
+        // And a train with no spikes tiles nothing.
+        assert_eq!(tiled_fraction(&[], 0.0, 4.0, 0.1).unwrap(), 0.0);
+        let ulp = [0.25f64.next_up(), 0.75, 1.25, 1.75];
+        assert_eq!(tiled_fraction(&ulp, 0.0, 2.0, 0.25).unwrap(), 1.0);
+        assert_eq!(sttc(&[1.0], &ulp, 0.0, 2.0, 0.25), Err(SyncError::Saturated { train: 1, dt: 0.25 }));
+        assert_eq!(
+            sttc(&[4.0], &[4.0], 0.0, 8.0, 5.0).unwrap_err().to_string(),
+            "train 0 is within dt = 5 of a spike everywhere in the window, so its tiling covers the whole recording"
+        );
+    }
+
+    /// Every refusal, by its message.
+    #[test]
+    fn the_sttc_refuses_what_it_cannot_measure() {
+        let a = [1.0, 2.0];
+        assert_eq!(sttc(&[], &a, 0.0, 4.0, 0.1), Err(SyncError::EmptyTrain { train: 0 }));
+        assert_eq!(sttc(&a, &[], 0.0, 4.0, 0.1), Err(SyncError::EmptyTrain { train: 1 }));
+        assert_eq!(sttc(&a, &[], 0.0, 4.0, 0.1).unwrap_err().to_string(), "train 1 has no spikes, so there is nothing to tile");
+        assert_eq!(sttc(&a, &a, 0.0, 4.0, 0.0), Err(SyncError::NotPositive { what: "dt", value: 0.0 }));
+        assert!(sttc(&a, &a, 0.0, 4.0, f64::NAN).is_err());
+        assert_eq!(sttc(&a, &a, 4.0, 0.0, 0.1), Err(SyncError::Window { start: 4.0, end: 0.0 }));
+        assert_eq!(sttc(&a, &[5.0], 0.0, 4.0, 0.1), Err(SyncError::Outside { train: 1, index: 0, value: 5.0 }));
+        assert_eq!(sttc(&[2.0, 1.0], &a, 0.0, 4.0, 0.1), Err(SyncError::NotIncreasing { train: 0, index: 1 }));
+        assert_eq!(tiled_fraction(&a, 0.0, 4.0, -1.0), Err(SyncError::NotPositive { what: "dt", value: -1.0 }));
+        assert_eq!(tiled_fraction(&[5.0], 0.0, 4.0, 0.1), Err(SyncError::Outside { train: 0, index: 0, value: 5.0 }));
+        assert_eq!(tiled_fraction(&a, 1.0, 1.0, 0.1), Err(SyncError::Window { start: 1.0, end: 1.0 }));
     }
 }

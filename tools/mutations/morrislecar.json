@@ -1,0 +1,1037 @@
+[
+ {
+  "label": "Eq. 7's voltage constant is 12 mV",
+  "old": "pub const EQ7_SCALE: f64 = 12.5;",
+  "new": "pub const EQ7_SCALE: f64 = 12.0;"
+ },
+ {
+  "label": "the search windows get no margin",
+  "old": "const PAD: f64 = 1.0;",
+  "new": "const PAD: f64 = 0.0;"
+ },
+ {
+  "label": "NotPositive's message drops 'finite'",
+  "old": "\"{what} = {value} must be finite and positive\"",
+  "new": "\"{what} = {value} must be positive\""
+ },
+ {
+  "label": "Negative's message drops 'finite'",
+  "old": "\"{what} = {value} must be finite and non-negative\"",
+  "new": "\"{what} = {value} must be non-negative\""
+ },
+ {
+  "label": "NonFinite's message changes",
+  "old": "\"{what} = {value} is not finite\"",
+  "new": "\"{what} = {value} is infinite\""
+ },
+ {
+  "label": "Zero's message changes",
+  "old": "\"{what} = 0 is a slope Eq. 2 divides by\"",
+  "new": "\"{what} = 0 is a zero slope\""
+ },
+ {
+  "label": "OutOfRange's message prints an open interval",
+  "old": "\"{what} = {value} is outside [{lo}, {hi}]\"",
+  "new": "\"{what} = {value} is outside ({lo}, {hi})\""
+ },
+ {
+  "label": "NoSamples's message changes",
+  "old": "Self::NoSamples => write!(f, \"a search over 0 samples brackets nothing\")",
+  "new": "Self::NoSamples => write!(f, \"no samples\")"
+ },
+ {
+  "label": "EmptyWindow's message changes",
+  "old": "\"the window [{lo}, {hi}] mV is not a finite, increasing interval\"",
+  "new": "\"the window [{lo}, {hi}] mV is empty\""
+ },
+ {
+  "label": "Concentrations's message changes",
+  "old": "Eq. 7 is used here only for 0 <= [Ca]_i < [Ca]_o, where its drive is monotone\"\n",
+  "new": "Eq. 7 is used here only for 0 <= [Ca]_i < [Ca]_o, where it is used\"\n"
+ },
+ {
+  "label": "NotLinear's message changes",
+  "old": "Self::NotLinear => write!(f, \"Eq. 4a is the nullcline of Eq. 3's linear drive; an electrodiffusion drive has no closed-form V(mu)\")",
+  "new": "Self::NotLinear => write!(f, \"Eq. 4a is the nullcline of Eq. 3's linear drive; an electrodiffusion drive has no closed form\")"
+ },
+ {
+  "label": "finite() admits infinities",
+  "old": "if value.is_finite() { Ok(value) }",
+  "new": "if !value.is_nan() { Ok(value) }"
+ },
+ {
+  "label": "positive() admits +inf",
+  "old": "if value.is_finite() && value > 0.0 { Ok(value) }",
+  "new": "if value > 0.0 { Ok(value) }"
+ },
+ {
+  "label": "positive() admits zero",
+  "old": "if value.is_finite() && value > 0.0 { Ok(value) }",
+  "new": "if value.is_finite() && value >= 0.0 { Ok(value) }"
+ },
+ {
+  "label": "non_negative() admits +inf",
+  "old": "if value.is_finite() && value >= 0.0 { Ok(value) }",
+  "new": "if value >= 0.0 { Ok(value) }"
+ },
+ {
+  "label": "non_negative() refuses zero",
+  "old": "if value.is_finite() && value >= 0.0 { Ok(value) }",
+  "new": "if value.is_finite() && value > 0.0 { Ok(value) }"
+ },
+ {
+  "label": "RK4's second slope is taken a full step out",
+  "old": "let k2 = f(at(k1, 0.5 * h));",
+  "new": "let k2 = f(at(k1, h));"
+ },
+ {
+  "label": "RK4's third slope is taken a full step out",
+  "old": "let k3 = f(at(k2, 0.5 * h));",
+  "new": "let k3 = f(at(k2, h));"
+ },
+ {
+  "label": "RK4's fourth slope is taken half a step out",
+  "old": "let k4 = f(at(k3, h));",
+  "new": "let k4 = f(at(k3, 0.5 * h));"
+ },
+ {
+  "label": "RK4's fourth slope starts from the second",
+  "old": "let k4 = f(at(k3, h));",
+  "new": "let k4 = f(at(k2, h));"
+ },
+ {
+  "label": "RK4's weights drop the doubling of k2",
+  "old": "x[j] + h / 6.0 * (k1[j] + 2.0 * k2[j] + 2.0 * k3[j] + k4[j])",
+  "new": "x[j] + h / 6.0 * (k1[j] + k2[j] + 2.0 * k3[j] + k4[j])"
+ },
+ {
+  "label": "RK4 divides by 4, not 6",
+  "old": "x[j] + h / 6.0 * (k1[j] + 2.0 * k2[j] + 2.0 * k3[j] + k4[j])",
+  "new": "x[j] + h / 4.0 * (k1[j] + 2.0 * k2[j] + 2.0 * k3[j] + k4[j])"
+ },
+ {
+  "label": "RK4's stages step backwards",
+  "old": "core::array::from_fn(|j| x[j] + s * k[j])",
+  "new": "core::array::from_fn(|j| x[j] - s * k[j])"
+ },
+ {
+  "label": "a search over zero samples is allowed",
+  "old": "if samples == 0 {",
+  "new": "if samples == usize::MAX {"
+ },
+ {
+  "label": "an infinite lower end is allowed",
+  "old": "if !(lo.is_finite() && hi.is_finite() && lo < hi) {",
+  "new": "if !(hi.is_finite() && lo < hi) {"
+ },
+ {
+  "label": "an infinite upper end is allowed",
+  "old": "if !(lo.is_finite() && hi.is_finite() && lo < hi) {",
+  "new": "if !(lo.is_finite() && lo < hi) {"
+ },
+ {
+  "label": "a window of zero width is allowed",
+  "old": "if !(lo.is_finite() && hi.is_finite() && lo < hi) {",
+  "new": "if !(lo.is_finite() && hi.is_finite() && lo <= hi) {"
+ },
+ {
+  "label": "the last grid interval is skipped",
+  "old": "for k in 1..=samples {",
+  "new": "for k in 1..samples {"
+ },
+ {
+  "label": "a sign change is read as no change",
+  "old": "if (fa < 0.0) != (fb < 0.0) {",
+  "new": "if (fa < 0.0) == (fb < 0.0) {"
+ },
+ {
+  "label": "a zero at a grid point counts as negative",
+  "old": "if (fa < 0.0) != (fb < 0.0) {",
+  "new": "if (fa <= 0.0) != (fb <= 0.0) {"
+ },
+ {
+  "label": "the bracket's sign is taken from its right end",
+  "old": "let (mut x0, mut x1, below) = (a, b, fa < 0.0);",
+  "new": "let (mut x0, mut x1, below) = (a, b, fb < 0.0);"
+ },
+ {
+  "label": "bisection stops after 30 halvings",
+  "old": "long before 200 halvings.\n            for _ in 0..200 {",
+  "new": "long before 200 halvings.\n            for _ in 0..30 {"
+ },
+ {
+  "label": "bisection moves the wrong end",
+  "old": "if (f(mid) < 0.0) == below {",
+  "new": "if (f(mid) < 0.0) != below {"
+ },
+ {
+  "label": "the root reported is the bracket's sum",
+  "old": "out.push(0.5 * (x0 + x1));",
+  "new": "out.push(x0 + x1);"
+ },
+ {
+  "label": "the scan never advances its left end",
+  "old": "(a, fa) = (b, fb);",
+  "new": "(a, fa) = (a, fa);"
+ },
+ {
+  "label": "the grid is laid from the wrong end",
+  "old": "let b = lo + step * k as f64;",
+  "new": "let b = hi - step * k as f64;"
+ },
+ {
+  "label": "M-infinity turns around",
+  "old": "0.5 * (1.0 + ((v - self.v_half) / self.slope).tanh())",
+  "new": "0.5 * (1.0 - ((v - self.v_half) / self.slope).tanh())"
+ },
+ {
+  "label": "M-infinity's slope is halved",
+  "old": "0.5 * (1.0 + ((v - self.v_half) / self.slope).tanh())",
+  "new": "0.5 * (1.0 + ((v - self.v_half) / (2.0 * self.slope)).tanh())"
+ },
+ {
+  "label": "the steady-state slope loses a sech",
+  "old": "0.5 / (self.slope * c * c)",
+  "new": "0.5 / (self.slope * c)"
+ },
+ {
+  "label": "the steady-state slope doubles",
+  "old": "0.5 / (self.slope * c * c)",
+  "new": "1.0 / (self.slope * c * c)"
+ },
+ {
+  "label": "the rate's cosh loses its factor 2",
+  "old": "self.rate * ((v - self.v_half) / (2.0 * self.slope)).cosh()",
+  "new": "self.rate * ((v - self.v_half) / self.slope).cosh()"
+ },
+ {
+  "label": "the rate's derivative loses its 1/(2 V_slope)",
+  "old": ".sinh() / (2.0 * self.slope)",
+  "new": ".sinh() / self.slope"
+ },
+ {
+  "label": "the rate's derivative is a cosh",
+  "old": "(2.0 * self.slope)).sinh()",
+  "new": "(2.0 * self.slope)).cosh()"
+ },
+ {
+  "label": "the gate relaxes away from its steady state",
+  "old": "self.rate_at(v) * (self.steady(v) - x)\n",
+  "new": "self.rate_at(v) * (x - self.steady(v))\n"
+ },
+ {
+  "label": "relax_slope drops the rate's derivative",
+  "old": "self.rate_slope(v) * (self.steady(v) - x) + self.rate_at(v) * self.steady_slope(v)",
+  "new": "self.rate_at(v) * self.steady_slope(v)"
+ },
+ {
+  "label": "relax_slope drops the steady state's derivative",
+  "old": "self.rate_slope(v) * (self.steady(v) - x) + self.rate_at(v) * self.steady_slope(v)",
+  "new": "self.rate_slope(v) * (self.steady(v) - x)"
+ },
+ {
+  "label": "a NaN half-activation is admitted",
+  "old": "finite(names[0], self.v_half)?;",
+  "new": "finite(names[0], 0.0)?;"
+ },
+ {
+  "label": "a zero slope is admitted",
+  "old": "if finite(names[1], self.slope)? == 0.0 {",
+  "new": "if finite(names[1], self.slope)? == 1.0 {"
+ },
+ {
+  "label": "a zero slope is reported under the half-activation's name",
+  "old": "return Err(MorrisLecarError::Zero { what: names[1] });",
+  "new": "return Err(MorrisLecarError::Zero { what: names[0] });"
+ },
+ {
+  "label": "a zero rate is admitted",
+  "old": "positive(names[2], self.rate)?;",
+  "new": "non_negative(names[2], self.rate)?;"
+ },
+ {
+  "label": "B(0) is taken as 1/2",
+  "old": "if x == 0.0 { 1.0 } else { x / x.exp_m1() }",
+  "new": "if x == 0.0 { 0.5 } else { x / x.exp_m1() }"
+ },
+ {
+  "label": "B has no removable-singularity guard",
+  "old": "if x == 0.0 { 1.0 } else { x / x.exp_m1() }",
+  "new": "if false { 1.0 } else { x / x.exp_m1() }"
+ },
+ {
+  "label": "B divides by exp, not expm1",
+  "old": "if x == 0.0 { 1.0 } else { x / x.exp_m1() }",
+  "new": "if x == 0.0 { 1.0 } else { x / x.exp() }"
+ },
+ {
+  "label": "B'(0) is +1/2",
+  "old": "if x == 0.0 {\n        -0.5",
+  "new": "if x == 0.0 {\n        0.5"
+ },
+ {
+  "label": "B' has no guard at zero",
+  "old": "if x == 0.0 {\n        -0.5",
+  "new": "if x == 1.0 {\n        -0.5"
+ },
+ {
+  "label": "B' flips the sign of x",
+  "old": "b * (1.0 - b - x) / x",
+  "new": "b * (1.0 - b + x) / x"
+ },
+ {
+  "label": "R adds the Bernoulli term",
+  "old": "ratio * v - (1.0 - ratio) * EQ7_SCALE * bernoulli(v / EQ7_SCALE)",
+  "new": "ratio * v + (1.0 - ratio) * EQ7_SCALE * bernoulli(v / EQ7_SCALE)"
+ },
+ {
+  "label": "R drops rho V",
+  "old": "ratio * v - (1.0 - ratio) * EQ7_SCALE * bernoulli(v / EQ7_SCALE)",
+  "new": "-(1.0 - ratio) * EQ7_SCALE * bernoulli(v / EQ7_SCALE)"
+ },
+ {
+  "label": "R weights by 1 + rho",
+  "old": "ratio * v - (1.0 - ratio) * EQ7_SCALE * bernoulli(v / EQ7_SCALE)",
+  "new": "ratio * v - (1.0 + ratio) * EQ7_SCALE * bernoulli(v / EQ7_SCALE)"
+ },
+ {
+  "label": "R's Bernoulli term is not scaled by 12.5",
+  "old": "ratio * v - (1.0 - ratio) * EQ7_SCALE * bernoulli(v / EQ7_SCALE)",
+  "new": "ratio * v - (1.0 - ratio) * EQ7_SCALE * bernoulli(v)"
+ },
+ {
+  "label": "R' adds the Bernoulli slope",
+  "old": "ratio - (1.0 - ratio) * bernoulli_slope(v / EQ7_SCALE)",
+  "new": "ratio + (1.0 - ratio) * bernoulli_slope(v / EQ7_SCALE)"
+ },
+ {
+  "label": "R' misses the chain rule's 1/12.5 cancelling",
+  "old": "ratio - (1.0 - ratio) * bernoulli_slope(v / EQ7_SCALE)",
+  "new": "ratio - (1.0 - ratio) * bernoulli_slope(v / EQ7_SCALE) / EQ7_SCALE"
+ },
+ {
+  "label": "the linear drive is V + V_i",
+  "old": "Self::Linear { v_rev } => v - v_rev,",
+  "new": "Self::Linear { v_rev } => v + v_rev,"
+ },
+ {
+  "label": "the electrodiffusion drive inverts the ratio",
+  "old": "Self::Electrodiffusion { ca_in, ca_out } => electrodiffusion(v, ca_in / ca_out),",
+  "new": "Self::Electrodiffusion { ca_in, ca_out } => electrodiffusion(v, ca_out / ca_in),"
+ },
+ {
+  "label": "the linear drive has zero slope",
+  "old": "Self::Linear { .. } => 1.0,",
+  "new": "Self::Linear { .. } => 0.0,"
+ },
+ {
+  "label": "the electrodiffusion slope ignores [Ca]_i",
+  "old": "electrodiffusion_slope(v, ca_in / ca_out)",
+  "new": "electrodiffusion_slope(v, 0.0 * ca_in / ca_out)"
+ },
+ {
+  "label": "a NaN V_i is admitted",
+  "old": "Self::Linear { v_rev } => finite(\"V_i\", v_rev).map(|_| ()),",
+  "new": "Self::Linear { .. } => Ok(()),"
+ },
+ {
+  "label": "an infinite [Ca]_o is admitted",
+  "old": "if ca_out.is_finite() && 0.0 <= ca_in && ca_in < ca_out {",
+  "new": "if 0.0 <= ca_in && ca_in < ca_out {"
+ },
+ {
+  "label": "[Ca]_i = 0 is refused",
+  "old": "if ca_out.is_finite() && 0.0 <= ca_in && ca_in < ca_out {",
+  "new": "if ca_out.is_finite() && 0.0 < ca_in && ca_in < ca_out {"
+ },
+ {
+  "label": "[Ca]_i = [Ca]_o is admitted",
+  "old": "if ca_out.is_finite() && 0.0 <= ca_in && ca_in < ca_out {",
+  "new": "if ca_out.is_finite() && 0.0 <= ca_in && ca_in <= ca_out {"
+ },
+ {
+  "label": "det = 0 is read as a saddle",
+  "old": "if d < 0.0 {\n            Self::Saddle",
+  "new": "if d <= 0.0 {\n            Self::Saddle"
+ },
+ {
+  "label": "det = 0 is not named",
+  "old": "} else if d == 0.0 {\n            Self::Degenerate",
+  "new": "} else if d == f64::MAX {\n            Self::Degenerate"
+ },
+ {
+  "label": "trace = 0 is not named",
+  "old": "} else if t == 0.0 {\n            Self::Centre",
+  "new": "} else if t == f64::MAX {\n            Self::Centre"
+ },
+ {
+  "label": "a repeated real root is read as a focus",
+  "old": "} else if t * t < 4.0 * d {",
+  "new": "} else if t * t <= 4.0 * d {"
+ },
+ {
+  "label": "the focus test uses 2 det",
+  "old": "} else if t * t < 4.0 * d {",
+  "new": "} else if t * t < 2.0 * d {"
+ },
+ {
+  "label": "stable and unstable foci swap",
+  "old": "if t < 0.0 { Self::StableFocus } else { Self::UnstableFocus }",
+  "new": "if t > 0.0 { Self::StableFocus } else { Self::UnstableFocus }"
+ },
+ {
+  "label": "stable and unstable nodes swap",
+  "old": "} else if t < 0.0 {\n            Self::StableNode",
+  "new": "} else if t > 0.0 {\n            Self::StableNode"
+ },
+ {
+  "label": "the single system's C is not checked",
+  "old": "        positive(\"C\", self.c)?;\n        positive(\"g_L\", self.g_l)?;\n        finite(\"V_L\", self.v_l)?;",
+  "new": "        positive(\"g_L\", self.g_l)?;\n        finite(\"V_L\", self.v_l)?;"
+ },
+ {
+  "label": "the single system's g_L is not checked",
+  "old": "        positive(\"g_L\", self.g_l)?;\n        finite(\"V_L\", self.v_l)?;",
+  "new": "        finite(\"V_L\", self.v_l)?;"
+ },
+ {
+  "label": "the single system's V_L is not checked",
+  "old": "        finite(\"V_L\", self.v_l)?;\n        non_negative(\"g\", self.g)?;",
+  "new": "        non_negative(\"g\", self.g)?;"
+ },
+ {
+  "label": "a negative g is admitted",
+  "old": "non_negative(\"g\", self.g)?;",
+  "new": "finite(\"g\", self.g)?;"
+ },
+ {
+  "label": "the drive is not checked",
+  "old": "        self.drive.check()?;\n",
+  "new": ""
+ },
+ {
+  "label": "the single gate's slope is named V_half",
+  "old": "self.gate.check([\"V_half\", \"V_slope\", \"lambda_bar\"])",
+  "new": "self.gate.check([\"V_half\", \"V_half\", \"lambda_bar\"])"
+ },
+ {
+  "label": "Eq. 3's leak has the wrong sign",
+  "old": "((i - self.g_l * (v - self.v_l) - self.g * mu * self.drive.at(v)) / self.c, self.gate.relax(v, mu))",
+  "new": "((i + self.g_l * (v - self.v_l) - self.g * mu * self.drive.at(v)) / self.c, self.gate.relax(v, mu))"
+ },
+ {
+  "label": "Eq. 3's conductance current has the wrong sign",
+  "old": "((i - self.g_l * (v - self.v_l) - self.g * mu * self.drive.at(v)) / self.c, self.gate.relax(v, mu))",
+  "new": "((i - self.g_l * (v - self.v_l) + self.g * mu * self.drive.at(v)) / self.c, self.gate.relax(v, mu))"
+ },
+ {
+  "label": "Eq. 3 divides by g_L, not C",
+  "old": "((i - self.g_l * (v - self.v_l) - self.g * mu * self.drive.at(v)) / self.c, self.gate.relax(v, mu))",
+  "new": "((i - self.g_l * (v - self.v_l) - self.g * mu * self.drive.at(v)) / self.g_l, self.gate.relax(v, mu))"
+ },
+ {
+  "label": "Eq. 3's gate relaxes from mu = 0",
+  "old": "((i - self.g_l * (v - self.v_l) - self.g * mu * self.drive.at(v)) / self.c, self.gate.relax(v, mu))",
+  "new": "((i - self.g_l * (v - self.v_l) - self.g * mu * self.drive.at(v)) / self.c, self.gate.relax(v, 0.0))"
+ },
+ {
+  "label": "the single steady current subtracts the conductance",
+  "old": "self.g_l * (v - self.v_l) + self.g * self.gate.steady(v) * self.drive.at(v)",
+  "new": "self.g_l * (v - self.v_l) - self.g * self.gate.steady(v) * self.drive.at(v)"
+ },
+ {
+  "label": "the single steady current's leak forgets V_L",
+  "old": "self.g_l * (v - self.v_l) + self.g * self.gate.steady(v) * self.drive.at(v)",
+  "new": "self.g_l * v + self.g * self.gate.steady(v) * self.drive.at(v)"
+ },
+ {
+  "label": "the single steady slope drops g_L",
+  "old": "self.g_l + self.g * (self.gate.steady_slope(v) * self.drive.at(v) + self.gate.steady(v) * self.drive.slope(v))",
+  "new": "self.g * (self.gate.steady_slope(v) * self.drive.at(v) + self.gate.steady(v) * self.drive.slope(v))"
+ },
+ {
+  "label": "the single steady slope drops the drive's slope",
+  "old": "self.g_l + self.g * (self.gate.steady_slope(v) * self.drive.at(v) + self.gate.steady(v) * self.drive.slope(v))",
+  "new": "self.g_l + self.g * (self.gate.steady_slope(v) * self.drive.at(v) + self.gate.steady(v))"
+ },
+ {
+  "label": "Eq. 4a admits a NaN current",
+  "old": "        self.check()?;\n        finite(\"I\", i)?;\n        if !(0.0..=1.0)",
+  "new": "        self.check()?;\n        if !(0.0..=1.0)"
+ },
+ {
+  "label": "Eq. 4a refuses mu = 1",
+  "old": "if !(0.0..=1.0).contains(&finite(\"mu\", mu)?) {",
+  "new": "if !(0.0..1.0).contains(&finite(\"mu\", mu)?) {"
+ },
+ {
+  "label": "Eq. 4a admits mu up to 2",
+  "old": "if !(0.0..=1.0).contains(&finite(\"mu\", mu)?) {",
+  "new": "if !(0.0..=2.0).contains(&finite(\"mu\", mu)?) {"
+ },
+ {
+  "label": "Eq. 4a's refusal names the wrong range",
+  "old": "value: mu, lo: 0.0, hi: 1.0 });",
+  "new": "value: mu, lo: 0.0, hi: 2.0 });"
+ },
+ {
+  "label": "Eq. 4a's denominator drops mu",
+  "old": "Ok((i + self.g_l * self.v_l + self.g * mu * v_rev) / (self.g_l + self.g * mu))",
+  "new": "Ok((i + self.g_l * self.v_l + self.g * mu * v_rev) / (self.g_l + self.g))"
+ },
+ {
+  "label": "Eq. 4a subtracts g mu V_i",
+  "old": "Ok((i + self.g_l * self.v_l + self.g * mu * v_rev) / (self.g_l + self.g * mu))",
+  "new": "Ok((i + self.g_l * self.v_l - self.g * mu * v_rev) / (self.g_l + self.g * mu))"
+ },
+ {
+  "label": "Eq. 4a answers for an electrodiffusion drive",
+  "old": "Drive::Electrodiffusion { .. } => Err(MorrisLecarError::NotLinear),",
+  "new": "Drive::Electrodiffusion { .. } => Ok(0.0),"
+ },
+ {
+  "label": "mu_nullcline divides by zero",
+  "old": "if gd == 0.0 { None }",
+  "new": "if gd == 1.0 { None }"
+ },
+ {
+  "label": "mu_nullcline adds the leak",
+  "old": "Some((i - self.g_l * (v - self.v_l)) / gd)",
+  "new": "Some((i + self.g_l * (v - self.v_l)) / gd)"
+ },
+ {
+  "label": "Eq. 3's Jacobian ignores the drive's slope",
+  "old": "[-(self.g_l + self.g * mu * self.drive.slope(v)) / self.c, -self.g * self.drive.at(v) / self.c],",
+  "new": "[-(self.g_l + self.g * mu) / self.c, -self.g * self.drive.at(v) / self.c],"
+ },
+ {
+  "label": "Eq. 3's Jacobian flips dV'/dmu",
+  "old": "[-(self.g_l + self.g * mu * self.drive.slope(v)) / self.c, -self.g * self.drive.at(v) / self.c],",
+  "new": "[-(self.g_l + self.g * mu * self.drive.slope(v)) / self.c, self.g * self.drive.at(v) / self.c],"
+ },
+ {
+  "label": "Eq. 3's Jacobian flips dmu'/dmu",
+  "old": "[self.gate.relax_slope(v, mu), -self.gate.rate_at(v)],",
+  "new": "[self.gate.relax_slope(v, mu), self.gate.rate_at(v)],"
+ },
+ {
+  "label": "the single search centres on V_L",
+  "old": "let v0 = self.v_l + i / self.g_l;\n        let w = ",
+  "new": "let v0 = self.v_l;\n        let w = "
+ },
+ {
+  "label": "the single search's half-width can be negative",
+  "old": "self.drive.at(v0).abs() / self.g_l + PAD",
+  "new": "self.drive.at(v0) / self.g_l + PAD"
+ },
+ {
+  "label": "the single search has no margin",
+  "old": "self.drive.at(v0).abs() / self.g_l + PAD",
+  "new": "self.drive.at(v0).abs() / self.g_l"
+ },
+ {
+  "label": "the single search looks only below V0",
+  "old": "roots(|v| self.steady_current(v) - i, v0 - w, v0 + w, samples)?",
+  "new": "roots(|v| self.steady_current(v) - i, v0 - w, v0, samples)?"
+ },
+ {
+  "label": "the single equilibria report mu = 1/2",
+  "old": "let mu = self.gate.steady(v);\n                Equilibrium",
+  "new": "let mu = 0.5;\n                Equilibrium"
+ },
+ {
+  "label": "the single search admits a NaN current",
+  "old": "        self.check()?;\n        finite(\"I\", i)?;\n        let v0",
+  "new": "        self.check()?;\n        let v0"
+ },
+ {
+  "label": "a negative step is admitted by the single system",
+  "old": "        positive(\"h\", h)?;\n        finite(\"V\", v)?;\n        finite(\"mu\", mu)?;",
+  "new": "        finite(\"V\", v)?;\n        finite(\"mu\", mu)?;"
+ },
+ {
+  "label": "a NaN mu is admitted by the single system",
+  "old": "        finite(\"mu\", mu)?;\n        finite(\"I\", i)?;\n        let [v1, mu1]",
+  "new": "        finite(\"I\", i)?;\n        let [v1, mu1]"
+ },
+ {
+  "label": "the single step swaps its derivatives",
+  "old": "let (dv, dmu) = self.field(v, mu, i);\n                [dv, dmu]",
+  "new": "let (dv, dmu) = self.field(v, mu, i);\n                [dmu, dv]"
+ },
+ {
+  "label": "Eq. 1's C is not checked",
+  "old": "        positive(\"C\", self.c)?;\n        positive(\"g_L\", self.g_l)?;\n        non_negative(\"g_Ca\"",
+  "new": "        positive(\"g_L\", self.g_l)?;\n        non_negative(\"g_Ca\""
+ },
+ {
+  "label": "Eq. 1's g_L is not checked",
+  "old": "        positive(\"g_L\", self.g_l)?;\n        non_negative(\"g_Ca\"",
+  "new": "        non_negative(\"g_Ca\""
+ },
+ {
+  "label": "g_Ca is not checked",
+  "old": "        non_negative(\"g_Ca\", self.g_ca)?;\n",
+  "new": ""
+ },
+ {
+  "label": "g_K is not checked",
+  "old": "        non_negative(\"g_K\", self.g_k)?;\n",
+  "new": ""
+ },
+ {
+  "label": "the reversal potentials are not checked",
+  "old": "            finite(what, value)?;\n",
+  "new": "            let _ = (what, value);\n"
+ },
+ {
+  "label": "the calcium gate's refusal is dropped",
+  "old": "self.m.check([\"V1\", \"V2\", \"lambda_M\"])?;",
+  "new": "self.m.check([\"V1\", \"V2\", \"lambda_M\"]).ok();"
+ },
+ {
+  "label": "the potassium rate is refused as lambda_M",
+  "old": "self.n.check([\"V3\", \"V4\", \"lambda_N\"])",
+  "new": "self.n.check([\"V3\", \"V4\", \"lambda_M\"])"
+ },
+ {
+  "label": "Eq. 1 drops the leak",
+  "old": "let ionic = self.g_l * (v - self.v_l) + self.g_ca * m * (v - self.v_ca) + self.g_k * n * (v - self.v_k);",
+  "new": "let ionic = self.g_ca * m * (v - self.v_ca) + self.g_k * n * (v - self.v_k);"
+ },
+ {
+  "label": "Eq. 1's calcium current has the wrong sign",
+  "old": "let ionic = self.g_l * (v - self.v_l) + self.g_ca * m * (v - self.v_ca) + self.g_k * n * (v - self.v_k);",
+  "new": "let ionic = self.g_l * (v - self.v_l) - self.g_ca * m * (v - self.v_ca) + self.g_k * n * (v - self.v_k);"
+ },
+ {
+  "label": "Eq. 1's potassium current reverses at -V_K",
+  "old": "let ionic = self.g_l * (v - self.v_l) + self.g_ca * m * (v - self.v_ca) + self.g_k * n * (v - self.v_k);",
+  "new": "let ionic = self.g_l * (v - self.v_l) + self.g_ca * m * (v - self.v_ca) + self.g_k * n * (v + self.v_k);"
+ },
+ {
+  "label": "Eq. 1 adds the ionic current",
+  "old": "[(i - ionic) / self.c, self.m.relax(v, m), self.n.relax(v, n)]",
+  "new": "[(i + ionic) / self.c, self.m.relax(v, m), self.n.relax(v, n)]"
+ },
+ {
+  "label": "Eq. 1's M relaxes with N",
+  "old": "[(i - ionic) / self.c, self.m.relax(v, m), self.n.relax(v, n)]",
+  "new": "[(i - ionic) / self.c, self.m.relax(v, n), self.n.relax(v, n)]"
+ },
+ {
+  "label": "Eq. 1's N relaxes with M",
+  "old": "[(i - ionic) / self.c, self.m.relax(v, m), self.n.relax(v, n)]",
+  "new": "[(i - ionic) / self.c, self.m.relax(v, m), self.n.relax(v, m)]"
+ },
+ {
+  "label": "Eq. 9 sets M to N-infinity",
+  "old": "let [dv, _, dn] = self.field(v, self.m.steady(v), n, i);",
+  "new": "let [dv, _, dn] = self.field(v, self.n.steady(v), n, i);"
+ },
+ {
+  "label": "Eq. 9 returns M's derivative for N's",
+  "old": "let [dv, _, dn] = self.field(v, self.m.steady(v), n, i);",
+  "new": "let [dv, dn, _] = self.field(v, self.m.steady(v), n, i);"
+ },
+ {
+  "label": "I_ss subtracts the potassium current",
+  "old": "+ self.g_k * self.n.steady(v) * (v - self.v_k)\n",
+  "new": "- self.g_k * self.n.steady(v) * (v - self.v_k)\n"
+ },
+ {
+  "label": "I_ss's calcium current reverses at V_K",
+  "old": "self.g_ca * self.m.steady(v) * (v - self.v_ca) + self.g_k * self.n.steady(v) * (v - self.v_k)\n",
+  "new": "self.g_ca * self.m.steady(v) * (v - self.v_k) + self.g_k * self.n.steady(v) * (v - self.v_k)\n"
+ },
+ {
+  "label": "I_ss's leak forgets V_L",
+  "old": "self.g_l * (v - self.v_l) + self.g_ca * self.m.steady(v) * (v - self.v_ca) + self.g_k * self.n.steady(v)",
+  "new": "self.g_l * v + self.g_ca * self.m.steady(v) * (v - self.v_ca) + self.g_k * self.n.steady(v)"
+ },
+ {
+  "label": "I_ss' drops M-infinity's product-rule term",
+  "old": "let ca = self.m.steady_slope(v) * (v - self.v_ca) + self.m.steady(v);",
+  "new": "let ca = self.m.steady_slope(v) * (v - self.v_ca);"
+ },
+ {
+  "label": "I_ss' uses V_Ca in the potassium term",
+  "old": "let k = self.n.steady_slope(v) * (v - self.v_k) + self.n.steady(v);",
+  "new": "let k = self.n.steady_slope(v) * (v - self.v_ca) + self.n.steady(v);"
+ },
+ {
+  "label": "I_ss' drops g_L",
+  "old": "self.g_l + self.g_ca * ca + self.g_k * k",
+  "new": "self.g_ca * ca + self.g_k * k"
+ },
+ {
+  "label": "Eq. 11's nullcline divides by zero at V_K",
+  "old": "if gk == 0.0 {\n            None",
+  "new": "if gk == 1.0 {\n            None"
+ },
+ {
+  "label": "Eq. 11's leak is the printed g_L(V_s - V_K)",
+  "old": "Some((i - self.g_l * (v - self.v_l) - self.g_ca * self.m.steady(v) * (v - self.v_ca)) / gk)",
+  "new": "Some((i - self.g_l * (v - self.v_k) - self.g_ca * self.m.steady(v) * (v - self.v_ca)) / gk)"
+ },
+ {
+  "label": "Eq. 11 adds the calcium current",
+  "old": "Some((i - self.g_l * (v - self.v_l) - self.g_ca * self.m.steady(v) * (v - self.v_ca)) / gk)",
+  "new": "Some((i - self.g_l * (v - self.v_l) + self.g_ca * self.m.steady(v) * (v - self.v_ca)) / gk)"
+ },
+ {
+  "label": "Eq. 10's V_min divides by g_L + g_Ca",
+  "old": "(self.g_l * self.v_l + self.g_k * self.v_k + i) / (self.g_l + self.g_k),",
+  "new": "(self.g_l * self.v_l + self.g_k * self.v_k + i) / (self.g_l + self.g_ca),"
+ },
+ {
+  "label": "Eq. 10's V_min subtracts I",
+  "old": "(self.g_l * self.v_l + self.g_k * self.v_k + i) / (self.g_l + self.g_k),",
+  "new": "(self.g_l * self.v_l + self.g_k * self.v_k - i) / (self.g_l + self.g_k),"
+ },
+ {
+  "label": "Eq. 10's V_max reverses at V_K",
+  "old": "(self.g_l * self.v_l + self.g_ca * self.v_ca + i) / (self.g_l + self.g_ca),",
+  "new": "(self.g_l * self.v_l + self.g_ca * self.v_k + i) / (self.g_l + self.g_ca),"
+ },
+ {
+  "label": "the trapping interval's V0 forgets I",
+  "old": "let v0 = self.v_l + i / self.g_l;\n        let all",
+  "new": "let v0 = self.v_l;\n        let all"
+ },
+ {
+  "label": "V_all drops g_K from its denominator",
+  "old": "+ self.g_k * self.v_k + i) / (self.g_l + self.g_ca + self.g_k);",
+  "new": "+ self.g_k * self.v_k + i) / (self.g_l + self.g_ca);"
+ },
+ {
+  "label": "the lower end ignores the lo corner",
+  "old": "lo.min(hi).min(v0).min(all)",
+  "new": "hi.min(v0).min(all)"
+ },
+ {
+  "label": "the lower end ignores the hi corner",
+  "old": "lo.min(hi).min(v0).min(all)",
+  "new": "lo.min(v0).min(all)"
+ },
+ {
+  "label": "the lower end ignores the v0 corner",
+  "old": "lo.min(hi).min(v0).min(all)",
+  "new": "lo.min(hi).min(all)"
+ },
+ {
+  "label": "the lower end ignores the all corner",
+  "old": "lo.min(hi).min(v0).min(all)",
+  "new": "lo.min(hi).min(v0)"
+ },
+ {
+  "label": "the upper end ignores the lo corner",
+  "old": "lo.max(hi).max(v0).max(all)",
+  "new": "hi.max(v0).max(all)"
+ },
+ {
+  "label": "the upper end ignores the hi corner",
+  "old": "lo.max(hi).max(v0).max(all)",
+  "new": "lo.max(v0).max(all)"
+ },
+ {
+  "label": "the upper end ignores the v0 corner",
+  "old": "lo.max(hi).max(v0).max(all)",
+  "new": "lo.max(hi).max(all)"
+ },
+ {
+  "label": "the upper end ignores the all corner",
+  "old": "lo.max(hi).max(v0).max(all)",
+  "new": "lo.max(hi).max(v0)"
+ },
+ {
+  "label": "Eq. 9's search has no lower margin",
+  "old": "roots(|v| self.steady_current(v) - i, lo - PAD, hi + PAD, samples)?",
+  "new": "roots(|v| self.steady_current(v) - i, lo, hi + PAD, samples)?"
+ },
+ {
+  "label": "Eq. 9's search has no upper margin",
+  "old": "roots(|v| self.steady_current(v) - i, lo - PAD, hi + PAD, samples)?",
+  "new": "roots(|v| self.steady_current(v) - i, lo - PAD, hi, samples)?"
+ },
+ {
+  "label": "Eq. 9's equilibria report M-infinity as N",
+  "old": "let n = self.n.steady(v);\n                Equilibrium { v, x: n,",
+  "new": "let n = self.m.steady(v);\n                Equilibrium { v, x: n,"
+ },
+ {
+  "label": "Eq. 9's search admits a NaN current",
+  "old": "        self.check()?;\n        finite(\"I\", i)?;\n        let (lo, hi) = self.trapping_interval(i);",
+  "new": "        self.check()?;\n        let (lo, hi) = self.trapping_interval(i);"
+ },
+ {
+  "label": "Eq. 9's search does not check the model",
+  "old": "        self.check()?;\n        finite(\"I\", i)?;\n        let (lo, hi) = self.trapping_interval(i);",
+  "new": "        finite(\"I\", i)?;\n        let (lo, hi) = self.trapping_interval(i);"
+ },
+ {
+  "label": "Eq. 9's Jacobian drops M-infinity's product-rule term",
+  "old": "let m_part = self.m.steady_slope(v) * (v - self.v_ca) + self.m.steady(v);",
+  "new": "let m_part = self.m.steady_slope(v) * (v - self.v_ca);"
+ },
+ {
+  "label": "Eq. 9's Jacobian reverses the calcium drive",
+  "old": "let m_part = self.m.steady_slope(v) * (v - self.v_ca) + self.m.steady(v);",
+  "new": "let m_part = self.m.steady_slope(v) * (self.v_ca - v) + self.m.steady(v);"
+ },
+ {
+  "label": "Eq. 9's Jacobian drops g_K N",
+  "old": "[-(self.g_l + self.g_ca * m_part + self.g_k * n) / self.c,",
+  "new": "[-(self.g_l + self.g_ca * m_part) / self.c,"
+ },
+ {
+  "label": "Eq. 9's Jacobian flips dV'/dN",
+  "old": "-self.g_k * (v - self.v_k) / self.c],",
+  "new": "self.g_k * (v - self.v_k) / self.c],"
+ },
+ {
+  "label": "Eq. 9's Jacobian takes dN'/dV at N = 0",
+  "old": "[self.n.relax_slope(v, n), -self.n.rate_at(v)],",
+  "new": "[self.n.relax_slope(v, 0.0), -self.n.rate_at(v)],"
+ },
+ {
+  "label": "Eq. 9's Jacobian uses M's rate for N",
+  "old": "[self.n.relax_slope(v, n), -self.n.rate_at(v)],",
+  "new": "[self.n.relax_slope(v, n), -self.m.rate_at(v)],"
+ },
+ {
+  "label": "Eq. 1's Jacobian drops g_K N",
+  "old": "-(self.g_l + self.g_ca * m + self.g_k * n) / self.c,",
+  "new": "-(self.g_l + self.g_ca * m) / self.c,"
+ },
+ {
+  "label": "Eq. 1's Jacobian flips dV'/dM",
+  "old": "-self.g_ca * (v - self.v_ca) / self.c,",
+  "new": "self.g_ca * (v - self.v_ca) / self.c,"
+ },
+ {
+  "label": "Eq. 1's Jacobian's dV'/dN reverses at V_Ca",
+  "old": "-self.g_k * (v - self.v_k) / self.c,\n",
+  "new": "-self.g_k * (v - self.v_ca) / self.c,\n"
+ },
+ {
+  "label": "Eq. 1's Jacobian couples M to N",
+  "old": "[self.m.relax_slope(v, m), -self.m.rate_at(v), 0.0],",
+  "new": "[self.m.relax_slope(v, m), -self.m.rate_at(v), 1.0],"
+ },
+ {
+  "label": "Eq. 1's Jacobian flips dN'/dN",
+  "old": "[self.n.relax_slope(v, n), 0.0, -self.n.rate_at(v)],",
+  "new": "[self.n.relax_slope(v, n), 0.0, self.n.rate_at(v)],"
+ },
+ {
+  "label": "Eq. 15's G reverses its drive",
+  "old": "let neg = self.g_ca * self.m.steady_slope(v) * (self.v_ca - v);",
+  "new": "let neg = self.g_ca * self.m.steady_slope(v) * (v - self.v_ca);"
+ },
+ {
+  "label": "Eq. 15's g-bar drops g_L",
+  "old": "let gbar = self.g_l + self.g_k * self.n.steady(v) + self.g_ca * self.m.steady(v);",
+  "new": "let gbar = self.g_k * self.n.steady(v) + self.g_ca * self.m.steady(v);"
+ },
+ {
+  "label": "Eq. 15's first margin adds C lambda_N",
+  "old": "(neg - gbar - self.c * self.n.rate_at(v), ",
+  "new": "(neg - gbar + self.c * self.n.rate_at(v), "
+ },
+ {
+  "label": "Eq. 15's first margin uses lambda_M",
+  "old": "(neg - gbar - self.c * self.n.rate_at(v), ",
+  "new": "(neg - gbar - self.c * self.m.rate_at(v), "
+ },
+ {
+  "label": "Eq. 15's second margin subtracts the potassium term",
+  "old": "gbar + self.g_k * self.n.steady_slope(v) * (v - self.v_k) - neg)",
+  "new": "gbar - self.g_k * self.n.steady_slope(v) * (v - self.v_k) - neg)"
+ },
+ {
+  "label": "on_curve linearises at M-infinity",
+  "old": "let l = self.reduced_linearisation(v, self.n.steady(v));",
+  "new": "let l = self.reduced_linearisation(v, self.m.steady(v));"
+ },
+ {
+  "label": "on_curve reports the trace as the determinant",
+  "old": "trace: l.trace(), det: l.determinant() }",
+  "new": "trace: l.trace(), det: l.trace() }"
+ },
+ {
+  "label": "on_curve reports V as the current",
+  "old": "OnCurve { v, i: self.steady_current(v),",
+  "new": "OnCurve { v, i: v,"
+ },
+ {
+  "label": "trace_zeros finds zeros of the determinant",
+  "old": "roots(|v| self.reduced_linearisation(v, self.n.steady(v)).trace(), v_lo, v_hi, samples)?",
+  "new": "roots(|v| self.reduced_linearisation(v, self.n.steady(v)).determinant(), v_lo, v_hi, samples)?"
+ },
+ {
+  "label": "trace_zeros does not check the model",
+  "old": "        self.check()?;\n        let vs = roots(|v| self.reduced_linearisation",
+  "new": "        let vs = roots(|v| self.reduced_linearisation"
+ },
+ {
+  "label": "folds finds zeros of I_ss, not I_ss'",
+  "old": "roots(|v| self.steady_current_slope(v), v_lo, v_hi, samples)?",
+  "new": "roots(|v| self.steady_current(v), v_lo, v_hi, samples)?"
+ },
+ {
+  "label": "folds does not check the model",
+  "old": "        self.check()?;\n        let vs = roots(|v| self.steady_current_slope(v)",
+  "new": "        let vs = roots(|v| self.steady_current_slope(v)"
+ },
+ {
+  "label": "Eq. 9's step admits a bad step",
+  "old": "        positive(\"h\", h)?;\n        finite(\"V\", v)?;\n        finite(\"N\", n)?;",
+  "new": "        finite(\"V\", v)?;\n        finite(\"N\", n)?;"
+ },
+ {
+  "label": "Eq. 9's step admits a NaN N",
+  "old": "        finite(\"N\", n)?;\n        finite(\"I\", i)?;\n        let [v1, n1]",
+  "new": "        finite(\"I\", i)?;\n        let [v1, n1]"
+ },
+ {
+  "label": "Eq. 9's step swaps its derivatives",
+  "old": "let (dv, dn) = self.reduced_field(v, n, i);\n                [dv, dn]",
+  "new": "let (dv, dn) = self.reduced_field(v, n, i);\n                [dn, dv]"
+ },
+ {
+  "label": "Eq. 1's step admits a NaN M",
+  "old": "        finite(\"M\", m)?;\n",
+  "new": ""
+ },
+ {
+  "label": "Eq. 1's step admits an infinite current",
+  "old": "        finite(\"N\", n)?;\n        finite(\"I\", i)?;\n        Ok(rk4",
+  "new": "        finite(\"N\", n)?;\n        Ok(rk4"
+ },
+ {
+  "label": "Eq. 1's step starts from (V, N, M)",
+  "old": "Ok(rk4(|[v, m, n]| self.field(v, m, n, i), [v, m, n], h))",
+  "new": "Ok(rk4(|[v, m, n]| self.field(v, m, n, i), [v, n, m], h))"
+ },
+ {
+  "label": "a2 is +trace",
+  "old": "let a2 = -(j[0][0] + j[1][1] + j[2][2]);",
+  "new": "let a2 = j[0][0] + j[1][1] + j[2][2];"
+ },
+ {
+  "label": "a1's first minor adds its off-diagonal product",
+  "old": "(j[0][0] * j[1][1] - j[0][1] * j[1][0])",
+  "new": "(j[0][0] * j[1][1] + j[0][1] * j[1][0])"
+ },
+ {
+  "label": "a1's second minor takes the wrong entry",
+  "old": "(j[0][0] * j[2][2] - j[0][2] * j[2][0])",
+  "new": "(j[0][0] * j[2][2] - j[0][2] * j[2][1])"
+ },
+ {
+  "label": "a1 drops its third minor",
+  "old": " + (j[1][1] * j[2][2] - j[1][2] * j[2][1]);",
+  "new": ";"
+ },
+ {
+  "label": "det's second cofactor has the wrong sign",
+  "old": "- j[0][1] * (j[1][0] * j[2][2] - j[1][2] * j[2][0])",
+  "new": "+ j[0][1] * (j[1][0] * j[2][2] - j[1][2] * j[2][0])"
+ },
+ {
+  "label": "det's third cofactor has the wrong sign",
+  "old": "+ j[0][2] * (j[1][0] * j[2][1] - j[1][1] * j[2][0]);",
+  "new": "- j[0][2] * (j[1][0] * j[2][1] - j[1][1] * j[2][0]);"
+ },
+ {
+  "label": "a0 is +det",
+  "old": "[a2, a1, -det]",
+  "new": "[a2, a1, det]"
+ },
+ {
+  "label": "Routh-Hurwitz drops a2 > 0",
+  "old": "a2 > 0.0 && a0 > 0.0 && a2 * a1 > a0",
+  "new": "a0 > 0.0 && a2 * a1 > a0"
+ },
+ {
+  "label": "Routh-Hurwitz drops a0 > 0",
+  "old": "a2 > 0.0 && a0 > 0.0 && a2 * a1 > a0",
+  "new": "a2 > 0.0 && a2 * a1 > a0"
+ },
+ {
+  "label": "Routh-Hurwitz admits a2 a1 = a0",
+  "old": "a2 > 0.0 && a0 > 0.0 && a2 * a1 > a0",
+  "new": "a2 > 0.0 && a0 > 0.0 && a2 * a1 >= a0"
+ },
+ {
+  "label": "Fig. 9's V2 is the printed -15",
+  "old": "m: Gate { v_half: 10.0, slope: 15.0, rate: 0.1 },\n        n: Gate { v_half: -1.0, slope: 14.5, rate: 1.0 / 15.0 },\n    };",
+  "new": "m: Gate { v_half: 10.0, slope: -15.0, rate: 0.1 },\n        n: Gate { v_half: -1.0, slope: 14.5, rate: 1.0 / 15.0 },\n    };"
+ },
+ {
+  "label": "Fig. 9's g_Ca is 4.5",
+  "old": "        g_ca: 4.0,\n        g_k: 8.0,",
+  "new": "        g_ca: 4.5,\n        g_k: 8.0,"
+ },
+ {
+  "label": "Fig. 10b's V3 is 13",
+  "old": "n: Gate { v_half: 12.0, ..Self::FIG9.n }",
+  "new": "n: Gate { v_half: 13.0, ..Self::FIG9.n }"
+ },
+ {
+  "label": "Fig. 10c's lambda_N is not halved",
+  "old": "n: Gate { rate: 1.0 / 30.0, ..Self::FIG9.n }",
+  "new": "n: Gate { rate: 1.0 / 15.0, ..Self::FIG9.n }"
+ },
+ {
+  "label": "Fig. 10d's g_L is not halved",
+  "old": "pub const FIG10D: Self = Self { g_l: 1.0, ..Self::FIG9 };",
+  "new": "pub const FIG10D: Self = Self { g_l: 2.0, ..Self::FIG9 };"
+ },
+ {
+  "label": "Fig. 10a's g_Ca is not doubled",
+  "old": "pub const FIG10A: Self = Self { g_ca: 8.0, ..Self::FIG9 };",
+  "new": "pub const FIG10A: Self = Self { g_ca: 4.0, ..Self::FIG9 };"
+ },
+ {
+  "label": "Fig. 11's V1 is +1",
+  "old": "m: Gate { v_half: -1.0, slope: 15.0, rate: 0.1 },",
+  "new": "m: Gate { v_half: 1.0, slope: 15.0, rate: 0.1 },"
+ },
+ {
+  "label": "Fig. 6's V4 is 14.5",
+  "old": "n: Gate { v_half: 10.0, slope: 10.0, rate: 0.1 },",
+  "new": "n: Gate { v_half: 10.0, slope: 14.5, rate: 0.1 },"
+ },
+ {
+  "label": "Fig. 6's second set keeps g_K = 12",
+  "old": "pub const FIG6_CA4_K8: Self = Self { g_ca: 4.0, g_k: 8.0, ..Self::FIG6_CA6_K12 };",
+  "new": "pub const FIG6_CA4_K8: Self = Self { g_ca: 4.0, g_k: 12.0, ..Self::FIG6_CA6_K12 };"
+ },
+ {
+  "label": "Fig. 2b's V_L is the printed Fig. 5a +50",
+  "old": "        v_l: -50.0,\n        g: 8.0,",
+  "new": "        v_l: 50.0,\n        g: 8.0,"
+ },
+ {
+  "label": "Fig. 3b's [Ca]_o is 10",
+  "old": "drive: Drive::Electrodiffusion { ca_in: 0.0, ca_out: 100.0 },",
+  "new": "drive: Drive::Electrodiffusion { ca_in: 0.0, ca_out: 10.0 },"
+ },
+ {
+  "label": "the printed V2 is recorded as +15",
+  "old": "pub const FIG9_PRINTED_V2: f64 = -15.0;",
+  "new": "pub const FIG9_PRINTED_V2: f64 = 15.0;"
+ },
+ {
+  "label": "the printed Fig. 11 current is recorded as 35",
+  "old": "pub const FIG11_PRINTED_I: f64 = 50.0;",
+  "new": "pub const FIG11_PRINTED_I: f64 = 35.0;"
+ },
+ {
+  "label": "the printed Fig. 5a V_L is recorded as -50",
+  "old": "pub const FIG5A_PRINTED_V_L: f64 = 50.0;",
+  "new": "pub const FIG5A_PRINTED_V_L: f64 = -50.0;"
+ }
+]

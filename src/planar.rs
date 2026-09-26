@@ -70,13 +70,12 @@
 //! `FitzHugh`'s time is dimensionless. Wilson–Cowan's `E` and `I` are proportions of a population
 //! firing and `P`, `Q` are dimensionless inputs; `τ` is in seconds, as everywhere in this crate.
 //!
-//! # Not here yet
+//! # Beside these
 //!
-//! Morris–Lecar (1981) and Hindmarsh–Rose (1984) belong beside these. Neither is here, because this
-//! review could not read either paper: the Biophysical Journal full text of Morris and Lecar
-//! returned 403, and Hindmarsh and Rose's Proceedings B paper was reachable only through a service
-//! that does not serve it. Transcribing their parameter tables from a secondary copy is how this
-//! crate once shipped a pre-silicon energy graded as a measurement, so they wait for the papers.
+//! Morris and Lecar (1981) is [`crate::morrislecar`], built once the paper itself could be read:
+//! transcribing its parameter tables from a secondary copy is how this crate once shipped a
+//! pre-silicon energy graded as a measurement, so it waited for the page. Hindmarsh and Rose
+//! (1984) is being built the same way and is not here yet.
 
 use core::fmt;
 

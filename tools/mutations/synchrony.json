@@ -378,5 +378,160 @@
   "label": "the reliability divides by the trial count",
   "old": "Ok(sum / pairs as f64)",
   "new": "Ok(sum / trials.len() as f64)"
+ },
+ {
+  "label": "a tile's start is not clipped to what is already covered",
+  "old": "        let lo = (x - dt).max(reach);",
+  "new": "        let lo = x - dt;"
+ },
+ {
+  "label": "a tile's end is not clipped to the window",
+  "old": "        let hi = (x + dt).min(end);",
+  "new": "        let hi = x + dt;"
+ },
+ {
+  "label": "the covered reach never advances",
+  "old": "        reach = reach.max(hi);",
+  "new": "        reach = reach.max(start);"
+ },
+ {
+  "label": "the union starts before the window",
+  "old": "    let mut reach = start;\n    // Never negative",
+  "new": "    let mut reach = f64::NEG_INFINITY;\n    // Never negative"
+ },
+ {
+  "label": "the tile is one-sided",
+  "old": "        let hi = (x + dt).min(end);",
+  "new": "        let hi = x.min(end);"
+ },
+ {
+  "label": "coverage ignores the start",
+  "old": "first - dt <= start && last + dt >= end",
+  "new": "last + dt >= end"
+ },
+ {
+  "label": "coverage ignores the end",
+  "old": "first - dt <= start && last + dt >= end",
+  "new": "first - dt <= start"
+ },
+ {
+  "label": "coverage ignores the gaps between tiles",
+  "old": "&& t.windows(2).all(|w| w[1] - w[0] <= 2.0 * dt),",
+  "new": "&& true,"
+ },
+ {
+  "label": "coverage allows gaps of three half-widths",
+  "old": "w[1] - w[0] <= 2.0 * dt",
+  "new": "w[1] - w[0] <= 3.0 * dt"
+ },
+ {
+  "label": "an empty train covers the window",
+  "old": "        _ => false,\n    }\n}",
+  "new": "        _ => true,\n    }\n}"
+ },
+ {
+  "label": "the partner search skips partners that are close",
+  "old": "        while j < b.len() && x - b[j] > dt {",
+  "new": "        while j < b.len() && x - b[j] > -dt {"
+ },
+ {
+  "label": "the partner search never advances",
+  "old": "        while j < b.len() && x - b[j] > dt {\n            j += 1;\n        }",
+  "new": "        while false && j < b.len() {\n            j += 1;\n        }"
+ },
+ {
+  "label": "the within-dt test is exclusive",
+  "old": "        if j < b.len() && (x - b[j]).abs() <= dt {",
+  "new": "        if j < b.len() && (x - b[j]).abs() < dt {"
+ },
+ {
+  "label": "the within-dt test is one-sided",
+  "old": "        if j < b.len() && (x - b[j]).abs() <= dt {",
+  "new": "        if j < b.len() && (x - b[j]) <= dt {"
+ },
+ {
+  "label": "tiled_fraction does not report a covering train as exactly one",
+  "old": "Ok(if covers(t, start, end, dt) { 1.0 } else { tiled(t, start, end, dt) / length })",
+  "new": "Ok(tiled(t, start, end, dt) / length)"
+ },
+ {
+  "label": "tiled_fraction divides by the window's end",
+  "old": "tiled(t, start, end, dt) / length })",
+  "new": "tiled(t, start, end, dt) / end })"
+ },
+ {
+  "label": "tiled_fraction accepts a spike outside the window",
+  "old": "    inside(0, t, start, end)?;\n    Ok(if covers",
+  "new": "    train(0, t)?;\n    Ok(if covers"
+ },
+ {
+  "label": "tiled_fraction accepts a non-positive dt",
+  "old": "    let dt = positive(\"dt\", dt)?;\n    inside(0, t, start, end)?;",
+  "new": "    inside(0, t, start, end)?;"
+ },
+ {
+  "label": "an empty train is not refused",
+  "old": "            return Err(SyncError::EmptyTrain { train: k });",
+  "new": "            return Ok(0.0);"
+ },
+ {
+  "label": "a covering train is not refused",
+  "old": "        if covers(t, start, end, dt) {\n            return Err(SyncError::Saturated { train: k, dt });",
+  "new": "        if false && covers(t, start, end, dt) {\n            return Err(SyncError::Saturated { train: k, dt });"
+ },
+ {
+  "label": "a tiling that rounds to the whole window is not refused",
+  "old": "        if t >= 1.0 {\n            return Err(SyncError::Saturated { train: k, dt });",
+  "new": "        if t > 1.0 {\n            return Err(SyncError::Saturated { train: k, dt });"
+ },
+ {
+  "label": "the second train's spikes are not checked against the window",
+  "old": "    inside(0, a, start, end)?;\n    inside(1, b, start, end)?;\n    for (k, t) in [a, b]",
+  "new": "    inside(0, a, start, end)?;\n    train(1, b)?;\n    for (k, t) in [a, b]"
+ },
+ {
+  "label": "P_A counts b's spikes near a",
+  "old": "    let p_a = near(a, b, dt) as f64 / a.len() as f64;",
+  "new": "    let p_a = near(b, a, dt) as f64 / a.len() as f64;"
+ },
+ {
+  "label": "P_B is normalised by the other train",
+  "old": "    let p_b = near(b, a, dt) as f64 / b.len() as f64;",
+  "new": "    let p_b = near(b, a, dt) as f64 / a.len() as f64;"
+ },
+ {
+  "label": "a half pairs P_A with its own tiling",
+  "old": "0.5 * (p_a - t_b) / (1.0 - p_a * t_b)",
+  "new": "0.5 * (p_a - t_a) / (1.0 - p_a * t_a)"
+ },
+ {
+  "label": "the denominator adds the product",
+  "old": "(1.0 - p_a * t_b) + 0.5",
+  "new": "(1.0 + p_a * t_b) + 0.5"
+ },
+ {
+  "label": "the second half is dropped",
+  "old": "+ 0.5 * (p_b - t_a) / (1.0 - p_b * t_a))",
+  "new": "+ 0.0)"
+ },
+ {
+  "label": "the halves are not averaged",
+  "old": "Ok(0.5 * (p_a - t_b)",
+  "new": "Ok(1.0 * (p_a - t_b)"
+ },
+ {
+  "label": "sttc accepts a non-positive dt",
+  "old": "    let length = window(start, end)?;\n    let dt = positive(\"dt\", dt)?;\n    inside(0, a, start, end)?;",
+  "new": "    let length = window(start, end)?;\n    inside(0, a, start, end)?;"
+ },
+ {
+  "label": "the empty-train error names the wrong train",
+  "old": "write!(f, \"train {train} has no spikes, so there is nothing to tile\")",
+  "new": "write!(f, \"a train has no spikes, so there is nothing to tile\")"
+ },
+ {
+  "label": "the saturation error drops dt",
+  "old": "write!(f, \"train {train} is within dt = {dt} of a spike everywhere in the window, so its tiling covers the whole recording\")",
+  "new": "write!(f, \"train {train} tiles the whole recording\")"
  }
 ]

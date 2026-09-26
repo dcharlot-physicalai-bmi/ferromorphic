@@ -1,0 +1,1232 @@
+[
+  {
+    "label": "non-finite message drops the value",
+    "old": "write!(f, \"{what} = {value} is not finite\")",
+    "new": "write!(f, \"{what} is not finite\")"
+  },
+  {
+    "label": "not-positive message drops the value",
+    "old": "\"{what} = {value} must be finite and positive\"",
+    "new": "\"{what} must be finite and positive\""
+  },
+  {
+    "label": "negative message loses 'finite'",
+    "old": "\"{what} = {value} must be finite and not negative\"",
+    "new": "\"{what} = {value} must be not negative\""
+  },
+  {
+    "label": "blank message truncated",
+    "old": "\"{what} is blank in Table 1b for this set; the paper prints no value\"",
+    "new": "\"{what} is blank\""
+  },
+  {
+    "label": "unprinted message truncated",
+    "old": "\"{what} is not printed in the paper; Membrane::AEIF_M takes it from the authors' aEIF.m\"",
+    "new": "\"{what} is not printed\""
+  },
+  {
+    "label": "thresholds message swaps its values",
+    "old": "\"theta_minus = {theta_minus} mV lies above theta_plus = {theta_plus} mV\"",
+    "new": "\"theta_minus = {theta_plus} mV lies above theta_plus = {theta_minus} mV\""
+  },
+  {
+    "label": "bounds message swaps its values",
+    "old": "\"w_min = {w_min} and w_max = {w_max} do not bound an interval\"",
+    "new": "\"w_min = {w_max} and w_max = {w_min} do not bound an interval\""
+  },
+  {
+    "label": "outside-bounds message swaps the bounds",
+    "old": "\"weight {index} = {w} lies outside [{w_min}, {w_max}]\"",
+    "new": "\"weight {index} = {w} lies outside [{w_max}, {w_min}]\""
+  },
+  {
+    "label": "length message swaps its counts",
+    "old": "\"{got} presynaptic flags for {expected} synapses\"",
+    "new": "\"{expected} presynaptic flags for {got} synapses\""
+  },
+  {
+    "label": "step-too-long message swaps dt and tau",
+    "old": "\"dt = {dt} s exceeds {what} = {tau} s, and",
+    "new": "\"dt = {tau} s exceeds {what} = {dt} s, and"
+  },
+  {
+    "label": "protocol message swaps period and lag",
+    "old": "f,\n                \"a period of {period} ms with a lag of {lag} ms",
+    "new": "f,\n                \"a period of {lag} ms with a lag of {period} ms"
+  },
+  {
+    "label": "finite admits infinity",
+    "old": "if value.is_finite() { Ok(value) }",
+    "new": "if !value.is_nan() { Ok(value) }"
+  },
+  {
+    "label": "positive admits infinity",
+    "old": "if value.is_finite() && value > 0.0 { Ok(value) }",
+    "new": "if value > 0.0 { Ok(value) }"
+  },
+  {
+    "label": "positive admits zero",
+    "old": "value > 0.0 { Ok(value) }",
+    "new": "value >= 0.0 { Ok(value) }"
+  },
+  {
+    "label": "non-negative admits infinity",
+    "old": "if value.is_finite() && value >= 0.0 { Ok(value) }",
+    "new": "if value >= 0.0 { Ok(value) }"
+  },
+  {
+    "label": "non-negative refuses zero",
+    "old": "value >= 0.0 { Ok(value) }",
+    "new": "value > 0.0 { Ok(value) }"
+  },
+  {
+    "label": "visual theta_minus",
+    "old": "theta_minus: -70.6,\n        theta_plus: -45.3,\n        a_ltd: 14e-5",
+    "new": "theta_minus: -70.5,\n        theta_plus: -45.3,\n        a_ltd: 14e-5"
+  },
+  {
+    "label": "visual theta_plus",
+    "old": "theta_plus: -45.3,\n        a_ltd: 14e-5",
+    "new": "theta_plus: -45.4,\n        a_ltd: 14e-5"
+  },
+  {
+    "label": "visual A_LTD",
+    "old": "a_ltd: 14e-5,",
+    "new": "a_ltd: 15e-5,"
+  },
+  {
+    "label": "visual A_LTP",
+    "old": "a_ltp: 8e-5,",
+    "new": "a_ltp: 8e-4,"
+  },
+  {
+    "label": "visual tau_x",
+    "old": "tau_x: 15.0,",
+    "new": "tau_x: 16.0,"
+  },
+  {
+    "label": "visual tau_minus",
+    "old": "tau_minus: Some(10.0),\n        tau_plus: Some(7.0),",
+    "new": "tau_minus: Some(11.0),\n        tau_plus: Some(7.0),"
+  },
+  {
+    "label": "visual tau_plus",
+    "old": "tau_plus: Some(7.0),\n    };",
+    "new": "tau_plus: Some(6.0),\n    };"
+  },
+  {
+    "label": "somatosensory theta_minus",
+    "old": "theta_minus: -70.6,\n        theta_plus: -45.3,\n        a_ltd: 21e-5",
+    "new": "theta_minus: -70.5,\n        theta_plus: -45.3,\n        a_ltd: 21e-5"
+  },
+  {
+    "label": "somatosensory theta_plus",
+    "old": "theta_plus: -45.3,\n        a_ltd: 21e-5",
+    "new": "theta_plus: -45.4,\n        a_ltd: 21e-5"
+  },
+  {
+    "label": "somatosensory A_LTD",
+    "old": "a_ltd: 21e-5,",
+    "new": "a_ltd: 22e-5,"
+  },
+  {
+    "label": "somatosensory A_LTP",
+    "old": "a_ltp: 30e-5,",
+    "new": "a_ltp: 3e-5,"
+  },
+  {
+    "label": "somatosensory tau_x",
+    "old": "tau_x: 30.0,",
+    "new": "tau_x: 31.0,"
+  },
+  {
+    "label": "somatosensory tau_minus",
+    "old": "tau_minus: Some(6.0),",
+    "new": "tau_minus: Some(7.0),"
+  },
+  {
+    "label": "somatosensory tau_plus",
+    "old": "tau_plus: Some(5.0),",
+    "new": "tau_plus: Some(4.0),"
+  },
+  {
+    "label": "hippocampal theta_minus",
+    "old": "theta_minus: -41.0,",
+    "new": "theta_minus: -40.0,"
+  },
+  {
+    "label": "hippocampal theta_plus",
+    "old": "theta_plus: -38.0,",
+    "new": "theta_plus: -37.0,"
+  },
+  {
+    "label": "hippocampal A_LTD",
+    "old": "a_ltd: 38e-5,",
+    "new": "a_ltd: 37e-5,"
+  },
+  {
+    "label": "hippocampal A_LTP",
+    "old": "a_ltp: 2e-5,",
+    "new": "a_ltp: 3e-5,"
+  },
+  {
+    "label": "hippocampal tau_x",
+    "old": "tau_x: 16.0,\n        tau_minus: None,",
+    "new": "tau_x: 15.0,\n        tau_minus: None,"
+  },
+  {
+    "label": "hippocampal blank tau_minus filled",
+    "old": "tau_minus: None,\n        tau_plus: None,\n    };",
+    "new": "tau_minus: Some(10.0),\n        tau_plus: None,\n    };"
+  },
+  {
+    "label": "hippocampal blank tau_plus filled",
+    "old": "tau_plus: None,\n    };",
+    "new": "tau_plus: Some(7.0),\n    };"
+  },
+  {
+    "label": "check skips theta_minus",
+    "old": "finite(\"theta_minus\", self.theta_minus)?;",
+    "new": ""
+  },
+  {
+    "label": "check skips theta_plus",
+    "old": "finite(\"theta_plus\", self.theta_plus)?;",
+    "new": ""
+  },
+  {
+    "label": "check refuses equal thresholds",
+    "old": "if self.theta_minus > self.theta_plus {",
+    "new": "if self.theta_minus >= self.theta_plus {"
+  },
+  {
+    "label": "thresholds error swaps its fields",
+    "old": "Err(ClopathError::Thresholds { theta_minus: self.theta_minus, theta_plus: self.theta_plus })",
+    "new": "Err(ClopathError::Thresholds { theta_minus: self.theta_plus, theta_plus: self.theta_minus })"
+  },
+  {
+    "label": "check skips A_LTD",
+    "old": "non_negative(\"a_ltd\", self.a_ltd)?;",
+    "new": ""
+  },
+  {
+    "label": "check skips A_LTP",
+    "old": "non_negative(\"a_ltp\", self.a_ltp)?;",
+    "new": ""
+  },
+  {
+    "label": "check skips tau_x",
+    "old": "positive(\"tau_x\", self.tau_x)?;",
+    "new": ""
+  },
+  {
+    "label": "check skips tau_minus",
+    "old": "positive(\"tau_minus\", tau)?;",
+    "new": ""
+  },
+  {
+    "label": "check skips tau_plus",
+    "old": "positive(\"tau_plus\", tau)?;",
+    "new": ""
+  },
+  {
+    "label": "clamp_per_spike skips the check",
+    "old": "self.check()?;\n        let u = finite(\"u_clamp\", u_clamp)? * 1e3;",
+    "new": "let u = finite(\"u_clamp\", u_clamp)? * 1e3;"
+  },
+  {
+    "label": "clamp voltage in the wrong unit",
+    "old": "finite(\"u_clamp\", u_clamp)? * 1e3",
+    "new": "finite(\"u_clamp\", u_clamp)? * 1e-3"
+  },
+  {
+    "label": "clamp LTD not rectified",
+    "old": "let over_minus = (u - self.theta_minus).max(0.0);",
+    "new": "let over_minus = u - self.theta_minus;"
+  },
+  {
+    "label": "clamp LTP not rectified",
+    "old": "let over_plus = (u - self.theta_plus).max(0.0);",
+    "new": "let over_plus = u - self.theta_plus;"
+  },
+  {
+    "label": "clamp LTD sign",
+    "old": "Ok(-self.a_ltd * over_minus + self.a_ltp * over_plus * over_minus)",
+    "new": "Ok(self.a_ltd * over_minus + self.a_ltp * over_plus * over_minus)"
+  },
+  {
+    "label": "clamp LTP squares the wrong factor",
+    "old": "Ok(-self.a_ltd * over_minus + self.a_ltp * over_plus * over_minus)",
+    "new": "Ok(-self.a_ltd * over_minus + self.a_ltp * over_plus * over_plus)"
+  },
+  {
+    "label": "clamp_rate refuses a zero rate",
+    "old": "Ok(non_negative(\"nu_pre\", nu_pre)? * per_spike)",
+    "new": "Ok(positive(\"nu_pre\", nu_pre)? * per_spike)"
+  },
+  {
+    "label": "clamp_rate adds instead of multiplying",
+    "old": "Ok(non_negative(\"nu_pre\", nu_pre)? * per_spike)",
+    "new": "Ok(non_negative(\"nu_pre\", nu_pre)? + per_spike)"
+  },
+  {
+    "label": "crossover skips the check",
+    "old": "self.check()?;\n        let a_ltp = positive(\"a_ltp\", self.a_ltp)?;\n        Ok((self.theta_plus",
+    "new": "let a_ltp = positive(\"a_ltp\", self.a_ltp)?;\n        Ok((self.theta_plus"
+  },
+  {
+    "label": "crossover admits A_LTP = 0",
+    "old": "let a_ltp = positive(\"a_ltp\", self.a_ltp)?;\n        Ok((self.theta_plus",
+    "new": "let a_ltp = non_negative(\"a_ltp\", self.a_ltp)?;\n        Ok((self.theta_plus"
+  },
+  {
+    "label": "crossover sign",
+    "old": "Ok((self.theta_plus + self.a_ltd / a_ltp) * 1e-3)",
+    "new": "Ok((self.theta_plus - self.a_ltd / a_ltp) * 1e-3)"
+  },
+  {
+    "label": "crossover unit",
+    "old": "Ok((self.theta_plus + self.a_ltd / a_ltp) * 1e-3)",
+    "new": "Ok((self.theta_plus + self.a_ltd / a_ltp) * 1e3)"
+  },
+  {
+    "label": "minimum skips the check",
+    "old": "self.check()?;\n        let a_ltp = positive(\"a_ltp\", self.a_ltp)?;\n        let vertex",
+    "new": "let a_ltp = positive(\"a_ltp\", self.a_ltp)?;\n        let vertex"
+  },
+  {
+    "label": "minimum admits A_LTP = 0",
+    "old": "let a_ltp = positive(\"a_ltp\", self.a_ltp)?;\n        let vertex",
+    "new": "let a_ltp = non_negative(\"a_ltp\", self.a_ltp)?;\n        let vertex"
+  },
+  {
+    "label": "vertex sign",
+    "old": "let vertex = 0.5 * (self.theta_plus + self.theta_minus + self.a_ltd / a_ltp);",
+    "new": "let vertex = 0.5 * (self.theta_plus + self.theta_minus - self.a_ltd / a_ltp);"
+  },
+  {
+    "label": "vertex halving",
+    "old": "let vertex = 0.5 * (self.theta_plus + self.theta_minus + self.a_ltd / a_ltp);",
+    "new": "let vertex = self.theta_plus + self.theta_minus + self.a_ltd / a_ltp;"
+  },
+  {
+    "label": "minimum takes the lower",
+    "old": "Ok(vertex.max(self.theta_plus) * 1e-3)",
+    "new": "Ok(vertex.min(self.theta_plus) * 1e-3)"
+  },
+  {
+    "label": "bcm_threshold skips the check",
+    "old": "self.check()?;\n        let beta = positive(\"beta\", beta)? * 1e6;",
+    "new": "let beta = positive(\"beta\", beta)? * 1e6;"
+  },
+  {
+    "label": "bcm_threshold beta unit",
+    "old": "let beta = positive(\"beta\", beta)? * 1e6;\n        let a_ltp",
+    "new": "let beta = positive(\"beta\", beta)? * 1e3;\n        let a_ltp"
+  },
+  {
+    "label": "bcm_threshold admits A_LTP = 0",
+    "old": "let a_ltp = positive(\"a_ltp\", self.a_ltp)?;\n        Ok(self.a_ltd / (beta * a_ltp) * 1e3)",
+    "new": "let a_ltp = non_negative(\"a_ltp\", self.a_ltp)?;\n        Ok(self.a_ltd / (beta * a_ltp) * 1e3)"
+  },
+  {
+    "label": "bcm_threshold rate unit",
+    "old": "Ok(self.a_ltd / (beta * a_ltp) * 1e3)",
+    "new": "Ok(self.a_ltd / (beta * a_ltp) * 1e-3)"
+  },
+  {
+    "label": "bcm_drift skips the check",
+    "old": "self.check()?;\n        let pre = non_negative",
+    "new": "let pre = non_negative"
+  },
+  {
+    "label": "bcm_drift refuses a silent presynaptic train",
+    "old": "let pre = non_negative(\"nu_pre\", nu_pre)? * 1e-3;",
+    "new": "let pre = positive(\"nu_pre\", nu_pre)? * 1e-3;"
+  },
+  {
+    "label": "bcm_drift refuses a silent neuron",
+    "old": "let post = non_negative(\"nu_post\", nu_post)? * 1e-3;",
+    "new": "let post = positive(\"nu_post\", nu_post)? * 1e-3;"
+  },
+  {
+    "label": "bcm_drift admits alpha = 0",
+    "old": "let alpha = positive(\"alpha\", alpha)? * 1e6;",
+    "new": "let alpha = non_negative(\"alpha\", alpha)? * 1e6;"
+  },
+  {
+    "label": "bcm_drift admits beta = 0",
+    "old": "let beta = positive(\"beta\", beta)? * 1e6;\n        Ok((alpha",
+    "new": "let beta = non_negative(\"beta\", beta)? * 1e6;\n        Ok((alpha"
+  },
+  {
+    "label": "bcm_drift learning rate alpha - beta",
+    "old": "Ok((alpha + beta) * pre * post * (beta * self.a_ltp * post - self.a_ltd) * 1e3)",
+    "new": "Ok((alpha - beta) * pre * post * (beta * self.a_ltp * post - self.a_ltd) * 1e3)"
+  },
+  {
+    "label": "bcm_drift LTD sign",
+    "old": "Ok((alpha + beta) * pre * post * (beta * self.a_ltp * post - self.a_ltd) * 1e3)",
+    "new": "Ok((alpha + beta) * pre * post * (beta * self.a_ltp * post + self.a_ltd) * 1e3)"
+  },
+  {
+    "label": "bcm_drift alpha for beta in the LTP term",
+    "old": "Ok((alpha + beta) * pre * post * (beta * self.a_ltp * post - self.a_ltd) * 1e3)",
+    "new": "Ok((alpha + beta) * pre * post * (alpha * self.a_ltp * post - self.a_ltd) * 1e3)"
+  },
+  {
+    "label": "bcm_drift LTP linear in post",
+    "old": "Ok((alpha + beta) * pre * post * (beta * self.a_ltp * post - self.a_ltd) * 1e3)",
+    "new": "Ok((alpha + beta) * pre * post * (beta * self.a_ltp - self.a_ltd) * 1e3)"
+  },
+  {
+    "label": "homeostatic skips the check",
+    "old": "self.check()?;\n        Ok(self.a_ltd * non_negative",
+    "new": "Ok(self.a_ltd * non_negative"
+  },
+  {
+    "label": "homeostatic multiplies by u_ref^2",
+    "old": "Ok(self.a_ltd * non_negative(\"ubarbar_sq\", ubarbar_sq)? / positive(\"u_ref_sq\", u_ref_sq)?)",
+    "new": "Ok(self.a_ltd * non_negative(\"ubarbar_sq\", ubarbar_sq)? * positive(\"u_ref_sq\", u_ref_sq)?)"
+  },
+  {
+    "label": "homeostatic refuses zero depolarization",
+    "old": "non_negative(\"ubarbar_sq\", ubarbar_sq)?",
+    "new": "positive(\"ubarbar_sq\", ubarbar_sq)?"
+  },
+  {
+    "label": "u_ref^2 Fig. 5",
+    "old": "pub const U_REF_SQ_FIG5: f64 = 60e-6;",
+    "new": "pub const U_REF_SQ_FIG5: f64 = 61e-6;"
+  },
+  {
+    "label": "u_ref^2 Fig. 6",
+    "old": "pub const U_REF_SQ_FIG6: f64 = 80e-6;",
+    "new": "pub const U_REF_SQ_FIG6: f64 = 81e-6;"
+  },
+  {
+    "label": "u_ref^2 Fig. 7",
+    "old": "pub const U_REF_SQ_FIG7: f64 = 50e-6;",
+    "new": "pub const U_REF_SQ_FIG7: f64 = 51e-6;"
+  },
+  {
+    "label": "new skips the rule check",
+    "old": "rule.check()?;\n        let tau_minus",
+    "new": "let tau_minus"
+  },
+  {
+    "label": "blank tau_minus named as tau_plus",
+    "old": "rule.tau_minus.ok_or(ClopathError::Blank { what: \"tau_minus\" })?",
+    "new": "rule.tau_minus.ok_or(ClopathError::Blank { what: \"tau_plus\" })?"
+  },
+  {
+    "label": "dt in the wrong unit",
+    "old": "let h = positive(\"dt\", dt)? * 1e3;",
+    "new": "let h = positive(\"dt\", dt)? * 1e-3;"
+  },
+  {
+    "label": "exponential decay at half the rate",
+    "old": "taus.map(|(_, tau)| (-h / tau).exp())",
+    "new": "taus.map(|(_, tau)| (-h / (2.0 * tau)).exp())"
+  },
+  {
+    "label": "Euler refuses dt = tau",
+    "old": "if h > tau {",
+    "new": "if h >= tau {"
+  },
+  {
+    "label": "Euler guard reports tau in ms",
+    "old": "return Err(ClopathError::StepTooLong { what, dt, tau: tau * 1e-3 });",
+    "new": "return Err(ClopathError::StepTooLong { what, dt, tau });"
+  },
+  {
+    "label": "Euler guard removed",
+    "old": "if h > tau {",
+    "new": "if h > tau * 1e9 {"
+  },
+  {
+    "label": "Euler decay ignores h",
+    "old": "taus.map(|(_, tau)| 1.0 - h / tau)",
+    "new": "taus.map(|(_, tau)| 1.0 - 1.0 / tau)"
+  },
+  {
+    "label": "exponential window sign",
+    "old": "Integrator::Exponential => -rule.tau_x * (-h / rule.tau_x).exp_m1(),",
+    "new": "Integrator::Exponential => rule.tau_x * (-h / rule.tau_x).exp_m1(),"
+  },
+  {
+    "label": "exponential window is h",
+    "old": "Integrator::Exponential => -rule.tau_x * (-h / rule.tau_x).exp_m1(),",
+    "new": "Integrator::Exponential => h,"
+  },
+  {
+    "label": "Euler window is one ms",
+    "old": "Integrator::Euler => h,\n        };",
+    "new": "Integrator::Euler => 1.0,\n        };"
+  },
+  {
+    "label": "u0 in the wrong unit",
+    "old": "let u0 = finite(\"u0\", u0)? * 1e3;",
+    "new": "let u0 = finite(\"u0\", u0)? * 1e-3;"
+  },
+  {
+    "label": "u0 not checked",
+    "old": "let u0 = finite(\"u0\", u0)? * 1e3;",
+    "new": "let u0 = u0 * 1e3;"
+  },
+  {
+    "label": "bounds admit NaN",
+    "old": "if !(w_min <= w_max) {",
+    "new": "if w_min > w_max {"
+  },
+  {
+    "label": "weights not checked for finiteness",
+    "old": "finite(\"weight\", w)?;",
+    "new": ""
+  },
+  {
+    "label": "weight above w_max admitted",
+    "old": "if w < w_min || w > w_max {",
+    "new": "if w < w_min {"
+  },
+  {
+    "label": "weight below w_min admitted",
+    "old": "if w < w_min || w > w_max {",
+    "new": "if w > w_max {"
+  },
+  {
+    "label": "weight at w_min refused",
+    "old": "if w < w_min || w > w_max {",
+    "new": "if w <= w_min || w > w_max {"
+  },
+  {
+    "label": "outside-bounds index off by one",
+    "old": "return Err(ClopathError::OutsideBounds { index, w, w_min, w_max });",
+    "new": "return Err(ClopathError::OutsideBounds { index: index + 1, w, w_min, w_max });"
+  },
+  {
+    "label": "LTD scale starts at one half",
+    "old": "ltd_scale: 1.0,",
+    "new": "ltd_scale: 0.5,"
+  },
+  {
+    "label": "traces start at one",
+    "old": "x: vec![0.0; n],",
+    "new": "x: vec![1.0; n],"
+  },
+  {
+    "label": "u_plus starts at zero",
+    "old": "now: (u0, u0),",
+    "new": "now: (u0, 0.0),"
+  },
+  {
+    "label": "one step too much delay",
+    "old": "repeat_n((u0, u0), delay + 1)",
+    "new": "repeat_n((u0, u0), delay + 2)"
+  },
+  {
+    "label": "delayed u_plus starts at zero",
+    "old": "repeat_n((u0, u0), delay + 1)",
+    "new": "repeat_n((u0, 0.0), delay + 1)"
+  },
+  {
+    "label": "set_ltd_scale refuses zero",
+    "old": "self.ltd_scale = non_negative(\"ltd_scale\", scale)?;",
+    "new": "self.ltd_scale = positive(\"ltd_scale\", scale)?;"
+  },
+  {
+    "label": "step unit",
+    "old": "let u = finite(\"u\", u)? * 1e3;\n        if pre.len()",
+    "new": "let u = finite(\"u\", u)? * 1e-3;\n        if pre.len()"
+  },
+  {
+    "label": "step does not check u",
+    "old": "let u = finite(\"u\", u)? * 1e3;\n        if pre.len()",
+    "new": "let u = u * 1e3;\n        if pre.len()"
+  },
+  {
+    "label": "step admits too few flags",
+    "old": "if pre.len() != self.w.len() {",
+    "new": "if pre.len() > self.w.len() {"
+  },
+  {
+    "label": "length error swaps its fields",
+    "old": "Err(ClopathError::Length { expected: self.w.len(), got: pre.len() })",
+    "new": "Err(ClopathError::Length { expected: pre.len(), got: self.w.len() })"
+  },
+  {
+    "label": "rule reads the filters without delay",
+    "old": "let (lagged_minus, lagged_plus) = self.past[0];",
+    "new": "let (lagged_minus, lagged_plus) = self.now;"
+  },
+  {
+    "label": "rule swaps the filters",
+    "old": "let (lagged_minus, lagged_plus) = self.past[0];",
+    "new": "let (lagged_plus, lagged_minus) = self.past[0];"
+  },
+  {
+    "label": "LTD ignores the homeostatic scale",
+    "old": "let ltd = r.a_ltd * self.ltd_scale * (lagged_minus - r.theta_minus).max(0.0);",
+    "new": "let ltd = r.a_ltd * (lagged_minus - r.theta_minus).max(0.0);"
+  },
+  {
+    "label": "LTD not rectified",
+    "old": "let ltd = r.a_ltd * self.ltd_scale * (lagged_minus - r.theta_minus).max(0.0);",
+    "new": "let ltd = r.a_ltd * self.ltd_scale * (lagged_minus - r.theta_minus);"
+  },
+  {
+    "label": "LTP momentary term not rectified",
+    "old": "let gain = r.a_ltp * (u - r.theta_plus).max(0.0);",
+    "new": "let gain = r.a_ltp * (u - r.theta_plus);"
+  },
+  {
+    "label": "LTP gate not rectified",
+    "old": "let gate = (lagged_plus - r.theta_minus).max(0.0);",
+    "new": "let gate = lagged_plus - r.theta_minus;"
+  },
+  {
+    "label": "LTP gate against theta_plus",
+    "old": "let gate = (lagged_plus - r.theta_minus).max(0.0);",
+    "new": "let gate = (lagged_plus - r.theta_plus).max(0.0);"
+  },
+  {
+    "label": "trace jump of 2/tau_x",
+    "old": "let jump = 1.0 / r.tau_x;",
+    "new": "let jump = 2.0 / r.tau_x;"
+  },
+  {
+    "label": "a presynaptic spike potentiates",
+    "old": "if spike {\n                w -= ltd;",
+    "new": "if spike {\n                w += ltd;"
+  },
+  {
+    "label": "potentiation sign",
+    "old": "w += gain * self.x[i] * gate * self.window;",
+    "new": "w -= gain * self.x[i] * gate * self.window;"
+  },
+  {
+    "label": "potentiation ignores the window",
+    "old": "w += gain * self.x[i] * gate * self.window;",
+    "new": "w += gain * self.x[i] * gate;"
+  },
+  {
+    "label": "no clipping",
+    "old": "self.w[i] = w.clamp(self.w_min, self.w_max);",
+    "new": "self.w[i] = w;"
+  },
+  {
+    "label": "depression clipped on its own, before potentiation",
+    "old": "w -= ltd;",
+    "new": "w = (w - ltd).max(self.w_min);"
+  },
+  {
+    "label": "depression gated on w > w_min at the step's start, as eq. (1) prints",
+    "old": "if spike {\n                w -= ltd;",
+    "new": "if spike && w > self.w_min {\n                w -= ltd;"
+  },
+  {
+    "label": "potentiation gated on w < w_max at the step's start, as eq. (2) prints",
+    "old": "w += gain * self.x[i] * gate * self.window;",
+    "new": "if self.w[i] < self.w_max {\n                w += gain * self.x[i] * gate * self.window;\n            }"
+  },
+  {
+    "label": "trace does not decay",
+    "old": "self.x[i] = if spike { jump } else { 0.0 } + self.decay_x * self.x[i];",
+    "new": "self.x[i] = if spike { jump } else { 0.0 } + self.x[i];"
+  },
+  {
+    "label": "trace jumps on silence",
+    "old": "self.x[i] = if spike { jump } else { 0.0 } + self.decay_x * self.x[i];",
+    "new": "self.x[i] = if spike { 0.0 } else { jump } + self.decay_x * self.x[i];"
+  },
+  {
+    "label": "exponential u_minus relaxes at tau_plus",
+    "old": "(u + (m - u) * self.decay_minus, u + (p - u) * self.decay_plus)",
+    "new": "(u + (m - u) * self.decay_plus, u + (p - u) * self.decay_plus)"
+  },
+  {
+    "label": "exponential u_plus relaxes at tau_minus",
+    "old": "(u + (m - u) * self.decay_minus, u + (p - u) * self.decay_plus)",
+    "new": "(u + (m - u) * self.decay_minus, u + (p - u) * self.decay_minus)"
+  },
+  {
+    "label": "exponential u_minus relaxes away",
+    "old": "(u + (m - u) * self.decay_minus, u + (p - u) * self.decay_plus)",
+    "new": "(u + (u - m) * self.decay_minus, u + (p - u) * self.decay_plus)"
+  },
+  {
+    "label": "Euler u_minus ignores h",
+    "old": "u * self.h / self.tau_minus + self.decay_minus * m",
+    "new": "u / self.tau_minus + self.decay_minus * m"
+  },
+  {
+    "label": "Euler u_plus input at tau_minus",
+    "old": "u * self.h / self.tau_plus + self.decay_plus * p",
+    "new": "u * self.h / self.tau_minus + self.decay_plus * p"
+  },
+  {
+    "label": "Euler u_plus decays u_minus",
+    "old": "u * self.h / self.tau_plus + self.decay_plus * p",
+    "new": "u * self.h / self.tau_plus + self.decay_plus * m"
+  },
+  {
+    "label": "delay line reversed",
+    "old": "self.past.push_back(self.now);\n        self.past.pop_front();",
+    "new": "self.past.push_front(self.now);\n        self.past.pop_back();"
+  },
+  {
+    "label": "traces in the wrong unit",
+    "old": "self.x.iter().map(|x| x * 1e3).collect()",
+    "new": "self.x.iter().map(|x| x * 1e-3).collect()"
+  },
+  {
+    "label": "filtered swaps its pair",
+    "old": "(self.now.0 * 1e-3, self.now.1 * 1e-3)",
+    "new": "(self.now.1 * 1e-3, self.now.0 * 1e-3)"
+  },
+  {
+    "label": "code's averaging time",
+    "old": "pub const TAU_CODE: f64 = 1.2;",
+    "new": "pub const TAU_CODE: f64 = 1.0;"
+  },
+  {
+    "label": "homeostat decay multiplies",
+    "old": "(-positive(\"dt\", dt)? / positive(\"tau\", tau)?).exp()",
+    "new": "(-positive(\"dt\", dt)? * positive(\"tau\", tau)?).exp()"
+  },
+  {
+    "label": "homeostat rest unit",
+    "old": "rest: finite(\"rest\", rest)? * 1e3",
+    "new": "rest: finite(\"rest\", rest)? * 1e-3"
+  },
+  {
+    "label": "homeostat mean square starts above zero",
+    "old": "mean: 0.0, mean_sq: 0.0 }",
+    "new": "mean: 0.0, mean_sq: 1e-4 }"
+  },
+  {
+    "label": "homeostat step unchecked",
+    "old": "let d = finite(\"u\", u)? * 1e3 - self.rest;",
+    "new": "let d = u * 1e3 - self.rest;"
+  },
+  {
+    "label": "depolarization sign",
+    "old": "let d = finite(\"u\", u)? * 1e3 - self.rest;",
+    "new": "let d = finite(\"u\", u)? * 1e3 + self.rest;"
+  },
+  {
+    "label": "mean relaxes away",
+    "old": "self.mean = d + (self.mean - d) * self.decay;",
+    "new": "self.mean = d + (self.mean + d) * self.decay;"
+  },
+  {
+    "label": "mean square filters d, not d squared",
+    "old": "self.mean_sq = d * d + (self.mean_sq - d * d) * self.decay;",
+    "new": "self.mean_sq = d * d + (self.mean_sq - d) * self.decay;"
+  },
+  {
+    "label": "mean in the wrong unit",
+    "old": "self.mean * 1e-3",
+    "new": "self.mean * 1e-6"
+  },
+  {
+    "label": "mean square in the wrong unit",
+    "old": "self.mean_sq * 1e-6",
+    "new": "self.mean_sq * 1e-3"
+  },
+  {
+    "label": "C",
+    "old": "c: 281.0,",
+    "new": "c: 280.0,"
+  },
+  {
+    "label": "g_L",
+    "old": "g_l: 30.0,",
+    "new": "g_l: 31.0,"
+  },
+  {
+    "label": "E_L",
+    "old": "e_l: -70.6,",
+    "new": "e_l: -70.5,"
+  },
+  {
+    "label": "Delta_T",
+    "old": "delta_t: 2.0,",
+    "new": "delta_t: 2.5,"
+  },
+  {
+    "label": "V_Trest",
+    "old": "v_t_rest: -50.4,",
+    "new": "v_t_rest: -50.5,"
+  },
+  {
+    "label": "tau_wad",
+    "old": "tau_w: 144.0,",
+    "new": "tau_w: 145.0,"
+  },
+  {
+    "label": "a",
+    "old": "a: 4.0,",
+    "new": "a: 5.0,"
+  },
+  {
+    "label": "printed b",
+    "old": "b: 0.805,",
+    "new": "b: 0.0805,"
+  },
+  {
+    "label": "I_sp",
+    "old": "i_sp: 400.0,",
+    "new": "i_sp: 401.0,"
+  },
+  {
+    "label": "tau_z",
+    "old": "tau_z: 40.0,",
+    "new": "tau_z: 41.0,"
+  },
+  {
+    "label": "tau_VT",
+    "old": "tau_v_t: 50.0,",
+    "new": "tau_v_t: 51.0,"
+  },
+  {
+    "label": "printed V_Tmax",
+    "old": "v_t_max: 30.4,",
+    "new": "v_t_max: -30.4,"
+  },
+  {
+    "label": "printed table gains a detection level",
+    "old": "v_detect: None,",
+    "new": "v_detect: Some(20.0),"
+  },
+  {
+    "label": "code's b",
+    "old": "b: 0.0805,",
+    "new": "b: 0.805,"
+  },
+  {
+    "label": "code's V_Tmax",
+    "old": "v_t_max: 20.0 + -50.4,",
+    "new": "v_t_max: 20.0 + -50.0,"
+  },
+  {
+    "label": "code's detection level",
+    "old": "v_detect: Some(20.0),",
+    "new": "v_detect: Some(25.0),"
+  },
+  {
+    "label": "code's first peak",
+    "old": "peak: Some([29.4, 29.4 + 3.462]),",
+    "new": "peak: Some([30.4, 29.4 + 3.462]),"
+  },
+  {
+    "label": "code's second peak",
+    "old": "peak: Some([29.4, 29.4 + 3.462]),",
+    "new": "peak: Some([29.4, 29.4]),"
+  },
+  {
+    "label": "code's reset",
+    "old": "v_reset: Some(-70.6 + 15.0 + 6.0984),",
+    "new": "v_reset: Some(-70.6 + 15.0),"
+  },
+  {
+    "label": "positivity of C, g_L, Delta_T unchecked",
+    "old": "positive(what, value)?;",
+    "new": "finite(what, value)?;"
+  },
+  {
+    "label": "tau equal to the step refused",
+    "old": "if positive(what, tau)? < 1.0 {",
+    "new": "if positive(what, tau)? <= 1.0 {"
+  },
+  {
+    "label": "neuron tau not checked for sign",
+    "old": "if positive(what, tau)? < 1.0 {",
+    "new": "if finite(what, tau)? < 1.0 {"
+  },
+  {
+    "label": "neuron step-too-long in ms",
+    "old": "StepTooLong { what, dt: Self::DT, tau: tau * 1e-3 }",
+    "new": "StepTooLong { what, dt: Self::DT, tau }"
+  },
+  {
+    "label": "other neuron values unchecked",
+    "old": "finite(what, value)?;\n        }\n        let v_detect",
+    "new": "}\n        let v_detect"
+  },
+  {
+    "label": "v_detect unchecked",
+    "old": "let v_detect = finite(\"v_detect\", m.v_detect.ok_or(ClopathError::Unprinted { what: \"v_detect\" })?)?;",
+    "new": "let v_detect = m.v_detect.ok_or(ClopathError::Unprinted { what: \"v_detect\" })?;"
+  },
+  {
+    "label": "missing peak named as v_reset",
+    "old": "m.peak.ok_or(ClopathError::Unprinted { what: \"peak\" })?",
+    "new": "m.peak.ok_or(ClopathError::Unprinted { what: \"v_reset\" })?"
+  },
+  {
+    "label": "peak[0] unchecked",
+    "old": "finite(\"peak[0]\", peak[0])?;",
+    "new": ""
+  },
+  {
+    "label": "peak[1] unchecked",
+    "old": "finite(\"peak[1]\", peak[1])?;",
+    "new": ""
+  },
+  {
+    "label": "v_reset unchecked",
+    "old": "let v_reset = finite(\"v_reset\", m.v_reset.ok_or(ClopathError::Unprinted { what: \"v_reset\" })?)?;",
+    "new": "let v_reset = m.v_reset.ok_or(ClopathError::Unprinted { what: \"v_reset\" })?;"
+  },
+  {
+    "label": "neuron starts at V_Trest",
+    "old": "u: m.e_l, w: 0.0, z: 0.0, v_t: m.v_t_rest",
+    "new": "u: m.v_t_rest, w: 0.0, z: 0.0, v_t: m.v_t_rest"
+  },
+  {
+    "label": "neuron starts adapted",
+    "old": "u: m.e_l, w: 0.0, z: 0.0, v_t: m.v_t_rest",
+    "new": "u: m.e_l, w: 1.0, z: 0.0, v_t: m.v_t_rest"
+  },
+  {
+    "label": "neuron starts with an afterpotential",
+    "old": "u: m.e_l, w: 0.0, z: 0.0, v_t: m.v_t_rest",
+    "new": "u: m.e_l, w: 0.0, z: 1.0, v_t: m.v_t_rest"
+  },
+  {
+    "label": "threshold starts at V_Tmax",
+    "old": "u: m.e_l, w: 0.0, z: 0.0, v_t: m.v_t_rest",
+    "new": "u: m.e_l, w: 0.0, z: 0.0, v_t: m.v_t_max"
+  },
+  {
+    "label": "step fixed at 2 ms",
+    "old": "pub const DT: f64 = 1e-3;",
+    "new": "pub const DT: f64 = 2e-3;"
+  },
+  {
+    "label": "current in the wrong unit",
+    "old": "Ok(self.step_pa(finite(\"i\", i)? * 1e12))",
+    "new": "Ok(self.step_pa(finite(\"i\", i)? * 1e9))"
+  },
+  {
+    "label": "current unchecked",
+    "old": "Ok(self.step_pa(finite(\"i\", i)? * 1e12))",
+    "new": "Ok(self.step_pa(i * 1e12))"
+  },
+  {
+    "label": "reset one millisecond early",
+    "old": "if self.phase == Phase::Plateau {",
+    "new": "if self.phase == Phase::Peak {"
+  },
+  {
+    "label": "reset to E_L",
+    "old": "self.u = self.v_reset;",
+    "new": "self.u = m.e_l;"
+  },
+  {
+    "label": "spike reduces adaptation",
+    "old": "self.w += m.b;",
+    "new": "self.w -= m.b;"
+  },
+  {
+    "label": "afterpotential accumulates",
+    "old": "self.z = m.i_sp;",
+    "new": "self.z += m.i_sp;"
+  },
+  {
+    "label": "reset leaves the neuron clamped",
+    "old": "self.phase = Phase::Integrating;\n            self.v_t = m.v_t_max;",
+    "new": "self.v_t = m.v_t_max;"
+  },
+  {
+    "label": "threshold not raised",
+    "old": "self.v_t = m.v_t_max;",
+    "new": "self.v_t = m.v_t_rest;"
+  },
+  {
+    "label": "exponential term's scale",
+    "old": "((self.u - self.v_t) / m.delta_t).exp()",
+    "new": "((self.u - self.v_t) * m.delta_t).exp()"
+  },
+  {
+    "label": "leak sign",
+    "old": "(-m.g_l * (self.u - m.e_l) + exponential - self.w + self.z + i)",
+    "new": "(m.g_l * (self.u - m.e_l) + exponential - self.w + self.z + i)"
+  },
+  {
+    "label": "adaptation depolarizes",
+    "old": "(-m.g_l * (self.u - m.e_l) + exponential - self.w + self.z + i)",
+    "new": "(-m.g_l * (self.u - m.e_l) + exponential + self.w + self.z + i)"
+  },
+  {
+    "label": "afterpotential hyperpolarizes",
+    "old": "(-m.g_l * (self.u - m.e_l) + exponential - self.w + self.z + i)",
+    "new": "(-m.g_l * (self.u - m.e_l) + exponential - self.w - self.z + i)"
+  },
+  {
+    "label": "injected current ignored",
+    "old": "(-m.g_l * (self.u - m.e_l) + exponential - self.w + self.z + i)",
+    "new": "(-m.g_l * (self.u - m.e_l) + exponential - self.w + self.z)"
+  },
+  {
+    "label": "capacitance multiplies",
+    "old": "let udot = 1.0 / m.c * (-m.g_l * (self.u",
+    "new": "let udot = m.c * 1e-5 * (-m.g_l * (self.u"
+  },
+  {
+    "label": "adaptation grows without bound",
+    "old": "let wdot = 1.0 / m.tau_w * (m.a * (self.u - m.e_l) - self.w);",
+    "new": "let wdot = 1.0 / m.tau_w * (m.a * (self.u - m.e_l) + self.w);"
+  },
+  {
+    "label": "subthreshold adaptation sign",
+    "old": "let wdot = 1.0 / m.tau_w * (m.a * (self.u - m.e_l) - self.w);",
+    "new": "let wdot = 1.0 / m.tau_w * (m.a * (m.e_l - self.u) - self.w);"
+  },
+  {
+    "label": "potential moves against udot",
+    "old": "self.u += udot;",
+    "new": "self.u -= udot;"
+  },
+  {
+    "label": "adaptation update skipped",
+    "old": "self.w += wdot;",
+    "new": "self.w += 0.0 * wdot;"
+  },
+  {
+    "label": "afterpotential decays at tau_wad",
+    "old": "self.z -= self.z / m.tau_z;",
+    "new": "self.z -= self.z / m.tau_w;"
+  },
+  {
+    "label": "threshold relaxes at tau_z",
+    "old": "self.v_t = m.v_t_rest / m.tau_v_t + (1.0 - 1.0 / m.tau_v_t) * self.v_t;",
+    "new": "self.v_t = m.v_t_rest / m.tau_z + (1.0 - 1.0 / m.tau_z) * self.v_t;"
+  },
+  {
+    "label": "threshold relaxes to zero",
+    "old": "self.v_t = m.v_t_rest / m.tau_v_t + (1.0 - 1.0 / m.tau_v_t) * self.v_t;",
+    "new": "self.v_t = (1.0 - 1.0 / m.tau_v_t) * self.v_t;"
+  },
+  {
+    "label": "second millisecond never entered",
+    "old": "if self.phase == Phase::Peak {\n            self.phase = Phase::Plateau;",
+    "new": "if self.phase == Phase::Plateau {\n            self.phase = Phase::Plateau;"
+  },
+  {
+    "label": "second millisecond held at the first peak",
+    "old": "self.u = self.peak[1];",
+    "new": "self.u = self.peak[0];"
+  },
+  {
+    "label": "second millisecond's adaptation kept",
+    "old": "self.w -= wdot;",
+    "new": "self.w -= 0.0 * wdot;"
+  },
+  {
+    "label": "detection ignores the phase",
+    "old": "let fired = self.u > self.v_detect && self.phase == Phase::Integrating;",
+    "new": "let fired = self.u > self.v_detect;"
+  },
+  {
+    "label": "detection below the level",
+    "old": "let fired = self.u > self.v_detect && self.phase == Phase::Integrating;",
+    "new": "let fired = self.u < self.v_detect && self.phase == Phase::Integrating;"
+  },
+  {
+    "label": "first millisecond held at the second peak",
+    "old": "self.u = self.peak[0];\n            self.phase = Phase::Peak;",
+    "new": "self.u = self.peak[1];\n            self.phase = Phase::Peak;"
+  },
+  {
+    "label": "potential unit",
+    "old": "self.u * 1e-3",
+    "new": "self.u * 1e-6"
+  },
+  {
+    "label": "threshold unit",
+    "old": "self.v_t * 1e-3",
+    "new": "self.v_t * 1e-6"
+  },
+  {
+    "label": "adaptation unit",
+    "old": "self.w * 1e-12",
+    "new": "self.w * 1e-9"
+  },
+  {
+    "label": "afterpotential unit",
+    "old": "self.z * 1e-12",
+    "new": "self.z * 1e-9"
+  },
+  {
+    "label": "periods above 0.1 Hz's admitted",
+    "old": "if period > 10_000 || gap >= period {",
+    "new": "if period > 20_000 || gap >= period {"
+  },
+  {
+    "label": "0.1 Hz refused",
+    "old": "if period > 10_000 || gap >= period {",
+    "new": "if period >= 10_000 || gap >= period {"
+  },
+  {
+    "label": "lag of a whole period admitted",
+    "old": "if period > 10_000 || gap >= period {",
+    "new": "if period > 10_000 || gap > period {"
+  },
+  {
+    "label": "group length four pairings",
+    "old": "let len = 5 * period + gap + 1;",
+    "new": "let len = 4 * period + gap + 1;"
+  },
+  {
+    "label": "group length one sample longer",
+    "old": "let len = 5 * period + gap + 1;",
+    "new": "let len = 5 * period + gap + 2;"
+  },
+  {
+    "label": "groups padded to 9.999 s",
+    "old": "let block = len.max(10_000);",
+    "new": "let block = len.max(9_999);"
+  },
+  {
+    "label": "0.1 Hz repeated 15 times",
+    "old": "let reps = if period == 10_000 { 10 } else { 15 };",
+    "new": "let reps = if period == 10_000 { 15 } else { 15 };"
+  },
+  {
+    "label": "other frequencies repeated 14 times",
+    "old": "let reps = if period == 10_000 { 10 } else { 15 };",
+    "new": "let reps = if period == 10_000 { 10 } else { 14 };"
+  },
+  {
+    "label": "pre-post lag counted once",
+    "old": "let first_post = if lag > 0 { 2 * gap } else { 0 };",
+    "new": "let first_post = if lag > 0 { gap } else { 0 };"
+  },
+  {
+    "label": "post-pre trains start at the lag",
+    "old": "let first_post = if lag > 0 { 2 * gap } else { 0 };",
+    "new": "let first_post = if lag > 0 { 2 * gap } else { gap };"
+  },
+  {
+    "label": "groups overlap",
+    "old": "let base = rep * block;",
+    "new": "let base = rep * len;"
+  },
+  {
+    "label": "presynaptic train filled to the end",
+    "old": "for t in (gap..len - 1).step_by(period) {",
+    "new": "for t in (gap..len).step_by(period) {"
+  },
+  {
+    "label": "postsynaptic train stops one early",
+    "old": "for t in (first_post..len).step_by(period) {",
+    "new": "for t in (first_post..len - 1).step_by(period) {"
+  },
+  {
+    "label": "presynaptic spikes all in the first group",
+    "old": "pre[base + t] = true;",
+    "new": "pre[t] = true;"
+  },
+  {
+    "label": "postsynaptic spikes all in the first group",
+    "old": "post[base + t] = true;",
+    "new": "post[t] = true;"
+  },
+  {
+    "label": "loop starts at t = 5",
+    "old": "for t in 3..pre.len() {",
+    "new": "for t in 4..pre.len() {"
+  },
+  {
+    "label": "loop starts at t = 3",
+    "old": "for t in 3..pre.len() {",
+    "new": "for t in 2..pre.len() {"
+  },
+  {
+    "label": "pulse of 1 nA does not fire",
+    "old": "neuron.step_pa(if post[t] { 1e6 } else { 0.0 });",
+    "new": "neuron.step_pa(if post[t] { 1e3 } else { 0.0 });"
+  },
+  {
+    "label": "synapse sees the postsynaptic train",
+    "old": "synapse.step_mv(neuron.u, &pre[t..=t]);",
+    "new": "synapse.step_mv(neuron.u, &post[t..=t]);"
+  },
+  {
+    "label": "pairing starts at w = 0.25",
+    "old": "delay, membrane.e_l * 1e-3, vec![0.5], unbounded)?;",
+    "new": "delay, membrane.e_l * 1e-3, vec![0.25], unbounded)?;"
+  },
+  {
+    "label": "pairing uses the exponential integrator",
+    "old": "Synapses::new(rule, Integrator::Euler, Neuron::DT, delay,",
+    "new": "Synapses::new(rule, Integrator::Exponential, Neuron::DT, delay,"
+  },
+  {
+    "label": "pairing delay off by one",
+    "old": "Neuron::DT, delay, membrane.e_l * 1e-3",
+    "new": "Neuron::DT, delay + 1, membrane.e_l * 1e-3"
+  },
+  {
+    "label": "pairing filters start at 0 mV",
+    "old": "delay, membrane.e_l * 1e-3, vec![0.5]",
+    "new": "delay, 0.0, vec![0.5]"
+  },
+  {
+    "label": "pairing swaps its trains",
+    "old": "votri_run(rule, membrane, delay, &pre, &post)",
+    "new": "votri_run(rule, membrane, delay, &post, &pre)"
+  },
+  {
+    "label": "blank tau_plus named as tau_minus",
+    "old": "rule.tau_plus.ok_or(ClopathError::Blank { what: \"tau_plus\" })?",
+    "new": "rule.tau_plus.ok_or(ClopathError::Blank { what: \"tau_minus\" })?"
+  },
+  {
+    "label": "missing v_detect named as peak",
+    "old": "m.v_detect.ok_or(ClopathError::Unprinted { what: \"v_detect\" })",
+    "new": "m.v_detect.ok_or(ClopathError::Unprinted { what: \"peak\" })"
+  },
+  {
+    "label": "missing v_reset named as peak",
+    "old": "m.v_reset.ok_or(ClopathError::Unprinted { what: \"v_reset\" })",
+    "new": "m.v_reset.ok_or(ClopathError::Unprinted { what: \"peak\" })"
+  },
+  {
+    "label": "homeostat admits a negative step",
+    "old": "(-positive(\"dt\", dt)? / positive(\"tau\", tau)?)",
+    "new": "(-finite(\"dt\", dt)? / positive(\"tau\", tau)?)"
+  },
+  {
+    "label": "homeostat admits tau = 0",
+    "old": "/ positive(\"tau\", tau)?).exp()",
+    "new": "/ finite(\"tau\", tau)?).exp()"
+  },
+  {
+    "label": "a detected spike skips its first clamped millisecond",
+    "old": "self.u = self.peak[0];\n            self.phase = Phase::Peak;",
+    "new": "self.u = self.peak[0];\n            self.phase = Phase::Plateau;"
+  },
+  {
+    "label": "the second clamped millisecond never ends",
+    "old": "self.phase = Phase::Plateau;\n            self.u = self.peak[1];",
+    "new": "self.phase = Phase::Peak;\n            self.u = self.peak[1];"
+  },
+  {
+    "label": "lag taken signed for the train offset",
+    "old": "let gap = lag.unsigned_abs() as usize;",
+    "new": "let gap = lag.max(0).unsigned_abs() as usize;"
+  },
+  {
+    "label": "presynaptic spacing one step too long",
+    "old": "for t in (gap..len - 1).step_by(period) {",
+    "new": "for t in (gap..len - 1).step_by(period + 1) {"
+  },
+  {
+    "label": "pairing bounded above at its starting weight",
+    "old": "let unbounded = (f64::NEG_INFINITY, f64::INFINITY);",
+    "new": "let unbounded = (f64::NEG_INFINITY, 0.5);"
+  }
+]
