@@ -75,17 +75,17 @@
   "new": "let after: f64 = own.iter().map(|f| self.kernel.eta(f - t, self.reset)).sum();"
  },
  {
-  "label": "srm0 keeps the inputs before the last spike",
+  "label": "the since-reset truncation keeps the inputs before the last spike",
   "old": "inputs.iter().filter(|(f, _)| *f >= t_hat).map(|(f, w)| w * self.kernel.epsilon(t - f)).sum()",
   "new": "inputs.iter().map(|(f, w)| w * self.kernel.epsilon(t - f)).sum()"
  },
  {
-  "label": "srm0 applies an after-potential with no spike",
+  "label": "the since-reset truncation applies an after-potential with no spike",
   "old": "let after = if last.is_some() { self.kernel.eta(t - t_hat, self.reset) } else { 0.0 };",
   "new": "let after = self.kernel.eta(t - t_hat, self.reset);"
  },
  {
-  "label": "srm0 has no after-potential at all",
+  "label": "the since-reset truncation has no after-potential at all",
   "old": "let after = if last.is_some() { self.kernel.eta(t - t_hat, self.reset) } else { 0.0 };",
   "new": "let after = 0.0;"
  },
@@ -213,5 +213,35 @@
   "label": "a zero threshold is accepted",
   "old": "        if !(theta > 0.0) || !theta.is_finite() {\n            return Err(SrmError::OutOfRange { what: \"theta\", value: theta });\n        }\n",
   "new": ""
+ },
+ {
+  "label": "srm0 drops every input",
+  "old": "let every_input = self.potential(t, inputs, &[])?;",
+  "new": "let every_input = self.potential(t, &[], &[])?;"
+ },
+ {
+  "label": "srm0 applies no after-potential for the last spike",
+  "old": "Some(t_hat) => Ok(every_input + self.kernel.eta(t - t_hat, self.reset)),",
+  "new": "Some(_) => Ok(every_input),"
+ },
+ {
+  "label": "srm0's after-potential has a unit amplitude",
+  "old": "Ok(every_input + self.kernel.eta(t - t_hat, self.reset))",
+  "new": "Ok(every_input + self.kernel.eta(t - t_hat, 1.0))"
+ },
+ {
+  "label": "srm0's after-potential is measured from the wrong side",
+  "old": "Ok(every_input + self.kernel.eta(t - t_hat,",
+  "new": "Ok(every_input + self.kernel.eta(t_hat - t,"
+ },
+ {
+  "label": "srm0 accepts a last spike that is not finite",
+  "old": "Some(t_hat) if !t_hat.is_finite() => Err(SrmError::NonFinite { what: \"last\" }),",
+  "new": ""
+ },
+ {
+  "label": "srm0 applies an after-potential from a spike at minus infinity when there was none",
+  "old": "None => Ok(every_input),",
+  "new": "None => Ok(every_input + self.kernel.eta(t - f64::NEG_INFINITY, self.reset)),"
  }
 ]

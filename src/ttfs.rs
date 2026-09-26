@@ -60,8 +60,11 @@
 //!   possible; the adjoint method handles repeated spikes and is not implemented.
 //! - The `τ_m = τ_s` case of Göltz et al., whose spike time needs the Lambert W function.
 //! - Robust training. When the causal set changes the spike time is continuous but its gradient
-//!   jumps, and a neuron that stops firing has no gradient at all; the remedy here is Mostafa's — a
-//!   uniform push on the weights of a silent neuron — and it is a heuristic.
+//!   jumps, and a neuron that stops firing has no gradient at all. The remedy here is a heuristic in
+//!   the spirit of Mostafa's weight-sum constraint, not that constraint: he adds
+//!   `K Σ_j max(0, θ − Σ_i w_ji)` to the cost, which pushes up every weight of ANY neuron whose input
+//!   weights sum below threshold, fired or not (`K = 10` for XOR, 100 for MNIST); here a neuron that
+//!   is silent on the current example has each weight raised by `boost · θ/n_in`.
 
 use core::fmt;
 
@@ -454,8 +457,9 @@ impl Network {
 
     /// One step of gradient descent on one example: weights move by `−rate ·` the gradient, with
     /// each layer's gradient rescaled to a largest entry of `clip` if it exceeds that, and every
-    /// weight of every silent neuron is raised by `boost · θ/n_in` — Mostafa's remedy for a neuron
-    /// with no gradient. Returns what [`Network::backward`] found BEFORE the step.
+    /// weight of every silent neuron is raised by `boost · θ/n_in` — this crate's heuristic for a
+    /// neuron with no gradient, in the spirit of Mostafa's weight-sum cost term (see the module
+    /// documentation for how they differ). Returns what [`Network::backward`] found BEFORE the step.
     ///
     /// # Errors
     ///
@@ -645,8 +649,10 @@ mod tests {
 
     #[test]
     fn gradient_descent_on_spike_times_solves_xor() {
-        // Mostafa's encoding: a value is early (0) or late (1), beside a reference that is always
-        // early; the answer is whichever output fires first.
+        // Mostafa's XOR has two inputs, each early (bit 0) or late (bit 1) — at 0 and 2 τ_syn — and
+        // no reference. The always-early third input is this test's addition, borrowed from his
+        // MNIST networks (where the reference projects to every neuron, not only the first layer),
+        // and the late time here is 6 ms, not 2 τ_syn. The answer is whichever output fires first.
         let (early, late) = (0.0, 6e-3);
         let cases: Vec<([Option<f64>; 3], usize)> = (0..4)
             .map(|c| {
@@ -1095,7 +1101,8 @@ mod tests {
     ///
     /// The hole this fills: every network in the suite has θ = 1, where multiplying by θ and not
     /// multiplying by it are the same arithmetic. At θ = 2 they differ by a factor of two, and an
-    /// unscaled push is half the drive Mostafa's remedy asks for — a silent neuron stays silent for
+    /// unscaled push is half the drive this rule is defined to give (the θ-scaling is this crate's
+    /// choice; Mostafa fixes θ = 1 and states no `n_in` scaling) — a silent neuron stays silent for
     /// twice as many epochs, which a test that only asks whether XOR is eventually solved cannot
     /// see, and which vanishes altogether as θ shrinks.
     #[test]

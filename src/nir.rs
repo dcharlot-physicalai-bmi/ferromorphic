@@ -417,12 +417,16 @@ pub struct Pool2d {
 
 /// Collapse a contiguous run of axes into one.
 ///
-/// ⚠ `NIR` inherits `PyTorch`'s convention in which axis `0` is the batch, so a file written by a
-/// `PyTorch`-side exporter usually carries `start_dim = 1`. The shapes in this module carry **no
-/// batch axis**, so [`Flatten::start_dim`] indexes [`Flatten::size`] directly and such a file needs
-/// its dimensions decremented by one on the way in. This implementation did not locate a statement
-/// in the `NIR` paper that fixes whether `input_type` includes the batch axis, so the convention is
-/// stated here rather than assumed.
+/// In the reference `nir` package, `Flatten.start_dim` and `end_dim` index `input_type` directly,
+/// and `input_type` has **no batch axis** (a `Conv1d` input is `[C_in, N]`; the reference tests
+/// flatten `[1, 64, 64]` with `start_dim = 0` to `[4096]`). The shapes in this module carry no batch
+/// axis either, so [`Flatten::start_dim`] indexes [`Flatten::size`] directly and a
+/// reference-conformant file is read without adjustment. The `NIR` paper's own `sinabs` export
+/// (`cnn_sinabs.nir`) writes `start_dim = 0` for `PyTorch`'s `nn.Flatten()`; `start_dim = 1` is only
+/// the reference dataclass's default. Importers are not consistent about it (the Lava example adds
+/// one for its batch axis), so check what a given exporter writes. Earlier releases said `NIR`
+/// inherits `PyTorch`'s batch-at-axis-0 convention and that files need decrementing; following that
+/// would corrupt a reference-conformant file.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Flatten {
     /// Input shape, at least one axis.
@@ -473,10 +477,15 @@ pub struct Li {
 ///
 /// `tau * dv/dt = (v_leak - v) + r * I`, spike on `v > v_threshold`, then `v = v_reset`.
 ///
-/// ⚠ **`NIR` version 1 hard-resets to zero**; later revisions of the specification carry an explicit
-/// reset potential. This implementation carries [`Lif::v_reset`] explicitly, so a version-1 file is
-/// reproduced by filling it with zeros. Where a reader's `NIR` release differs, this is the field
-/// to check.
+/// ⚠ **Reset changed within `NIR` 1.0.x.** Releases up to 1.0.5 carry no reset potential and
+/// document a SUBTRACTIVE reset (`v ← v − v_threshold` on a spike) for `LIF`, `IF` and `CubaLIF`.
+/// From 1.0.6 the node carries `v_reset` and the reset is `v ← v_reset`, which is what this
+/// implementation does: [`Lif::v_reset`] is required, never defaulted. A 1.0.6-or-later reader fills
+/// `v_reset` with zeros when it loads an older file; that is a compatibility default, not the older
+/// specification, and it changes the dynamics of any file trained with subtractive reset (the `NIR`
+/// paper's `braille_noDelay_noBias_subtract.nir` is one). No constant `v_reset` reproduces a
+/// pre-1.0.6 file exactly. Earlier releases of this crate said the opposite — that version 1
+/// hard-reset to zero and zero-filling reproduced it.
 ///
 /// ⚠ **There is no refractory period in `NIR`.** [`crate::neuron::Lif`] has one, and
 /// [`Graph::from_net`] therefore refuses a neuron whose `t_ref` is non-zero rather than dropping it.

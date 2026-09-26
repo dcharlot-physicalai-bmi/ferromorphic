@@ -17,9 +17,11 @@
 //!   with `pᵢ = ±1`. On integer pixel coordinates the spatial kernels select one pixel, and the
 //!   temporal kernel splits each event's `±1` between the two time bins either side of `t*ᵢ`, in
 //!   proportion to its closeness. Nothing is lost: every event lands whole, so the grid sums to
-//!   `Σ pᵢ` — and to `N` with every event taken as ON — [`voxel_grid`]. (The paper's equation (1)
-//!   prints `t₀` in the numerator and `t₁` in the denominator, for events numbered from 1; the range
-//!   it states, `[0, B − 1]`, needs both to be the first event's time.)
+//!   `Σ pᵢ` — and to `N` with every event taken as ON — [`voxel_grid`]. (The CVPR 2019 version
+//!   cited here prints `t₁` in both places, as the range it states, `[0, B − 1]`, requires. The
+//!   arXiv preprint, arXiv:1812.08156v1, prints `t₀` in the numerator and `t₁` in the denominator,
+//!   for events numbered from 1; earlier releases of this module attributed that slip to the CVPR
+//!   version.)
 //! - **Event frames in time bins**: per pixel and polarity, the number of events in each of `n`
 //!   windows — [`time_frames`] over windows you choose, [`spanning_frames`] over the recording's
 //!   own span with its last event included.

@@ -35,11 +35,15 @@
 //!    rather than sending one copy per target — that is what `SpiNNaker`'s multicast router is for
 //!    (Furber, Galluppi, Temple and Plana, *The `SpiNNaker` Project*, Proceedings of the IEEE
 //!    102(5):652–665, 2014).
-//! 3. **Price, or refuse.** [`SpikeHops::bill`] converts hops into joules against [`HopPrices`],
-//!    and **every price in this module is `None`**. That is the finding, in the same form
-//!    [`crate::ledger`] states it: *this review did not locate a published per-hop joule, on-chip
-//!    or off-chip, for any commercially available neuromorphic part.* The hop counts themselves are
-//!    exact integers and are useful without a price.
+//! 3. **Price, or refuse.** [`SpikeHops::bill`] converts hops into joules against [`HopPrices`].
+//!    **One term in this module has a number**: `Loihi`'s on-die tile hop, 3.0 pJ east-west and
+//!    4.0 pJ north-south, from pre-silicon simulation (Davies et al. 2018, Table 2 —
+//!    [`LOIHI_FABRIC`]). Every other term is `None`, and that is the finding, in the same form
+//!    [`crate::ledger`] states it: *this review did not locate a per-hop joule measured on
+//!    silicon, or any chip-crossing or packet-injection joule, for any commercially available
+//!    neuromorphic part.* Earlier releases said no per-hop price was published at all; Loihi's
+//!    pre-silicon one was in the same table the ledger cites. The hop counts themselves are exact
+//!    integers and are useful without a price.
 //!
 //! # Where a synapse's memory lives, and why it is the postsynaptic core
 //!
@@ -1118,7 +1122,8 @@ impl fmt::Display for Feasibility {
 // ---------------------------------------------------------------------------------------------
 
 /// The most cores a [`Partition`] may span: `2^24`, above any machine this crate models
-/// (`SpiNNaker2`'s full build is about 10.6 million ARM cores).
+/// (`SpiNNaker2` was designed for about 10 million ARM cores — Mayr, Höppner and Furber,
+/// arXiv:1911.02385, 2019 — and the installed machine at TU Dresden has about 5 million).
 ///
 /// What it bounds, stated rather than discovered: [`Partition::loads`] holds one **48-byte**
 /// [`CoreLoad`] per core, so 805 MB at the limit; [`Partition::used_cores`] one byte per core; the
@@ -2193,11 +2198,13 @@ pub fn spike_hops(
 
 /// Per-hop energies for one fabric, in joules. `None` means **nobody has published this number**.
 ///
-/// Every table in this module is entirely `None`, and that is the finding rather than an unfinished
-/// implementation: *this review did not locate a published per-hop, per-link or per-router-traversal
-/// energy for any commercially available neuromorphic part.* The figures the field does publish are
-/// per synaptic operation ([`crate::ledger`]) and whole-chip averages, and neither separates the
-/// fabric from the arithmetic.
+/// One term in one table has a number — [`LOIHI_FABRIC`]'s on-die hop, from pre-silicon
+/// simulation — and everything else is `None`. That is the finding rather than an unfinished
+/// implementation: *this review did not locate a per-hop, per-link or per-router-traversal energy
+/// MEASURED ON SILICON, nor any chip-crossing or packet-injection energy, for any commercially
+/// available neuromorphic part.* The measured figures the field publishes are per synaptic
+/// operation ([`crate::ledger`]) and whole-chip averages, and neither separates the fabric from the
+/// arithmetic.
 ///
 /// Supply your own, measured, at a stated boundary, and [`SpikeHops::bill`] will price your
 /// workload. The hop counts themselves are exact and useful without any of this.
@@ -2268,22 +2275,35 @@ pub const SPINNAKER_FABRIC: HopPrices = HopPrices {
     evidence: Evidence::Unstated,
 };
 
-/// `Loihi`'s mesh, unpriced, with what was looked for recorded.
+/// `Loihi`'s mesh: the on-die hop priced from pre-silicon simulation, the rest unpublished.
+///
+/// Davies et al., IEEE Micro 38(1):82–99, 2018, Table 2 ("Loihi pre-silicon performance and energy
+/// measurements", SDF and SPICE simulation at 0.75 V): **3.0 pJ per tile hop east-west and 4.0 pJ
+/// north-south**, beside 1.7 pJ for a within-tile spike and 23.6 pJ for a synaptic operation
+/// ([`crate::ledger::LOIHI_2018`]). One number has to stand for both directions here, so this
+/// table carries the larger, **4.0 pJ — an upper bound** that over-prices every east-west hop by
+/// 1.0 pJ. Two further cautions. The unit is a `Loihi` TILE: cores that share a tile exchange
+/// spikes without a mesh hop, so the hop count this prices is the one a [`Fabric`] whose nodes are
+/// tiles produces, not one whose nodes are cores. And it is simulation, graded
+/// [`Evidence::Simulated`]; the paper says early post-silicon characterisation is consistent with
+/// it, and prints no measured hop. Table 2 has no chip-crossing and no packet-injection row, and
+/// those stay `None`.
 pub const LOIHI_FABRIC: HopPrices = HopPrices {
-    e_hop_on_chip: None,
+    e_hop_on_chip: Some(4.0e-12),
     e_hop_chip_crossing: None,
     e_packet_inject: None,
-    source: "Loihi: Davies et al., IEEE Micro 38(1):82-99, 2018, prices a synaptic operation \
-             (pre-silicon — see crate::ledger::LOIHI_2018) and does not, in what this review read, \
-             price a mesh hop separately. The distinction between an on-die hop and a chip crossing \
-             is architecturally explicit in that part and energetically unpublished.",
-    evidence: Evidence::Unstated,
+    source: "Loihi: Davies et al., IEEE Micro 38(1):82-99, 2018, Table 2, pre-silicon SDF/SPICE \
+             at 0.75 V: energy per tile hop 3.0 pJ (E-W) / 4.0 pJ (N-S), priced here at the upper \
+             bound 4.0 pJ per TILE hop; within-tile spike 1.7 pJ. No chip-crossing or packet \
+             injection energy is published, and no hop measured on silicon.",
+    evidence: Evidence::Simulated,
 };
 
 /// Every fabric price table in this crate, for a caller that wants to sweep them.
 ///
-/// Three entries and **not one priced term among them**. That is the state of the field as this
-/// review found it: the per-operation energy is published and the per-hop energy is not, on parts
+/// Three entries and **one priced term among them**, `Loihi`'s on-die hop, from pre-silicon
+/// simulation. That is the state of the field as this review found it: a per-operation energy is
+/// published, a per-hop energy only once and only simulated, and no chip crossing at all — on parts
 /// whose whole design argument is that the hop is what you should be minimising.
 pub const FABRIC_CATALOGUE: [(&str, HopPrices); 3] = [
     ("unstated", UNSTATED_FABRIC),
@@ -3355,18 +3375,32 @@ mod tests {
     // ----------------------------------------------------------------------------------------
 
     /// The finding, asserted. If someone later fills in a hop price without a source, this test is
-    /// where the argument has to happen.
+    /// where the argument has to happen. Through 0.22.0 it asserted that NO table priced a hop;
+    /// Davies et al. 2018 Table 2 prices Loihi's tile hop (pre-silicon), so the finding is now
+    /// narrower and exactly as stated: one simulated on-die hop, no silicon-measured hop, and no
+    /// chip crossing or injection anywhere.
     #[test]
-    fn no_fabric_price_table_in_this_crate_prices_a_hop() {
+    fn no_fabric_price_table_in_this_crate_prices_a_measured_hop_or_a_chip_crossing() {
         assert_eq!(FABRIC_CATALOGUE.len(), 3);
         for (name, p) in FABRIC_CATALOGUE {
-            assert!(p.e_hop_on_chip.is_none(), "{name} gained an on-chip hop price");
             assert!(p.e_hop_chip_crossing.is_none(), "{name} gained a crossing price");
             assert!(p.e_packet_inject.is_none(), "{name} gained an injection price");
             assert!(!p.is_complete(), "{name} claims to be complete");
-            assert_eq!(p.unpriced().len(), 3);
-            assert_eq!(p.evidence, Evidence::Unstated);
             assert!(!p.source.is_empty(), "{name} has no provenance string");
+            assert!(p.evidence < Evidence::Measured, "{name} claims a measured hop");
+            if name == "loihi" {
+                // Table 2's north-south hop, the upper of its two, and graded as the simulation it is.
+                assert_eq!(p.e_hop_on_chip, Some(4.0e-12));
+                assert_eq!(p.unpriced(), vec!["chip-crossing hop", "packet injection"]);
+                assert_eq!(p.evidence, Evidence::Simulated);
+            } else {
+                assert!(p.e_hop_on_chip.is_none(), "{name} gained an on-chip hop price");
+                assert_eq!(p.unpriced().len(), 3);
+                assert_eq!(p.evidence, Evidence::Unstated);
+            }
+        }
+        for row in ["Table 2", "pre-silicon", "3.0 pJ", "4.0 pJ", "TILE", "1.7 pJ"] {
+            assert!(LOIHI_FABRIC.source.contains(row), "the Loihi table lost {row:?}: {}", LOIHI_FABRIC.source);
         }
         // Each table says what was looked for, not merely that nothing was found.
         assert!(SPINNAKER_FABRIC.source.contains("Furber"));
@@ -4024,8 +4058,9 @@ mod tests {
 
     /// The per-core bookkeeping bound is `2^24`, and its doc prices that in bytes. Every test that
     /// used the constant wrote `MAX_CORES + 1`, which moves with it, so the value itself could be
-    /// cut by a factor of sixteen with every test green — down to 1,048,576, below the 10.6
-    /// million cores of `SpiNNaker2`'s full build that the same doc says it is above.
+    /// cut by a factor of sixteen with every test green — down to 1,048,576, below the 10 million
+    /// cores `SpiNNaker2` was designed for, which the same doc says it is above. (Releases through
+    /// 0.22.0 said 10.6 million, uncited; the design paper says about 10 million.)
     ///
     /// ⛔ THE DOC'S BYTE COUNT WAS WRONG AND THIS IS WHERE IT WAS CAUGHT. It said a `CoreLoad` is
     /// 40 bytes and the limit is 671 MB. `size_of` measures 48 and 805 MB: the record is a `u32`,
@@ -4035,9 +4070,10 @@ mod tests {
     fn the_per_core_bookkeeping_bound_is_the_size_its_doc_prices() {
         assert_eq!(super::MAX_CORES, 1 << 24);
         assert_eq!(super::MAX_CORES, 16_777_216);
-        // The machine the constant's doc says it is above: SpiNNaker2's full build, about 10.6
-        // million ARM cores. Bound through a binding so the comparison is not folded away.
-        let spinnaker2_full_build: u32 = 10_600_000;
+        // The machine the constant's doc says it is above: SpiNNaker2 as designed, about 10
+        // million ARM cores (arXiv:1911.02385). Bound through a binding so the comparison is not
+        // folded away.
+        let spinnaker2_full_build: u32 = 10_000_000;
         assert!(
             super::MAX_CORES > spinnaker2_full_build,
             "the bound has to stay above SpiNNaker2's full build, which its own doc claims"

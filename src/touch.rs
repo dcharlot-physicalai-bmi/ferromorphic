@@ -16,10 +16,16 @@
 //! | **PC** (Pacinian) | Pacinian corpuscle | **vibration**, 40–400 Hz, peaking near 250 Hz | texture and the transients of impact |
 //!
 //! Saal, Delhaye, Rayhaun and Bensmaia, *Simulating tactile signals from the whole hand with
-//! millisecond precision*, PNAS 114(28):E5693–E5702, 2017 (`TouchSim`), fit integrate-and-fire
-//! afferents of each class to recorded spike trains, with the drive of each a linear combination
-//! of depth, velocity and acceleration. This module keeps that architecture — a feature, a linear
-//! drive, this crate's [`crate::neuron::Lif`] — and **does not carry their fitted constants**:
+//! millisecond precision*, PNAS 114(28):E5693–E5702, 2017 (`TouchSim`), fit a leaky
+//! integrate-and-fire model to each of 17 recorded macaque afferents (4 SA1, 9 RA, 4 PC), minimising
+//! the van Rossum distance to their spike trains. Their input is not indentation depth: it is the
+//! quasistatic stress and the dynamic pressure at the receptor, both from a skin-mechanics stage,
+//! plus the derivative of the dynamic term, each split into positive and negative parts that are
+//! rectified and weighted separately; RA and PC models then saturate the sum, and the model adds
+//! low-pass filtering, noise and a post-spike inhibitory kernel. This module keeps only the
+//! outline — a feature stage feeding an integrate-and-fire neuron — and simplifies the rest: its
+//! drive is a linear combination of indentation depth, velocity and acceleration, feeding this
+//! crate's [`crate::neuron::Lif`]. It **does not carry their fitted constants**:
 //! every gain here is a round number stated at the constructor, and every claim is about the
 //! shape of the response (which channel fires when) and the arithmetic of the neuron (the rate a
 //! given drive produces, from [`crate::neuron::Lif::isi`]), not about matching a recording.
@@ -53,8 +59,9 @@
 //!
 //! - `TouchSim`'s fitted parameters, its skin mechanics (the propagation of strain from a contact
 //!   to a distant receptor is a Gaussian here, not a continuum model), or any recorded rate.
-//! - SA2 afferents (Ruffini endings, skin stretch), which the whole-hand model has and this
-//!   module leaves out, saying so.
+//! - SA2 afferents (Ruffini endings, skin stretch). `TouchSim` does not simulate them either: its
+//!   models are fit to macaque recordings, and macaques have no SA2 afferents (Saal et al. 2017,
+//!   Discussion, "Limitations of the Model"). Earlier releases said the whole-hand model had them.
 //! - Any tactile sensor's own transfer function. The input is indentation depth in metres; what a
 //!   sensor returns is the sensor's business.
 

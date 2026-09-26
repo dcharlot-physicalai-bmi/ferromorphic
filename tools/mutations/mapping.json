@@ -1181,8 +1181,8 @@
  },
  {
   "label": "Loihi's mesh gains an unsourced packet injection price",
-  "old": "pub const LOIHI_FABRIC: HopPrices = HopPrices {\n    e_hop_on_chip: None,\n    e_hop_chip_crossing: None,\n    e_packet_inject: None,",
-  "new": "pub const LOIHI_FABRIC: HopPrices = HopPrices {\n    e_hop_on_chip: None,\n    e_hop_chip_crossing: None,\n    e_packet_inject: Some(1e-13),"
+  "old": "pub const LOIHI_FABRIC: HopPrices = HopPrices {\n    e_hop_on_chip: Some(4.0e-12),\n    e_hop_chip_crossing: None,\n    e_packet_inject: None,",
+  "new": "pub const LOIHI_FABRIC: HopPrices = HopPrices {\n    e_hop_on_chip: Some(4.0e-12),\n    e_hop_chip_crossing: None,\n    e_packet_inject: Some(1e-12),"
  },
  {
   "label": "the SpiNNaker citation carries the Science page range two lines away",
@@ -1190,9 +1190,9 @@
   "new": "             Furber, Galluppi, Temple and Plana, Proceedings of the IEEE 102(5):652-673, 2014, or \\"
  },
  {
-  "label": "Loihi's absence claim is attributed to the TrueNorth authors",
-  "old": "    source: \"Loihi: Davies et al., IEEE Micro 38(1):82-99, 2018, prices a synaptic operation \\",
-  "new": "    source: \"Loihi: Merolla et al., IEEE Micro 38(1):82-99, 2018, prices a synaptic operation \\"
+  "label": "Loihi's hop price is attributed to the TrueNorth authors",
+  "old": "    source: \"Loihi: Davies et al., IEEE Micro 38(1):82-99, 2018, Table 2, pre-silicon SDF/SPICE \\",
+  "new": "    source: \"Loihi: Merolla et al., IEEE Micro 38(1):82-99, 2018, Table 2, pre-silicon SDF/SPICE \\"
  },
  {
   "label": "SpiNNaker's unpriced table is graded as measured",
@@ -1324,5 +1324,25 @@
   "label": "a utilisation is printed as a fraction under a percent sign",
   "old": "                    u * 100.0",
   "new": "                    u"
+ },
+ {
+  "label": "Loihi's hop is priced at the east-west figure rather than the upper bound",
+  "old": "    e_hop_on_chip: Some(4.0e-12),\n",
+  "new": "    e_hop_on_chip: Some(3.0e-12),\n"
+ },
+ {
+  "label": "Loihi's table loses its hop price",
+  "old": "    e_hop_on_chip: Some(4.0e-12),\n",
+  "new": "    e_hop_on_chip: None,\n"
+ },
+ {
+  "label": "Loihi's simulated hop is graded as measured",
+  "old": "             injection energy is published, and no hop measured on silicon.\",\n    evidence: Evidence::Simulated,",
+  "new": "             injection energy is published, and no hop measured on silicon.\",\n    evidence: Evidence::Measured,"
+ },
+ {
+  "label": "Loihi's source loses the tile caution",
+  "old": "bound 4.0 pJ per TILE hop; within-tile spike 1.7 pJ.",
+  "new": "bound 4.0 pJ per hop; within-tile spike 1.7 pJ."
  }
 ]

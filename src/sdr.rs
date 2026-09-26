@@ -51,10 +51,14 @@
 //!   cortex — `n = 2048`, `w = 40` — matching half a pattern by chance is `2.5 × 10⁻²⁶`; a
 //!   dendrite sampling twenty of the forty bits and requiring all twenty is `2.2 × 10⁻³⁷`;
 //!   requiring only half of that subsample, which is what robustness to noise costs, is still
-//!   `3.9 × 10⁻¹³`. These are MEASURED from this module's own arithmetic. This review did not
-//!   locate the paper's own numerical examples in a source it could read — the abstract does not
-//!   carry them — so no figure here is attributed to it, and the derivation above is what the
-//!   module stands on.
+//!   `3.9 × 10⁻¹³` — the paper's own example (§II.E), which it states as "better than 1 in 10¹²".
+//! - **The paper's own tables.** Its worked examples (§II.B–II.H) and its "SDR Actuarial Tables"
+//!   (Appendix A) are in the open arXiv full text, arXiv:1503.07469v1. This module's overlap tail
+//!   reproduces all 16 rows of Table 1 (exact matches) and all 16 rows of Table 2 (inexact matches)
+//!   to within half a unit of the last printed digit, as does [`union_false_positive_rate`] for
+//!   the nine rows of Table 4 with `θ = w`, and the text's "one in 14,587" (§II.D),
+//!   "one in 3,142" and "1 in 2.5 million" (§II.E). Earlier releases said this review had not
+//!   located those numbers; they are checked now.
 //! - **Every probability is in `[0, 1]`**, including where the binomials overflow a `u64` — the
 //!   computation is done in logarithms, and the test drives it to `n = 100_000` where a factorial
 //!   would have no chance.
@@ -313,7 +317,16 @@ impl Sdr {
 /// with a union of `m` independent patterns of `w` bits each.
 ///
 /// The union has an expected `n(1 − (1 − w/n)^m)` bits on, and this treats it as a fixed set of
-/// that many — which is the paper's approximation, and is stated as one.
+/// that many (rounded to an integer) — the paper's eqs. (14)–(15), an approximation, and stated as
+/// one.
+///
+/// ⚠ **The paper's own noisy-union numbers do not follow its eq. (14).** Its Table 4 rows with
+/// `θ < w` and the §II.H figures ("1 in 123 million", "1 in 4 million", "1 in 223 billion")
+/// reproduce to six figures as `C(w̃, b) · C(n − w, w − b) / C(n, w)`, which is not a probability —
+/// it reaches 2.03 at the Table 4 row the paper prints as 1. And its "1 in 5 billion" for `θ = w`
+/// (§II.H) comes from eq. (13) (1 in 5.45 × 10⁹), where its Table 4 prints 1.2532 × 10⁻¹⁰ (1 in
+/// 7.98 × 10⁹); this function gives the latter. Only the `θ = w` rows of Table 4 are a fixture for
+/// it.
 ///
 /// `None` for a bad shape.
 #[must_use]
@@ -432,6 +445,73 @@ mod tests {
         // subsample is rarer than demanding ANY twenty of the forty, because there are fewer ways
         // to do it. Relaxing the subsample's threshold to ten is what costs the robustness.
         assert!(all_of_a_subsample < half && half < half_of_a_subsample);
+    }
+
+    /// Half a unit in the last digit of a printed decimal: the tolerance a printed number allows.
+    /// The tables are compared at `half_unit · (1 + 10⁻⁵)`, because one row sits ON a rounding
+    /// boundary: `1/1024 = 0.0009765625` is printed `0.000976563`, exactly half a unit away, and the
+    /// log-domain arithmetic lands `8 × 10⁻¹³` relative below the exact value — `8 × 10⁻¹⁶` absolute,
+    /// which is `1.6 × 10⁻⁶` of that half unit.
+    fn half_unit(printed: &str) -> f64 {
+        let upper = printed.to_uppercase();
+        let (mantissa, exponent) = upper.split_once('E').unwrap_or((upper.as_str(), "0"));
+        let decimals = mantissa.split_once('.').map_or(0, |(_, d)| d.len());
+        0.5 * 10f64.powi(exponent.parse::<i32>().unwrap() - decimals as i32)
+    }
+
+    /// The paper's Appendix A, Tables 1 and 2 (arXiv:1503.07469v1, pp. 15–16), every row, Table 4's
+    /// nine rows with `θ = w`, and the
+    /// three "one in N" figures of its text: each is this module's tail to within half a unit of
+    /// the last digit printed. Table 1 is the exact match, `1/C(n, w)`; Table 2 is the whole-pattern
+    /// tail at threshold `t`.
+    #[test]
+    fn the_papers_actuarial_tables_are_this_tail() {
+        let table1: [(usize, usize, &str); 16] = [
+            (64, 1, "0.015625"), (64, 3, "2.40015E-05"), (64, 5, "1.31156E-07"), (64, 7, "1.60975E-09"),
+            (64, 9, "3.631E-11"), (64, 11, "1.34482E-12"), (512, 1, "0.001953125"), (512, 3, "4.49666E-08"),
+            (512, 5, "3.47807E-12"), (512, 7, "5.69416E-16"), (512, 9, "1.61079E-19"), (1024, 1, "0.000976563"),
+            (1024, 3, "5.60434E-09"), (1024, 5, "1.07629E-13"), (1024, 7, "4.35769E-18"), (1024, 9, "3.03651E-22"),
+        ];
+        for (n, w, printed) in table1 {
+            let got = false_positive_rate(n, w, w, w).unwrap();
+            let want: f64 = printed.parse().unwrap();
+            assert!((got - want).abs() <= half_unit(printed) * (1.0 + 1e-5), "Table 1, n {n} w {w}: {got} against {printed}");
+        }
+        let table2: [(usize, usize, usize, &str); 16] = [
+            (64, 4, 4, "1.57387E-06"), (64, 4, 3, "0.000379303"), (64, 4, 2, "0.017093815"), (64, 4, 1, "0.232525308"),
+            (64, 8, 8, "2.25929E-10"), (64, 8, 7, "1.01442E-07"), (64, 8, 6, "9.84351E-06"), (64, 8, 5, "0.000360558"),
+            (64, 8, 4, "0.006169265"), (64, 32, 32, "5.45666E-19"), (64, 32, 24, "6.70223E-05"), (64, 32, 16, "0.59857385"),
+            (1024, 20, 20, "1.82484E-42"), (1024, 20, 17, "3.50023E-31"), (1024, 20, 14, "9.93621E-23"), (1024, 20, 10, "9.32924E-14"),
+        ];
+        for (n, w, t, printed) in table2 {
+            let got = false_positive_rate(n, w, w, t).unwrap();
+            let want: f64 = printed.parse().unwrap();
+            assert!((got - want).abs() <= half_unit(printed) * (1.0 + 1e-5), "Table 2, n {n} w {w} t {t}: {got} against {printed}");
+        }
+        // §II.D: n = 1024, w = 4, θ = 2 — "one in 14,587".
+        assert_eq!((1.0 / false_positive_rate(1024, 4, 4, 2).unwrap()).round(), 14_587.0);
+        // §II.E: eight bits, a subsample of four, θ = 2 — "one in 3,142"; twenty, ten, five — "1 in
+        // 2.5 million" (2,529,618 by this arithmetic).
+        assert_eq!((1.0 / false_positive_rate(1024, 8, 4, 2).unwrap()).round(), 3_142.0);
+        let million = 1.0 / false_positive_rate(1024, 20, 10, 5).unwrap();
+        assert!((2.5e6..2.55e6).contains(&million), "{million}");
+        // Table 4 (p. 17), its nine rows with θ = w: the union treated as a fixed set of its
+        // expected size, eqs. (14)–(15). Its rows with θ < w do not follow eq. (14) — see
+        // `union_false_positive_rate` — and are not fixtures.
+        let table4: [(usize, usize, usize, &str); 9] = [
+            (64, 4, 10, "0.043131941"), (64, 8, 10, "0.07104513"), (1024, 20, 20, "1.2532E-10"),
+            (1024, 20, 30, "7.76674E-08"), (8192, 20, 60, "4.33389E-18"), (8192, 40, 80, "2.15567E-20"),
+            (65536, 40, 80, "1.06052E-53"), (65536, 40, 1000, "2.4446E-14"), (65536, 40, 600, "2.86956E-21"),
+        ];
+        for (n, w, m, printed) in table4 {
+            let got = union_false_positive_rate(n, w, m, w).unwrap();
+            let want: f64 = printed.parse().unwrap();
+            assert!((got - want).abs() <= half_unit(printed) * (1.0 + 1e-5), "Table 4, n {n} w {w} M {m}: {got} against {printed}");
+        }
+        // The half-unit helper itself, on the three shapes the tables use.
+        assert_eq!(half_unit("0.015625"), 0.5e-6);
+        assert!((half_unit("2.40015E-05") - 0.5e-10).abs() < 1e-25);
+        assert!((half_unit("3.631E-11") - 0.5e-14).abs() < 1e-29);
     }
 
     #[test]

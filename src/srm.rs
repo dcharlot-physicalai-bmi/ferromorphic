@@ -18,9 +18,15 @@
 //! written in ([`crate::ttfs`], [`crate::eprop`]'s tempotron and `SpikeProp`,
 //! [`crate::surrogate`]'s `SLAYER` kernel all differentiate an `ε`).
 //!
-//! **SRM₀** is the simplification that keeps only the LAST own spike, `u(t) = η(t − t̂) + Σ …`,
-//! on the argument that a reset erases what came before it. This module implements both, and
-//! measures exactly where that argument fails — see below.
+//! **SRM₀** (Gerstner and Kistler 2002, §4.2.3, Eqs. 4.42 and 4.54–4.55) is the simplification
+//! that keeps only the LAST own spike's after-potential, `u(t) = η(t − t̂) + Σ_j w_j Σ_f ε(t − t_j^f)`,
+//! with the input sum still taken over ALL input spikes — the "short-term memory approximation",
+//! good when the neuron's intervals are much longer than `τ_m`, so that the earlier own spikes'
+//! after-potentials have decayed ([`Srm::potential_srm0`]). A different truncation drops the inputs
+//! that arrived before `t̂` as well, on the argument that a reset to zero erases them; that is the
+//! reset-as-initial-condition mapping cut at the last spike ([`Srm::potential_since_reset`]). This
+//! module implements all three, and measures exactly where each shortcut fails — see below.
+//! Earlier releases called the input-dropping truncation "SRM₀"; Gerstner's SRM₀ keeps the inputs.
 //!
 //! **Escape noise** replaces "fires when `u` reaches `θ`" with a hazard rate that rises smoothly
 //! through the threshold, `ρ(t) = ρ₀ exp((u(t) − θ)/Δu)`. The neuron becomes a point process; the
@@ -51,12 +57,16 @@
 //! - **The full SRM IS the linear neuron with reset by subtraction**, exactly: a direct
 //!   integration of `τ_m u̇ = −u + I`, `τ_s İ = −I`, subtracting `θ` at each spike, agrees with
 //!   the kernel sum to a tolerance set by the integrator, not by the model.
-//! - **SRM₀ is exact for delta synapses and NOT otherwise.** With `τ_s = 0`, resetting to zero
-//!   erases everything before the last spike and SRM₀ is exact. With `τ_s > 0` the synaptic
-//!   current is NOT reset by a spike, so input that arrived before `t̂` keeps flowing in
-//!   afterwards; SRM₀ drops exactly `ε(t − t̂) · Σ_{f < t̂} w e^{−(t̂ − t_f)/τ_s}`, and
-//!   [`Srm::carried_current`] is that term. Adding it back closes the gap to rounding — which is
-//!   how this module knows it has named the right term rather than a plausible one.
+//! - **SRM₀ drops exactly the earlier own spikes' after-potentials.** The full sum minus
+//!   `Σ_{k < last} η(t − t̂_k)` is [`Srm::potential_srm0`] to rounding, and with intervals of ten
+//!   membrane constants what it drops is below `e^{−10}` of a reset.
+//! - **The since-reset truncation is exact for delta synapses and NOT otherwise.** With `τ_s = 0`,
+//!   resetting to zero erases everything before the last spike and dropping those inputs is exact.
+//!   With `τ_s > 0` the synaptic current is NOT reset by a spike, so input that arrived before `t̂`
+//!   keeps flowing in afterwards; the truncation drops exactly
+//!   `ε(t − t̂) · Σ_{f < t̂} w e^{−(t̂ − t_f)/τ_s}`, and [`Srm::carried_current`] is that term. Adding
+//!   it back closes the gap to rounding — which is how this module knows it has named the right
+//!   term rather than a plausible one.
 //! - **Escape noise.** At a constant potential the interval density is `ρ e^{−ρt}`: the survivor
 //!   function is `e^{−ρt}`, the density integrates to one, the mean interval is `1/ρ`, and drawn
 //!   intervals match that mean and that survivor. The hazard's slope is `1/Δu` per volt — a decade
@@ -277,12 +287,30 @@ impl Srm {
         Ok(drive + after)
     }
 
-    /// SRM₀ at time `t`: only the LAST own spike's `η`, and only the inputs that arrived after it.
+    /// SRM₀ at time `t` (Gerstner and Kistler 2002, Eqs. 4.42, 4.55): the LAST own spike's `η`,
+    /// and every input spike's `ε`. The earlier own spikes' after-potentials are what it drops.
+    ///
+    /// # Errors
+    ///
+    /// As [`Srm::potential`], and [`SrmError::NonFinite`] for a `last` that is not finite.
+    pub fn potential_srm0(&self, t: f64, inputs: &[(f64, f64)], last: Option<f64>) -> Result<f64, SrmError> {
+        let every_input = self.potential(t, inputs, &[])?;
+        match last {
+            None => Ok(every_input),
+            Some(t_hat) if !t_hat.is_finite() => Err(SrmError::NonFinite { what: "last" }),
+            Some(t_hat) => Ok(every_input + self.kernel.eta(t - t_hat, self.reset)),
+        }
+    }
+
+    /// The reset-to-zero mapping cut at the last own spike: that spike's `η`, and only the inputs
+    /// that arrived AFTER it. This crate's truncation, not Gerstner's SRM₀ (which keeps every input,
+    /// [`Srm::potential_srm0`]); exact for delta synapses, and short by
+    /// [`Srm::carried_current`]'s PSP otherwise.
     ///
     /// # Errors
     ///
     /// As [`Srm::potential`].
-    pub fn potential_srm0(&self, t: f64, inputs: &[(f64, f64)], last: Option<f64>) -> Result<f64, SrmError> {
+    pub fn potential_since_reset(&self, t: f64, inputs: &[(f64, f64)], last: Option<f64>) -> Result<f64, SrmError> {
         let times: Vec<f64> = inputs.iter().map(|(t, _)| *t).collect();
         sorted("input", &times)?;
         if !t.is_finite() || inputs.iter().any(|(_, w)| !w.is_finite()) {
@@ -299,8 +327,8 @@ impl Srm {
     }
 
     /// The synaptic current standing at `t_hat` — what a reset does NOT erase, and exactly what
-    /// SRM₀ leaves out: `Σ_{f < t̂} w e^{−(t̂ − t_f)/τ_s}`. Zero for a delta synapse, which is why
-    /// SRM₀ is exact there.
+    /// [`Srm::potential_since_reset`] leaves out: `Σ_{f < t̂} w e^{−(t̂ − t_f)/τ_s}`. Zero for a
+    /// delta synapse, which is why that truncation is exact there.
     ///
     /// # Errors
     ///
@@ -480,7 +508,7 @@ mod tests {
         /// Subtract `reset` — the linear reset the full kernel sum is exact for.
         Subtract,
         /// Set the potential to zero, leaving the synaptic current alone. This is what a real
-        /// LIF does, and what SRM₀ assumes erases the past.
+        /// LIF does, and what the since-reset truncation assumes erases the past.
         ToZero,
     }
 
@@ -556,15 +584,15 @@ mod tests {
     }
 
     #[test]
-    fn srm0_is_exact_for_a_delta_synapse_and_short_by_a_named_term_otherwise() {
+    fn the_since_reset_truncation_is_exact_for_a_delta_synapse_and_short_by_a_named_term_otherwise() {
         // The reference throughout: the ODE, reset TO ZERO at the own spike, integrated exactly.
-        // SRM₀ claims to reproduce it from the last spike onward.
-        // Two of the five inputs arrive AFTER the own spike, so there is something for SRM₀ to
+        // The since-reset truncation claims to reproduce it from the last spike onward.
+        // Two of the five inputs arrive AFTER the own spike, so there is something for it to
         // be right about, and three before it, so there is something for it to drop.
         let inputs = [(2e-3, 0.7), (5e-3, 1.1), (11e-3, 0.5), (15e-3, 0.8), (23e-3, 0.9)];
         let t_hat = 13e-3;
 
-        // Delta synapses: a reset to zero erases everything, and SRM₀ is the whole story. The
+        // Delta synapses: a reset to zero erases everything, and the truncation is the whole story. The
         // reference here is the delta-synapse membrane summed directly, since the two-equation
         // integrator above has no τ_s to run with.
         let delta = Srm { kernel: Kernel::new(20e-3, 0.0).unwrap(), theta: 1.0, reset: 1.0 };
@@ -575,14 +603,14 @@ mod tests {
         assert!((inputs.iter().filter(|(f, _)| *f < t_hat).map(|(_, w)| w).sum::<f64>() - 2.3).abs() < 1e-15);
         for t in [18e-3, 30e-3] {
             let exact = integrate(&delta, &inputs, &[t_hat], t, Reset::ToZero);
-            let srm0 = delta.potential_srm0(t, &inputs, Some(t_hat)).unwrap() - delta.kernel.eta(t - t_hat, delta.reset);
-            assert!((srm0 - exact).abs() < 1e-15, "delta synapse at {t}: {srm0} against {exact}");
+            let cut = delta.potential_since_reset(t, &inputs, Some(t_hat)).unwrap() - delta.kernel.eta(t - t_hat, delta.reset);
+            assert!((cut - exact).abs() < 1e-15, "delta synapse at {t}: {cut} against {exact}");
             assert!(exact.abs() > 1e-2, "the comparison at {t} is between two near-zeros");
         }
         // Before the next input arrives there is nothing at all left: that is what "erased" means.
         assert_eq!(integrate(&delta, &inputs, &[t_hat], 14e-3, Reset::ToZero), 0.0);
 
-        // With a synaptic time constant the current standing at t̂ keeps flowing, and SRM₀ is
+        // With a synaptic time constant the current standing at t̂ keeps flowing, and the truncation is
         // short by exactly that current's own PSP.
         let srm = Srm { kernel: Kernel::new(20e-3, 5e-3).unwrap(), theta: 1.0, reset: 1.0 };
         let carried = srm.carried_current(t_hat, &inputs).unwrap();
@@ -592,31 +620,72 @@ mod tests {
         let mut worst = 0.0f64;
         for t in [14e-3, 18e-3, 30e-3] {
             let truth = integrate(&srm, &inputs, &[t_hat], t, Reset::ToZero);
-            let srm0 = srm.potential_srm0(t, &inputs, Some(t_hat)).unwrap() - srm.kernel.eta(t - t_hat, srm.reset);
-            let missing = truth - srm0;
-            assert!(missing.abs() > 1e-3, "at {t} SRM₀ is short by only {missing}, too little to be evidence");
+            let cut = srm.potential_since_reset(t, &inputs, Some(t_hat)).unwrap() - srm.kernel.eta(t - t_hat, srm.reset);
+            let missing = truth - cut;
+            assert!(missing.abs() > 1e-3, "at {t} the truncation is short by only {missing}, too little to be evidence");
             // And what is missing is the named term, to rounding — not merely of its order.
             assert!((missing - carried * srm.kernel.epsilon(t - t_hat)).abs() < 1e-14, "at {t}: short by {missing}, named term {}", carried * srm.kernel.epsilon(t - t_hat));
             worst = worst.max(missing.abs() / truth.abs().max(1e-12));
         }
-        assert!(worst > 0.05, "SRM₀'s largest relative error was only {worst}");
+        assert!(worst > 0.05, "the truncation's largest relative error was only {worst}");
 
-        // With no own spike at all, SRM₀ IS the full sum — no after-potential is applied from a
+        // With no own spike at all, the truncation IS the full sum — no after-potential is applied from a
         // spike that never happened. `None` is not "a spike at minus infinity" only because the
         // after-potential is skipped; the kernel there would be exp(-inf) = 0, so the difference
         // only shows where the reset is NOT exponentially small, which is what this checks.
         let t = 30e-3;
-        let none = srm.potential_srm0(t, &inputs, None).unwrap();
+        let none = srm.potential_since_reset(t, &inputs, None).unwrap();
         assert_eq!(none, srm.potential(t, &inputs, &[]).unwrap());
         assert!(none.abs() > 1e-2, "the comparison is between two near-zeros");
         let flat = Srm { kernel: srm.kernel, theta: 1.0, reset: 2.0 };
         let mut wide = flat;
         wide.kernel.tau_m = 1e12; // an after-potential that does not decay over this window
-        assert_eq!(wide.potential_srm0(t, &inputs, None).unwrap(), wide.potential(t, &inputs, &[]).unwrap());
-        assert!((wide.potential_srm0(t, &inputs, Some(t_hat)).unwrap() - wide.potential_srm0(t, &inputs, None).unwrap()).abs() > 1.0, "the two must differ by the whole reset");
+        assert_eq!(wide.potential_since_reset(t, &inputs, None).unwrap(), wide.potential(t, &inputs, &[]).unwrap());
+        assert!((wide.potential_since_reset(t, &inputs, Some(t_hat)).unwrap() - wide.potential_since_reset(t, &inputs, None).unwrap()).abs() > 1.0, "the two must differ by the whole reset");
         // And it drops the inputs before t̂, which is the other half of the simplification.
         let after_only: f64 = inputs.iter().filter(|(f, _)| *f >= t_hat).map(|(f, w)| w * srm.kernel.epsilon(t - f)).sum();
-        assert!((srm.potential_srm0(t, &inputs, Some(t_hat)).unwrap() - (after_only + srm.kernel.eta(t - t_hat, 1.0))).abs() < 1e-18);
+        assert!((srm.potential_since_reset(t, &inputs, Some(t_hat)).unwrap() - (after_only + srm.kernel.eta(t - t_hat, 1.0))).abs() < 1e-18);
+    }
+
+    /// Gerstner's SRM₀ (Gerstner and Kistler 2002, Eqs. 4.42, 4.55) keeps EVERY input and only the
+    /// last own spike's `η`, so what it drops from the full sum is exactly the earlier own spikes'
+    /// after-potentials — and when the intervals are ten membrane constants long, less than
+    /// `e^{−10}` of a reset, which is the short-term-memory argument (Eq. 4.54) made a number.
+    /// The reset is 1.5 rather than one, so an after-potential scaled by the wrong amplitude shows.
+    #[test]
+    fn srm0_keeps_every_input_and_drops_only_the_earlier_after_potentials() {
+        let srm = Srm { kernel: Kernel::new(20e-3, 5e-3).unwrap(), theta: 1.0, reset: 1.5 };
+        let inputs = [(2e-3, 0.7), (5e-3, 1.1), (11e-3, 0.5), (15e-3, 0.8), (23e-3, 0.9)];
+        let own = [4e-3, 9e-3, 13e-3];
+        for t in [14e-3, 18e-3, 30e-3] {
+            let full = srm.potential(t, &inputs, &own).unwrap();
+            let srm0 = srm.potential_srm0(t, &inputs, Some(13e-3)).unwrap();
+            let dropped: f64 = own[..2].iter().map(|f| srm.kernel.eta(t - f, srm.reset)).sum();
+            assert!(dropped < -0.1, "at {t} the earlier after-potentials are only {dropped}");
+            assert!((full - dropped - srm0).abs() < 1e-15, "at {t}: full {full}, dropped {dropped}, SRM₀ {srm0}");
+            // And it is not the since-reset truncation: the inputs before t̂ are in it, whole.
+            let cut = srm.potential_since_reset(t, &inputs, Some(13e-3)).unwrap();
+            let early: f64 = inputs.iter().filter(|(f, _)| *f < 13e-3).map(|(f, w)| w * srm.kernel.epsilon(t - f)).sum();
+            assert!(early > 0.01, "at {t} the early inputs leave only {early}");
+            assert!((srm0 - cut - early).abs() < 1e-15, "at {t}: SRM₀ {srm0}, truncation {cut}, early inputs {early}");
+        }
+        // With one own spike there is nothing to drop, and SRM₀ is the full sum to the bit.
+        assert_eq!(srm.potential_srm0(30e-3, &inputs, Some(13e-3)).unwrap(), srm.potential(30e-3, &inputs, &[13e-3]).unwrap());
+        // Intervals of ten τ_m: the two earlier after-potentials are 1.5·(e^{−10.25} + e^{−20.25})
+        // = 5.3e-5 of potential, below e^{−10} of the reset and above e^{−11} of it.
+        let sparse = [0.0, 200e-3, 400e-3];
+        let t = 405e-3;
+        let gap = srm.potential(t, &inputs, &sparse).unwrap() - srm.potential_srm0(t, &inputs, Some(400e-3)).unwrap();
+        assert!(gap < 0.0 && -gap < 1.5 * (-10.0f64).exp() && -gap > 1.5 * (-11.0f64).exp(), "the dropped after-potentials: {gap}");
+        // No own spike: the full sum over no own spikes, whatever the reset — not even a reset that
+        // would poison an after-potential reaches the arithmetic.
+        for reset in [1.5, f64::INFINITY, f64::NAN] {
+            let r = Srm { reset, ..srm };
+            assert_eq!(r.potential_srm0(30e-3, &inputs, None).unwrap(), r.potential(30e-3, &inputs, &[]).unwrap(), "reset {reset}");
+        }
+        assert_eq!(srm.potential_srm0(0.0, &[], Some(f64::NAN)), Err(SrmError::NonFinite { what: "last" }));
+        assert_eq!(srm.potential_srm0(0.0, &[], Some(f64::INFINITY)), Err(SrmError::NonFinite { what: "last" }));
+        assert_eq!(srm.potential_srm0(0.0, &[(2e-3, 1.0), (1e-3, 1.0)], None), Err(SrmError::Unsorted { index: 1 }));
     }
 
     #[test]
@@ -627,8 +696,8 @@ mod tests {
         assert_eq!(srm.potential(0.0, &[(f64::NAN, 1.0)], &[]), Err(SrmError::NonFinite { what: "input" }));
         assert_eq!(srm.potential(0.0, &[(1e-3, f64::NAN)], &[]), Err(SrmError::NonFinite { what: "t" }));
         assert_eq!(srm.potential(f64::NAN, &[], &[]), Err(SrmError::NonFinite { what: "t" }));
-        assert!(srm.potential_srm0(0.0, &[(2e-3, 1.0), (1e-3, 1.0)], None).is_err());
-        assert_eq!(srm.potential_srm0(0.0, &[], Some(f64::NAN)), Err(SrmError::NonFinite { what: "last" }));
+        assert!(srm.potential_since_reset(0.0, &[(2e-3, 1.0), (1e-3, 1.0)], None).is_err());
+        assert_eq!(srm.potential_since_reset(0.0, &[], Some(f64::NAN)), Err(SrmError::NonFinite { what: "last" }));
         assert!(srm.carried_current(f64::NAN, &[]).is_err() && srm.carried_current(0.0, &[(2e-3, 1.0), (1e-3, 1.0)]).is_err());
         let many = vec![0.0; MAX_SPIKES + 1];
         assert_eq!(srm.potential(0.0, &[], &many), Err(SrmError::TooManySpikes { got: MAX_SPIKES + 1 }));
@@ -737,14 +806,14 @@ mod tests {
     /// A neuron that has never fired applies no after-potential — not even one that happens to
     /// vanish.
     ///
-    /// The hole: `srm0_is_exact_for_delta_synapses_and_not_otherwise` already asserts
-    /// `potential_srm0(t, inputs, None) == potential(t, inputs, &[])`, and widens `tau_m` to
+    /// The hole: `the_since_reset_truncation_is_exact_for_a_delta_synapse_and_short_by_a_named_term_otherwise` already asserts
+    /// `potential_since_reset(t, inputs, None) == potential(t, inputs, &[])`, and widens `tau_m` to
     /// `1e12` so that an applied after-potential could not hide inside an exponential. But what
     /// makes the conditional invisible there is that `eta(+inf, reset)` is
     /// `-reset * exp(-inf/tau_m)`, i.e. `-reset * 0.0`, which is `-0.0`, and `x + (-0.0) == x`.
     /// That holds for every FINITE reset and for no other: `inf * 0.0` is a `NaN`. `Srm::reset`
     /// is a `pub` field on a struct this module's own tests build by literal and by assignment,
-    /// and `potential_srm0` validates `t`, the weights and `last` — nothing else. So the identity
+    /// and `potential_since_reset` validates `t`, the weights and `last` — nothing else. So the identity
     /// being pinned is over ALL resets: with `last: None` the reset is not an argument to any
     /// arithmetic, so a reset that would poison the sum cannot reach it.
     #[test]
@@ -759,9 +828,9 @@ mod tests {
         assert!((drive - 1.161_846_79).abs() < 1e-8, "the fixture's drive is {drive}");
         for reset in [1.0, 0.0, -3.0, 1e300, f64::INFINITY, f64::NEG_INFINITY, f64::NAN] {
             let srm = Srm { kernel, theta: 1.0, reset };
-            let none = srm.potential_srm0(t, &inputs, None).unwrap();
+            let none = srm.potential_since_reset(t, &inputs, None).unwrap();
             assert_eq!(none, drive, "a reset of {reset} reached the sum");
-            assert_eq!(none, srm.potential(t, &inputs, &[]).unwrap(), "SRM₀ with no own spike is not the full sum over no own spikes, at a reset of {reset}");
+            assert_eq!(none, srm.potential(t, &inputs, &[]).unwrap(), "the truncation with no own spike is not the full sum over no own spikes, at a reset of {reset}");
         }
         // Why the finite half of that loop cannot see it, stated so the non-finite half reads as
         // the measurement it is: at a finite reset the after-potential a spike at minus infinity
@@ -775,7 +844,7 @@ mod tests {
     /// A delta synapse carries no current, and the early return that says so is load-bearing at
     /// two edges the rest of the suite cannot reach.
     ///
-    /// The hole: `srm0_is_exact_for_delta_synapses_and_not_otherwise` asserts
+    /// The hole: `the_since_reset_truncation_is_exact_for_a_delta_synapse_and_short_by_a_named_term_otherwise` asserts
     /// `carried_current(t_hat, &inputs) == 0.0` for `tau_s = 0.0` with weights of order one, and
     /// the argument that the early return is redundant there is sound — every term is
     /// `w * exp(-(t_hat - f)/0)` with a strictly positive numerator, `w * exp(-inf)`, `w * 0`.
@@ -784,7 +853,7 @@ mod tests {
     /// while `is_delta` is `tau_s == 0.0`, which `-0.0` also satisfies. Dividing the strictly
     /// NEGATIVE numerator by a negative zero gives `+inf`, and `exp(+inf)` is `+inf`. (b)
     /// `carried_current` is the one entry point in this module that does not check the weights;
-    /// `potential` and `potential_srm0` both refuse a non-finite one. `inf * exp(-inf)` is
+    /// `potential` and `potential_since_reset` both refuse a non-finite one. `inf * exp(-inf)` is
     /// `inf * 0.0`, a `NaN`.
     #[test]
     fn a_delta_synapse_carries_no_current_at_a_negative_zero_or_an_infinite_weight() {

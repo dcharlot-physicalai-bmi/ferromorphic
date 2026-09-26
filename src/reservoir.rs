@@ -11,8 +11,8 @@
 //! least-squares problem with a closed-form solution.
 //!
 //! Two papers invented it independently in the same window. Maass, Natschläger & Markram, *Real-Time
-//! Computing Without Stable States: A New Framework for Neural Computation Based on Perturbations of
-//! Neural Circuits*, Neural Computation 14:2531–2560, 2002, built the **liquid state machine**: a
+//! Computing Without Stable States: A New Framework for Neural Computation Based on Perturbations*,
+//! Neural Computation 14(11):2531–2560, 2002, doi:10.1162/089976602760407955, built the **liquid state machine**: a
 //! column of spiking neurons with distance-dependent connectivity, whose transient response to an
 //! input is read out by a memoryless classifier. Jaeger, *The "Echo State" Approach to Analysing and
 //! Training Recurrent Neural Networks*, GMD Report 148, German National Research Center for
@@ -58,9 +58,13 @@
 //!    *Spatiotemporal Pattern Recognition via Liquid State Machines*, IJCNN 2006, which divides the
 //!    distance between class centroids by the spread within a class.
 //!
-//! 3. **The approximation property** (Maass, §3). The readout class must be rich enough to extract
-//!    whatever the state holds. With a linear readout this is exactly a least-squares residual, and
-//!    [`approximation_residual`] returns it.
+//! 3. **The approximation property** (Maass et al. 2002, §2; defined formally in Appendix A and
+//!    used in Theorem 1 of §4). The readout class must be rich enough to extract whatever the
+//!    state holds. Appendix A defines it as a property of the readout FUNCTION CLASS — uniform
+//!    approximation of any continuous function on a compact set — which the class of linear
+//!    readouts does not have. So what [`approximation_residual`] returns, a least-squares
+//!    residual of a linear readout, is a proxy measurement of how far a linear readout falls
+//!    short on a given target, not the property itself.
 //!
 //! Maass's theorem is that separation plus approximation gives universal real-time computing power
 //! on time-varying inputs. Both halves are needed and both are measurable, which is why they are
@@ -1543,9 +1547,13 @@ pub struct MemoryCapacity {
 /// cannot sum past the dimension. In practice a reservoir reaches a fraction of it — the tests here
 /// see roughly a fifth — and the gap is the cost of a nonlinearity that is buying something else.
 ///
-/// The readout is fitted on the same data the `r²` is computed from, which is the definition in the
-/// source. It makes the figure optimistic for small sample counts, so `samples` should be several
-/// times `units`; this implementation refuses fewer samples than delays.
+/// Jaeger defines `MC_k` as the maximum, over readout weights, of the squared correlation on a
+/// stationary input (Eq. 14) — the infinite-training-data optimum. Fitting the readout on the same
+/// finite sample the `r²` is computed from is this crate's plug-in estimator of that maximum, and
+/// it is biased upward; Jaeger's own figures (for example `MC = 19.2` for a 20-unit linear network)
+/// were estimated on separate test runs. So `samples` should be several times `units`; this
+/// implementation refuses fewer samples than delays. (Releases through 0.22.0 called same-sample
+/// fitting "the definition in the source"; it is not.)
 ///
 /// # Errors
 ///

@@ -9,7 +9,7 @@ hardware constraint models, analog device non-idealities, NIR, event-camera deco
 metrics, teaching tasks — and a joules ledger that charges for the memory traffic a synaptic
 operation needs.
 
-**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 81 modules, 2,736 tests.**
+**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 81 modules, 2,738 tests.**
 
 Run it in a browser without installing anything:
 **[energy.physicalai-bmi.org/neuromorphic](https://energy.physicalai-bmi.org/neuromorphic)** — the
@@ -95,7 +95,7 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 | `ttfs` | learning with spike TIMES: two neuron models whose first-spike time is a closed form (Mostafa's non-leaky integrator; the leaky cell with `τ_m = 2τ_s`), its exact gradient by the implicit function theorem, backpropagation through spike times checked against finite differences, and XOR learned with one spike per neuron |
 | `ssm` | diagonal state-space models: the S4D sequence model and a bank of multi-timescale synapses shown to be the same object — zero-order hold exact for held input, convolution and recurrence required to agree to rounding, and the continuous impulse response checked against `srm`'s postsynaptic potential |
 | `sdr` | sparse distributed representations: the hypergeometric arithmetic of why a few active bits out of many are unconfusable, computed in logarithms so it holds at a hundred thousand bits, with subsampling, noise and union capacity |
-| `srm` | the Spike Response Model: the kernel form the crate's time-coded learning is written in, checked against `eventprop`'s own integration, plus escape noise — a hazard, a survivor function and an interval distribution — and the exact term SRM₀ drops when the synapse has a time constant |
+| `srm` | the Spike Response Model: the kernel form the crate's time-coded learning is written in, checked against `eventprop`'s own integration, plus escape noise — a hazard, a survivor function and an interval distribution — Gerstner's SRM₀, and the exact term a reset-to-zero truncation drops when the synapse has a time constant |
 | `ottt` | online training through time: the gradient of a spiking layer computed FORWARD in constant memory, proven equal to the true gradient when the reset path is off and measured against it when it is on |
 | `polychron` | polychronous groups: the time-locked patterns axonal delays buy, enumerated by simulation — with the count shown to be combinatorics rather than evidence, and a prediction about cascade size refuted by the measurement |
 | `eventprop` | `EventProp`: exact gradients for LIF networks with exponential synapses whose neurons fire any number of times and may be recurrent — an event-driven forward pass with spike times found to the last bit, an adjoint that jumps only at the spikes, checked against a closed-form spike time and its derivative and against finite differences of every weight |
@@ -282,7 +282,7 @@ rather than assumed.
 - **A sub-threshold current returns `None`, not a large number.** "Fires rarely" and "does not fire"
   are different statements and a rate-coded readout cannot recover the difference later.
 
-2,736 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
+2,738 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
 `#![forbid(unsafe_code)]`, and `cargo build --target wasm32-unknown-unknown` compiles the library
 unchanged. Three of the four `examples/` are verification gates that exit non-zero when a check fails. Two of them run
 a closed form against the simulator — the LIF's analytic inter-spike interval, and the STDP pair
@@ -333,7 +333,7 @@ be reproduced cannot be checked against anything, including itself.
 
 ## Status
 
-**Today:** eighty-one modules, 2,736 tests, and **8,452 recorded mutations — one list per
+**Today:** eighty-one modules, 2,738 tests, and **8,462 recorded mutations — one list per
 module**, every one applicable to today's source by `python3 tools/mutate.py`.
 `python3 tools/readme_numbers.py` recomputes those figures from the repository and refuses if this
 paragraph disagrees with it, because the last time they were typed by hand the test count was 423
@@ -690,10 +690,13 @@ quiet.
 0.17.0 adds three more: 123 mutations, 13 survivors — every one now caught — and 3 equivalent by
 stated arguments.  `srm` is the formalism the rest of the crate's time-coded
 learning is written in — the neuron as two kernels and a threshold — and writing it down produced
-a correction to a claim that is usually made loosely. SRM₀ says a reset erases the past, and that
-is exact for a delta synapse and FALSE for a synapse with a time constant: the reset empties the
-membrane but not the synaptic current, so input that arrived before the spike keeps flowing in
-afterwards. The term SRM₀ drops is `ε(t − t̂) · Σ_{f < t̂} w e^{−(t̂ − t_f)/τ_s}`, it is a few
+a correction to a claim that is usually made loosely: that a reset erases the past. Dropping the
+inputs that arrived before the last spike is exact for a delta synapse and FALSE for a synapse
+with a time constant: the reset empties the membrane but not the synaptic current, so input that
+arrived before the spike keeps flowing in afterwards. (Releases up to 0.22.0 called that
+truncation SRM₀. Gerstner's SRM₀ keeps every input and drops only the earlier spikes'
+after-potentials; the module now has both, under their right names.) The term the truncation
+drops is `ε(t − t̂) · Σ_{f < t̂} w e^{−(t̂ − t_f)/τ_s}`, it is a few
 percent of the potential in the fixture here, and adding it back closes the gap to rounding —
 which is how the module knows it has named the right term rather than a plausible one. The
 kernel itself is checked against `eventprop`'s integration of the same two equations, and the

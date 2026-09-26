@@ -70,10 +70,12 @@
 //! is not caught.
 //!
 //! The 80/20 excitatory/inhibitory split is the modelling convention, from Brunel (J. Comput.
-//! Neurosci. 8:183-208, 2000, `N_E = 4 N_I`) and Maass et al. (Neural Computation 14(11):2531-2560,
-//! 2002, 20% inhibitory). **Caveat beside the figure:** the anatomy it abstracts is 15-20%
-//! inhibitory and varies by area and species — the roughly 15% GABA-immunoreactive neurons of cat
-//! area 17 are Gabbott and Somogyi's count (Exp. Brain Res. 61:323-331, 1986), and Braitenberg and
+//! Neurosci. 8:183-208, 2000, p. 185: "`N_E = 0.8N`, `N_I = 0.2N`", so `N_E = 4 N_I`) and Maass et al. (Neural Computation 14(11):2531-2560,
+//! 2002, 20% inhibitory). **Caveat beside the figure:** the anatomy it abstracts varies by area and
+//! species — Gabbott and Somogyi (Exp. Brain Res. 61:323-331, 1986) counted 20.6% (20.60 ± 0.48%,
+//! mean ± SEM, five cats) of the neurons of cat area 17 as GABA-immunoreactive, which is the 80/20
+//! convention itself rather than a figure below it (releases through 0.22.0 said "roughly 15%"
+//! and cited them for it), and Braitenberg and
 //! Schüz (*Cortex: Statistics and Geometry of Neuronal Connectivity*, 2nd ed., Springer, 1998) put
 //! pyramidal cells near 85% of mouse cortex. 80/20 is a round number chosen inside that range, not
 //! a measurement.
@@ -261,14 +263,16 @@ impl Sign {
 ///
 /// From the modelling convention — Brunel, J. Comput. Neurosci. 8:183-208, 2000 (`N_E = 4 N_I`) and
 /// Maass et al., Neural Computation 14(11):2531-2560, 2002 (20% inhibitory). The anatomy behind it
-/// is 15-20% and area-dependent; see the module doc. Dimensionless, in `[0, 1]`.
+/// is area- and species-dependent (20.6% in cat area 17); see the module doc. Dimensionless, in
+/// `[0, 1]`.
 pub const CORTICAL_INHIBITORY_FRACTION: f64 = 0.2;
 
 /// Brunel's inhibition-to-excitation weight ratio for a network balanced at the 80/20 split.
 ///
 /// `g = |J_I| / J_E` of Brunel, J. Comput. Neurosci. 8:183-208, 2000 — **not** a constant of Maass
 /// et al. 2002, which defines no `g`: with four times as many excitatory neurons as inhibitory ones, the
-/// mean drive on a neuron cancels exactly at `g = 4`. Dimensionless. [`Wiring::balanced`] applies
+/// mean drive on a neuron cancels exactly at `g = 4` — Brunel's "line `g = 4` is where feedback
+/// excitation exactly balances inhibition" (p. 188). Dimensionless. [`Wiring::balanced`] applies
 /// it and [`Wiring::expected_drive`] is the arithmetic that makes the cancellation checkable.
 pub const BALANCED_G: f64 = 4.0;
 
@@ -795,8 +799,10 @@ pub fn watts_strogatz(
 /// p(k) = 2m(m+1) / (k(k+1)(k+2)),    k >= m
 /// ```
 ///
-/// derived by Krapivsky, Redner and Leyvraz (Phys. Rev. Lett. 85:4629-4632, 2000) and by
-/// Dorogovtsev, Mendes and Samukhin (Phys. Rev. Lett. 85:4633-4636, 2000). This module did not
+/// Dorogovtsev, Mendes and Samukhin's Eq. (6a) (Phys. Rev. Lett. 85:4633-4636, 2000), written
+/// there in the in-degree `q = k − m`. Krapivsky, Redner and Leyvraz (Phys. Rev. Lett.
+/// 85:4629-4632, 2000) derived the `m = 1` case, `n_k = 4/(k(k+1)(k+2))`, by the same rate-equation
+/// method; releases through 0.22.0 credited them with the general form. This module did not
 /// re-derive it; it measured it, and
 /// `barabasi_albert_degrees_match_the_exact_stationary_distribution` checks every degree from `m`
 /// to `m + 4` against that expression within binomial error.
