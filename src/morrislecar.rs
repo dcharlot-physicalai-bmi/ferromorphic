@@ -243,6 +243,41 @@
 //! every reading. The tests hold that reading of the accumulation law; the module does not implement
 //! it.
 //!
+//! # The sets the field uses, and where they come from
+//!
+//! Rinzel and Ermentrout, *Analysis of neural excitability and oscillations* (in Koch and Segev,
+//! eds., *Methods in Neuronal Modeling*, MIT Press; read here as the authors' typescript of the
+//! chapter, whose references run to 1996, so the 1998 second edition), print three parameter sets
+//! in their Appendix A that are none of the 1981 paper's, all for Eq. 9 with calcium
+//! instantaneous: `V1 = −1.2`, `V2 = 18`, `g_K = 8`, `g_L = 2`, `V_K = −84`,
+//! `V_L = −60`, `V_Ca = 120`, `C = 20`, and then `V3 = 2`, `V4 = 30`, `g_Ca = 4.4`, `φ = 0.04` for
+//! their Figs. 1–3 ([`MorrisLecar::RINZEL_ERMENTROUT_HOPF`]); `V3 = 12`, `V4 = 17.4`, `g_Ca = 4`,
+//! `φ = 1/15` for Figs. 4–6 ([`MorrisLecar::RINZEL_ERMENTROUT_SNLC`]); and that set with `φ = 0.23`
+//! for Figs. 7–8 ([`MorrisLecar::RINZEL_ERMENTROUT_FAST_K`]). Computed here, from the closed forms
+//! above:
+//!
+//! - **Figs. 4–6 begin firing at zero frequency.** The fold of `I_ss`, which they place "at the
+//!   value of `V` for which `∂I_ss/∂v = 0`" (p. 7), is at `I₁ = 39.963153` µA/cm²; just past it the
+//!   period diverges as `1/√(I − I₁)` — 1789, 907 and 465 ms at 0.01, 0.04 and 0.16 above it.
+//! - **Figs. 1–3 begin firing at a finite frequency.** `I_ss` has no fold; the rest state loses
+//!   stability at a Hopf point, `I = 93.8576`, and a large cycle already exists below it: started
+//!   on it, the membrane fires at 88.3 µA/cm² at 7.90 Hz while the rest state is still stable, and
+//!   the cycle is gone at 88.2.
+//! - **Figs. 7–8: `φ` moves the stability, not the curve.** `φ` does not enter `I_ss`, so the fold
+//!   is at 39.963153 again; the upper equilibrium's Hopf point moves to 36.316, and at
+//!   40 µA/cm² a stable upper equilibrium and a 24.04 ms cycle coexist.
+//!
+//! Tsumoto, Kitajima, Yoshinaga, Aihara and Kawakami, *Bifurcations in Morris–Lecar neuron model*,
+//! Neurocomputing 69:293–316, 2006, print the same class I and class II sets with ONE difference:
+//! their Table 1 has `V_K = −80`, not −84 ([`MorrisLecar::TSUMOTO_CLASS_I`],
+//! [`MorrisLecar::TSUMOTO_CLASS_II`]). Their figures are drawn with −80: Fig. 2a's saddle-node `g₁`
+//! at about 40 and Hopf point `h₁` between 80 and 90 are 39.693 and 85.103 here, where −84 would
+//! put `h₁` at 97.79; and Fig. 2c's diagram — the class I values with `V3 = 2` — has its Hopf point
+//! `h₂` at 51.190, its cycle fold `G₂` between 50.35 and 50.40, and a firing frequency there of
+//! 7.27 Hz, against the inset's 51.2 and 50.3 and Fig. 2d's curve starting near 7 Hz. ⚠ Their
+//! Table 2 gives `φ` in s⁻¹, but their time is in milliseconds (Eq. 1); read as per second, `φ`
+//! would slow the potassium gate a thousandfold and none of their figures would follow.
+//!
 //! # What is checked
 //!
 //! The tests hold the paper's printed numbers where the paper is self-consistent, and reference
@@ -903,6 +938,45 @@ impl MorrisLecar {
 
     /// Fig. 6 with `g_Ca = 4`, `g_K = 8` — printed for the solid line, and drawing the broken one.
     pub const FIG6_CA4_K8: Self = Self { g_ca: 4.0, g_k: 8.0, ..Self::FIG6_CA6_K12 };
+
+    /// Rinzel and Ermentrout's set for their Figs. 1–3 (Appendix A): `V1 = −1.2`, `V2 = 18`,
+    /// `V3 = 2`, `V4 = 30`, `g_Ca = 4.4`, `g_K = 8`, `g_L = 2`, `V_K = −84`, `V_L = −60`,
+    /// `V_Ca = 120`, `C = 20`, `φ = 0.04` — the rest state losing stability at a Hopf point. Their
+    /// model is Eq. 9, calcium instantaneous; `φ` is `λ̄_N` here, and `λ̄_M`, which Eq. 9 does not
+    /// use, is set to 1 only so that [`MorrisLecar::check`] passes. Eq. 1 with this set is not theirs.
+    pub const RINZEL_ERMENTROUT_HOPF: Self = Self {
+        c: 20.0,
+        g_l: 2.0,
+        g_ca: 4.4,
+        g_k: 8.0,
+        v_l: -60.0,
+        v_ca: 120.0,
+        v_k: -84.0,
+        m: Gate { v_half: -1.2, slope: 18.0, rate: 1.0 },
+        n: Gate { v_half: 2.0, slope: 30.0, rate: 0.04 },
+    };
+
+    /// Rinzel and Ermentrout's set for their Figs. 4–6: the Figs. 1–3 set with `V3 = 12`,
+    /// `V4 = 17.4`, `g_Ca = 4` and `φ = 1/15` — firing that begins at a saddle-node on the cycle.
+    pub const RINZEL_ERMENTROUT_SNLC: Self = Self {
+        g_ca: 4.0,
+        n: Gate { v_half: 12.0, slope: 17.4, rate: 1.0 / 15.0 },
+        ..Self::RINZEL_ERMENTROUT_HOPF
+    };
+
+    /// Rinzel and Ermentrout's set for their Figs. 7–8: the Figs. 4–6 set with `φ = 0.23`.
+    pub const RINZEL_ERMENTROUT_FAST_K: Self =
+        Self { n: Gate { rate: 0.23, ..Self::RINZEL_ERMENTROUT_SNLC.n }, ..Self::RINZEL_ERMENTROUT_SNLC };
+
+    /// Tsumoto, Kitajima, Yoshinaga, Aihara and Kawakami's class I set: their Table 1 (`C = 20`,
+    /// `g_K = 8`, `g_L = 2`, `V_Ca = 120`, `V_K = −80`, `V_L = −60`, `V1 = −1.2`, `V2 = 18`) with
+    /// Table 2's class I column (`g_Ca = 4`, `φ = 1/15`, `V3 = 12`, `V4 = 17.4`). Their `V_K` is −80
+    /// where Rinzel and Ermentrout's is −84, and their figures are drawn with −80.
+    pub const TSUMOTO_CLASS_I: Self = Self { v_k: -80.0, ..Self::RINZEL_ERMENTROUT_SNLC };
+
+    /// Tsumoto et al.'s class II set: Table 1 with Table 2's class II column (`g_Ca = 4.4`,
+    /// `φ = 1/25`, `V3 = 2`, `V4 = 30`).
+    pub const TSUMOTO_CLASS_II: Self = Self { v_k: -80.0, ..Self::RINZEL_ERMENTROUT_HOPF };
 
     /// Every parameter finite, `C`, `g_L` and both `λ̄` positive, `g_Ca` and `g_K` non-negative,
     /// `V2` and `V4` non-zero.
@@ -3055,5 +3129,125 @@ mod tests {
         assert!(far.windows(2).all(|w| w[1] < w[0]), "{far:?}");
         let ratio = far[3] / far[4];
         assert!((ratio / (-re * 30_000.0).exp() - 1.0).abs() < 1e-3, "{ratio}");
+    }
+
+    /// The largest `I` over a closed-form fold of `I_ss` in `[−80, 60]` mV.
+    fn knee(m: &MorrisLecar) -> f64 {
+        m.folds(-80.0, 60.0, 20_000).unwrap().iter().map(|f| f.i).fold(f64::NEG_INFINITY, f64::max)
+    }
+
+    /// The amplitude of the last `tail` steps of a reduced run.
+    fn swing(v: &[f64], tail: usize) -> f64 {
+        let t = &v[v.len() - tail..];
+        t.iter().copied().fold(f64::NEG_INFINITY, f64::max) - t.iter().copied().fold(f64::INFINITY, f64::min)
+    }
+
+    /// Rinzel and Ermentrout's Figs. 4–6 set begins firing at zero frequency (their p. 7): the rest
+    /// state and the saddle meet at the fold of `I_ss`, `I₁ = 39.963153`, and just past it the period
+    /// diverges as `1/√(I − I₁)` — measured 1789.1, 906.7 and 465.1 ms at 0.01, 0.04 and 0.16 above
+    /// the fold, so `T·√(I − I₁)` is 178.9, 181.3 and 186.0, falling towards a limit, and each
+    /// quartering of the distance nearly doubles the period. Just below, the membrane rests.
+    #[test]
+    fn rinzel_and_ermentrouts_class_i_set_begins_firing_at_zero_frequency() {
+        let m = MorrisLecar::RINZEL_ERMENTROUT_SNLC;
+        let i1 = knee(&m);
+        assert!((i1 - 39.963_153_092_745_36).abs() < 1e-9, "{i1}");
+        let n0 = m.n.steady(-30.0);
+        let t: Vec<f64> = [0.01, 0.04, 0.16].iter().map(|d| period(&run_reduced(&m, -30.0, n0, i1 + d, 4_000_000)).0).collect();
+        assert!((t[0] - 1789.1).abs() < 0.5 && (t[1] - 906.67).abs() < 0.5 && (t[2] - 465.06).abs() < 0.5, "{t:?}");
+        let scaled: Vec<f64> = t.iter().zip([0.1, 0.2, 0.4]).map(|(t, r)| t * r).collect();
+        assert!(scaled[0] < scaled[1] && scaled[1] < scaled[2] && scaled[2] - scaled[0] < 8.0, "T·√(I − I₁): {scaled:?}");
+        assert!(t[0] / t[1] > 1.95 && t[1] / t[2] > 1.9, "{t:?}");
+        let below = run_reduced(&m, -30.0, n0, i1 - 0.01, 2_000_000);
+        assert!(swing(&below, 100_000) < 1e-6, "below the fold it still moves: {}", swing(&below, 100_000));
+    }
+
+    /// Their Figs. 1–3 set begins firing at a FINITE frequency. `I_ss` has no fold; the rest state
+    /// loses stability at a Hopf point, `I = 93.8576` (frequency `√det/2π` = 12.7 Hz there), and a
+    /// large cycle already exists below it: started on it at 88.3 µA/cm² the membrane fires every
+    /// 126.58 ms, 7.90 Hz, while started near rest it stays at rest; at 88.2 the cycle is gone.
+    #[test]
+    fn rinzel_and_ermentrouts_class_ii_set_begins_firing_at_a_finite_frequency() {
+        let m = MorrisLecar::RINZEL_ERMENTROUT_HOPF;
+        assert!(m.folds(-80.0, 60.0, 20_000).unwrap().is_empty(), "the Figs. 1–3 steady-state curve is monotone");
+        let hopf = m.trace_zeros(-80.0, 60.0, 20_000).unwrap();
+        assert_eq!(hopf.len(), 2);
+        assert!((hopf[0].i - 93.857_618_373_7).abs() < 1e-6 && hopf[0].det > 0.0, "{:?}", hopf[0]);
+        let hz = hopf[0].det.sqrt() / core::f64::consts::TAU * 1000.0;
+        assert!((hz - 12.70).abs() < 0.01, "{hz}");
+        let on = run_reduced(&m, 20.0, 0.2, 88.3, 600_000);
+        let (t, spread, lo, hi) = period(&on);
+        assert!((t - 126.584).abs() < 0.01 && spread < 1e-4 && hi - lo > 70.0, "{t} {spread} {lo} {hi}");
+        let rest = run_reduced(&m, -26.0, m.n.steady(-26.0), 88.3, 600_000);
+        assert!(swing(&rest, 100_000) < 1e-6, "the rest state is not stable at 88.3");
+        let gone = run_reduced(&m, 20.0, 0.2, 88.2, 600_000);
+        assert!(swing(&gone, 100_000) < 1e-6, "the cycle survives at 88.2: {}", swing(&gone, 100_000));
+    }
+
+    /// Figs. 7–8: `φ` enters the stability and not `I_ss`, so the knee is where it was, 39.963153;
+    /// the upper equilibrium's Hopf point is 36.316; and at 40 µA/cm² a stable upper equilibrium
+    /// (4.707 mV) and a 24.04 ms cycle coexist — their bistability past the knee.
+    #[test]
+    fn a_fast_potassium_gate_moves_the_stability_and_not_the_curve() {
+        let m = MorrisLecar::RINZEL_ERMENTROUT_FAST_K;
+        assert_eq!(knee(&m), knee(&MorrisLecar::RINZEL_ERMENTROUT_SNLC));
+        let hopf = m.trace_zeros(-80.0, 60.0, 20_000).unwrap();
+        let b = hopf.iter().find(|h| h.det > 0.0).unwrap();
+        assert!((b.i - 36.316_217_5).abs() < 1e-6, "{b:?}");
+        let eq = m.equilibria(40.0, 4_000).unwrap();
+        assert_eq!(eq.len(), 1, "past the knee only the upper equilibrium is left: {eq:?}");
+        assert_eq!(eq[0].kind, Kind::StableFocus);
+        assert!((eq[0].v - 4.706_576).abs() < 1e-5, "{:?}", eq[0]);
+        let cycle = run_reduced(&m, -60.0, m.n.steady(-60.0), 40.0, 300_000);
+        let (t, spread, _, _) = period(&cycle);
+        // Measured by the midway-level crossings: 24.0378 ms, intervals within 0.0014 of it.
+        assert!((t - 24.038).abs() < 0.005 && spread < 0.005, "{t} {spread}");
+        // The focus decays slowly (eigenvalues −0.00565 ± 0.387i per ms): 6 s from half a millivolt
+        // away leaves a swing of 5.8e-12 mV over the last second.
+        let upper = run_reduced(&m, eq[0].v + 0.5, eq[0].x, 40.0, 600_000);
+        assert!(swing(&upper, 100_000) < 1e-9, "{}", swing(&upper, 100_000));
+    }
+
+    /// Tsumoto et al.'s Table 1 has `V_K = −80` where Rinzel and Ermentrout's has −84, and their
+    /// Fig. 2 is drawn with −80. Fig. 2a (class I, `V3 = 12`): `g₁` at about 40 and `h₁` between 80
+    /// and 90 — here 39.693 and 85.103, while −84 puts `h₁` at 97.788. Fig. 2c (the class I values
+    /// with `V3 = 2`): `h₂` at about 51.2 and `G₂` at about 50.3 in the inset, the frequency in
+    /// Fig. 2d starting near 7 Hz — here `h₂` = 51.190, the cycle alive at 50.40 at 7.27 Hz and gone
+    /// at 50.35.
+    #[test]
+    fn tsumotos_figures_are_drawn_with_their_own_table() {
+        let one = MorrisLecar::TSUMOTO_CLASS_I;
+        assert_eq!((one.v_k, one.g_ca, one.n.v_half, one.n.slope, one.n.rate), (-80.0, 4.0, 12.0, 17.4, 1.0 / 15.0));
+        let two = MorrisLecar::TSUMOTO_CLASS_II;
+        assert_eq!((two.v_k, two.g_ca, two.n.v_half, two.n.slope, two.n.rate), (-80.0, 4.4, 2.0, 30.0, 1.0 / 25.0));
+        assert!((knee(&one) - 39.693_454).abs() < 1e-5, "{}", knee(&one));
+        let h1 = one.trace_zeros(-80.0, 60.0, 20_000).unwrap().into_iter().find(|h| h.det > 0.0).unwrap();
+        assert!((h1.i - 85.103_231).abs() < 1e-5 && (80.0..90.0).contains(&h1.i), "{h1:?}");
+        let re = MorrisLecar::RINZEL_ERMENTROUT_SNLC.trace_zeros(-80.0, 60.0, 20_000).unwrap().into_iter().find(|h| h.det > 0.0).unwrap();
+        assert!((re.i - 97.787_889).abs() < 1e-5 && !(80.0..90.0).contains(&re.i), "{re:?}");
+        let fig2c = MorrisLecar { n: Gate { v_half: 2.0, ..one.n }, ..one };
+        let h2 = fig2c.trace_zeros(-80.0, 60.0, 20_000).unwrap()[0];
+        assert!((h2.i - 51.190_449).abs() < 1e-5 && h2.det > 0.0, "{h2:?}");
+        let alive = run_reduced(&fig2c, 20.0, 0.2, 50.40, 600_000);
+        let (t, _, lo, hi) = period(&alive);
+        assert!((1000.0 / t - 7.27).abs() < 0.01 && hi - lo > 60.0, "{t}");
+        let gone = run_reduced(&fig2c, 20.0, 0.2, 50.35, 600_000);
+        assert!(swing(&gone, 100_000) < 1e-6);
+    }
+
+    /// Every constant of Rinzel and Ermentrout's Appendix A, and the two sets built from it.
+    #[test]
+    fn rinzel_and_ermentrouts_appendix_is_transcribed() {
+        let h = MorrisLecar::RINZEL_ERMENTROUT_HOPF;
+        assert_eq!((h.c, h.g_l, h.g_ca, h.g_k, h.v_l, h.v_ca, h.v_k), (20.0, 2.0, 4.4, 8.0, -60.0, 120.0, -84.0));
+        assert_eq!((h.m.v_half, h.m.slope, h.n.v_half, h.n.slope, h.n.rate), (-1.2, 18.0, 2.0, 30.0, 0.04));
+        let s = MorrisLecar::RINZEL_ERMENTROUT_SNLC;
+        assert_eq!((s.g_ca, s.n.v_half, s.n.slope, s.n.rate), (4.0, 12.0, 17.4, 1.0 / 15.0));
+        assert_eq!((s.c, s.g_l, s.g_k, s.v_l, s.v_ca, s.v_k, s.m), (h.c, h.g_l, h.g_k, h.v_l, h.v_ca, h.v_k, h.m));
+        let f = MorrisLecar::RINZEL_ERMENTROUT_FAST_K;
+        assert_eq!(f, MorrisLecar { n: Gate { rate: 0.23, ..s.n }, ..s });
+        for m in [h, s, f, MorrisLecar::TSUMOTO_CLASS_I, MorrisLecar::TSUMOTO_CLASS_II] {
+            assert!(m.check().is_ok());
+        }
     }
 }

@@ -1033,5 +1033,105 @@
   "label": "the printed Fig. 5a V_L is recorded as -50",
   "old": "pub const FIG5A_PRINTED_V_L: f64 = 50.0;",
   "new": "pub const FIG5A_PRINTED_V_L: f64 = -50.0;"
+ },
+ {
+  "label": "Rinzel and Ermentrout's C is 1",
+  "old": "    pub const RINZEL_ERMENTROUT_HOPF: Self = Self {\n        c: 20.0,\n        g_l: 2.0,\n        g_ca: 4.4,\n        g_k: 8.0,\n        v_l: -60.0,\n        v_ca: 120.0,\n        v_k: -84.0,\n        m: Gate { v_half: -1.2, slope: 18.0, rate: 1.0 },\n        n: Gate { v_half: 2.0, slope: 30.0, rate: 0.04 },",
+  "new": "    pub const RINZEL_ERMENTROUT_HOPF: Self = Self {\n        c: 1.0,\n        g_l: 2.0,\n        g_ca: 4.4,\n        g_k: 8.0,\n        v_l: -60.0,\n        v_ca: 120.0,\n        v_k: -84.0,\n        m: Gate { v_half: -1.2, slope: 18.0, rate: 1.0 },\n        n: Gate { v_half: 2.0, slope: 30.0, rate: 0.04 },"
+ },
+ {
+  "label": "their g_L is 0.5",
+  "old": "    pub const RINZEL_ERMENTROUT_HOPF: Self = Self {\n        c: 20.0,\n        g_l: 2.0,\n        g_ca: 4.4,\n        g_k: 8.0,\n        v_l: -60.0,\n        v_ca: 120.0,\n        v_k: -84.0,\n        m: Gate { v_half: -1.2, slope: 18.0, rate: 1.0 },\n        n: Gate { v_half: 2.0, slope: 30.0, rate: 0.04 },",
+  "new": "    pub const RINZEL_ERMENTROUT_HOPF: Self = Self {\n        c: 20.0,\n        g_l: 0.5,\n        g_ca: 4.4,\n        g_k: 8.0,\n        v_l: -60.0,\n        v_ca: 120.0,\n        v_k: -84.0,\n        m: Gate { v_half: -1.2, slope: 18.0, rate: 1.0 },\n        n: Gate { v_half: 2.0, slope: 30.0, rate: 0.04 },"
+ },
+ {
+  "label": "their Figs. 1-3 g_Ca is 4",
+  "old": "    pub const RINZEL_ERMENTROUT_HOPF: Self = Self {\n        c: 20.0,\n        g_l: 2.0,\n        g_ca: 4.4,\n        g_k: 8.0,\n        v_l: -60.0,\n        v_ca: 120.0,\n        v_k: -84.0,\n        m: Gate { v_half: -1.2, slope: 18.0, rate: 1.0 },\n        n: Gate { v_half: 2.0, slope: 30.0, rate: 0.04 },",
+  "new": "    pub const RINZEL_ERMENTROUT_HOPF: Self = Self {\n        c: 20.0,\n        g_l: 2.0,\n        g_ca: 4.0,\n        g_k: 8.0,\n        v_l: -60.0,\n        v_ca: 120.0,\n        v_k: -84.0,\n        m: Gate { v_half: -1.2, slope: 18.0, rate: 1.0 },\n        n: Gate { v_half: 2.0, slope: 30.0, rate: 0.04 },"
+ },
+ {
+  "label": "their g_K is 6",
+  "old": "    pub const RINZEL_ERMENTROUT_HOPF: Self = Self {\n        c: 20.0,\n        g_l: 2.0,\n        g_ca: 4.4,\n        g_k: 8.0,\n        v_l: -60.0,\n        v_ca: 120.0,\n        v_k: -84.0,\n        m: Gate { v_half: -1.2, slope: 18.0, rate: 1.0 },\n        n: Gate { v_half: 2.0, slope: 30.0, rate: 0.04 },",
+  "new": "    pub const RINZEL_ERMENTROUT_HOPF: Self = Self {\n        c: 20.0,\n        g_l: 2.0,\n        g_ca: 4.4,\n        g_k: 6.0,\n        v_l: -60.0,\n        v_ca: 120.0,\n        v_k: -84.0,\n        m: Gate { v_half: -1.2, slope: 18.0, rate: 1.0 },\n        n: Gate { v_half: 2.0, slope: 30.0, rate: 0.04 },"
+ },
+ {
+  "label": "their V_L is -50",
+  "old": "    pub const RINZEL_ERMENTROUT_HOPF: Self = Self {\n        c: 20.0,\n        g_l: 2.0,\n        g_ca: 4.4,\n        g_k: 8.0,\n        v_l: -60.0,\n        v_ca: 120.0,\n        v_k: -84.0,\n        m: Gate { v_half: -1.2, slope: 18.0, rate: 1.0 },\n        n: Gate { v_half: 2.0, slope: 30.0, rate: 0.04 },",
+  "new": "    pub const RINZEL_ERMENTROUT_HOPF: Self = Self {\n        c: 20.0,\n        g_l: 2.0,\n        g_ca: 4.4,\n        g_k: 8.0,\n        v_l: -50.0,\n        v_ca: 120.0,\n        v_k: -84.0,\n        m: Gate { v_half: -1.2, slope: 18.0, rate: 1.0 },\n        n: Gate { v_half: 2.0, slope: 30.0, rate: 0.04 },"
+ },
+ {
+  "label": "their V_Ca is 100",
+  "old": "    pub const RINZEL_ERMENTROUT_HOPF: Self = Self {\n        c: 20.0,\n        g_l: 2.0,\n        g_ca: 4.4,\n        g_k: 8.0,\n        v_l: -60.0,\n        v_ca: 120.0,\n        v_k: -84.0,\n        m: Gate { v_half: -1.2, slope: 18.0, rate: 1.0 },\n        n: Gate { v_half: 2.0, slope: 30.0, rate: 0.04 },",
+  "new": "    pub const RINZEL_ERMENTROUT_HOPF: Self = Self {\n        c: 20.0,\n        g_l: 2.0,\n        g_ca: 4.4,\n        g_k: 8.0,\n        v_l: -60.0,\n        v_ca: 100.0,\n        v_k: -84.0,\n        m: Gate { v_half: -1.2, slope: 18.0, rate: 1.0 },\n        n: Gate { v_half: 2.0, slope: 30.0, rate: 0.04 },"
+ },
+ {
+  "label": "their V_K is Tsumoto's -80",
+  "old": "    pub const RINZEL_ERMENTROUT_HOPF: Self = Self {\n        c: 20.0,\n        g_l: 2.0,\n        g_ca: 4.4,\n        g_k: 8.0,\n        v_l: -60.0,\n        v_ca: 120.0,\n        v_k: -84.0,\n        m: Gate { v_half: -1.2, slope: 18.0, rate: 1.0 },\n        n: Gate { v_half: 2.0, slope: 30.0, rate: 0.04 },",
+  "new": "    pub const RINZEL_ERMENTROUT_HOPF: Self = Self {\n        c: 20.0,\n        g_l: 2.0,\n        g_ca: 4.4,\n        g_k: 8.0,\n        v_l: -60.0,\n        v_ca: 120.0,\n        v_k: -80.0,\n        m: Gate { v_half: -1.2, slope: 18.0, rate: 1.0 },\n        n: Gate { v_half: 2.0, slope: 30.0, rate: 0.04 },"
+ },
+ {
+  "label": "their V1 has the wrong sign",
+  "old": "    pub const RINZEL_ERMENTROUT_HOPF: Self = Self {\n        c: 20.0,\n        g_l: 2.0,\n        g_ca: 4.4,\n        g_k: 8.0,\n        v_l: -60.0,\n        v_ca: 120.0,\n        v_k: -84.0,\n        m: Gate { v_half: -1.2, slope: 18.0, rate: 1.0 },\n        n: Gate { v_half: 2.0, slope: 30.0, rate: 0.04 },",
+  "new": "    pub const RINZEL_ERMENTROUT_HOPF: Self = Self {\n        c: 20.0,\n        g_l: 2.0,\n        g_ca: 4.4,\n        g_k: 8.0,\n        v_l: -60.0,\n        v_ca: 120.0,\n        v_k: -84.0,\n        m: Gate { v_half: 1.2, slope: 18.0, rate: 1.0 },\n        n: Gate { v_half: 2.0, slope: 30.0, rate: 0.04 },"
+ },
+ {
+  "label": "their V2 is 15",
+  "old": "    pub const RINZEL_ERMENTROUT_HOPF: Self = Self {\n        c: 20.0,\n        g_l: 2.0,\n        g_ca: 4.4,\n        g_k: 8.0,\n        v_l: -60.0,\n        v_ca: 120.0,\n        v_k: -84.0,\n        m: Gate { v_half: -1.2, slope: 18.0, rate: 1.0 },\n        n: Gate { v_half: 2.0, slope: 30.0, rate: 0.04 },",
+  "new": "    pub const RINZEL_ERMENTROUT_HOPF: Self = Self {\n        c: 20.0,\n        g_l: 2.0,\n        g_ca: 4.4,\n        g_k: 8.0,\n        v_l: -60.0,\n        v_ca: 120.0,\n        v_k: -84.0,\n        m: Gate { v_half: -1.2, slope: 15.0, rate: 1.0 },\n        n: Gate { v_half: 2.0, slope: 30.0, rate: 0.04 },"
+ },
+ {
+  "label": "their Figs. 1-3 V3 is 12",
+  "old": "    pub const RINZEL_ERMENTROUT_HOPF: Self = Self {\n        c: 20.0,\n        g_l: 2.0,\n        g_ca: 4.4,\n        g_k: 8.0,\n        v_l: -60.0,\n        v_ca: 120.0,\n        v_k: -84.0,\n        m: Gate { v_half: -1.2, slope: 18.0, rate: 1.0 },\n        n: Gate { v_half: 2.0, slope: 30.0, rate: 0.04 },",
+  "new": "    pub const RINZEL_ERMENTROUT_HOPF: Self = Self {\n        c: 20.0,\n        g_l: 2.0,\n        g_ca: 4.4,\n        g_k: 8.0,\n        v_l: -60.0,\n        v_ca: 120.0,\n        v_k: -84.0,\n        m: Gate { v_half: -1.2, slope: 18.0, rate: 1.0 },\n        n: Gate { v_half: 12.0, slope: 30.0, rate: 0.04 },"
+ },
+ {
+  "label": "their Figs. 1-3 V4 is 17.4",
+  "old": "    pub const RINZEL_ERMENTROUT_HOPF: Self = Self {\n        c: 20.0,\n        g_l: 2.0,\n        g_ca: 4.4,\n        g_k: 8.0,\n        v_l: -60.0,\n        v_ca: 120.0,\n        v_k: -84.0,\n        m: Gate { v_half: -1.2, slope: 18.0, rate: 1.0 },\n        n: Gate { v_half: 2.0, slope: 30.0, rate: 0.04 },",
+  "new": "    pub const RINZEL_ERMENTROUT_HOPF: Self = Self {\n        c: 20.0,\n        g_l: 2.0,\n        g_ca: 4.4,\n        g_k: 8.0,\n        v_l: -60.0,\n        v_ca: 120.0,\n        v_k: -84.0,\n        m: Gate { v_half: -1.2, slope: 18.0, rate: 1.0 },\n        n: Gate { v_half: 2.0, slope: 17.4, rate: 0.04 },"
+ },
+ {
+  "label": "their Figs. 1-3 phi is 1/15",
+  "old": "    pub const RINZEL_ERMENTROUT_HOPF: Self = Self {\n        c: 20.0,\n        g_l: 2.0,\n        g_ca: 4.4,\n        g_k: 8.0,\n        v_l: -60.0,\n        v_ca: 120.0,\n        v_k: -84.0,\n        m: Gate { v_half: -1.2, slope: 18.0, rate: 1.0 },\n        n: Gate { v_half: 2.0, slope: 30.0, rate: 0.04 },",
+  "new": "    pub const RINZEL_ERMENTROUT_HOPF: Self = Self {\n        c: 20.0,\n        g_l: 2.0,\n        g_ca: 4.4,\n        g_k: 8.0,\n        v_l: -60.0,\n        v_ca: 120.0,\n        v_k: -84.0,\n        m: Gate { v_half: -1.2, slope: 18.0, rate: 1.0 },\n        n: Gate { v_half: 2.0, slope: 30.0, rate: 1.0 / 15.0 },"
+ },
+ {
+  "label": "the Figs. 4-6 g_Ca stays 4.4",
+  "old": "    pub const RINZEL_ERMENTROUT_SNLC: Self = Self {\n        g_ca: 4.0,\n        n: Gate { v_half: 12.0, slope: 17.4, rate: 1.0 / 15.0 },",
+  "new": "    pub const RINZEL_ERMENTROUT_SNLC: Self = Self {\n        g_ca: 4.4,\n        n: Gate { v_half: 12.0, slope: 17.4, rate: 1.0 / 15.0 },"
+ },
+ {
+  "label": "the Figs. 4-6 V3 is 2",
+  "old": "    pub const RINZEL_ERMENTROUT_SNLC: Self = Self {\n        g_ca: 4.0,\n        n: Gate { v_half: 12.0, slope: 17.4, rate: 1.0 / 15.0 },",
+  "new": "    pub const RINZEL_ERMENTROUT_SNLC: Self = Self {\n        g_ca: 4.0,\n        n: Gate { v_half: 2.0, slope: 17.4, rate: 1.0 / 15.0 },"
+ },
+ {
+  "label": "the Figs. 4-6 V4 is 30",
+  "old": "    pub const RINZEL_ERMENTROUT_SNLC: Self = Self {\n        g_ca: 4.0,\n        n: Gate { v_half: 12.0, slope: 17.4, rate: 1.0 / 15.0 },",
+  "new": "    pub const RINZEL_ERMENTROUT_SNLC: Self = Self {\n        g_ca: 4.0,\n        n: Gate { v_half: 12.0, slope: 30.0, rate: 1.0 / 15.0 },"
+ },
+ {
+  "label": "the Figs. 4-6 phi is 0.04",
+  "old": "    pub const RINZEL_ERMENTROUT_SNLC: Self = Self {\n        g_ca: 4.0,\n        n: Gate { v_half: 12.0, slope: 17.4, rate: 1.0 / 15.0 },",
+  "new": "    pub const RINZEL_ERMENTROUT_SNLC: Self = Self {\n        g_ca: 4.0,\n        n: Gate { v_half: 12.0, slope: 17.4, rate: 0.04 },"
+ },
+ {
+  "label": "the Figs. 7-8 phi is 0.2",
+  "old": "Self { n: Gate { rate: 0.23, ..Self::RINZEL_ERMENTROUT_SNLC.n }, ..Self::RINZEL_ERMENTROUT_SNLC };",
+  "new": "Self { n: Gate { rate: 0.2, ..Self::RINZEL_ERMENTROUT_SNLC.n }, ..Self::RINZEL_ERMENTROUT_SNLC };"
+ },
+ {
+  "label": "Tsumoto's class I keeps V_K = -84",
+  "old": "pub const TSUMOTO_CLASS_I: Self = Self { v_k: -80.0, ..Self::RINZEL_ERMENTROUT_SNLC };",
+  "new": "pub const TSUMOTO_CLASS_I: Self = Self { v_k: -84.0, ..Self::RINZEL_ERMENTROUT_SNLC };"
+ },
+ {
+  "label": "Tsumoto's class II keeps V_K = -84",
+  "old": "pub const TSUMOTO_CLASS_II: Self = Self { v_k: -80.0, ..Self::RINZEL_ERMENTROUT_HOPF };",
+  "new": "pub const TSUMOTO_CLASS_II: Self = Self { v_k: -84.0, ..Self::RINZEL_ERMENTROUT_HOPF };"
+ },
+ {
+  "label": "Tsumoto's class I is built on the class II set",
+  "old": "pub const TSUMOTO_CLASS_I: Self = Self { v_k: -80.0, ..Self::RINZEL_ERMENTROUT_SNLC };",
+  "new": "pub const TSUMOTO_CLASS_I: Self = Self { v_k: -80.0, ..Self::RINZEL_ERMENTROUT_HOPF };"
  }
 ]
