@@ -781,5 +781,90 @@
   "label": "a tick count is matched by anything at or above it",
   "old": "        self.ticks.iter().position(|&t| t == ticks).map(|k| self.mean_abs_error[k])",
   "new": "        self.ticks.iter().position(|&t| t >= ticks).map(|k| self.mean_abs_error[k])"
+ },
+ {
+  "label": "qcfs accepts a non-finite z",
+  "old": "    if !z.is_finite() || !(lambda.is_finite() && lambda > 0.0) || levels == 0 || !(0.0..1.0).contains(&shift) {",
+  "new": "    if !(lambda.is_finite() && lambda > 0.0) || levels == 0 || !(0.0..1.0).contains(&shift) {"
+ },
+ {
+  "label": "qcfs accepts a zero lambda",
+  "old": "|| !(lambda.is_finite() && lambda > 0.0) || levels == 0 || !(0.0..1.0).contains(&shift) {",
+  "new": "|| !(lambda.is_finite() && lambda >= 0.0) || levels == 0 || !(0.0..1.0).contains(&shift) {"
+ },
+ {
+  "label": "qcfs accepts zero levels",
+  "old": "|| levels == 0 || !(0.0..1.0).contains(&shift) {\n        return None;\n    }\n    let l = f64::from(levels);",
+  "new": "|| !(0.0..1.0).contains(&shift) {\n        return None;\n    }\n    let l = f64::from(levels);"
+ },
+ {
+  "label": "qcfs drops the shift",
+  "old": "    Some(lambda * ((z * l / lambda + shift).floor() / l).clamp(0.0, 1.0))",
+  "new": "    Some(lambda * ((z * l / lambda ).floor() / l).clamp(0.0, 1.0))"
+ },
+ {
+  "label": "qcfs rounds instead of flooring",
+  "old": "    Some(lambda * ((z * l / lambda + shift).floor() / l).clamp(0.0, 1.0))",
+  "new": "    Some(lambda * ((z * l / lambda + shift).round() / l).clamp(0.0, 1.0))"
+ },
+ {
+  "label": "qcfs does not clip at one",
+  "old": "    Some(lambda * ((z * l / lambda + shift).floor() / l).clamp(0.0, 1.0))",
+  "new": "    Some(lambda * ((z * l / lambda + shift).floor() / l).max(0.0))"
+ },
+ {
+  "label": "qcfs does not clip at zero",
+  "old": "    Some(lambda * ((z * l / lambda + shift).floor() / l).clamp(0.0, 1.0))",
+  "new": "    Some(lambda * ((z * l / lambda + shift).floor() / l).min(1.0))"
+ },
+ {
+  "label": "qcfs forgets lambda on the way out",
+  "old": "    Some(lambda * ((z * l / lambda + shift).floor() / l).clamp(0.0, 1.0))",
+  "new": "    Some(((z * l / lambda + shift).floor() / l).clamp(0.0, 1.0))"
+ },
+ {
+  "label": "qcfs divides by the levels twice",
+  "old": "    Some(lambda * ((z * l / lambda + shift).floor() / l).clamp(0.0, 1.0))",
+  "new": "    Some(lambda * ((z * l / lambda + shift).floor() / l / l).clamp(0.0, 1.0))"
+ },
+ {
+  "label": "precharged_spikes accepts a v0 of one",
+  "old": "    if !z.is_finite() || !(0.0..1.0).contains(&v0) {",
+  "new": "    if !z.is_finite() || !(0.0..=1.0).contains(&v0) {"
+ },
+ {
+  "label": "precharged_spikes ignores v0",
+  "old": "    let n = ticks as f64 * z + v0;",
+  "new": "    let n = ticks as f64 * z;"
+ },
+ {
+  "label": "precharged_spikes rounds",
+  "old": "} else { n.floor() as u64 })",
+  "new": "} else { n.round() as u64 })"
+ },
+ {
+  "label": "precharged_spikes is not capped at one spike a tick",
+  "old": "Some(if n >= ticks as f64 { ticks } else {",
+  "new": "Some(if false { ticks } else {"
+ },
+ {
+  "label": "the expected error has the wrong sign",
+  "old": "    Some((shift - 0.5) * (1.0 / ticks as f64 - 1.0 / f64::from(levels)))",
+  "new": "    Some((0.5 - shift) * (1.0 / ticks as f64 - 1.0 / f64::from(levels)))"
+ },
+ {
+  "label": "the expected error forgets the levels",
+  "old": "    Some((shift - 0.5) * (1.0 / ticks as f64 - 1.0 / f64::from(levels)))",
+  "new": "    Some((shift - 0.5) * (1.0 / ticks as f64))"
+ },
+ {
+  "label": "the expected error accepts zero ticks",
+  "old": "    if ticks == 0 || levels == 0 || !(0.0..1.0).contains(&shift) {\n        return None;\n    }\n    Some((shift",
+  "new": "    if levels == 0 || !(0.0..1.0).contains(&shift) {\n        return None;\n    }\n    Some((shift"
+ },
+ {
+  "label": "qcfs accepts a shift of one",
+  "old": "levels == 0 || !(0.0..1.0).contains(&shift) {\n        return None;\n    }\n    let l",
+  "new": "levels == 0 || !(0.0..=1.0).contains(&shift) {\n        return None;\n    }\n    let l"
  }
 ]

@@ -80,6 +80,24 @@
 //! exponent over eight tick counts from 16 to 2048 on this module's fixture is **-1.02**, and the
 //! error over that sweep falls from 0.0227 to 0.00016 of the layer's dynamic range.
 //!
+//! # Halving it: a half-threshold start, and a network trained for it
+//!
+//! Start the membrane at half a threshold instead of zero and the same accounting gives
+//! `N = floor(T z + 1/2)`: the count is `T z` ROUNDED, and the error bound halves to `1/(2T)`
+//! ([`precharged_spikes`]; Hwang et al., Frontiers in Neuroscience 15:629000, 2021, call it a
+//! pre-charged membrane). Bu et al. (ICLR 2022) take the other side of the same identity: train the
+//! source network with the quantization-clip-floor-shift activation [`qcfs`],
+//! `λ·clip(floor(zL/λ + φ)/L, 0, 1)`, and a converted unit started at `φ` thresholds reproduces it
+//! EXACTLY after `T = L` ticks — their Theorem 1, an integer identity the tests check on a dyadic
+//! grid against the simulated unit. For `T ≠ L` the error no longer vanishes pointwise, but its
+//! expectation over a uniform activation is `(φ − 1/2)(1/T − 1/L)` ([`qcfs_expected_error`],
+//! derived here and checked against an exact quadrature), which is zero at `φ = 1/2` for every `T`
+//! and `L` — their Theorem 2 — and `1/(2L) − 1/(2T)` without the shift. Their Section 3 names what
+//! none of this covers: two inputs at rates 0.6 and 0.4 with weights 2 and −2 drive a unit to 0.4,
+//! 0.8 or 0.2 depending only on the ORDER their spikes arrive in, and the tests reproduce all three.
+//! A rate identity is exact for constant drive; a layer whose inputs are spike trains is not driven
+//! at a constant rate.
+//!
 //! # Reset by subtraction versus reset to zero: a two-line difference worth a factor of a hundred
 //!
 //! The derivation above assumed the reset SUBTRACTS the threshold. Diehl et al. (2015) reset to
@@ -476,6 +494,76 @@ impl Reset {
             Self::ToZero => 1.0 / (1.0 / z).ceil().max(1.0),
         })
     }
+}
+
+/// The quantization-clip-floor-shift activation of Bu, Fang, Ding, Dai, Yu and Huang (*Optimal
+/// ANN-SNN conversion for high-accuracy and ultra-low-latency spiking neural networks*, ICLR 2022,
+/// arXiv:2303.04347, Eq. 15), which a source network is trained with in place of `ReLU`:
+///
+/// ```text
+/// h(z) = λ · clip(floor(z L / λ + φ) / L, 0, 1)
+/// ```
+///
+/// `levels` is `L`, the number of quantisation steps; `shift` is `φ`. With `φ = 0` it is their
+/// Eq. 13, and a converted unit started from rest reproduces it EXACTLY after `T = L` ticks
+/// (their Theorem 1, [`precharged_spikes`] at `v0 = 0`). With `φ = 1/2` and the unit pre-charged to
+/// half its threshold the same holds at `T = L`, and the expected error is zero for EVERY `T` and
+/// `L` (their Theorem 2, [`qcfs_expected_error`]). `None` for a `z` that is not finite, a `λ` that is
+/// not finite and positive, `L = 0`, or a `φ` outside `[0, 1)`.
+#[must_use]
+pub fn qcfs(z: f64, lambda: f64, levels: u32, shift: f64) -> Option<f64> {
+    if !z.is_finite() || !(lambda.is_finite() && lambda > 0.0) || levels == 0 || !(0.0..1.0).contains(&shift) {
+        return None;
+    }
+    let l = f64::from(levels);
+    Some(lambda * ((z * l / lambda + shift).floor() / l).clamp(0.0, 1.0))
+}
+
+/// Spikes a reset-by-subtraction unit emits in `ticks` ticks of constant activation `z` (spikes per
+/// tick at one per tick) when its membrane starts at `v0` thresholds instead of zero:
+///
+/// ```text
+/// N = clip(floor(T z + v0), 0, T)
+/// ```
+///
+/// Each tick adds `z` thresholds and each spike removes one, so after `T` ticks the membrane holds
+/// `v0 + T z − N`, which firing keeps below one threshold. This is the pre-charged membrane of
+/// Hwang, Chang, Oh, Min, Jang, Park, Yu, Lee and Park (*Low-latency spiking neural networks using
+/// pre-charged membrane potential and delayed evaluation*, Frontiers in Neuroscience 15:629000,
+/// 2021, their Eq. 2 with `V_th = 1`), and the half-threshold start of Bu et al.'s Theorem 2: at
+/// `v0 = 1/2` the count is `T z` ROUNDED instead of floored, so `|N/T − z| ≤ 1/(2T)` — half the
+/// `1/T` this module's derivation gives from rest. `None` for a `z` that is not finite or a `v0`
+/// outside `[0, 1)`.
+#[must_use]
+pub fn precharged_spikes(z: f64, ticks: u64, v0: f64) -> Option<u64> {
+    if !z.is_finite() || !(0.0..1.0).contains(&v0) {
+        return None;
+    }
+    let n = ticks as f64 * z + v0;
+    // A negative count is zero spikes: `as u64` saturates, so `floor(n)` below zero casts to 0.
+    Some(if n >= ticks as f64 { ticks } else { n.floor() as u64 })
+}
+
+/// The expected difference between a converted unit's output after `ticks` ticks and the
+/// [`qcfs`] activation it was trained with, for an activation uniform over `[0, λ]`, when the
+/// shift is `shift` and the unit starts at `shift` thresholds (Bu et al.'s pairing,
+/// `v(0) = θφ`):
+///
+/// ```text
+/// E[N/T] − E[h] = (φ − 1/2)(1/T − 1/L)
+/// ```
+///
+/// derived here: `E[floor(T z + φ)]/T = 1/2 + (φ − 1/2)/T` for `z` uniform on `[0, 1]`, and the
+/// same with `L` for the activation. Zero at `φ = 1/2` for every `T` and `L` — their Theorem 2 —
+/// and zero at `T = L` for every `φ` — their Theorem 1; at `φ = 0` it is `1/(2L) − 1/(2T)`, which
+/// is why a network trained at `L` steps and run for more ticks without the shift comes out
+/// systematically high. `None` for zero ticks or levels, or a `φ` outside `[0, 1)`.
+#[must_use]
+pub fn qcfs_expected_error(ticks: u64, levels: u32, shift: f64) -> Option<f64> {
+    if ticks == 0 || levels == 0 || !(0.0..1.0).contains(&shift) {
+        return None;
+    }
+    Some((shift - 0.5) * (1.0 / ticks as f64 - 1.0 / f64::from(levels)))
 }
 
 /// A non-leaky integrate-and-fire neuron used as a `ReLU`'s rate-coded twin.
@@ -1637,7 +1725,7 @@ pub fn error_vs_ticks(
 mod tests {
     use super::{
         Config, ConvertError, DenseRelu, ErrorCurve, InputCoding, Mlp, Norm, Readout, Reset,
-        SpikingMlp, SpikingRelu, error_vs_ticks, percentile,
+        SpikingMlp, SpikingRelu, error_vs_ticks, percentile, precharged_spikes, qcfs, qcfs_expected_error,
     };
     use crate::crossover::Verdict;
     use crate::neuron::Neuron;
@@ -3986,5 +4074,148 @@ mod tests {
         let out = snn.run(&[0.0, 1.0], 100).expect("the structure is intact");
         assert_eq!(snn.total_spikes(), 50);
         assert_eq!(out, vec![1.0]);
+    }
+
+    /// A unit with threshold 1, capacitance 1 and one-second ticks, so one tick of drive `z` adds `z`
+    /// thresholds, started at `v0`; the number of spikes in `ticks` ticks.
+    fn run_unit(z: f64, ticks: u64, v0: f64) -> u64 {
+        let mut u = SpikingRelu::new(1.0, 1.0, Reset::BySubtraction);
+        u.v = v0;
+        (0..ticks).filter(|_| u.step(1.0, z)).count() as u64
+    }
+
+    /// Bu et al.'s Theorem 1, and its half-shifted twin, as integer identities in a dyadic frame:
+    /// for every `z` in `[−0.25, 1.25]` in steps of 1/64, a unit run for `T = L` ticks emits exactly
+    /// `L·h(z)` spikes — from rest when `φ = 0`, from half a threshold when `φ = 1/2`. The simulated
+    /// unit, the closed form [`precharged_spikes`] and [`qcfs`] agree to the bit, at `L` = 4, 8 and
+    /// 16. And at `T ≠ L` they do not: `z = 0.4375` at `L = 4`, `T = 16` is `h = 0.25` and 7/16.
+    #[test]
+    fn a_converted_unit_is_the_qcfs_activation_when_the_ticks_are_the_levels() {
+        for levels in [4u32, 8, 16] {
+            let ticks = u64::from(levels);
+            for k in -16..=80 {
+                let z = f64::from(k) / 64.0;
+                for (shift, v0) in [(0.0, 0.0), (0.5, 0.5)] {
+                    let n = precharged_spikes(z, ticks, v0).unwrap();
+                    assert_eq!(n, run_unit(z, ticks, v0), "simulated, z {z}, L {levels}, v0 {v0}");
+                    assert_eq!(n as f64 / ticks as f64, qcfs(z, 1.0, levels, shift).unwrap(), "z {z}, L {levels}, shift {shift}");
+                }
+            }
+        }
+        assert_eq!(qcfs(0.4375, 1.0, 4, 0.0), Some(0.25));
+        assert_eq!(precharged_spikes(0.4375, 16, 0.0), Some(7));
+        // λ scales both axes: h(λz; λ) = λ h(z; 1).
+        assert_eq!(qcfs(3.0 * 0.4375, 3.0, 4, 0.5), Some(3.0 * qcfs(0.4375, 1.0, 4, 0.5).unwrap()));
+        // The authors' reference code (putshua/SNN_conversion_QCFS, modules.py, MyFloor.forward):
+        // clamp(floor(x / up * t + 0.5) / t, 0, 1) * up — the same function at φ = 1/2.
+        for k in 0..=40 {
+            let x = f64::from(k) * 0.1;
+            let (up, t) = (2.5, 8.0);
+            let my_floor = ((x / up * t + 0.5).floor() / t).clamp(0.0, 1.0) * up;
+            assert!((qcfs(x, up, 8, 0.5).unwrap() - my_floor).abs() < 1e-15, "x {x}");
+        }
+    }
+
+    /// Hwang et al.'s pre-charged membrane: from `v0` thresholds the count is `floor(T z + v0)`, and
+    /// at `v0 = 1/2` it is `T z` rounded, so the worst error over the dyadic grid is `1/(2T)` —
+    /// half the `1/T` from rest. Checked against the simulated unit at `v0` = 0, 1/4, 1/2 and 3/4,
+    /// with drives past one spike per tick and below zero.
+    #[test]
+    fn a_precharged_unit_rounds_where_a_rested_one_floors() {
+        let ticks = 32u64;
+        let mut worst = [0.0f64; 2];
+        for k in -64..=320 {
+            let z = f64::from(k) / 256.0;
+            for v0 in [0.0, 0.25, 0.5, 0.75] {
+                assert_eq!(precharged_spikes(z, ticks, v0), Some(run_unit(z, ticks, v0)), "z {z}, v0 {v0}");
+            }
+            if (0.0..=1.0).contains(&z) {
+                for (slot, v0) in [(0, 0.0), (1, 0.5)] {
+                    let err = (precharged_spikes(z, ticks, v0).unwrap() as f64 / ticks as f64 - z).abs();
+                    worst[slot] = worst[slot].max(err);
+                }
+            }
+        }
+        assert_eq!(worst[1], 1.0 / 64.0, "half a tick's worth at the half-threshold start");
+        assert!(worst[0] > 1.0 / 64.0 && worst[0] < 1.0 / 32.0, "from rest: {}", worst[0]);
+    }
+
+    /// Bu et al.'s Theorem 2 and the closed form behind it, `(φ − 1/2)(1/T − 1/L)`, against an exact
+    /// quadrature: both outputs are step functions of a uniform `z`, so the expectation is a finite
+    /// sum over the merged breakpoints, each piece evaluated at its midpoint. Every `T` and `L` from
+    /// 1 to 12 at `φ` = 0, 1/4, 1/2 and 3/4: zero at `φ = 1/2` whatever `T` and `L`, zero at `T = L`
+    /// whatever `φ`, and `1/(2L) − 1/(2T)` at `φ = 0`.
+    #[test]
+    fn the_expected_qcfs_error_is_zero_at_a_half_shift_for_any_ticks() {
+        let quadrature = |ticks: u64, levels: u32, shift: f64| -> f64 {
+            let (t, l) = (ticks as f64, f64::from(levels));
+            let mut cuts: Vec<f64> = (0..=ticks).map(|k| (k as f64 - shift) / t).chain((0..=levels).map(|k| (f64::from(k) - shift) / l)).collect();
+            cuts.push(0.0);
+            cuts.push(1.0);
+            cuts.retain(|c| (0.0..=1.0).contains(c));
+            cuts.sort_by(f64::total_cmp);
+            cuts.windows(2)
+                .map(|w| {
+                    let z = 0.5 * (w[0] + w[1]);
+                    let snn = precharged_spikes(z, ticks, shift).unwrap() as f64 / t;
+                    (snn - qcfs(z, 1.0, levels, shift).unwrap()) * (w[1] - w[0])
+                })
+                .sum()
+        };
+        for ticks in 1..=12u64 {
+            for levels in 1..=12u32 {
+                for shift in [0.0, 0.25, 0.5, 0.75] {
+                    let closed = qcfs_expected_error(ticks, levels, shift).unwrap();
+                    let exact = quadrature(ticks, levels, shift);
+                    assert!((closed - exact).abs() < 1e-14, "T {ticks} L {levels} φ {shift}: {closed} against {exact}");
+                }
+                assert_eq!(qcfs_expected_error(ticks, levels, 0.5), Some(0.0));
+                let at_zero = qcfs_expected_error(ticks, levels, 0.0).unwrap();
+                assert!((at_zero - (0.5 / f64::from(levels) - 0.5 / ticks as f64)).abs() < 1e-15);
+            }
+            assert_eq!(qcfs_expected_error(ticks, u32::try_from(ticks).unwrap(), 0.75), Some(0.0));
+        }
+    }
+
+    /// Bu et al.'s unevenness error (Section 3, their Fig. 1b–d): two inputs of weight 2 and −2 whose
+    /// units fire 3 and 2 times in 5 ticks — rates 0.6 and 0.4, so the ANN says 0.4 — drive a unit of
+    /// threshold 1 to 0.4, 0.8 or 0.2 depending only on WHEN they fire: interleaved (1, 3, 5 and 2, 4)
+    /// gives spikes at 1 and 3; excitation first (1, 2, 3 and 4, 5) gives 1, 2, 3, 4; inhibition
+    /// first (3, 4, 5 and 1, 2) gives 5 alone. The same rates, three answers, every one the paper's.
+    #[test]
+    fn the_same_input_rates_give_three_outputs_by_their_timing() {
+        let cases: [([u64; 3], [u64; 2], &[u64]); 3] =
+            [([1, 3, 5], [2, 4], &[1, 3]), ([1, 2, 3], [4, 5], &[1, 2, 3, 4]), ([3, 4, 5], [1, 2], &[5])];
+        for (excite, inhibit, want) in cases {
+            let mut u = SpikingRelu::new(1.0, 1.0, Reset::BySubtraction);
+            let fired: Vec<u64> = (1..=5u64)
+                .filter(|t| {
+                    let drive = 2.0 * f64::from(u8::from(excite.contains(t))) - 2.0 * f64::from(u8::from(inhibit.contains(t)));
+                    u.step(1.0, drive)
+                })
+                .collect();
+            assert_eq!(fired, want, "excitation at {excite:?}, inhibition at {inhibit:?}");
+        }
+    }
+
+    /// Every refusal of the three closed forms.
+    #[test]
+    fn the_qcfs_closed_forms_refuse_what_they_cannot_state() {
+        assert_eq!(qcfs(f64::NAN, 1.0, 4, 0.5), None);
+        assert_eq!(qcfs(0.5, 0.0, 4, 0.5), None);
+        assert_eq!(qcfs(0.5, f64::INFINITY, 4, 0.5), None);
+        assert_eq!(qcfs(0.5, 1.0, 0, 0.5), None);
+        assert_eq!(qcfs(0.5, 1.0, 4, 1.0), None);
+        assert_eq!(qcfs(0.5, 1.0, 4, -0.25), None);
+        assert_eq!(qcfs(-3.0, 1.0, 4, 0.5), Some(0.0));
+        assert_eq!(qcfs(3.0, 1.0, 4, 0.5), Some(1.0));
+        assert_eq!(precharged_spikes(f64::INFINITY, 4, 0.5), None);
+        assert_eq!(precharged_spikes(0.5, 4, 1.0), None);
+        assert_eq!(precharged_spikes(0.5, 4, -0.5), None);
+        assert_eq!(precharged_spikes(-1.0, 4, 0.5), Some(0));
+        assert_eq!(precharged_spikes(0.5, 0, 0.5), Some(0));
+        assert_eq!(qcfs_expected_error(0, 4, 0.5), None);
+        assert_eq!(qcfs_expected_error(4, 0, 0.5), None);
+        assert_eq!(qcfs_expected_error(4, 4, 1.0), None);
     }
 }

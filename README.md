@@ -9,7 +9,7 @@ hardware constraint models, analog device non-idealities, NIR, event-camera deco
 metrics, teaching tasks — and a joules ledger that charges for the memory traffic a synaptic
 operation needs.
 
-**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 84 modules, 2,851 tests.**
+**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 84 modules, 2,856 tests.**
 
 Run it in a browser without installing anything:
 **[energy.physicalai-bmi.org/neuromorphic](https://energy.physicalai-bmi.org/neuromorphic)** — the
@@ -43,7 +43,7 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 | `istdp` | inhibitory plasticity that balances excitation (Vogels et al. 2011): the drift `η ν_pre (2ν_post τ − α)` measured on independent trains, and a neuron that learns its inhibition and settles ABOVE the target rate — 6.5 Hz for 5 Hz with twenty inputs, 5.6 Hz with a hundred — because a synapse is not independent of the neuron it inhibits |
 | `surrogate` | surrogate gradients (`SuperSpike`, arctan, triangular, boxcar, straight-through) and a working BPTT path |
 | `plif` | the parametric LIF of Fang et al. as SpikingJelly writes it: a learned leak `1/τ = sigmoid(w)`, hard and soft reset, input decay on or off, and a reverse-mode gradient shown exact against finite differences — then gradient descent recovering `τ = 5` from `τ = 2` |
-| `convert` | ANN-to-SNN: threshold balancing, percentile normalisation, reset-by-subtraction vs reset-to-zero |
+| `convert` | ANN-to-SNN: threshold balancing, percentile normalisation, reset-by-subtraction vs reset-to-zero; the half-threshold start that rounds where rest floors (`1/(2T)`, not `1/T`), and Bu et al.'s quantization-clip-floor-shift activation, reproduced exactly at `T = L` and with an expected error of `(φ − 1/2)(1/T − 1/L)` — zero at the half shift for every `T` — plus their three-outputs-from-one-rate unevenness example |
 | `reservoir` | liquid state machines and echo state networks, with a pure-Rust ridge solve and power iteration |
 | `encode`, `coding` | rate, latency, delta; population, rank-order, phase, burst, BSA/HSA, temporal contrast — and their decoders |
 | `topology` | Erdős-Rényi, Watts-Strogatz, Barabási-Albert, distance-dependent, layered, winner-take-all, Dale's law |
@@ -285,7 +285,7 @@ rather than assumed.
 - **A sub-threshold current returns `None`, not a large number.** "Fires rarely" and "does not fire"
   are different statements and a rate-coded readout cannot recover the difference later.
 
-2,851 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
+2,856 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
 `#![forbid(unsafe_code)]`, and `cargo build --target wasm32-unknown-unknown` compiles the library
 unchanged. Three of the four `examples/` are verification gates that exit non-zero when a check fails. Two of them run
 a closed form against the simulator — the LIF's analytic inter-spike interval, and the STDP pair
@@ -336,7 +336,7 @@ be reproduced cannot be checked against anything, including itself.
 
 ## Status
 
-**Today:** eighty-four modules, 2,851 tests, and **9,235 recorded mutations — one list per
+**Today:** eighty-four modules, 2,856 tests, and **9,252 recorded mutations — one list per
 module**, every one applicable to today's source by `python3 tools/mutate.py`.
 `python3 tools/readme_numbers.py` recomputes those figures from the repository and refuses if this
 paragraph disagrees with it, because the last time they were typed by hand the test count was 423
