@@ -1215,5 +1215,90 @@
   "label": "Akida's year is its 2025 card brief's rather than its silicon's",
   "old": "        2021,\n        \"Silicon reported back in 2021; development kits shipped from 2022. Vendor announcements. \\\n",
   "new": "        2025,\n        \"Silicon reported back in 2021; development kits shipped from 2022. Vendor announcements. \\\n"
+ },
+ {
+  "label": "Tianjic's year is the circuits paper's rather than the Nature paper's",
+  "old": "year: Spec::known(2019, \"Pei et al., Nature 572:106-111, 2019",
+  "new": "year: Spec::known(2020, \"Pei et al., Nature 572:106-111, 2019"
+ },
+ {
+  "label": "Tianjic's 256 neurons per core are read as the 32 fan-in the same sentence prints",
+  "old": "        256,\n        \"Deng et al., IEEE JSSC 55(8), 2020: 'we set N = 256",
+  "new": "        32,\n        \"Deng et al., IEEE JSSC 55(8), 2020: 'we set N = 256"
+ },
+ {
+  "label": "Tianjic's per-core neuron ceiling, printed by Deng et al., is graded as this review's arithmetic",
+  "old": "in one single chip' (a UFC is Pei et al.'s FCore). A ceiling.\",\n        Evidence::Measured,",
+  "new": "in one single chip' (a UFC is Pei et al.'s FCore). A ceiling.\",\n        Evidence::Derived,"
+ },
+ {
+  "label": "Tianjic's 156 FCores are rounded to 160",
+  "old": "        156,\n        \"Pei et al., Nature 572, 2019: the chip 'consists of 156 FCores'",
+  "new": "        160,\n        \"Pei et al., Nature 572, 2019: the chip 'consists of 156 FCores'"
+ },
+ {
+  "label": "Tianjic's printed core count is graded as this review's inference",
+  "old": "'consists of 156 FCores'; Deng et al. 2020 the same.\",\n        Evidence::Measured,",
+  "new": "'consists of 156 FCores'; Deng et al. 2020 the same.\",\n        Evidence::Projected,"
+ },
+ {
+  "label": "Tianjic's synapses per core count the 32 weight indexes rather than the 256 x 256 connections",
+  "old": "        65_536,\n        \"DERIVED by this review: 256 inputs",
+  "new": "        8_192,\n        \"DERIVED by this review: 256 inputs"
+ },
+ {
+  "label": "Tianjic's synapse count, this review's product, is graded as a figure the papers print",
+  "old": "so this counts connections, not distinct stored weights.\",\n        Evidence::Derived,",
+  "new": "so this counts connections, not distinct stored weights.\",\n        Evidence::Measured,"
+ },
+ {
+  "label": "Tianjic's fan-in is the 32 of the fan-in/fan-out pair rather than N = 256",
+  "old": "        256,\n        \"Pei et al., Nature 572, 2019, Methods: fan-in N = 256",
+  "new": "        32,\n        \"Pei et al., Nature 572, 2019, Methods: fan-in N = 256"
+ },
+ {
+  "label": "Tianjic's printed fan-in is graded as this review's arithmetic",
+  "old": "across cores; this is the wall a single core imposes.\",\n        Evidence::Measured,",
+  "new": "across cores; this is the wall a single core imposes.\",\n        Evidence::Derived,"
+ },
+ {
+  "label": "Tianjic's weights are counted as the 16 read per cycle rather than 8 bits wide",
+  "old": "        8,\n        \"Pei et al., Nature 572, 2019, Methods: the dendrite reads",
+  "new": "        16,\n        \"Pei et al., Nature 572, 2019, Methods: the dendrite reads"
+ },
+ {
+  "label": "Tianjic's printed weight width is graded as this review's inference",
+  "old": "precision for activations and weights'.\",\n        Evidence::Measured,",
+  "new": "precision for activations and weights'.\",\n        Evidence::Projected,"
+ },
+ {
+  "label": "Tianjic acquires a delay range neither paper prints",
+  "old": "    delay_ticks: Spec::unlocated(\"This review did not locate a synaptic delay range in either paper.\"),",
+  "new": "delay_ticks: Spec::known(DelayRange { min_ticks: 1, max_ticks: 16 }, \"This review did not locate a synaptic delay range in either paper.\", Evidence::Measured),"
+ },
+ {
+  "label": "Tianjic's deployment-time statement is recorded as the absence of on-chip learning",
+  "old": "    on_chip_learning: Spec::unlocated(\n        \"This review did not locate on-chip learning in either paper. Pei et al. train offline (an \\\n         'STDP-like rule' for one model) and write that deployed weights 'remain unchanged and do \\\n         not need reloads given fixed working modes and static network topologies after \\\n         initialization' - a statement about deployment, not a hardware limit, so the field is not \\\n         recorded as false.\",\n    ),",
+  "new": "    on_chip_learning: Spec::known(\n        false,\n        \"This review did not locate on-chip learning in either paper. Pei et al. train offline (an \\\n         'STDP-like rule' for one model) and write that deployed weights 'remain unchanged and do \\\n         not need reloads given fixed working modes and static network topologies after \\\n         initialization' - a statement about deployment, not a hardware limit, so the field is not \\\n         recorded as false.\",\n        Evidence::Measured,\n    ),"
+ },
+ {
+  "label": "Tianjic's process loses the foundry the circuits paper names",
+  "old": "        \"UMC 28 nm HLP\",",
+  "new": "        \"28 nm HLP\","
+ },
+ {
+  "label": "Tianjic's printed process is graded as this review's inference",
+  "old": "3.8 mm2'.\",\n        Evidence::Measured,",
+  "new": "3.8 mm2'.\",\n        Evidence::Projected,"
+ },
+ {
+  "label": "Tianjic's chip total is the paper's round 40,000 rather than 156 x 256",
+  "old": "        39_936,",
+  "new": "        40_000,"
+ },
+ {
+  "label": "Tianjic's chip total, read out of the paper's round 40,000, is graded as a figure the paper prints",
+  "old": "record from its independent count for that reason.\",\n        Evidence::Derived,\n    ),\n    note: \"Seven structural",
+  "new": "record from its independent count for that reason.\",\n        Evidence::Measured,\n    ),\n    note: \"Seven structural"
  }
 ]

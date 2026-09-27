@@ -51,7 +51,7 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 | `reservoir` | liquid state machines and echo state networks, with a pure-Rust ridge solve and power iteration; and Dambre et al.'s information processing capacity over normalised Legendre products of the past input — equal to the authors' own code to 1.6e-5 (the difference is their uncentred denominator), 15/19 and 4/19 on Kubota et al.'s worked example, a linear reservoir's whole rank in degree 1, no even-degree capacity in an odd one |
 | `encode`, `coding` | rate, latency, delta; population, rank-order, phase, burst, BSA/HSA, temporal contrast — and their decoders |
 | `topology` | Erdős-Rényi, Watts-Strogatz, Barabási-Albert, distance-dependent, layered, winner-take-all, Dale's law |
-| `hardware` | constraint models for Loihi, Loihi 2, `TrueNorth`, `NorthPole`, Akida, `SpiNNaker`, Xylo, Speck, ODIN, DYNAP and more — ten graded figures per part, each with its provenance string |
+| `hardware` | constraint models for Loihi, Loihi 2, `TrueNorth`, `NorthPole`, Akida, `SpiNNaker`, Xylo, Speck, ODIN, DYNAP, Tianjic and more — ten graded figures per part, each with its provenance string |
 | `nir` | the Neuromorphic Intermediate Representation graph, validation, and a bridge to this crate's networks |
 | `json` | a strict RFC 8259 reader: numbers back to the bit, `NaN` and repeated keys refused, every refusal naming its byte — so published model files are read as published |
 | `npy` | NumPy's `.npy` files as NumPy writes them: scalar and structured dtypes, both byte orders, versions 1 to 3 including the Latin-1 header NumPy actually writes, a 64-bit integer f64 cannot hold refused rather than rounded — and NeuroBench's Mackey–Glass file read to the bit |
@@ -341,7 +341,7 @@ be reproduced cannot be checked against anything, including itself.
 
 ## Status
 
-**Today:** eighty-eight modules, 3,013 tests, and **10,143 recorded mutations — one list per
+**Today:** eighty-eight modules, 3,013 tests, and **10,160 recorded mutations — one list per
 module**, every one applicable to today's source by `python3 tools/mutate.py`.
 `python3 tools/readme_numbers.py` recomputes those figures from the repository and refuses if this
 paragraph disagrees with it, because the last time they were typed by hand the test count was 423

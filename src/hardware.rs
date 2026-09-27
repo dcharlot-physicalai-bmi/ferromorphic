@@ -1584,6 +1584,92 @@ pub const INNATERA_T1: Part = Part {
            not a pass, and not a failure. Nothing was checkable.",
 };
 
+/// Tianjic — Tsinghua's hybrid chip, whose cores run as an artificial or a spiking network, or as
+/// a converter between the two.
+///
+/// Pei et al., Nature 572:106–111, 2019 (the architecture and the bicycle demonstration), and Deng
+/// et al., IEEE Journal of Solid-State Circuits 55(8):2228–2246, 2020 (the circuits). Every
+/// structural field comes from those two papers, read in full. Its energy figures are pre-computed
+/// peak efficiencies and a per-core power at one operating point, not a per-operation energy, and
+/// are recorded in the note rather than priced (see [`crate::ledger`]).
+pub const TIANJIC: Part = Part {
+    name: "Tianjic",
+    vendor: "Tsinghua University",
+    citation: "Pei, Deng, Song, Zhao, Zhang, Wu, Wang, Zou, Wu, He, Chen, Deng, Wu, Wang, Wu, Yang, \
+               Ma, Li, Han, Li, Wu, Zhao, Xie & Shi, Towards artificial general intelligence with \
+               hybrid Tianjic chip architecture, Nature 572(7767):106-111, 2019, \
+               doi:10.1038/s41586-019-1424-8; and Deng, Wang, Li, Li, Liang, Zhu, Wu, Yang, Zou, \
+               Pei, Wu, Hu, Ding, He, Xie & Shi, Tianjic: a unified and scalable chip bridging \
+               spike-based and continuous neural computation, IEEE Journal of Solid-State Circuits \
+               55(8):2228-2246, 2020, doi:10.1109/JSSC.2020.2970709.",
+    year: Spec::known(2019, "Pei et al., Nature 572:106-111, 2019 - publication year.", Evidence::Measured),
+    neurons_per_core: Spec::known(
+        256,
+        "Deng et al., IEEE JSSC 55(8), 2020: 'we set N = 256 in each UFC and integrate only 156 UFCs \
+         in one single chip' (a UFC is Pei et al.'s FCore). A ceiling.",
+        Evidence::Measured,
+    ),
+    cores_per_chip: Spec::known(
+        156,
+        "Pei et al., Nature 572, 2019: the chip 'consists of 156 FCores'; Deng et al. 2020 the same.",
+        Evidence::Measured,
+    ),
+    synapses_per_core: Spec::known(
+        65_536,
+        "DERIVED by this review: 256 inputs to each of 256 neurons, from Pei et al.'s 'fan-ins/ \
+         fan-outs (N) are set as 32 and 256' read with Deng et al.'s N = 256 per core. The chip \
+         total it implies, 156 x 65,536 = 10,223,616, is Pei et al.'s 'approximately ... 10 million \
+         synapses'. Weights are shared through 32 weight indexes per core ('roughly 22 KB' of SRAM), \
+         so this counts connections, not distinct stored weights.",
+        Evidence::Derived,
+    ),
+    max_fan_in: Spec::known(
+        256,
+        "Pei et al., Nature 572, 2019, Methods: fan-in N = 256 per FCore, and in ANN mode 'Each \
+         neuron completely performs 256 multiplications'. A network wider than that is split \
+         across cores; this is the wall a single core imposes.",
+        Evidence::Measured,
+    ),
+    weight_bits: Spec::known(
+        8,
+        "Pei et al., Nature 572, 2019, Methods: the dendrite reads '16 8-bit weights from the synapse \
+         memory' each cycle; Deng et al. 2020: 'we select 8-bit signed integers as the major data \
+         precision for activations and weights'.",
+        Evidence::Measured,
+    ),
+    delay_ticks: Spec::unlocated("This review did not locate a synaptic delay range in either paper."),
+    on_chip_learning: Spec::unlocated(
+        "This review did not locate on-chip learning in either paper. Pei et al. train offline (an \
+         'STDP-like rule' for one model) and write that deployed weights 'remain unchanged and do \
+         not need reloads given fixed working modes and static network topologies after \
+         initialization' - a statement about deployment, not a hardware limit, so the field is not \
+         recorded as false.",
+    ),
+    process: Spec::known(
+        "UMC 28 nm HLP",
+        "Deng et al., IEEE JSSC 55(8), 2020: 'fabricated ... in UMC 28-nm HLP CMOS process'; Pei et \
+         al., Nature 572, 2019: '28-nm high performance low power (HLP) technology', die '3.8 x \
+         3.8 mm2'.",
+        Evidence::Measured,
+    ),
+    neurons_per_chip_stated: Spec::known(
+        39_936,
+        "DERIVED by this review, and READ IT BEFORE QUOTING IT: Pei et al., Nature 572, 2019, say \
+         the 156 FCores contain 'approximately 40,000 neurons', which is a round number and not \
+         this one. 39,936 is the product of the per-core figures both papers print, 156 x 256 = \
+         39,936, which rounds to the paper's 40,000. Because the figure is computed from \
+         neurons_per_core and cores_per_chip, checking it against their product is an identity, \
+         and a_published_chip_total_agrees_with_the_product_of_the_per_core_figures excludes this \
+         record from its independent count for that reason.",
+        Evidence::Derived,
+    ),
+    note: "Seven structural fields from the two papers; delays and on-chip learning are unlocated. \
+           Energy is published only as peak efficiency - 1.28 TOPS/W in ANN mode and 649 GSOPS/W in \
+           SNN mode at 300 MHz and 0.85 V - and as 6.1 mW and 5.5 mW per core in the two modes, with \
+           about 400 mW measured during the bicycle demonstration (Pei et al. 2019). None of those is \
+           a per-operation energy with its boundary stated, so no Prices table is made from them.",
+};
+
 /// `BrainScaleS`-2 — analogue neurons running about **a thousand times faster than biology**.
 ///
 /// Pehle, Billaudelle, Cramer et al., *The `BrainScaleS`-2 Accelerated Neuromorphic System With
@@ -1669,7 +1755,7 @@ pub const BRAINSCALES_2: Part = Part {
 
 /// Every part this review could source, oldest first.
 ///
-/// Sixteen records. Not one of them is complete: [`Part::weakest_evidence`] returns
+/// Seventeen records. Not one of them is complete: [`Part::weakest_evidence`] returns
 /// [`Evidence::Unstated`] for every single entry, because every part in the open literature has at
 /// least one structural field nobody published. Sort by [`Part::stated_fields`] to see which parts
 /// are actually documented — **[`TRUENORTH`], [`DYNAP_SE`] and [`BRAINSCALES_2`] at the top with
@@ -1681,13 +1767,14 @@ pub const BRAINSCALES_2: Part = Part {
 ///
 /// Two entries are in the table as corrections rather than as spiking parts: [`NORTHPOLE`], which
 /// has no spikes, and [`BRAINSCALES_2`], which has no tick.
-pub const PARTS: [Part; 16] = [
+pub const PARTS: [Part; 17] = [
     TRUENORTH,
     SPINNAKER,
     DARWIN,
     LOIHI,
     DYNAP_SE,
     ODIN,
+    TIANJIC,
     AKD1000,
     SPINNAKER2,
     LOIHI_2,
@@ -2728,7 +2815,7 @@ mod tests {
     use super::{
         AKD1000, AKD1500, BRAINSCALES_2, Bind, CoreCount, DARWIN, DARWIN3, DYNAP_SE, DelayRange,
         Evidence, Fit, HardwareError, Headroom, INNATERA_T1, LOIHI, LOIHI_2, NORTHPOLE, ODIN,
-        PARTS, Part, Quantiser, Rounding, SPECK, SPINNAKER, SPINNAKER2, Spec, TRUENORTH,
+        PARTS, Part, Quantiser, Rounding, SPECK, SPINNAKER, SPINNAKER2, Spec, TIANJIC, TRUENORTH,
         XYLO_AUDIO_2, core_count, fits, part_named,
     };
     use crate::net::{Net, NetBuilder};
@@ -3619,6 +3706,8 @@ mod tests {
             ("BrainScaleS-2", "max_fan_in"),
             ("Speck", "neurons_per_chip_stated"),
             ("Darwin3", "neurons_per_chip_stated"),
+            ("Tianjic", "synapses_per_core"),
+            ("Tianjic", "neurons_per_chip_stated"),
         ];
         let mut found: Vec<(&str, &str)> = Vec::new();
         for p in PARTS {
@@ -3750,6 +3839,22 @@ mod tests {
         let d3_src = DARWIN3.neurons_per_chip_stated.source;
         assert!(d3_src.contains("'supports up to 2.35 million neurons'"), "{d3_src}");
 
+        // Tianjic: 156 cores of 256 neurons, which Pei et al.'s "approximately 40,000" rounds;
+        // and 256 inputs to each of those 256 neurons, which over 156 cores is their
+        // "approximately ... 10 million synapses" to within 3%.
+        let tj_n = u64::from(TIANJIC.neurons_per_core.value.expect("stated"));
+        let tj_c = u64::from(TIANJIC.cores_per_chip.value.expect("stated"));
+        let tj_f = u64::from(TIANJIC.max_fan_in.value.expect("stated"));
+        let tj_total = TIANJIC.neurons_per_chip_stated.value.expect("stated");
+        assert_eq!(tj_total, tj_n * tj_c);
+        assert_eq!((tj_total + 5_000) / 10_000 * 10_000, 40_000, "the paper's figure, rounded");
+        assert_eq!(TIANJIC.synapses_per_core.value, Some(tj_n * tj_f));
+        let tj_syn = TIANJIC.synapses_per_chip().expect("both stated");
+        assert_eq!(tj_syn, 10_223_616);
+        let rel = (tj_syn as f64 - 10e6).abs() / 10e6;
+        assert!(rel < 0.03, "Tianjic's synapse derivation is {:.1}% from 10 million", rel * 100.0);
+        assert!(TIANJIC.neurons_per_chip_stated.source.contains("'approximately 40,000 neurons'"));
+
         // Speck: the neuron memory of the nine cores in the datasheet's section 4.5 — three of
         // 64 Ki words, two of 32 Ki, four of 16 Ki. The per-core figures are not fields (they
         // differ by core, which is why neurons_per_core is empty), but the number of cores they
@@ -3830,7 +3935,10 @@ mod tests {
         }
         checked.sort_unstable();
         independent.sort_unstable();
-        assert_eq!(checked, ["BrainScaleS-2", "DYNAP-SE", "Darwin3", "Loihi 2", "TrueNorth"]);
+        assert_eq!(
+            checked,
+            ["BrainScaleS-2", "DYNAP-SE", "Darwin3", "Loihi 2", "Tianjic", "TrueNorth"]
+        );
         assert_eq!(
             independent,
             ["DYNAP-SE", "TrueNorth"],
@@ -3846,6 +3954,9 @@ mod tests {
         assert_eq!(DARWIN3.neurons_per_core.evidence, Evidence::Measured);
         assert_eq!(DARWIN3.cores_per_chip.evidence, Evidence::Measured);
         assert_eq!(DARWIN3.neurons_per_chip_stated.evidence, Evidence::Derived);
+        assert_eq!(TIANJIC.neurons_per_core.evidence, Evidence::Measured);
+        assert_eq!(TIANJIC.cores_per_chip.evidence, Evidence::Measured);
+        assert_eq!(TIANJIC.neurons_per_chip_stated.evidence, Evidence::Derived);
         assert_eq!(BRAINSCALES_2.cores_per_chip.value, Some(1));
         assert_ne!(BRAINSCALES_2.cores_per_chip.evidence, Evidence::Measured);
     }
@@ -3945,6 +4056,9 @@ mod tests {
             // Darwin3 3 -> 7: core count, per-core neurons, weight width and process, all in Ma et
             // al., Natl. Sci. Rev. 11(5):nwae102 (2024), Table 6 and text.
             ("Darwin3", 7),
+            // Tianjic joined after v0.22.0 with eight: Pei et al., Nature 572 (2019) and Deng et
+            // al., IEEE JSSC 55(8) (2020). Delays and on-chip learning are unlocated.
+            ("Tianjic", 8),
             ("Akida AKD1000", 6),
             ("SpiNNaker", 6),
             ("Darwin", 5),
@@ -4630,10 +4744,10 @@ mod tests {
     ///
     /// ⛔ The suite could not see either fact, for the same reason twice: every record in
     /// [`PARTS`] is missing at least one field, so `weakest_evidence()` is `Unstated` for all
-    /// sixteen of them. That makes the method indistinguishable from one that returns `Unstated`
+    /// seventeen of them. That makes the method indistinguishable from one that returns `Unstated`
     /// unconditionally, and `a_records_weakest_grade_is_unstated_exactly_when_a_field_is_empty`
     /// compares it against `stated_fields() < 10`, a condition that is likewise true for all
-    /// sixteen. The same census also hid a narrower hole: the only three records at nine of ten
+    /// seventeen. The same census also hid a narrower hole: the only three records at nine of ten
     /// are missing `delay_ticks`, and every record missing `process` is missing several other
     /// fields too, so deleting `process` from the list of grades read moved no minimum anywhere in
     /// the table.
@@ -5185,7 +5299,7 @@ mod tests {
         );
         // part, year, neurons/core, cores/chip, synapses/core, max fan-in, weight bits,
         // on-chip learning, process
-        let table: [Row; 16] = [
+        let table: [Row; 17] = [
             (&LOIHI, 2018, Some(1024), Some(128), Some(1_048_576), None, Some(9), Some(true),
              Some("Intel 14 nm")),
             (&LOIHI_2, 2021, Some(8192), Some(128), Some(937_500), None, None, Some(true),
@@ -5219,6 +5333,9 @@ mod tests {
             (&DARWIN3, 2024, Some(4096), Some(575), None, None, Some(16), Some(true),
              Some("GlobalFoundries 22 nm FD-SOI")),
             (&INNATERA_T1, 2024, None, None, None, None, None, None, None),
+            // Pei et al., Nature 572 (2019); Deng et al., IEEE JSSC 55(8) (2020). New after v0.22.0.
+            (&TIANJIC, 2019, Some(256), Some(156), Some(65_536), Some(256), Some(8), None,
+             Some("UMC 28 nm HLP")),
             (&BRAINSCALES_2, 2022, Some(512), Some(1), Some(131_072), Some(256), Some(6),
              Some(true), Some("65 nm CMOS")),
         ];
