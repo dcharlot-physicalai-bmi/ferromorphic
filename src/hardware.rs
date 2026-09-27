@@ -1616,11 +1616,12 @@ pub const TIANJIC: Part = Part {
     ),
     synapses_per_core: Spec::known(
         65_536,
-        "DERIVED by this review: 256 inputs to each of 256 neurons, from Pei et al.'s 'fan-ins/ \
-         fan-outs (N) are set as 32 and 256' read with Deng et al.'s N = 256 per core. The chip \
-         total it implies, 156 x 65,536 = 10,223,616, is Pei et al.'s 'approximately ... 10 million \
-         synapses'. Weights are shared through 32 weight indexes per core ('roughly 22 KB' of SRAM), \
-         so this counts connections, not distinct stored weights.",
+        "DERIVED by this review: 256 inputs to each of 256 neurons, from Pei et al.'s 'The number \
+         of weight indexes (M) and fan-ins/fan-outs (N) are set as 32 and 256, respectively' read \
+         with Deng et al.'s N = 256 per core. The chip total it implies, 156 x 65,536 = \
+         10,223,616, is Pei et al.'s '10 million synapses' to within 3%. Weights are shared through \
+         the 32 weight indexes per core ('roughly 22 KB' of SRAM), so this counts connections, not \
+         distinct stored weights.",
         Evidence::Derived,
     ),
     max_fan_in: Spec::known(

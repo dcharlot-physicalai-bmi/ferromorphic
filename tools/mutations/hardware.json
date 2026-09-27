@@ -1222,7 +1222,7 @@
   "new": "year: Spec::known(2020, \"Pei et al., Nature 572:106-111, 2019"
  },
  {
-  "label": "Tianjic's 256 neurons per core are read as the 32 fan-in the same sentence prints",
+  "label": "Tianjic's 256 neurons per core are read as Pei et al.'s 32 weight indexes",
   "old": "        256,\n        \"Deng et al., IEEE JSSC 55(8), 2020: 'we set N = 256",
   "new": "        32,\n        \"Deng et al., IEEE JSSC 55(8), 2020: 'we set N = 256"
  },
@@ -1248,11 +1248,11 @@
  },
  {
   "label": "Tianjic's synapse count, this review's product, is graded as a figure the papers print",
-  "old": "so this counts connections, not distinct stored weights.\",\n        Evidence::Derived,",
-  "new": "so this counts connections, not distinct stored weights.\",\n        Evidence::Measured,"
+  "old": "         distinct stored weights.\",\n        Evidence::Derived,",
+  "new": "         distinct stored weights.\",\n        Evidence::Measured,"
  },
  {
-  "label": "Tianjic's fan-in is the 32 of the fan-in/fan-out pair rather than N = 256",
+  "label": "Tianjic's fan-in is the 32 weight indexes rather than N = 256",
   "old": "        256,\n        \"Pei et al., Nature 572, 2019, Methods: fan-in N = 256",
   "new": "        32,\n        \"Pei et al., Nature 572, 2019, Methods: fan-in N = 256"
  },
