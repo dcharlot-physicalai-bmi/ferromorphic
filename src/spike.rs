@@ -38,6 +38,18 @@
 //! many places inside a network where there is only one kind. [`crate::aer`] reads and writes the
 //! file formats.
 //!
+//! # How irregular a train is, locally
+//!
+//! [`Train::cv`] is the global coefficient of variation, which reads a slow change of rate as
+//! irregularity. [`local_variation`] (Shinomoto, Shima and Tanji 2003), its refractoriness-corrected
+//! [`revised_local_variation`] (Shinomoto et al. 2009) and Holt et al.'s [`cv2`] compare each
+//! interval only with its neighbour. All three return the same doubles as `Elephant`'s `lv`, `lvr`
+//! and `cv2` on that library's own examples, and `Lv` meets its closed form for gamma intervals.
+//! ⚠ `Elephant`'s `lvr` example passes `R=0.005` without units, and the function then assumes
+//! milliseconds: the example is `R` = 0.005 ms, not the 5 ms the paper recommends. And its `lv` and
+//! `cv2` docstrings print the prefactor as `1/N` where the code, and Shinomoto's Eq. 2.2, divide by
+//! `N − 1`.
+//!
 //! This section used to call the `(time, address, polarity)` triple "Mahowald's address-event
 //! representation, 1992, and every event camera since", with no title or identifier. The author and
 //! the year were right. The work went unnamed, and the sentence credited Mahowald with the whole
@@ -209,9 +221,74 @@ impl Train {
     }
 }
 
+/// Consecutive intervals `I_i`, at least two, every one finite and positive — or `None`.
+fn adjacent(intervals: &[f64]) -> Option<f64> {
+    (intervals.len() >= 2 && intervals.iter().all(|&x| x.is_finite() && x > 0.0)).then(|| (intervals.len() - 1) as f64)
+}
+
+/// Shinomoto, Shima and Tanji's local variation of a sequence of intervals (*Differences in spiking
+/// patterns among cortical neurons*, Neural Computation 15:2823–2842, 2003, Eq. 2.2):
+///
+/// ```text
+/// Lv = 3/(n − 1) · Σ_{i<n} (I_i − I_{i+1})² / (I_i + I_{i+1})²
+/// ```
+///
+/// Each term compares only NEIGHBOURING intervals, so a slow change of rate that the global
+/// coefficient of variation ([`Train::cv`]) reads as irregularity leaves it alone. 0 for a regular
+/// train; for intervals drawn from a gamma distribution of order `z` its expectation is
+/// `3/(2z + 1)` (their Eq. B.7) — 1 for a Poisson process, 0.6 for `z = 2`. `None` for fewer than two
+/// intervals or any that is not finite and positive. Written in the order `Elephant`'s `lv` sums,
+/// so it returns the same double.
+#[must_use]
+pub fn local_variation(intervals: &[f64]) -> Option<f64> {
+    let m = adjacent(intervals)?;
+    let sum: f64 = intervals.windows(2).map(|w| ((w[1] - w[0]) / (w[0] + w[1])).powi(2)).sum();
+    Some(3.0 * (sum / m))
+}
+
+/// Shinomoto et al.'s revised local variation (*Relating neuronal firing patterns to functional
+/// differentiation of cerebral cortex*, `PLoS` Computational Biology 5:e1000433, 2009, Eq. 3), with a
+/// refractoriness constant `r` in the intervals' unit:
+///
+/// ```text
+/// LvR = 3/(n − 1) · Σ_{i<n} (1 − 4 I_i I_{i+1}/(I_i + I_{i+1})²) · (1 + 4r/(I_i + I_{i+1}))
+/// ```
+///
+/// the first-order expansion in `r` of [`local_variation`] with `r` taken off each interval. Equal
+/// to `Lv` at `r = 0`; they found `r` = 5 ms discriminated cortical areas best. `None` as for
+/// [`local_variation`], and for an `r` that is negative or not finite.
+#[must_use]
+pub fn revised_local_variation(intervals: &[f64], r: f64) -> Option<f64> {
+    let m = adjacent(intervals)?;
+    if !(r.is_finite() && r >= 0.0) {
+        return None;
+    }
+    let sum: f64 = intervals
+        .windows(2)
+        .map(|w| {
+            let t = w[0] + w[1];
+            (1.0 - 4.0 * w[0] * w[1] / (t * t)) * (1.0 + 4.0 * r / t)
+        })
+        .sum();
+    Some(3.0 / m * sum)
+}
+
+/// Holt, Softky, Koch and Douglas's `CV2` (Journal of Neurophysiology 75:1806–1814, 1996), as
+/// `Elephant` computes it: `2/(n − 1) · Σ_{i<n} |I_{i+1} − I_i|/(I_{i+1} + I_i)`. The same
+/// neighbour-by-neighbour comparison as [`local_variation`], with an absolute value where `Lv`
+/// squares. The 1996 paper was not read here; the definition is `Elephant`'s code. `None` as for
+/// [`local_variation`].
+#[must_use]
+pub fn cv2(intervals: &[f64]) -> Option<f64> {
+    let m = adjacent(intervals)?;
+    let sum: f64 = intervals.windows(2).map(|w| ((w[1] - w[0]) / (w[0] + w[1])).abs()).sum();
+    Some(2.0 * (sum / m))
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Event, Polarity, Spike, Train};
+    use super::{Event, Polarity, Spike, Train, cv2, local_variation, revised_local_variation};
+    use crate::rng::Rng;
 
     #[test]
     fn spikes_sort_by_time_then_source() {
@@ -361,5 +438,77 @@ mod tests {
         let a = Event { t: 1, address: 99, polarity: Polarity::On };
         let b = Event { t: 2, address: 0, polarity: Polarity::Off };
         assert!(a < b);
+    }
+
+    /// `Elephant`'s own examples (`elephant/statistics.py`, commit `32f1b56`): `lv`, `lvr` with
+    /// `R=0.005` and `cv2` of the intervals `[0.3, 4.5, 6.7, 9.3]` print 0.8306154336734695,
+    /// 0.833907445980624 and 0.8226190476190478, and these are the same doubles.
+    #[test]
+    fn the_local_measures_are_elephants_on_its_own_examples() {
+        let x = [0.3, 4.5, 6.7, 9.3];
+        assert_eq!(local_variation(&x), Some(0.830_615_433_673_469_5));
+        assert_eq!(revised_local_variation(&x, 0.005), Some(0.833_907_445_980_624));
+        assert_eq!(cv2(&x), Some(0.822_619_047_619_047_8));
+    }
+
+    /// Shinomoto 2003, Eq. B.7: for gamma intervals of order `z` the expected `Lv` is `3/(2z + 1)`.
+    /// Two hundred thousand seeded intervals for each of `z` = 1, 2, 4, their standard error taken
+    /// from a hundred batches: measured 0.99612, 0.60137 and 0.33333 against 1, 0.6 and 0.33333,
+    /// within 1.96, 0.69 and 0.01 standard errors. Neighbouring terms share an interval, which is
+    /// why the error comes from batches and not from the terms.
+    #[test]
+    fn local_variation_meets_its_gamma_closed_form() {
+        let mut rng = Rng::new(2003);
+        for z in [1usize, 2, 4] {
+            let iv: Vec<f64> = (0..200_000).map(|_| (0..z).map(|_| -(1.0 - rng.next_f64()).ln()).sum::<f64>()).collect();
+            let lv = local_variation(&iv).unwrap();
+            let batches: Vec<f64> = iv.chunks(2_000).map(|c| local_variation(c).unwrap()).collect();
+            let k = batches.len() as f64;
+            let mean = batches.iter().sum::<f64>() / k;
+            let se = (batches.iter().map(|b| (b - mean).powi(2)).sum::<f64>() / (k - 1.0) / k).sqrt();
+            let want = 3.0 / (2.0 * z as f64 + 1.0);
+            assert!((lv - want).abs() < 3.0 * se && se < 0.003, "z = {z}: Lv {lv} against {want}, standard error {se}");
+        }
+    }
+
+    /// Closed forms. A regular train has `Lv = LvR = CV2 = 0` exactly. `LvR` at `r = 0` is `Lv`
+    /// (to rounding: the terms are written differently). `Lv` and `CV2` are ratios of neighbouring
+    /// intervals, so doubling every interval changes neither by a bit — a rate change they ignore —
+    /// while `LvR` with a fixed `r` rises, because `r` becomes a smaller share of each interval. And
+    /// intervals alternating short and long — Shinomoto 2009's Fig. 1C — are maximally irregular
+    /// locally: with ratio 3, each term of `Lv` is `3·(2/4)² = 3/4` and of `CV2` is `2·(2/4) = 1`.
+    #[test]
+    fn the_local_measures_meet_their_closed_forms() {
+        let regular = [0.25; 5];
+        assert_eq!(local_variation(&regular), Some(0.0));
+        assert_eq!(revised_local_variation(&regular, 0.5), Some(0.0));
+        assert_eq!(cv2(&regular), Some(0.0));
+        let x = [0.3, 4.5, 6.7, 9.3, 0.8, 2.25];
+        let lv = local_variation(&x).unwrap();
+        assert!((revised_local_variation(&x, 0.0).unwrap() - lv).abs() < 1e-15 * lv);
+        let doubled: Vec<f64> = x.iter().map(|v| v * 2.0).collect();
+        assert_eq!(local_variation(&doubled), Some(lv));
+        assert_eq!(cv2(&doubled), cv2(&x));
+        assert!(revised_local_variation(&x, 0.25).unwrap() > revised_local_variation(&doubled, 0.25).unwrap());
+        let alternating = [1.0, 3.0, 1.0, 3.0, 1.0];
+        assert_eq!(local_variation(&alternating), Some(0.75));
+        assert_eq!(cv2(&alternating), Some(1.0));
+        // LvR's correction by hand for one pair: (1 − 4·1·3/16)(1 + 4·0.5/4) · 3 = 0.25 · 1.5 · 3.
+        assert_eq!(revised_local_variation(&[1.0, 3.0], 0.5), Some(1.125));
+    }
+
+    /// Fewer than two intervals, an interval that is not finite and positive, or a refractoriness
+    /// that is negative or not finite: no number.
+    #[test]
+    fn the_local_measures_refuse_what_they_cannot_measure() {
+        for bad in [&[][..], &[1.0], &[1.0, 0.0], &[1.0, -2.0], &[1.0, f64::NAN], &[f64::INFINITY, 1.0]] {
+            assert_eq!(local_variation(bad), None, "{bad:?}");
+            assert_eq!(revised_local_variation(bad, 0.0), None, "{bad:?}");
+            assert_eq!(cv2(bad), None, "{bad:?}");
+        }
+        assert_eq!(revised_local_variation(&[1.0, 2.0], -0.001), None);
+        assert_eq!(revised_local_variation(&[1.0, 2.0], f64::NAN), None);
+        assert_eq!(revised_local_variation(&[1.0, 2.0], f64::INFINITY), None);
+        assert!(revised_local_variation(&[1.0, 2.0], 0.0).is_some());
     }
 }

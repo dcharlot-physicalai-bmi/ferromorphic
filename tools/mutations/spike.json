@@ -108,5 +108,100 @@
   "label": "is_empty is never true",
   "old": "        self.spikes.is_empty()",
   "new": "        false"
+ },
+ {
+  "label": "one interval is accepted",
+  "old": "(intervals.len() >= 2 && intervals",
+  "new": "(intervals.len() >= 1 && intervals"
+ },
+ {
+  "label": "a zero interval is accepted",
+  "old": "x.is_finite() && x > 0.0)",
+  "new": "x.is_finite() && x >= 0.0)"
+ },
+ {
+  "label": "a non-finite interval is accepted",
+  "old": "intervals.iter().all(|&x| x.is_finite() && x > 0.0)",
+  "new": "intervals.iter().all(|&x| x > 0.0)"
+ },
+ {
+  "label": "the pairs are counted as the intervals",
+  "old": ".then(|| (intervals.len() - 1) as f64)",
+  "new": ".then(|| intervals.len() as f64)"
+ },
+ {
+  "label": "Lv's terms are not squared",
+  "old": "((w[1] - w[0]) / (w[0] + w[1])).powi(2)).sum();",
+  "new": "((w[1] - w[0]) / (w[0] + w[1])).abs()).sum();"
+ },
+ {
+  "label": "Lv's terms are differences over one interval",
+  "old": "((w[1] - w[0]) / (w[0] + w[1])).powi(2)",
+  "new": "((w[1] - w[0]) / w[0]).powi(2)"
+ },
+ {
+  "label": "Lv's factor is 2",
+  "old": "Some(3.0 * (sum / m))",
+  "new": "Some(2.0 * (sum / m))"
+ },
+ {
+  "label": "Lv divides by the intervals",
+  "old": "Some(3.0 * (sum / m))",
+  "new": "Some(3.0 * (sum / (m + 1.0)))"
+ },
+ {
+  "label": "LvR accepts a negative refractoriness",
+  "old": "if !(r.is_finite() && r >= 0.0) {",
+  "new": "if !(r.is_finite()) {"
+ },
+ {
+  "label": "LvR accepts an infinite refractoriness",
+  "old": "if !(r.is_finite() && r >= 0.0) {",
+  "new": "if !(r >= 0.0) {"
+ },
+ {
+  "label": "LvR's first factor uses one interval squared",
+  "old": "(1.0 - 4.0 * w[0] * w[1] / (t * t))",
+  "new": "(1.0 - 4.0 * w[0] * w[0] / (t * t))"
+ },
+ {
+  "label": "LvR's first factor has 2 for 4",
+  "old": "(1.0 - 4.0 * w[0] * w[1] / (t * t))",
+  "new": "(1.0 - 2.0 * w[0] * w[1] / (t * t))"
+ },
+ {
+  "label": "LvR ignores the refractoriness",
+  "old": "* (1.0 + 4.0 * r / t)",
+  "new": "* (1.0 + 0.0 * r / t)"
+ },
+ {
+  "label": "LvR's correction has 2r for 4r",
+  "old": "* (1.0 + 4.0 * r / t)",
+  "new": "* (1.0 + 2.0 * r / t)"
+ },
+ {
+  "label": "LvR's correction is subtracted",
+  "old": "* (1.0 + 4.0 * r / t)",
+  "new": "* (1.0 - 4.0 * r / t)"
+ },
+ {
+  "label": "LvR's factor is 2",
+  "old": "Some(3.0 / m * sum)",
+  "new": "Some(2.0 / m * sum)"
+ },
+ {
+  "label": "CV2 squares its terms",
+  "old": "((w[1] - w[0]) / (w[0] + w[1])).abs()).sum();\n    Some(2.0",
+  "new": "((w[1] - w[0]) / (w[0] + w[1])).powi(2)).sum();\n    Some(2.0"
+ },
+ {
+  "label": "CV2 keeps the sign of its terms",
+  "old": "((w[1] - w[0]) / (w[0] + w[1])).abs()).sum();\n    Some(2.0",
+  "new": "((w[1] - w[0]) / (w[0] + w[1]))).sum();\n    Some(2.0"
+ },
+ {
+  "label": "CV2's factor is 3",
+  "old": "Some(2.0 * (sum / m))",
+  "new": "Some(3.0 * (sum / m))"
  }
 ]
