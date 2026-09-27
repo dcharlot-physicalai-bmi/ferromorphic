@@ -131,6 +131,7 @@ pub mod graph;
 pub mod grid;
 pub mod hardware;
 pub mod hh;
+pub mod hindmarshrose;
 pub mod hopfield;
 pub mod intspike;
 pub mod istdp;

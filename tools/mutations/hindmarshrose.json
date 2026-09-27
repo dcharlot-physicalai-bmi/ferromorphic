@@ -1,0 +1,1252 @@
+[
+ {
+  "label": "the not-positive message names the value as the parameter",
+  "old": "write!(f, \"{what} = {value} must be finite and positive\")",
+  "new": "write!(f, \"{value} = {what} must be finite and positive\")"
+ },
+ {
+  "label": "the non-finite message drops the value",
+  "old": "write!(f, \"{what} = {value} is not finite\")",
+  "new": "write!(f, \"{what} is not finite\")"
+ },
+ {
+  "label": "the no-band message drops b",
+  "old": "write!(f, \"a = {a}, b = {b} give b^2 <= 3a",
+  "new": "write!(f, \"a = {a} give b^2 <= 3a"
+ },
+ {
+  "label": "the out-of-order message swaps b and d",
+  "old": "write!(f, \"b = {b} is not below d = {d}",
+  "new": "write!(f, \"b = {d} is not below d = {b}"
+ },
+ {
+  "label": "the no-positive-root message drops q",
+  "old": "write!(f, \"q = {q} is not positive",
+  "new": "write!(f, \"q is not positive"
+ },
+ {
+  "label": "the diverged message reports the step as the time",
+  "old": "at t = {t}: the step h = {h} is too long",
+  "new": "at t = {h}: the step h = {h} is too long"
+ },
+ {
+  "label": "the unordered message swaps the two times",
+  "old": "write!(f, \"spike {index} at t = {after} comes before the spike ahead of it at t = {before}\")",
+  "new": "write!(f, \"spike {index} at t = {before} comes before the spike ahead of it at t = {after}\")"
+ },
+ {
+  "label": "the finiteness guard admits infinity",
+  "old": "if value.is_finite() { Ok(value) }",
+  "new": "if !value.is_nan() { Ok(value) }"
+ },
+ {
+  "label": "the positivity guard admits infinity",
+  "old": "if value.is_finite() && value > 0.0 { Ok(value) }",
+  "new": "if value > 0.0 { Ok(value) }"
+ },
+ {
+  "label": "the positivity guard admits zero",
+  "old": "if value.is_finite() && value > 0.0 { Ok(value) }",
+  "new": "if value.is_finite() && value >= 0.0 { Ok(value) }"
+ },
+ {
+  "label": "the depressing shift is b/2",
+  "old": "let shift = b / 3.0;",
+  "new": "let shift = b / 2.0;"
+ },
+ {
+  "label": "the depressed linear coefficient adds b^2/3",
+  "old": "let p = c - b * b / 3.0;",
+  "new": "let p = c + b * b / 3.0;"
+ },
+ {
+  "label": "the depressed constant takes 2b^3/9",
+  "old": "let q = 2.0 * b * b * b / 27.0 - b * c / 3.0 + d;",
+  "new": "let q = 2.0 * b * b * b / 9.0 - b * c / 3.0 + d;"
+ },
+ {
+  "label": "the depressed constant adds bc/3",
+  "old": "let q = 2.0 * b * b * b / 27.0 - b * c / 3.0 + d;",
+  "new": "let q = 2.0 * b * b * b / 27.0 + b * c / 3.0 + d;"
+ },
+ {
+  "label": "the depressed constant subtracts d",
+  "old": "let q = 2.0 * b * b * b / 27.0 - b * c / 3.0 + d;",
+  "new": "let q = 2.0 * b * b * b / 27.0 - b * c / 3.0 - d;"
+ },
+ {
+  "label": "a zero discriminant takes Cardano's branch",
+  "old": "} else if disc < 0.0 {",
+  "new": "} else if disc <= 0.0 {"
+ },
+ {
+  "label": "the trigonometric amplitude drops its factor of two",
+  "old": "let m = 2.0 * (-p / 3.0).sqrt();",
+  "new": "let m = (-p / 3.0).sqrt();"
+ },
+ {
+  "label": "the trigonometric argument is not clamped",
+  "old": "let theta = (3.0 * q / (p * m)).clamp(-1.0, 1.0).acos() / 3.0;",
+  "new": "let theta = (3.0 * q / (p * m)).acos() / 3.0;"
+ },
+ {
+  "label": "the trigonometric angle is not divided by three",
+  "old": ".clamp(-1.0, 1.0).acos() / 3.0;",
+  "new": ".clamp(-1.0, 1.0).acos() / 2.0;"
+ },
+ {
+  "label": "the trigonometric argument flips sign",
+  "old": "let theta = (3.0 * q / (p * m))",
+  "new": "let theta = (-3.0 * q / (p * m))"
+ },
+ {
+  "label": "only two trigonometric roots",
+  "old": "(0..3).map(|k| m * (theta",
+  "new": "(0..2).map(|k| m * (theta"
+ },
+ {
+  "label": "the roots are pi/3 apart",
+  "old": "(theta - 2.0 * core::f64::consts::PI * f64::from(k) / 3.0).cos()",
+  "new": "(theta - core::f64::consts::PI * f64::from(k) / 3.0).cos()"
+ },
+ {
+  "label": "Cardano's first cube root takes +q/2",
+  "old": "vec![(-q / 2.0 + root).cbrt() + (-q / 2.0 - root).cbrt()]",
+  "new": "vec![(q / 2.0 + root).cbrt() + (-q / 2.0 - root).cbrt()]"
+ },
+ {
+  "label": "the simple root of a double pair flips sign",
+  "old": "vec![3.0 * q / p, -3.0 * q / (2.0 * p)]",
+  "new": "vec![-3.0 * q / p, -3.0 * q / (2.0 * p)]"
+ },
+ {
+  "label": "the double root flips sign",
+  "old": "vec![3.0 * q / p, -3.0 * q / (2.0 * p)]",
+  "new": "vec![3.0 * q / p, 3.0 * q / (2.0 * p)]"
+ },
+ {
+  "label": "the shift is added back instead of subtracted",
+  "old": "let x = t - shift;",
+  "new": "let x = t + shift;"
+ },
+ {
+  "label": "the Newton slope drops the 2b term",
+  "old": "/ ((3.0 * x + 2.0 * b) * x + c);",
+  "new": "/ ((3.0 * x + b) * x + c);"
+ },
+ {
+  "label": "the Newton step goes uphill",
+  "old": "let polished = x - residual(x)",
+  "new": "let polished = x + residual(x)"
+ },
+ {
+  "label": "the residual drops its linear term",
+  "old": "let residual = |x: f64| ((x + b) * x + c) * x + d;",
+  "new": "let residual = |x: f64| (x + b) * x * x + d;"
+ },
+ {
+  "label": "the residual drops its constant",
+  "old": "let residual = |x: f64| ((x + b) * x + c) * x + d;",
+  "new": "let residual = |x: f64| ((x + b) * x + c) * x;"
+ },
+ {
+  "label": "the Newton step is kept even when it raises the residual",
+  "old": "if polished.is_finite() && residual(polished).abs() <= residual(x).abs() { polished }",
+  "new": "if polished.is_finite() { polished }"
+ },
+ {
+  "label": "a non-finite Newton step is kept",
+  "old": "if polished.is_finite() && residual(polished).abs() <= residual(x).abs() { polished }",
+  "new": "if !(residual(polished).abs() > residual(x).abs()) { polished }"
+ },
+ {
+  "label": "the Newton step is kept only when it strictly lowers the residual",
+  "old": "residual(polished).abs() <= residual(x).abs()",
+  "new": "residual(polished).abs() < residual(x).abs()"
+ },
+ {
+  "label": "the Newton step is dropped",
+  "old": "if polished.is_finite() && residual(polished).abs() <= residual(x).abs() { polished } else { x }",
+  "new": "x"
+ },
+ {
+  "label": "the roots are not sorted",
+  "old": "roots.sort_by(f64::total_cmp);",
+  "new": ""
+ },
+ {
+  "label": "a zero constant is not factored out",
+  "old": "let mut roots: Vec<f64> = if d == 0.0 {",
+  "new": "let mut roots: Vec<f64> = if false {"
+ },
+ {
+  "label": "the factoring is taken for a non-zero constant",
+  "old": "let mut roots: Vec<f64> = if d == 0.0 {",
+  "new": "let mut roots: Vec<f64> = if d != 0.0 {"
+ },
+ {
+  "label": "the factored origin is dropped",
+  "old": "let mut roots = vec![0.0];",
+  "new": "let mut roots = Vec::new();"
+ },
+ {
+  "label": "a quadratic root at the origin is listed twice",
+  "old": ".filter(|&x| x != 0.0)",
+  "new": ".filter(|&x| x == x)"
+ },
+ {
+  "label": "the quadratic's negative roots are dropped",
+  "old": ".filter(|&x| x != 0.0)",
+  "new": ".filter(|&x| x > 0.0)"
+ },
+ {
+  "label": "the discriminant flips its d term",
+  "old": "let disc = d * (",
+  "new": "let disc = -d * ("
+ },
+ {
+  "label": "the discriminant weighs 18bc by 9",
+  "old": "(18.0 * b * c - 4.0 * b * b * b",
+  "new": "(9.0 * b * c - 4.0 * b * b * b"
+ },
+ {
+  "label": "the discriminant adds 4b^3",
+  "old": "18.0 * b * c - 4.0 * b * b * b - 27.0 * d)",
+  "new": "18.0 * b * c + 4.0 * b * b * b - 27.0 * d)"
+ },
+ {
+  "label": "the discriminant adds 27d",
+  "old": "4.0 * b * b * b - 27.0 * d)",
+  "new": "4.0 * b * b * b + 27.0 * d)"
+ },
+ {
+  "label": "the discriminant weighs d by 9",
+  "old": "4.0 * b * b * b - 27.0 * d)",
+  "new": "4.0 * b * b * b - 9.0 * d)"
+ },
+ {
+  "label": "the discriminant subtracts its c^2 term",
+  "old": "+ c * c * (b * b - 4.0 * c);",
+  "new": "- c * c * (b * b - 4.0 * c);"
+ },
+ {
+  "label": "the discriminant's c term drops a factor c",
+  "old": "+ c * c * (b * b - 4.0 * c);",
+  "new": "+ c * (b * b - 4.0 * c);"
+ },
+ {
+  "label": "the discriminant's c term adds 4c",
+  "old": "(b * b - 4.0 * c);",
+  "new": "(b * b + 4.0 * c);"
+ },
+ {
+  "label": "a zero discriminant takes the three-root branch",
+  "old": "if disc > 0.0 && p < 0.0 {",
+  "new": "if disc >= 0.0 && p < 0.0 {"
+ },
+ {
+  "label": "the three-root branch does not need P < 0",
+  "old": "if disc > 0.0 && p < 0.0 {",
+  "new": "if disc > 0.0 {"
+ },
+ {
+  "label": "the three-root branch admits P = 0",
+  "old": "if disc > 0.0 && p < 0.0 {",
+  "new": "if disc > 0.0 && p <= 0.0 {"
+ },
+ {
+  "label": "Cardano's radicand is -disc/27",
+  "old": "let root = (-disc / 108.0).sqrt();",
+  "new": "let root = (-disc / 27.0).sqrt();"
+ },
+ {
+  "label": "Cardano's radicand loses its sign",
+  "old": "let root = (-disc / 108.0).sqrt();",
+  "new": "let root = (disc / 108.0).sqrt();"
+ },
+ {
+  "label": "the double-root branch admits P = 0",
+  "old": "} else if p < 0.0 {",
+  "new": "} else if p <= 0.0 {"
+ },
+ {
+  "label": "the double-root branch takes positive P",
+  "old": "} else if p < 0.0 {",
+  "new": "} else if p > 0.0 {"
+ },
+ {
+  "label": "the triple root is not at -b/3",
+  "old": "        } else {\n            vec![0.0]\n        };",
+  "new": "        } else {\n            vec![0.5]\n        };"
+ },
+ {
+  "label": "the quadratic's discriminant adds 4c",
+  "old": "let spread = b * b - 4.0 * c;",
+  "new": "let spread = b * b + 4.0 * c;"
+ },
+ {
+  "label": "the quadratic's discriminant takes 2c",
+  "old": "let spread = b * b - 4.0 * c;",
+  "new": "let spread = b * b - 2.0 * c;"
+ },
+ {
+  "label": "a zero quadratic discriminant gives two roots",
+  "old": "if spread > 0.0 {",
+  "new": "if spread >= 0.0 {"
+ },
+ {
+  "label": "the far root takes the wrong sign",
+  "old": "let far = -0.5 * (b + spread.sqrt().copysign(b));",
+  "new": "let far = 0.5 * (b + spread.sqrt().copysign(b));"
+ },
+ {
+  "label": "the far root cancels",
+  "old": "let far = -0.5 * (b + spread.sqrt().copysign(b));",
+  "new": "let far = -0.5 * (b - spread.sqrt().copysign(b));"
+ },
+ {
+  "label": "the far root ignores the sign of b",
+  "old": "let far = -0.5 * (b + spread.sqrt().copysign(b));",
+  "new": "let far = -0.5 * (b + spread.sqrt());"
+ },
+ {
+  "label": "the far root takes the opposite sign of b",
+  "old": "spread.sqrt().copysign(b));",
+  "new": "spread.sqrt().copysign(-b));"
+ },
+ {
+  "label": "the near root is far over c",
+  "old": "vec![far, c / far]",
+  "new": "vec![far, far / c]"
+ },
+ {
+  "label": "the near root is dropped",
+  "old": "vec![far, c / far]",
+  "new": "vec![far]"
+ },
+ {
+  "label": "the double quadratic root is taken for none",
+  "old": "} else if spread == 0.0 {",
+  "new": "} else if spread != 0.0 {"
+ },
+ {
+  "label": "the double quadratic root flips sign",
+  "old": "vec![-0.5 * b]",
+  "new": "vec![0.5 * b]"
+ },
+ {
+  "label": "no real quadratic root gives -b/2",
+  "old": "    } else {\n        Vec::new()\n    }\n}",
+  "new": "    } else {\n        vec![-0.5 * b]\n    }\n}"
+ },
+ {
+  "label": "the stage offsets subtract",
+  "old": "core::array::from_fn(|n| u[n] + w * k[n])",
+  "new": "core::array::from_fn(|n| u[n] - w * k[n])"
+ },
+ {
+  "label": "the second stage takes the full step",
+  "old": "let k2 = f(at(k1, 0.5 * h));",
+  "new": "let k2 = f(at(k1, h));"
+ },
+ {
+  "label": "the third stage takes the full step",
+  "old": "let k3 = f(at(k2, 0.5 * h));",
+  "new": "let k3 = f(at(k2, h));"
+ },
+ {
+  "label": "the third stage starts from k1",
+  "old": "let k3 = f(at(k2, 0.5 * h));",
+  "new": "let k3 = f(at(k1, 0.5 * h));"
+ },
+ {
+  "label": "the fourth stage takes half a step",
+  "old": "let k4 = f(at(k3, h));",
+  "new": "let k4 = f(at(k3, 0.5 * h));"
+ },
+ {
+  "label": "the second stage has weight one",
+  "old": "h / 6.0 * (k1[n] + 2.0 * k2[n] + 2.0 * k3[n] + k4[n])",
+  "new": "h / 6.0 * (k1[n] + k2[n] + 2.0 * k3[n] + k4[n])"
+ },
+ {
+  "label": "the third stage has weight one",
+  "old": "h / 6.0 * (k1[n] + 2.0 * k2[n] + 2.0 * k3[n] + k4[n])",
+  "new": "h / 6.0 * (k1[n] + 2.0 * k2[n] + k3[n] + k4[n])"
+ },
+ {
+  "label": "the fourth stage is subtracted",
+  "old": "h / 6.0 * (k1[n] + 2.0 * k2[n] + 2.0 * k3[n] + k4[n])",
+  "new": "h / 6.0 * (k1[n] + 2.0 * k2[n] + 2.0 * k3[n] - k4[n])"
+ },
+ {
+  "label": "the weights sum to two",
+  "old": "u[n] + h / 6.0 * (k1[n]",
+  "new": "u[n] + h / 3.0 * (k1[n]"
+ },
+ {
+  "label": "the step is not checked",
+  "old": "    positive(\"h\", h)?;\n    finite(\"threshold\", threshold)?;",
+  "new": "    finite(\"threshold\", threshold)?;"
+ },
+ {
+  "label": "the threshold is not checked",
+  "old": "    positive(\"h\", h)?;\n    finite(\"threshold\", threshold)?;",
+  "new": "    positive(\"h\", h)?;"
+ },
+ {
+  "label": "the start is not checked",
+  "old": "        finite(what, value)?;",
+  "new": "        let _ = (what, value);"
+ },
+ {
+  "label": "the start is checked under the wrong names",
+  "old": "[\"x\", \"y\", \"z\"].into_iter().zip(start)",
+  "new": "[\"y\", \"x\", \"z\"].into_iter().zip(start)"
+ },
+ {
+  "label": "the protocol's currents are not checked",
+  "old": "    for &(_, i) in protocol {\n        finite(\"I\", i)?;\n    }\n",
+  "new": ""
+ },
+ {
+  "label": "divergence is not detected",
+  "old": "if !next.iter().all(|v| v.is_finite()) {",
+  "new": "if false {"
+ },
+ {
+  "label": "divergence reports the end of the failing step",
+  "old": "Err(HindmarshRoseError::Diverged { t: k as f64 * h, h })",
+  "new": "Err(HindmarshRoseError::Diverged { t: (k + 1) as f64 * h, h })"
+ },
+ {
+  "label": "a spike may start on the threshold",
+  "old": "if u[0] < threshold && next[0] >= threshold {",
+  "new": "if u[0] <= threshold && next[0] >= threshold {"
+ },
+ {
+  "label": "a spike must pass the threshold strictly",
+  "old": "if u[0] < threshold && next[0] >= threshold {",
+  "new": "if u[0] < threshold && next[0] > threshold {"
+ },
+ {
+  "label": "a spike is timed at the start of its step",
+  "old": "spikes.push((k as f64 + (threshold - u[0]) / (next[0] - u[0])) * h);",
+  "new": "spikes.push(k as f64 * h);"
+ },
+ {
+  "label": "the interpolation measures from the end of the step",
+  "old": "spikes.push((k as f64 + (threshold - u[0]) / (next[0] - u[0])) * h);",
+  "new": "spikes.push((k as f64 + (next[0] - threshold) / (next[0] - u[0])) * h);"
+ },
+ {
+  "label": "the step counter advances by two",
+  "old": "            k += 1;\n",
+  "new": "            k += 2;\n"
+ },
+ {
+  "label": "the state never advances",
+  "old": "            u = next;\n            k += 1;",
+  "new": "            k += 1;"
+ },
+ {
+  "label": "the gap is not checked",
+  "old": "    positive(\"gap\", gap)?;\n",
+  "new": ""
+ },
+ {
+  "label": "a spike time is not checked for finiteness",
+  "old": "        finite(\"spike time\", t)?;\n",
+  "new": ""
+ },
+ {
+  "label": "equal spike times are refused",
+  "old": "if n > 0 && t < spikes[n - 1] {",
+  "new": "if n > 0 && t <= spikes[n - 1] {"
+ },
+ {
+  "label": "the ordering check reads before the first spike",
+  "old": "if n > 0 && t < spikes[n - 1] {",
+  "new": "if t < spikes[n - 1] {"
+ },
+ {
+  "label": "an interval equal to the gap splits a burst",
+  "old": "if spikes[n] - spikes[n - 1] > gap {",
+  "new": "if spikes[n] - spikes[n - 1] >= gap {"
+ },
+ {
+  "label": "a closed burst counts one spike too many",
+  "old": "sizes.push(n - first);",
+  "new": "sizes.push(n - first + 1);"
+ },
+ {
+  "label": "the next burst does not start at the split",
+  "old": "            first = n;\n",
+  "new": ""
+ },
+ {
+  "label": "an empty train reports one empty burst",
+  "old": "if !spikes.is_empty() {\n        sizes.push(spikes.len() - first);",
+  "new": "if true {\n        sizes.push(spikes.len() - first);"
+ },
+ {
+  "label": "the last burst counts the whole train",
+  "old": "sizes.push(spikes.len() - first);",
+  "new": "sizes.push(spikes.len());"
+ },
+ {
+  "label": "the trace is positive outside region IV",
+  "old": "self == Self::IV\n",
+  "new": "self != Self::IV\n"
+ },
+ {
+  "label": "the determinant is negative outside region II",
+  "old": "self != Self::II\n",
+  "new": "self == Self::II\n"
+ },
+ {
+  "label": "region I is printed as a focus",
+  "old": "Self::I => \"stable node or spiral\",",
+  "new": "Self::I => \"stable focus or spiral\","
+ },
+ {
+  "label": "region II is printed as a node",
+  "old": "Self::II => \"unstable saddle\",",
+  "new": "Self::II => \"unstable node\","
+ },
+ {
+  "label": "regions III and V are printed as nodes",
+  "old": "Self::III | Self::V => \"stable focus or spiral\",",
+  "new": "Self::III | Self::V => \"stable node or spiral\","
+ },
+ {
+  "label": "region IV is printed as p. 92's node",
+  "old": "Self::IV => \"unstable focus or spiral\",",
+  "new": "Self::IV => \"unstable node or spiral\","
+ },
+ {
+  "label": "the paper's a is 2",
+  "old": "pub const PAPER: Self = Self { a: 1.0, b: 3.0, c: 1.0, d: 5.0 };",
+  "new": "pub const PAPER: Self = Self { a: 2.0, b: 3.0, c: 1.0, d: 5.0 };"
+ },
+ {
+  "label": "the paper's b is 2.5",
+  "old": "pub const PAPER: Self = Self { a: 1.0, b: 3.0, c: 1.0, d: 5.0 };",
+  "new": "pub const PAPER: Self = Self { a: 1.0, b: 2.5, c: 1.0, d: 5.0 };"
+ },
+ {
+  "label": "the paper's c is 1.5",
+  "old": "pub const PAPER: Self = Self { a: 1.0, b: 3.0, c: 1.0, d: 5.0 };",
+  "new": "pub const PAPER: Self = Self { a: 1.0, b: 3.0, c: 1.5, d: 5.0 };"
+ },
+ {
+  "label": "the paper's d is 4",
+  "old": "pub const PAPER: Self = Self { a: 1.0, b: 3.0, c: 1.0, d: 5.0 };",
+  "new": "pub const PAPER: Self = Self { a: 1.0, b: 3.0, c: 1.0, d: 4.0 };"
+ },
+ {
+  "label": "the pulse is I = 1.5",
+  "old": "pub const PULSE_I: f64 = 1.0;",
+  "new": "pub const PULSE_I: f64 = 1.5;"
+ },
+ {
+  "label": "new does not check its model",
+  "old": "        let m = Self { a, b, c, d };\n        m.check()?;\n",
+  "new": "        let m = Self { a, b, c, d };\n"
+ },
+ {
+  "label": "a is not checked",
+  "old": "        positive(\"a\", self.a)?;\n",
+  "new": ""
+ },
+ {
+  "label": "b is not checked",
+  "old": "        positive(\"b\", self.b)?;\n",
+  "new": ""
+ },
+ {
+  "label": "c is not checked",
+  "old": "        positive(\"c\", self.c)?;\n",
+  "new": ""
+ },
+ {
+  "label": "d is not checked",
+  "old": "        positive(\"d\", self.d)?;\n",
+  "new": ""
+ },
+ {
+  "label": "the cubic of F enters with a plus",
+  "old": "(y - self.a * x * x * x + self.b * x * x + i, ",
+  "new": "(y + self.a * x * x * x + self.b * x * x + i, "
+ },
+ {
+  "label": "the quadratic of F enters with a minus",
+  "old": "(y - self.a * x * x * x + self.b * x * x + i, ",
+  "new": "(y - self.a * x * x * x - self.b * x * x + i, "
+ },
+ {
+  "label": "the current is subtracted",
+  "old": "(y - self.a * x * x * x + self.b * x * x + i, ",
+  "new": "(y - self.a * x * x * x + self.b * x * x - i, "
+ },
+ {
+  "label": "the recovery quadratic enters with a plus",
+  "old": "self.c - self.d * x * x - y)",
+  "new": "self.c + self.d * x * x - y)"
+ },
+ {
+  "label": "the recovery variable is not self-limiting",
+  "old": "self.c - self.d * x * x - y)",
+  "new": "self.c - self.d * x * x + y)"
+ },
+ {
+  "label": "p is (b - d)/a",
+  "old": "        (self.d - self.b) / self.a\n",
+  "new": "        (self.b - self.d) / self.a\n"
+ },
+ {
+  "label": "q subtracts the current",
+  "old": "(self.c + i) / self.a",
+  "new": "(self.c - i) / self.a"
+ },
+ {
+  "label": "the discriminant adds 27q",
+  "old": "q * (4.0 * p * p * p - 27.0 * q)",
+  "new": "q * (4.0 * p * p * p + 27.0 * q)"
+ },
+ {
+  "label": "the discriminant drops its factor q",
+  "old": "q * (4.0 * p * p * p - 27.0 * q)",
+  "new": "(4.0 * p * p * p - 27.0 * q)"
+ },
+ {
+  "label": "the three-point condition is not checked",
+  "old": "        self.check()?;\n        finite(\"I\", i)?;\n        let (p, q) = (self.p(), self.q(i));",
+  "new": "        let (p, q) = (self.p(), self.q(i));"
+ },
+ {
+  "label": "the three-point condition drops 0 < 27q",
+  "old": "Ok(0.0 < 27.0 * q && 27.0 * q < 4.0 * p * p * p)",
+  "new": "Ok(27.0 * q < 4.0 * p * p * p)"
+ },
+ {
+  "label": "the three-point condition admits q = 0",
+  "old": "Ok(0.0 < 27.0 * q && 27.0 * q < 4.0 * p * p * p)",
+  "new": "Ok(0.0 <= 27.0 * q && 27.0 * q < 4.0 * p * p * p)"
+ },
+ {
+  "label": "the three-point condition admits 27q = 4p^3",
+  "old": "Ok(0.0 < 27.0 * q && 27.0 * q < 4.0 * p * p * p)",
+  "new": "Ok(0.0 < 27.0 * q && 27.0 * q <= 4.0 * p * p * p)"
+ },
+ {
+  "label": "the equilibria are not checked",
+  "old": "        self.check()?;\n        finite(\"I\", i)?;\n        Ok(cubic_roots",
+  "new": "        Ok(cubic_roots"
+ },
+ {
+  "label": "the equilibria solve x^3 + px^2 = -q",
+  "old": "Ok(cubic_roots(self.p(), 0.0, -self.q(i)))",
+  "new": "Ok(cubic_roots(self.p(), 0.0, self.q(i)))"
+ },
+ {
+  "label": "the steady current adds c",
+  "old": "self.a * x * x * x + (self.d - self.b) * x * x - self.c",
+  "new": "self.a * x * x * x + (self.d - self.b) * x * x + self.c"
+ },
+ {
+  "label": "the steady current takes b - d",
+  "old": "self.a * x * x * x + (self.d - self.b) * x * x - self.c",
+  "new": "self.a * x * x * x + (self.b - self.d) * x * x - self.c"
+ },
+ {
+  "label": "the linearisation's first entry drops a",
+  "old": "jacobian: [[-3.0 * self.a * x0 * x0 + 2.0 * self.b * x0, 1.0]",
+  "new": "jacobian: [[-3.0 * x0 * x0 + 2.0 * self.b * x0, 1.0]"
+ },
+ {
+  "label": "the linearisation's coupling to y is -1",
+  "old": "+ 2.0 * self.b * x0, 1.0], [",
+  "new": "+ 2.0 * self.b * x0, -1.0], ["
+ },
+ {
+  "label": "the linearisation's dQ/dx flips sign",
+  "old": "[-2.0 * self.d * x0, -1.0]] }",
+  "new": "[2.0 * self.d * x0, -1.0]] }"
+ },
+ {
+  "label": "the linearisation's dQ/dy is +1",
+  "old": "[-2.0 * self.d * x0, -1.0]] }",
+  "new": "[-2.0 * self.d * x0, 1.0]] }"
+ },
+ {
+  "label": "the printed trace adds one",
+  "old": "-3.0 * self.a * x0 * x0 + 2.0 * self.b * x0 - 1.0",
+  "new": "-3.0 * self.a * x0 * x0 + 2.0 * self.b * x0 + 1.0"
+ },
+ {
+  "label": "the printed trace drops a",
+  "old": "-3.0 * self.a * x0 * x0 + 2.0 * self.b * x0 - 1.0",
+  "new": "-3.0 * x0 * x0 + 2.0 * self.b * x0 - 1.0"
+ },
+ {
+  "label": "the printed determinant subtracts the linear term",
+  "old": "3.0 * self.a * x0 * x0 + 2.0 * (self.d - self.b) * x0",
+  "new": "3.0 * self.a * x0 * x0 - 2.0 * (self.d - self.b) * x0"
+ },
+ {
+  "label": "the printed determinant drops a",
+  "old": "3.0 * self.a * x0 * x0 + 2.0 * (self.d - self.b) * x0",
+  "new": "3.0 * x0 * x0 + 2.0 * (self.d - self.b) * x0"
+ },
+ {
+  "label": "the band does not check its model",
+  "old": "        self.check()?;\n        let s = self.b * self.b - 3.0 * self.a;",
+  "new": "        let s = self.b * self.b - 3.0 * self.a;"
+ },
+ {
+  "label": "D is (b^2 - a)^1/2",
+  "old": "let s = self.b * self.b - 3.0 * self.a;",
+  "new": "let s = self.b * self.b - self.a;"
+ },
+ {
+  "label": "b^2 = 3a gives a band",
+  "old": "if s > 0.0 { Ok(s.sqrt()) }",
+  "new": "if s >= 0.0 { Ok(s.sqrt()) }"
+ },
+ {
+  "label": "L adds D",
+  "old": "Ok((self.b - self.band()?) / (3.0 * self.a))",
+  "new": "Ok((self.b + self.band()?) / (3.0 * self.a))"
+ },
+ {
+  "label": "L divides by 3 and multiplies by a",
+  "old": "Ok((self.b - self.band()?) / (3.0 * self.a))",
+  "new": "Ok((self.b - self.band()?) / 3.0 * self.a)"
+ },
+ {
+  "label": "M subtracts D",
+  "old": "Ok((self.b + self.band()?) / (3.0 * self.a))",
+  "new": "Ok((self.b - self.band()?) / (3.0 * self.a))"
+ },
+ {
+  "label": "M divides by 3 and multiplies by a",
+  "old": "Ok((self.b + self.band()?) / (3.0 * self.a))",
+  "new": "Ok((self.b + self.band()?) / 3.0 * self.a)"
+ },
+ {
+  "label": "the region does not check x0",
+  "old": "        finite(\"x0\", x0)?;\n        let (l, m) = (self.l()?, self.m()?);",
+  "new": "        let (l, m) = (self.l()?, self.m()?);"
+ },
+ {
+  "label": "b = d is in order",
+  "old": "if self.b < self.d { Ok(()) }",
+  "new": "if self.b <= self.d { Ok(()) }"
+ },
+ {
+  "label": "b > d is in order",
+  "old": "if self.b < self.d { Ok(()) }",
+  "new": "if self.b != self.d { Ok(()) }"
+ },
+ {
+  "label": "the out-of-order refusal swaps b and d",
+  "old": "Err(HindmarshRoseError::RegionsOutOfOrder { b: self.b, d: self.d })",
+  "new": "Err(HindmarshRoseError::RegionsOutOfOrder { b: self.d, d: self.b })"
+ },
+ {
+  "label": "the region does not need b < d",
+  "old": "let (l, m) = (self.l()?, self.m()?);\n        self.ordered()?;",
+  "new": "let (l, m) = (self.l()?, self.m()?);"
+ },
+ {
+  "label": "condition (12) does not need b < d",
+  "old": "self.q(i));\n        self.ordered()?;",
+  "new": "self.q(i));"
+ },
+ {
+  "label": "condition (12) refuses q <= 0 before b >= d",
+  "old": "        self.ordered()?;\n        if !(q > 0.0) {\n            return Err(HindmarshRoseError::NoPositiveRoot { q });\n        }\n",
+  "new": "        if !(q > 0.0) {\n            return Err(HindmarshRoseError::NoPositiveRoot { q });\n        }\n        self.ordered()?;\n"
+ },
+ {
+  "label": "the region I/II boundary is -2(d - b)/2a",
+  "old": "let saddle = -2.0 * (self.d - self.b) / (3.0 * self.a);",
+  "new": "let saddle = -2.0 * (self.d - self.b) / (2.0 * self.a);"
+ },
+ {
+  "label": "the region I/II boundary is -3(d - b)/3a",
+  "old": "let saddle = -2.0 * (self.d - self.b) / (3.0 * self.a);",
+  "new": "let saddle = -3.0 * (self.d - self.b) / (3.0 * self.a);"
+ },
+ {
+  "label": "the I/II boundary belongs to region I",
+  "old": "Ok(if x0 < saddle {",
+  "new": "Ok(if x0 <= saddle {"
+ },
+ {
+  "label": "the origin belongs to region II",
+  "old": "} else if saddle < x0 && x0 < 0.0 {",
+  "new": "} else if saddle < x0 && x0 <= 0.0 {"
+ },
+ {
+  "label": "the origin belongs to region III",
+  "old": "} else if 0.0 < x0 && x0 < l {",
+  "new": "} else if 0.0 <= x0 && x0 < l {"
+ },
+ {
+  "label": "L belongs to region IV",
+  "old": "} else if l < x0 && x0 < m {",
+  "new": "} else if l <= x0 && x0 < m {"
+ },
+ {
+  "label": "M belongs to region IV",
+  "old": "} else if l < x0 && x0 < m {",
+  "new": "} else if l < x0 && x0 <= m {"
+ },
+ {
+  "label": "M belongs to region V",
+  "old": "} else if m < x0 {",
+  "new": "} else if m <= x0 {"
+ },
+ {
+  "label": "condition (12) does not check the current",
+  "old": "        finite(\"I\", i)?;\n        let (l, m, p, q)",
+  "new": "        let (l, m, p, q)"
+ },
+ {
+  "label": "condition (12) admits q = 0",
+  "old": "if !(q > 0.0) {",
+  "new": "if !(q >= 0.0) {"
+ },
+ {
+  "label": "condition (12) admits the root at L",
+  "old": "Ok(l * l * l + p * l * l < q && q < m * m * m + p * m * m)",
+  "new": "Ok(l * l * l + p * l * l <= q && q < m * m * m + p * m * m)"
+ },
+ {
+  "label": "condition (12) admits the root at M",
+  "old": "Ok(l * l * l + p * l * l < q && q < m * m * m + p * m * m)",
+  "new": "Ok(l * l * l + p * l * l < q && q <= m * m * m + p * m * m)"
+ },
+ {
+  "label": "condition (12) takes pL for pL^2",
+  "old": "Ok(l * l * l + p * l * l < q",
+  "new": "Ok(l * l * l + p * l < q"
+ },
+ {
+  "label": "kind does not check its model",
+  "old": "        self.check()?;\n        finite(\"x0\", x0)?;\n        let l = self.linearisation(x0);",
+  "new": "        finite(\"x0\", x0)?;\n        let l = self.linearisation(x0);"
+ },
+ {
+  "label": "kind does not check x0",
+  "old": "        finite(\"x0\", x0)?;\n        let l = self.linearisation(x0);",
+  "new": "        let l = self.linearisation(x0);"
+ },
+ {
+  "label": "a zero determinant is a saddle",
+  "old": "Ok(if det < 0.0 {",
+  "new": "Ok(if det <= 0.0 {"
+ },
+ {
+  "label": "non-hyperbolic needs both zero",
+  "old": "} else if det == 0.0 || t == 0.0 {",
+  "new": "} else if det == 0.0 && t == 0.0 {"
+ },
+ {
+  "label": "a repeated eigenvalue is a spiral",
+  "old": "match (t < 0.0, t * t < 4.0 * det) {",
+  "new": "match (t < 0.0, t * t <= 4.0 * det) {"
+ },
+ {
+  "label": "the spiral test uses 2 Det",
+  "old": "match (t < 0.0, t * t < 4.0 * det) {",
+  "new": "match (t < 0.0, t * t < 2.0 * det) {"
+ },
+ {
+  "label": "a stable node is called a spiral",
+  "old": "(true, false) => Kind::StableNode,",
+  "new": "(true, false) => Kind::StableSpiral,"
+ },
+ {
+  "label": "an unstable spiral is called a node",
+  "old": "(false, true) => Kind::UnstableSpiral,",
+  "new": "(false, true) => Kind::UnstableNode,"
+ },
+ {
+  "label": "the two-variable step drops the current",
+  "old": "let run = self.simulate([x, y], &[(1, i)], h, 0.0)?;",
+  "new": "let run = self.simulate([x, y], &[(1, 0.0)], h, 0.0)?;"
+ },
+ {
+  "label": "the two-variable step swaps x and y",
+  "old": "Ok((run.end[0], run.end[1]))",
+  "new": "Ok((run.end[1], run.end[0]))"
+ },
+ {
+  "label": "the two-variable run does not check its model",
+  "old": "        self.check()?;\n        integrate(\n",
+  "new": "        integrate(\n"
+ },
+ {
+  "label": "the two-variable run swaps the derivatives",
+  "old": "                [dx, dy]\n",
+  "new": "                [dy, dx]\n"
+ },
+ {
+  "label": "x1 is one ulp off",
+  "old": "pub const X1: f64 = -1.618_033_988_749_895;",
+  "new": "pub const X1: f64 = -1.618_033_988_749_894;"
+ },
+ {
+  "label": "the printed x1 is -1.62",
+  "old": "pub const X1_PRINTED: f64 = -1.6;",
+  "new": "pub const X1_PRINTED: f64 = -1.62;"
+ },
+ {
+  "label": "Fig. 5a's s is 2",
+  "old": "pub const FIG5A: Self = Self { base: TwoVariable::PAPER, r: 0.001, s: 1.0, x1: Self::X1 };",
+  "new": "pub const FIG5A: Self = Self { base: TwoVariable::PAPER, r: 0.001, s: 2.0, x1: Self::X1 };"
+ },
+ {
+  "label": "Fig. 5a's r is 0.002",
+  "old": "pub const FIG5A: Self = Self { base: TwoVariable::PAPER, r: 0.001, s: 1.0, x1: Self::X1 };",
+  "new": "pub const FIG5A: Self = Self { base: TwoVariable::PAPER, r: 0.002, s: 1.0, x1: Self::X1 };"
+ },
+ {
+  "label": "Fig. 5c's s is 3",
+  "old": "pub const FIG5C: Self = Self { base: TwoVariable::PAPER, r: 0.001, s: 4.0, x1: Self::X1 };",
+  "new": "pub const FIG5C: Self = Self { base: TwoVariable::PAPER, r: 0.001, s: 3.0, x1: Self::X1 };"
+ },
+ {
+  "label": "Fig. 6's s is 3",
+  "old": "pub const FIG6: Self = Self { base: TwoVariable::PAPER, r: 0.001, s: 4.0, x1: Self::X1 };",
+  "new": "pub const FIG6: Self = Self { base: TwoVariable::PAPER, r: 0.001, s: 3.0, x1: Self::X1 };"
+ },
+ {
+  "label": "Fig. 6's r is 0.002",
+  "old": "pub const FIG6: Self = Self { base: TwoVariable::PAPER, r: 0.001, s: 4.0, x1: Self::X1 };",
+  "new": "pub const FIG6: Self = Self { base: TwoVariable::PAPER, r: 0.002, s: 4.0, x1: Self::X1 };"
+ },
+ {
+  "label": "Fig. 8's r is 0.002",
+  "old": "pub const FIG8: Self = Self { base: TwoVariable::PAPER, r: 0.001, s: 4.0, x1: Self::X1 };",
+  "new": "pub const FIG8: Self = Self { base: TwoVariable::PAPER, r: 0.002, s: 4.0, x1: Self::X1 };"
+ },
+ {
+  "label": "the random bursts' r is 0.006",
+  "old": "pub const RANDOM_BURSTS: Self = Self { base: TwoVariable::PAPER, r: 0.005, s: 4.0, x1: Self::X1 };",
+  "new": "pub const RANDOM_BURSTS: Self = Self { base: TwoVariable::PAPER, r: 0.006, s: 4.0, x1: Self::X1 };"
+ },
+ {
+  "label": "the random bursts' s is 3.5",
+  "old": "pub const RANDOM_BURSTS: Self = Self { base: TwoVariable::PAPER, r: 0.005, s: 4.0, x1: Self::X1 };",
+  "new": "pub const RANDOM_BURSTS: Self = Self { base: TwoVariable::PAPER, r: 0.005, s: 3.5, x1: Self::X1 };"
+ },
+ {
+  "label": "Fig. 6a's current is 0.5",
+  "old": "pub const FIG6_I: [f64; 3] = [0.4, 2.0, 4.0];",
+  "new": "pub const FIG6_I: [f64; 3] = [0.5, 2.0, 4.0];"
+ },
+ {
+  "label": "Fig. 6b's current is 2.5",
+  "old": "pub const FIG6_I: [f64; 3] = [0.4, 2.0, 4.0];",
+  "new": "pub const FIG6_I: [f64; 3] = [0.4, 2.5, 4.0];"
+ },
+ {
+  "label": "Fig. 6c's current is 3.5",
+  "old": "pub const FIG6_I: [f64; 3] = [0.4, 2.0, 4.0];",
+  "new": "pub const FIG6_I: [f64; 3] = [0.4, 2.0, 3.5];"
+ },
+ {
+  "label": "Fig. 8's current is -2",
+  "old": "pub const FIG8_I: f64 = -3.0;",
+  "new": "pub const FIG8_I: f64 = -2.0;"
+ },
+ {
+  "label": "the random-burst current is 3",
+  "old": "pub const RANDOM_BURSTS_I: f64 = 3.25;",
+  "new": "pub const RANDOM_BURSTS_I: f64 = 3.0;"
+ },
+ {
+  "label": "new does not check r",
+  "old": "        positive(\"r\", r)?;\n",
+  "new": ""
+ },
+ {
+  "label": "new does not check s",
+  "old": "        positive(\"s\", s)?;\n",
+  "new": ""
+ },
+ {
+  "label": "new takes the rightmost e.p.",
+  "old": "let x1 = base.equilibria(0.0)?[0];",
+  "new": "let x1 = *base.equilibria(0.0)?.last().unwrap();"
+ },
+ {
+  "label": "the three-variable check skips the base",
+  "old": "        self.base.check()?;\n",
+  "new": ""
+ },
+ {
+  "label": "the three-variable check skips r",
+  "old": "        positive(\"r\", self.r)?;\n",
+  "new": ""
+ },
+ {
+  "label": "the three-variable check skips s",
+  "old": "        positive(\"s\", self.s)?;\n",
+  "new": ""
+ },
+ {
+  "label": "the three-variable check skips x1",
+  "old": "        finite(\"x1\", self.x1)?;\n",
+  "new": ""
+ },
+ {
+  "label": "the adaptation current depolarizes",
+  "old": "[dx - z, dy, self.r",
+  "new": "[dx + z, dy, self.r"
+ },
+ {
+  "label": "the adaptation steady state is s(x + x1)",
+  "old": "self.r * (self.s * (x - self.x1) - z)]",
+  "new": "self.r * (self.s * (x + self.x1) - z)]"
+ },
+ {
+  "label": "the adaptation current does not decay",
+  "old": "self.r * (self.s * (x - self.x1) - z)]",
+  "new": "self.r * (self.s * (x - self.x1) + z)]"
+ },
+ {
+  "label": "the adaptation rate is dropped",
+  "old": "self.r * (self.s * (x - self.x1) - z)]",
+  "new": "(self.s * (x - self.x1) - z)]"
+ },
+ {
+  "label": "the rest state's y adds d x1^2",
+  "old": "[self.x1, self.base.c - self.base.d * self.x1 * self.x1, 0.0]",
+  "new": "[self.x1, self.base.c + self.base.d * self.x1 * self.x1, 0.0]"
+ },
+ {
+  "label": "the three-variable equilibria are not checked",
+  "old": "        self.check()?;\n        finite(\"I\", i)?;\n        let m = self.base;",
+  "new": "        let m = self.base;"
+ },
+ {
+  "label": "the three-variable equilibria's linear term multiplies by a",
+  "old": "let roots = cubic_roots(m.p(), self.s / m.a,",
+  "new": "let roots = cubic_roots(m.p(), self.s * m.a,"
+ },
+ {
+  "label": "the three-variable equilibria subtract the current",
+  "old": "-(m.c + i + self.s * self.x1) / m.a)",
+  "new": "-(m.c - i + self.s * self.x1) / m.a)"
+ },
+ {
+  "label": "the three-variable equilibria drop s x1",
+  "old": "-(m.c + i + self.s * self.x1) / m.a)",
+  "new": "-(m.c + i) / m.a)"
+ },
+ {
+  "label": "the three-variable equilibria's z is s(x + x1)",
+  "old": "self.s * (x - self.x1)]).collect()",
+  "new": "self.s * (x + self.x1)]).collect()"
+ },
+ {
+  "label": "the three-variable equilibria's y adds d x^2",
+  "old": ".map(|x| [x, m.c - m.d * x * x,",
+  "new": ".map(|x| [x, m.c + m.d * x * x,"
+ },
+ {
+  "label": "the Jacobian's dx'/dz is +1",
+  "old": "[[-3.0 * m.a * x * x + 2.0 * m.b * x, 1.0, -1.0]",
+  "new": "[[-3.0 * m.a * x * x + 2.0 * m.b * x, 1.0, 1.0]"
+ },
+ {
+  "label": "the Jacobian's dy'/dy is +1",
+  "old": "[-2.0 * m.d * x, -1.0, 0.0]",
+  "new": "[-2.0 * m.d * x, 1.0, 0.0]"
+ },
+ {
+  "label": "the Jacobian's dz'/dx drops s",
+  "old": "[self.r * self.s, 0.0, -self.r]]",
+  "new": "[self.r, 0.0, -self.r]]"
+ },
+ {
+  "label": "the Jacobian's dz'/dz is +r",
+  "old": "[self.r * self.s, 0.0, -self.r]]",
+  "new": "[self.r * self.s, 0.0, self.r]]"
+ },
+ {
+  "label": "c2 is the trace",
+  "old": "[-trace, minors, -det]",
+  "new": "[trace, minors, -det]"
+ },
+ {
+  "label": "c0 is the determinant",
+  "old": "[-trace, minors, -det]",
+  "new": "[-trace, minors, det]"
+ },
+ {
+  "label": "the first minor adds its off-diagonal product",
+  "old": "let minors = (j[0][0] * j[1][1] - j[0][1] * j[1][0])",
+  "new": "let minors = (j[0][0] * j[1][1] + j[0][1] * j[1][0])"
+ },
+ {
+  "label": "the second minor adds its off-diagonal product",
+  "old": "+ (j[0][0] * j[2][2] - j[0][2] * j[2][0])",
+  "new": "+ (j[0][0] * j[2][2] + j[0][2] * j[2][0])"
+ },
+ {
+  "label": "the determinant's second cofactor enters with a plus",
+  "old": "- j[0][1] * (j[1][0] * j[2][2] - j[1][2] * j[2][0])",
+  "new": "+ j[0][1] * (j[1][0] * j[2][2] - j[1][2] * j[2][0])"
+ },
+ {
+  "label": "the determinant's third cofactor enters with a minus",
+  "old": "+ j[0][2] * (j[1][0] * j[2][1] - j[1][1] * j[2][0]);",
+  "new": "- j[0][2] * (j[1][0] * j[2][1] - j[1][1] * j[2][0]);"
+ },
+ {
+  "label": "stability does not check the model",
+  "old": "        self.check()?;\n        finite(\"x\", x)?;\n",
+  "new": "        finite(\"x\", x)?;\n"
+ },
+ {
+  "label": "stability does not check x",
+  "old": "        finite(\"x\", x)?;\n",
+  "new": ""
+ },
+ {
+  "label": "stability drops c2 c1 > c0",
+  "old": "Ok(c2 > 0.0 && c0 > 0.0 && c2 * c1 > c0)",
+  "new": "Ok(c2 > 0.0 && c0 > 0.0)"
+ },
+ {
+  "label": "stability drops c0 > 0",
+  "old": "Ok(c2 > 0.0 && c0 > 0.0 && c2 * c1 > c0)",
+  "new": "Ok(c2 > 0.0 && c2 * c1 > c0)"
+ },
+ {
+  "label": "stability drops c2 > 0",
+  "old": "Ok(c2 > 0.0 && c0 > 0.0 && c2 * c1 > c0)",
+  "new": "Ok(c0 > 0.0 && c2 * c1 > c0)"
+ },
+ {
+  "label": "the three-variable step drops the current",
+  "old": "Ok(self.simulate(u, &[(1, i)], h, 0.0)?.end)",
+  "new": "Ok(self.simulate(u, &[(1, 0.0)], h, 0.0)?.end)"
+ },
+ {
+  "label": "the three-variable run does not check its model",
+  "old": "        self.check()?;\n        integrate(|u, i|",
+  "new": "        integrate(|u, i|"
+ },
+ {
+  "label": "p multiplies by a",
+  "old": "        (self.d - self.b) / self.a\n",
+  "new": "        (self.d - self.b) * self.a\n"
+ },
+ {
+  "label": "q multiplies by a",
+  "old": "(self.c + i) / self.a",
+  "new": "(self.c + i) * self.a"
+ },
+ {
+  "label": "the discriminant takes 4p^2",
+  "old": "q * (4.0 * p * p * p - 27.0 * q)",
+  "new": "q * (4.0 * p * p - 27.0 * q)"
+ },
+ {
+  "label": "the three-point condition takes 4p^2",
+  "old": "27.0 * q < 4.0 * p * p * p)",
+  "new": "27.0 * q < 4.0 * p * p)"
+ },
+ {
+  "label": "the steady current's cubic term is quadratic",
+  "old": "self.a * x * x * x + (self.d - self.b) * x * x - self.c",
+  "new": "self.a * x * x + (self.d - self.b) * x * x - self.c"
+ },
+ {
+  "label": "the linearisation's first entry takes b for 2b",
+  "old": "jacobian: [[-3.0 * self.a * x0 * x0 + 2.0 * self.b * x0, 1.0]",
+  "new": "jacobian: [[-3.0 * self.a * x0 * x0 + self.b * x0, 1.0]"
+ },
+ {
+  "label": "the no-band refusal swaps a and b",
+  "old": "Err(HindmarshRoseError::NoUnstableBand { a: self.a, b: self.b })",
+  "new": "Err(HindmarshRoseError::NoUnstableBand { a: self.b, b: self.a })"
+ },
+ {
+  "label": "the I/II boundary belongs to region II",
+  "old": "} else if saddle < x0 && x0 < 0.0 {",
+  "new": "} else if saddle <= x0 && x0 < 0.0 {"
+ },
+ {
+  "label": "L belongs to region III",
+  "old": "} else if 0.0 < x0 && x0 < l {",
+  "new": "} else if 0.0 < x0 && x0 <= l {"
+ },
+ {
+  "label": "non-hyperbolic ignores the trace",
+  "old": "} else if det == 0.0 || t == 0.0 {",
+  "new": "} else if det == 0.0 {"
+ },
+ {
+  "label": "non-hyperbolic ignores the determinant",
+  "old": "} else if det == 0.0 || t == 0.0 {",
+  "new": "} else if t == 0.0 {"
+ },
+ {
+  "label": "a stable spiral is called a node",
+  "old": "(true, true) => Kind::StableSpiral,",
+  "new": "(true, true) => Kind::StableNode,"
+ },
+ {
+  "label": "an unstable node is called a spiral",
+  "old": "(false, false) => Kind::UnstableNode,",
+  "new": "(false, false) => Kind::UnstableSpiral,"
+ },
+ {
+  "label": "the unordered refusal names the predecessor's index",
+  "old": "Err(HindmarshRoseError::Unordered { index: n,",
+  "new": "Err(HindmarshRoseError::Unordered { index: n - 1,"
+ },
+ {
+  "label": "the rest state's z is not zero",
+  "old": "[self.x1, self.base.c - self.base.d * self.x1 * self.x1, 0.0]",
+  "new": "[self.x1, self.base.c - self.base.d * self.x1 * self.x1, 0.001]"
+ },
+ {
+  "label": "the Jacobian's dx'/dx subtracts 2bx",
+  "old": "[[-3.0 * m.a * x * x + 2.0 * m.b * x, 1.0, -1.0]",
+  "new": "[[-3.0 * m.a * x * x - 2.0 * m.b * x, 1.0, -1.0]"
+ },
+ {
+  "label": "the trace drops dz'/dz",
+  "old": "let trace = j[0][0] + j[1][1] + j[2][2];",
+  "new": "let trace = j[0][0] + j[1][1];"
+ },
+ {
+  "label": "Cardano's second cube root takes +q/2",
+  "old": "+ (-q / 2.0 - root).cbrt()]",
+  "new": "+ (q / 2.0 - root).cbrt()]"
+ },
+ {
+  "label": "the trigonometric amplitude takes -P/2",
+  "old": "let m = 2.0 * (-p / 3.0).sqrt();",
+  "new": "let m = 2.0 * (-p / 2.0).sqrt();"
+ },
+ {
+  "label": "the trigonometric argument takes 2Q",
+  "old": "let theta = (3.0 * q / (p * m))",
+  "new": "let theta = (2.0 * q / (p * m))"
+ },
+ {
+  "label": "the second-stage offset takes a third of the step",
+  "old": "let k2 = f(at(k1, 0.5 * h));",
+  "new": "let k2 = f(at(k1, h / 3.0));"
+ }
+]

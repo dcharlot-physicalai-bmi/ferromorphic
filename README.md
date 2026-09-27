@@ -9,7 +9,7 @@ hardware constraint models, analog device non-idealities, NIR, event-camera deco
 metrics, teaching tasks — and a joules ledger that charges for the memory traffic a synaptic
 operation needs.
 
-**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 83 modules, 2,820 tests.**
+**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 84 modules, 2,851 tests.**
 
 Run it in a browser without installing anything:
 **[energy.physicalai-bmi.org/neuromorphic](https://energy.physicalai-bmi.org/neuromorphic)** — the
@@ -36,6 +36,7 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 | `planar` | the phase plane: `FitzHugh`'s 1961 BVP model with its singular point by Cardano, his stability conditions shown to be the matrix's own verdict, and the stimulus window of repetitive firing; Wilson and Cowan's 1972 population with each figure's steady states counted and classified — and its limit-cycle figure shown to FAIL the paper's own sufficient condition |
 | `clopath` | voltage-based STDP with homeostasis (Clopath et al. 2010). Eq. (3) runs on a bank of synapses under exact-exponential or the authors' forward-Euler steps. Both converge at first order to the weight eq. (3) gives in continuous time, computed from closed-form filters and one quadrature. Fig. 1h's voltage-clamp curve, crossover and minimum are in closed form, checked against the figure's own vector paths. Eq. (8) is recovered on a simulated linear Poisson neuron. The module reproduces a line-by-line transcription of the authors' `VoTri.m`/`aEIF.m` bit for bit (MATLAB not run): Fig. 2b's ten weights, every spike step, and the code's two train quirks, which the published figure carries. Some read delay is needed (the code uses 3 ms), because without one the 0.1 Hz point becomes 129.9 %. `b`: the code runs 0.0805 pA, a unit slip from ref. 49's 80.5 pA, and Fig. 2b cannot tell it from the printed 0.805. `V_Tmax` is printed without its minus sign. `θ_+ = −45.3` mV matches the `AdEx` current's upper root (−45.327 mV). The published Fig. 2b lies up to 2.34 points above the code wherever a presynaptic spike comes within 29 ms of the next postsynaptic one |
 | `morrislecar` | Morris and Lecar's 1981 barnacle muscle fibre: the full three-variable Eq. 1, the one-conductance planes of Eq. 3, and the reduced `V, N` system of Eq. 9 that now carries their names. The equilibria come from the closed-form steady-state current curve, and the Hopf currents are roots of the trace on that curve (289.652 and 465.105 µA/cm² for Fig. 9). Each model figure is checked against its closed forms or against `SciPy` on the same equations, Figs. 5a, 7, 8 and 9 at points only. Seventeen findings on the page, fifteen with a test and two that are notation: the rate constants are ms⁻¹, not the printed s⁻¹; Fig. 9 needs `V2 = +15`, not the printed −15; Fig. 6's line labels are swapped at every current from 30 to 120 µA/cm², and its sustained trace is a limit cycle around a stable equilibrium that the eigenvalues cannot see; Fig. 11's period fits `I = 35`, not the printed 50; and at the listed `λ̄_M` the full Eq. 1 settles where Eq. 9 oscillates, so Figs. 7–10 describe the reduction only; and the two later papers' parameter sets, from their own pages — Rinzel and Ermentrout's three (zero-frequency onset at the fold `I₁ = 39.963153` with the period diverging as `1/√(I − I₁)`, a finite-frequency onset at 7.90 Hz below a Hopf point at 93.858, and a fast-potassium set whose bistability survives the knee) and Tsumoto et al.'s two, whose `V_K = −80` against Rinzel and Ermentrout's −84 is what their own figures are drawn with |
+| `hindmarshrose` | Hindmarsh and Rose's 1984 bursting neuron, with two variables and with adaptation. The equilibria of `x³ + px² = q` are solved in closed form, with the current entering through `q`. Their count follows the discriminant `q(4p³ − 27q)`, and the paper's `0 < 27q < 4p³` is only its `q > 0` half. Table 1's five regions and condition (12) are implemented, and `x₁ = −(1 + √5)/2` is exact and proved to be the nearest double. The paper prints only `−1.6`, which is not an equilibrium and moves Fig. 6b's burst period from 452.84 to 430.78. Checked against `SciPy`'s `DOP853` on the same inputs: Fig. 6a spike for spike, Fig. 6b burst for burst, Fig. 6c by its intervals, Fig. 3a's switching bands over 3 021 pulse widths, and Figs 5 and 8 by their spike counts. Measured and recorded: Figs 3a, 5a and 8, the tail of Fig. 6a and the random-burst sequence cannot be reproduced from the printed equations; Fig. 6c draws the model's firing some 500 time units later than its caption's 1000; and in the random-burst regime a change of 10⁻¹⁵ in `z` moves a spike by a whole time unit within 2 600 time units |
 | `exponential` | EIF, `AdEx` with the Naud firing-pattern taxonomy, QIF, theta |
 | `synapse` | delta / exponential / alpha / bi-exponential kernels, CUBA vs COBA, AMPA / GABA / NMDA with the magnesium block, Tsodyks-Markram short-term plasticity |
 | `plasticity` | pair and triplet STDP, Hebbian, Oja, BCM, reward-modulated three-factor, homeostatic scaling |
@@ -284,7 +285,7 @@ rather than assumed.
 - **A sub-threshold current returns `None`, not a large number.** "Fires rarely" and "does not fire"
   are different statements and a rate-coded readout cannot recover the difference later.
 
-2,820 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
+2,851 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
 `#![forbid(unsafe_code)]`, and `cargo build --target wasm32-unknown-unknown` compiles the library
 unchanged. Three of the four `examples/` are verification gates that exit non-zero when a check fails. Two of them run
 a closed form against the simulator — the LIF's analytic inter-spike interval, and the STDP pair
@@ -335,7 +336,7 @@ be reproduced cannot be checked against anything, including itself.
 
 ## Status
 
-**Today:** eighty-three modules, 2,820 tests, and **8,985 recorded mutations — one list per
+**Today:** eighty-four modules, 2,851 tests, and **9,235 recorded mutations — one list per
 module**, every one applicable to today's source by `python3 tools/mutate.py`.
 `python3 tools/readme_numbers.py` recomputes those figures from the repository and refuses if this
 paragraph disagrees with it, because the last time they were typed by hand the test count was 423

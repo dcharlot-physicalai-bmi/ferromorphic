@@ -72,10 +72,10 @@
 //!
 //! # Beside these
 //!
-//! Morris and Lecar (1981) is [`crate::morrislecar`], built once the paper itself could be read:
-//! transcribing its parameter tables from a secondary copy is how this crate once shipped a
-//! pre-silicon energy graded as a measurement, so it waited for the page. Hindmarsh and Rose
-//! (1984) is being built the same way and is not here yet.
+//! Morris and Lecar (1981) is [`crate::morrislecar`] and Hindmarsh and Rose (1984) is
+//! [`crate::hindmarshrose`], each built once its paper could be read: transcribing parameter
+//! tables from a secondary copy is how this crate once shipped a pre-silicon energy graded as a
+//! measurement, so they waited for the page.
 
 use core::fmt;
 
