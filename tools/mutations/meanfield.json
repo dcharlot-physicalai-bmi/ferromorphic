@@ -93,7 +93,7 @@
   "label": "the overflow guard is raised past the point the integrand itself overflows",
   "old": "        if hi > 26.7 {",
   "new": "        if hi > 100.0 {",
-  "equivalent": "exp(s^2) overflows f64 at s^2 = 709.78, that is s = 26.641, which is BELOW the 26.7 the guard uses. For any hi in (26.7, 100] the substituted branch is always entered (split is at most max(1, lo) < hi) and its last panel evaluates g at x close to hi^2 >= 712 > 709.78, so `x.exp()` is already +inf, `total` becomes +inf by addition, and the function returns Some(f64::INFINITY) — the same value the guard returns. Below 26.641 neither form fires. The only observable difference is how many panels the loop walks, which no test measures."
+  "equivalent": "exp(s^2) overflows f64 at s^2 = 709.78, that is s = 26.641, which is BELOW the 26.7 the guard uses. For any hi in (26.7, 100] the substituted branch is always entered (split is at most max(1, lo) < hi) and its last panel evaluates g at x close to hi^2 >= 712 > 709.78, so `x.exp()` is already +inf, `total` becomes +inf by addition, and the function returns Some(f64::INFINITY) — the same value the guard returns. Below 26.641 neither form fires. The only observable difference is how many panels the loop walks, which no test measures. Fixture, run 2026-09-27: the unmutated `siegert_integral` and this mutant compared bit for bit on 8,083 `(p, q)` pairs (the guard and the mutant's guard with one ulp either side, 6,000 random `p` on [-101, -26] with `q` spanning negative and positive, and 2,000 with `q` within 2 of `p`), 7,869 of them with `-p` in (26.7, 100]: 0 disagreements."
  },
  {
   "label": "the noise half's substitution begins at the wrong lower limit when the reset is also far below the mean",
@@ -491,14 +491,19 @@
   "new": "        for _ in 0..5 {"
  },
  {
-  "label": "the excitation-dominated boundary is inverted",
-  "old": "            Some(b) if b < 1.0 => Ok(Some(Regime::SynchronousRegular)),",
-  "new": "            Some(b) if b > 1.0 => Ok(Some(Regime::SynchronousRegular)),"
- },
- {
   "label": "a silent network is reported as firing regularly",
   "old": "        if nu < SILENCE_RATE_HZ {\n            return Ok(Some(Regime::NearlySilent));\n        }",
   "new": "        if nu < SILENCE_RATE_HZ {\n            return Ok(Some(Regime::SynchronousRegular));\n        }"
+ },
+ {
+  "label": "the excitation-dominated corner is called synchronous-regular again, as it used to be",
+  "old": "            return Ok(Some(Regime::NearlySilent));\n        }\n        Ok(None)\n    }",
+  "new": "            return Ok(Some(Regime::NearlySilent));\n        }\n        match self.balance_index() {\n            Some(b) if b < 1.0 => Ok(Some(Regime::SynchronousRegular)),\n            _ => Ok(None),\n        }\n    }"
+ },
+ {
+  "label": "every network that fires is predicted silent",
+  "old": "            return Ok(Some(Regime::NearlySilent));\n        }\n        Ok(None)\n    }",
+  "new": "            return Ok(Some(Regime::NearlySilent));\n        }\n        Ok(Some(Regime::NearlySilent))\n    }"
  },
  {
   "label": "the fast oscillation band is set by the membrane time constant",
@@ -679,7 +684,7 @@
   "label": "the empty-slice refusal is removed from the branching estimator",
   "old": "    if avalanches.is_empty() {\n        return None;\n    }\n    let (mut offspring, mut parents) = (0u64, 0u64);",
   "new": "    let (mut offspring, mut parents) = (0u64, 0u64);",
-  "equivalent": "for an empty slice the loop body never runs, so `parents` is still 0 when control reaches the `if parents == 0 { return None; }` four lines below, and that returns exactly the same `None` the deleted guard would have. No other input reaches the deleted branch, and nothing between the two guards has an effect: the two accumulators are initialised and then left untouched. The two refusals are redundant with each other, which is itself the finding."
+  "equivalent": "for an empty slice the loop body never runs, so `parents` is still 0 when control reaches the `if parents == 0 { return None; }` four lines below, and that returns exactly the same `None` the deleted guard would have. No other input reaches the deleted branch, and nothing between the two guards has an effect: the two accumulators are initialised and then left untouched. The two refusals are redundant with each other, which is itself the finding. Fixture, run 2026-09-27: the unmutated `branching_parameter` and this mutant compared bit for bit on the empty slice and 100,000 random sets of 0 to 7 avalanches (1 to 6 generations of 0 to 3 events, complete or truncated at random), 14,432 of them refused by both: 0 disagreements."
  },
  {
   "label": "the second generation is read as the first",
@@ -740,7 +745,7 @@
   "label": "a fit to a single lag is allowed",
   "old": "    if n < 2.0 {\n        return None;\n    }",
   "new": "    if n < 1.0 {\n        return None;\n    }",
-  "equivalent": "with exactly one usable lag k the accumulators are sx = k, sxx = k * k and n = 1, so denom = n * sxx - sx * sx = k * k - k * k, which is exactly 0.0 in floating point because both products are the same multiplication of the same two doubles; the `if denom == 0.0` guard two lines below then returns the same `None`. With no usable lags sx = sxx = 0 and denom = 0 as well. So no series can distinguish a threshold of 2 from one of 1 here."
+  "equivalent": "with exactly one usable lag k the accumulators are sx = k, sxx = k * k and n = 1, so denom = n * sxx - sx * sx = k * k - k * k, which is exactly 0.0 in floating point because both products are the same multiplication of the same two doubles; the `if denom == 0.0` guard two lines below then returns the same `None`. With no usable lags sx = sxx = 0 and denom = 0 as well. So no series can distinguish a threshold of 2 from one of 1 here. Fixture, run 2026-09-27: the unmutated `multistep_regression` and this mutant compared bit for bit on 200,000 random series (length 4 to 64, AR(1) with `m` in [-0.1, 1.1], one sample in ten rounded, `k_max` 1 to 8, ten floors from -1 to 0.99), 31,089 of them with exactly one usable lag: 0 disagreements."
  },
  {
   "label": "the regression's slope is not exponentiated",

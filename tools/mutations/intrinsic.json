@@ -1,0 +1,1207 @@
+[
+ {
+  "label": "msg-gain",
+  "old": "\"gain a = {a} must be finite",
+  "new": "\"gain a = {a} should be finite"
+ },
+ {
+  "label": "msg-gain-eq",
+  "old": "must be finite and positive: eq. 12 divides by it and eq. 9 takes its logarithm\")\n",
+  "new": "must be finite and positive: eq. 13 divides by it and eq. 9 takes its logarithm\")\n"
+ },
+ {
+  "label": "msg-notpositive",
+  "old": "write!(f, \"{what} = {value} must be finite and positive\")",
+  "new": "write!(f, \"{what} = {value} must be positive\")"
+ },
+ {
+  "label": "msg-nonfinite",
+  "old": "write!(f, \"{what} = {value} is not finite\")",
+  "new": "write!(f, \"{what} = {value} is not a number\")"
+ },
+ {
+  "label": "msg-empty",
+  "old": "interval [{lo}, {hi}] is empty",
+  "new": "interval [{hi}, {lo}] is empty"
+ },
+ {
+  "label": "msg-panels-cap",
+  "old": "panels, not {panels}\", Input::MAX_PANELS)",
+  "new": "panels, not {panels}\", Input::PANELS)"
+ },
+ {
+  "label": "msg-panels-got",
+  "old": "panels, not {panels}\"",
+  "new": "panels, not {0}\""
+ },
+ {
+  "label": "msg-overshoot",
+  "old": "takes the gain from {a} to {next}",
+  "new": "takes the gain from {next} to {a}"
+ },
+ {
+  "label": "msg-unrepresentable-what",
+  "old": "\"{what} comes out as {value}, which f64",
+  "new": "\"{value} comes out as {what}, which f64"
+ },
+ {
+  "label": "msg-unrepresentable-tail",
+  "old": "too extreme for the arithmetic\"\n            ),",
+  "new": "too large for the arithmetic\"\n            ),"
+ },
+ {
+  "label": "msg-nofixed",
+  "old": "after {iterations} steps the gradient of D is still {residual}",
+  "new": "after {iterations} steps the gradient of D is still {iterations}"
+ },
+ {
+  "label": "positive-drops-finite",
+  "old": "if value.is_finite() && value > 0.0 { Ok(value) }",
+  "new": "if value > 0.0 { Ok(value) }"
+ },
+ {
+  "label": "positive-admits-zero",
+  "old": "&& value > 0.0 { Ok(value) }",
+  "new": "&& value >= 0.0 { Ok(value) }"
+ },
+ {
+  "label": "gain-drops-finite",
+  "old": "if a.is_finite() && a > 0.0 { Ok(a) }",
+  "new": "if a > 0.0 { Ok(a) }"
+ },
+ {
+  "label": "gain-admits-zero",
+  "old": "&& a > 0.0 { Ok(a) }",
+  "new": "&& a >= 0.0 { Ok(a) }"
+ },
+ {
+  "label": "finite-lets-inf",
+  "old": "if value.is_finite() { Ok(value) } else { Err(IntrinsicError::NonFinite",
+  "new": "if !value.is_nan() { Ok(value) } else { Err(IntrinsicError::NonFinite"
+ },
+ {
+  "label": "held-lets-inf",
+  "old": "if value.is_finite() { Ok(value) } else { Err(IntrinsicError::Unrepresentable",
+  "new": "if !value.is_nan() { Ok(value) } else { Err(IntrinsicError::Unrepresentable"
+ },
+ {
+  "label": "held-lets-nan",
+  "old": "if value.is_finite() { Ok(value) } else { Err(IntrinsicError::Unrepresentable",
+  "new": "if !value.is_infinite() { Ok(value) } else { Err(IntrinsicError::Unrepresentable"
+ },
+ {
+  "label": "held-error-what",
+  "old": "Err(IntrinsicError::Unrepresentable { what, value })",
+  "new": "Err(IntrinsicError::Unrepresentable { what: \"a result\", value })"
+ },
+ {
+  "label": "held-error-value",
+  "old": "Err(IntrinsicError::Unrepresentable { what, value })",
+  "new": "Err(IntrinsicError::Unrepresentable { what, value: f64::NAN })"
+ },
+ {
+  "label": "softplus-max",
+  "old": "t.max(0.0) + (-t.abs())",
+  "new": "t.min(0.0) + (-t.abs())"
+ },
+ {
+  "label": "softplus-abs",
+  "old": "(-t.abs()).exp().ln_1p()",
+  "new": "(-t).exp().ln_1p()"
+ },
+ {
+  "label": "softplus-plus",
+  "old": "t.max(0.0) + (-t",
+  "new": "t.max(0.0) - (-t"
+ },
+ {
+  "label": "rate-sign",
+  "old": "1.0 / (1.0 + (-(self.a * x + self.b)).exp())",
+  "new": "1.0 / (1.0 + (self.a * x + self.b).exp())"
+ },
+ {
+  "label": "rate-bias",
+  "old": "(-(self.a * x + self.b))",
+  "new": "(-(self.a * x - self.b))"
+ },
+ {
+  "label": "rate-one",
+  "old": "1.0 / (1.0 + (-(self.a",
+  "new": "1.0 / (2.0 + (-(self.a"
+ },
+ {
+  "label": "slope-gain",
+  "old": "self.a * y * (1.0 - y)",
+  "new": "y * (1.0 - y)"
+ },
+ {
+  "label": "slope-one-minus",
+  "old": "self.a * y * (1.0 - y)",
+  "new": "self.a * y * (1.0 + y)"
+ },
+ {
+  "label": "sigmoid-new-gain",
+  "old": "Ok(Self { a: gain(a)?, b: finite(\"b\", b)? })",
+  "new": "Ok(Self { a: finite(\"a\", a)?, b: finite(\"b\", b)? })"
+ },
+ {
+  "label": "sigmoid-new-b",
+  "old": "Ok(Self { a: gain(a)?, b: finite(\"b\", b)? })",
+  "new": "Ok(Self { a: gain(a)?, b })"
+ },
+ {
+  "label": "sigmoid-check-gain",
+  "old": "        gain(self.a)?;\n",
+  "new": ""
+ },
+ {
+  "label": "sigmoid-check-b",
+  "old": "        finite(\"b\", self.b)?;\n",
+  "new": ""
+ },
+ {
+  "label": "check-mean",
+  "old": "                finite(\"mean\", mean)?;\n",
+  "new": ""
+ },
+ {
+  "label": "check-sd",
+  "old": "positive(\"sd\", sd)?;",
+  "new": "finite(\"sd\", sd)?;"
+ },
+ {
+  "label": "check-lo",
+  "old": "                finite(\"lo\", lo)?;\n",
+  "new": ""
+ },
+ {
+  "label": "check-hi",
+  "old": "                finite(\"hi\", hi)?;\n",
+  "new": ""
+ },
+ {
+  "label": "check-empty",
+  "old": "if lo >= hi {",
+  "new": "if lo > hi {"
+ },
+ {
+  "label": "check-exp-mean",
+  "old": "positive(\"mean\", mean)?;",
+  "new": "finite(\"mean\", mean)?;"
+ },
+ {
+  "label": "density-gauss-sd",
+  "old": "(-0.5 * z * z).exp() / (sd * core::f64::consts::TAU.sqrt())",
+  "new": "(-0.5 * z * z).exp() / core::f64::consts::TAU.sqrt()"
+ },
+ {
+  "label": "density-gauss-half",
+  "old": "(-0.5 * z * z).exp() / (sd",
+  "new": "(-z * z).exp() / (sd"
+ },
+ {
+  "label": "density-gauss-tau",
+  "old": "/ (sd * core::f64::consts::TAU.sqrt())",
+  "new": "/ (sd * core::f64::consts::PI.sqrt())"
+ },
+ {
+  "label": "density-gauss-z",
+  "old": "let z = (x - mean) / sd;\n                (-0.5",
+  "new": "let z = x - mean;\n                (-0.5"
+ },
+ {
+  "label": "density-uniform-lo",
+  "old": "if lo <= x && x <= hi {",
+  "new": "if lo < x && x <= hi {"
+ },
+ {
+  "label": "density-uniform-hi",
+  "old": "if lo <= x && x <= hi {",
+  "new": "if lo <= x && x < hi {"
+ },
+ {
+  "label": "density-uniform-value",
+  "old": "1.0 / (hi - lo)",
+  "new": "1.0 / (hi + lo)"
+ },
+ {
+  "label": "density-exp-edge",
+  "old": "if x >= 0.0 {\n                    (-x / mean)",
+  "new": "if x > 0.0 {\n                    (-x / mean)"
+ },
+ {
+  "label": "density-exp-norm",
+  "old": "(-x / mean).exp() / mean",
+  "new": "(-x / mean).exp()"
+ },
+ {
+  "label": "density-exp-rate",
+  "old": "(-x / mean).exp() / mean",
+  "new": "(-x * mean).exp() / mean"
+ },
+ {
+  "label": "surv-branch",
+  "old": "if z >= 0.0 {",
+  "new": "if z <= 0.0 {"
+ },
+ {
+  "label": "surv-t",
+  "old": "let t = z / core::f64::consts::SQRT_2;",
+  "new": "let t = z;"
+ },
+ {
+  "label": "surv-upper-half",
+  "old": "(0.5 * erfcx(t)).ln() - 0.5 * z * z",
+  "new": "erfcx(t).ln() - 0.5 * z * z"
+ },
+ {
+  "label": "surv-upper-sign",
+  "old": "(0.5 * erfcx(t)).ln() - 0.5 * z * z",
+  "new": "(0.5 * erfcx(t)).ln() + 0.5 * z * z"
+ },
+ {
+  "label": "surv-lower-arg",
+  "old": "(-0.5 * erfcx(-t) * (-0.5 * z * z).exp()).ln_1p()",
+  "new": "(-0.5 * erfcx(t) * (-0.5 * z * z).exp()).ln_1p()"
+ },
+ {
+  "label": "surv-lower-sign",
+  "old": "(-0.5 * erfcx(-t) * (-0.5 * z * z).exp()).ln_1p()",
+  "new": "(0.5 * erfcx(-t) * (-0.5 * z * z).exp()).ln_1p()"
+ },
+ {
+  "label": "surv-uniform-below",
+  "old": "if x <= lo {\n                    0.0",
+  "new": "if x.is_nan() {\n                    0.0"
+ },
+ {
+  "label": "surv-uniform-above",
+  "old": "} else if x >= hi {",
+  "new": "} else if x.is_nan() {"
+ },
+ {
+  "label": "surv-uniform-ratio",
+  "old": "((hi - x) / (hi - lo)).ln()",
+  "new": "((hi - x) / (hi + lo)).ln()"
+ },
+ {
+  "label": "surv-exp-below",
+  "old": "if x <= 0.0 {\n                    0.0\n                } else {\n                    -x / mean",
+  "new": "if x.is_nan() {\n                    0.0\n                } else {\n                    -x / mean"
+ },
+ {
+  "label": "surv-exp-value",
+  "old": "                    -x / mean\n",
+  "new": "                    -x * mean\n"
+ },
+ {
+  "label": "entropy-gauss-sd",
+  "old": "0.5 * (1.0 + core::f64::consts::TAU.ln()) + sd.ln()",
+  "new": "0.5 * (1.0 + core::f64::consts::TAU.ln()) - sd.ln()"
+ },
+ {
+  "label": "entropy-gauss-e",
+  "old": "0.5 * (1.0 + core::f64::consts::TAU.ln())",
+  "new": "0.5 * core::f64::consts::TAU.ln()"
+ },
+ {
+  "label": "entropy-uniform",
+  "old": "Self::Uniform { lo, hi } => (hi - lo).ln(),",
+  "new": "Self::Uniform { lo, hi } => (hi + lo).ln(),"
+ },
+ {
+  "label": "entropy-exp",
+  "old": "Self::Exponential { mean } => 1.0 + mean.ln(),",
+  "new": "Self::Exponential { mean } => mean.ln(),"
+ },
+ {
+  "label": "domain-gauss",
+  "old": "(mean - 10.0 * sd, mean + 10.0 * sd)",
+  "new": "(mean - 5.0 * sd, mean + 10.0 * sd)"
+ },
+ {
+  "label": "domain-uniform",
+  "old": "Self::Uniform { lo, hi } => (lo, hi),",
+  "new": "Self::Uniform { lo, hi } => (lo, 0.5 * (lo + hi)),"
+ },
+ {
+  "label": "domain-exp",
+  "old": "(0.0, 40.0 * mean)",
+  "new": "(0.0, 20.0 * mean)"
+ },
+ {
+  "label": "panels-const",
+  "old": "pub const PANELS: usize = 4096;",
+  "new": "pub const PANELS: usize = 2048;"
+ },
+ {
+  "label": "max-panels-const",
+  "old": "pub const MAX_PANELS: usize = 1 << 20;",
+  "new": "pub const MAX_PANELS: usize = 1 << 21;"
+ },
+ {
+  "label": "expect-check",
+  "old": "        self.check()?;\n        if panels == 0",
+  "new": "        if panels == 0"
+ },
+ {
+  "label": "panels-zero",
+  "old": "if panels == 0 || panels > Self::MAX_PANELS {",
+  "new": "if panels > Self::MAX_PANELS {"
+ },
+ {
+  "label": "panels-cap",
+  "old": "if panels == 0 || panels > Self::MAX_PANELS {",
+  "new": "if panels == 0 || panels >= Self::MAX_PANELS {"
+ },
+ {
+  "label": "simpson-n",
+  "old": "let n = 2 * panels;",
+  "new": "let n = 2 * panels + 1;"
+ },
+ {
+  "label": "simpson-h",
+  "old": "let h = (hi - lo) / n as f64;",
+  "new": "let h = (hi - lo) / panels as f64;"
+ },
+ {
+  "label": "simpson-g",
+  "old": "let g = |x: f64| f(x) * self.density(x);",
+  "new": "let g = |x: f64| f(x) + self.density(x);"
+ },
+ {
+  "label": "simpson-ends",
+  "old": "let mut sum = g(lo) + g(hi);",
+  "new": "let mut sum = g(lo) - g(hi);"
+ },
+ {
+  "label": "simpson-weights",
+  "old": "{ 2.0 } else { 4.0 }",
+  "new": "{ 4.0 } else { 2.0 }"
+ },
+ {
+  "label": "simpson-range",
+  "old": "for i in 1..n {",
+  "new": "for i in 1..n - 1 {"
+ },
+ {
+  "label": "simpson-node",
+  "old": "sum += w * g(lo + h * i as f64);",
+  "new": "sum += w * g(lo + h * (i + 1) as f64);"
+ },
+ {
+  "label": "simpson-third",
+  "old": "Ok(sum * h / 3.0)",
+  "new": "Ok(sum * h / 6.0)"
+ },
+ {
+  "label": "expect-panels",
+  "old": "self.expect_with(Self::PANELS, f)",
+  "new": "self.expect_with(64, f)"
+ },
+ {
+  "label": "sample-check",
+  "old": "        self.check()?;\n        Ok(match *self {",
+  "new": "        Ok(match *self {"
+ },
+ {
+  "label": "sample-u",
+  "old": "let u = 1.0 - rng.next_f64();",
+  "new": "let u = rng.next_f64();"
+ },
+ {
+  "label": "sample-radius",
+  "old": "(-2.0 * u.ln()).sqrt()",
+  "new": "(-u.ln()).sqrt()"
+ },
+ {
+  "label": "sample-angle",
+  "old": "(core::f64::consts::TAU * v).cos()",
+  "new": "(core::f64::consts::TAU * v).sin()"
+ },
+ {
+  "label": "sample-gauss-sign",
+  "old": "mean + sd * (-2.0",
+  "new": "mean - sd * (-2.0"
+ },
+ {
+  "label": "sample-uniform",
+  "old": "lo + (hi - lo) * rng.next_f64()",
+  "new": "hi - (hi - lo) * rng.next_f64()"
+ },
+ {
+  "label": "sample-exp",
+  "old": "-mean * (1.0 - rng.next_f64()).ln()",
+  "new": "-mean * rng.next_f64().ln()"
+ },
+ {
+  "label": "fig1-mu",
+  "old": "pub const FIG1: Self = Self { mu: 0.1, eta: 0.001 };",
+  "new": "pub const FIG1: Self = Self { mu: 0.2, eta: 0.001 };"
+ },
+ {
+  "label": "fig1-eta",
+  "old": "pub const FIG1: Self = Self { mu: 0.1, eta: 0.001 };",
+  "new": "pub const FIG1: Self = Self { mu: 0.1, eta: 0.002 };"
+ },
+ {
+  "label": "newton-steps-const",
+  "old": "pub const NEWTON_STEPS: usize = 100;",
+  "new": "pub const NEWTON_STEPS: usize = 101;"
+ },
+ {
+  "label": "newton-tol-const",
+  "old": "pub const NEWTON_TOLERANCE: f64 = 1e-12;",
+  "new": "pub const NEWTON_TOLERANCE: f64 = 1e-9;"
+ },
+ {
+  "label": "halvings-const",
+  "old": "pub const HALVINGS: usize = 60;",
+  "new": "pub const HALVINGS: usize = 59;"
+ },
+ {
+  "label": "halvings-const-up",
+  "old": "pub const HALVINGS: usize = 60;",
+  "new": "pub const HALVINGS: usize = 61;"
+ },
+ {
+  "label": "new-mu",
+  "old": "mu: positive(\"mu\", mu)?",
+  "new": "mu: finite(\"mu\", mu)?"
+ },
+ {
+  "label": "new-eta",
+  "old": "eta: positive(\"eta\", eta)?",
+  "new": "eta: finite(\"eta\", eta)?"
+ },
+ {
+  "label": "check-rule-mu",
+  "old": "        positive(\"mu\", self.mu)?;\n",
+  "new": ""
+ },
+ {
+  "label": "check-rule-eta",
+  "old": "        positive(\"eta\", self.eta)?;\n",
+  "new": ""
+ },
+ {
+  "label": "k-two",
+  "old": "2.0 + 1.0 / self.mu",
+  "new": "3.0 + 1.0 / self.mu"
+ },
+ {
+  "label": "k-inverse",
+  "old": "2.0 + 1.0 / self.mu",
+  "new": "2.0 + self.mu"
+ },
+ {
+  "label": "db-eta",
+  "old": "let db = self.eta * (1.0 - self.k()",
+  "new": "let db = (1.0 - self.k()"
+ },
+ {
+  "label": "db-one",
+  "old": "(1.0 - self.k() * y + y * y / self.mu)",
+  "new": "(2.0 - self.k() * y + y * y / self.mu)"
+ },
+ {
+  "label": "db-ky-sign",
+  "old": "(1.0 - self.k() * y + y * y / self.mu)",
+  "new": "(1.0 + self.k() * y + y * y / self.mu)"
+ },
+ {
+  "label": "db-yy",
+  "old": "(1.0 - self.k() * y + y * y / self.mu)",
+  "new": "(1.0 - self.k() * y + y / self.mu)"
+ },
+ {
+  "label": "da-eta",
+  "old": "self.eta / s.a + x * db",
+  "new": "1.0 / s.a + x * db"
+ },
+ {
+  "label": "da-inverse-gain",
+  "old": "self.eta / s.a + x * db",
+  "new": "self.eta * s.a + x * db"
+ },
+ {
+  "label": "da-x-sign",
+  "old": "/ s.a + x * db, db)",
+  "new": "/ s.a - x * db, db)"
+ },
+ {
+  "label": "da-x-drop",
+  "old": "/ s.a + x * db, db)",
+  "new": "/ s.a + db, db)"
+ },
+ {
+  "label": "da-eta-for-db",
+  "old": "/ s.a + x * db, db)",
+  "new": "/ s.a + x * self.eta, db)"
+ },
+ {
+  "label": "db-returned",
+  "old": "+ x * db, db)",
+  "new": "+ x * db, self.eta)"
+ },
+ {
+  "label": "advance-a",
+  "old": "let next = Sigmoid { a: s.a + da, b: s.b + db };",
+  "new": "let next = Sigmoid { a: s.a - da, b: s.b + db };"
+ },
+ {
+  "label": "advance-b",
+  "old": "let next = Sigmoid { a: s.a + da, b: s.b + db };",
+  "new": "let next = Sigmoid { a: s.a + da, b: s.b - db };"
+ },
+ {
+  "label": "advance-finite",
+  "old": "if !(next.a.is_finite() && next.a > 0.0) {",
+  "new": "if !(next.a > 0.0) {"
+ },
+ {
+  "label": "advance-zero",
+  "old": "if !(next.a.is_finite() && next.a > 0.0) {",
+  "new": "if !(next.a.is_finite() && next.a >= 0.0) {"
+ },
+ {
+  "label": "advance-bias-check",
+  "old": "        held(\"the bias after the step\", next.b)?;\n",
+  "new": ""
+ },
+ {
+  "label": "advance-bias-reads-a",
+  "old": "held(\"the bias after the step\", next.b)?",
+  "new": "held(\"the bias after the step\", next.a)?"
+ },
+ {
+  "label": "advance-bias-what",
+  "old": "held(\"the bias after the step\", next.b)",
+  "new": "held(\"b\", next.b)"
+ },
+ {
+  "label": "advance-error",
+  "old": "Err(IntrinsicError::Overshoot { a: s.a, next: next.a })",
+  "new": "Err(IntrinsicError::Overshoot { a: next.a, next: s.a })"
+ },
+ {
+  "label": "update-check-rule",
+  "old": "        self.check()?;\n        s.check()?;\n        finite(\"x\", x)?;",
+  "new": "        s.check()?;\n        finite(\"x\", x)?;"
+ },
+ {
+  "label": "update-check-neuron",
+  "old": "        s.check()?;\n        finite(\"x\", x)?;\n        let (da, db) = self.raw_update(s, x);",
+  "new": "        finite(\"x\", x)?;\n        let (da, db) = self.raw_update(s, x);"
+ },
+ {
+  "label": "update-check-x",
+  "old": "        finite(\"x\", x)?;\n        let (da, db) = self.raw_update(s, x);",
+  "new": "        let (da, db) = self.raw_update(s, x);"
+ },
+ {
+  "label": "update-held-db",
+  "old": "let db = held(\"Δb\", db)?;",
+  "new": "let db = db;"
+ },
+ {
+  "label": "update-held-da",
+  "old": "Ok((held(\"Δa\", da)?, db))",
+  "new": "Ok((da, db))"
+ },
+ {
+  "label": "update-what-b",
+  "old": "held(\"Δb\", db)",
+  "new": "held(\"Δa\", db)"
+ },
+ {
+  "label": "update-what-a",
+  "old": "held(\"Δa\", da)",
+  "new": "held(\"Δb\", da)"
+ },
+ {
+  "label": "update-order",
+  "old": "let db = held(\"Δb\", db)?;\n        Ok((held(\"Δa\", da)?, db))",
+  "new": "let da = held(\"Δa\", da)?;\n        Ok((da, held(\"Δb\", db)?))"
+ },
+ {
+  "label": "learn-bypass",
+  "old": "Self::advance(s, self.update(s, x)?)",
+  "new": "Self::advance(s, self.raw_update(s, x))"
+ },
+ {
+  "label": "mean-update-check-rule",
+  "old": "        self.check()?;\n        s.check()?;\n        let da = input.expect",
+  "new": "        s.check()?;\n        let da = input.expect"
+ },
+ {
+  "label": "mean-update-check-neuron",
+  "old": "        s.check()?;\n        let da = input.expect",
+  "new": "        let da = input.expect"
+ },
+ {
+  "label": "mean-update-da",
+  "old": "let da = input.expect(|x| self.raw_update(s, x).0)?;",
+  "new": "let da = input.expect(|x| self.raw_update(s, x).1)?;"
+ },
+ {
+  "label": "mean-update-db",
+  "old": "let db = input.expect(|x| self.raw_update(s, x).1)?;",
+  "new": "let db = input.expect(|x| self.raw_update(s, x).0)?;"
+ },
+ {
+  "label": "mean-update-held-db",
+  "old": "let db = held(\"E[Δb]\", db)?;",
+  "new": "let db = db;"
+ },
+ {
+  "label": "mean-update-held-da",
+  "old": "Ok((held(\"E[Δa]\", da)?, db))",
+  "new": "Ok((da, db))"
+ },
+ {
+  "label": "mean-update-what-b",
+  "old": "held(\"E[Δb]\", db)",
+  "new": "held(\"Δb\", db)"
+ },
+ {
+  "label": "mean-update-what-a",
+  "old": "held(\"E[Δa]\", da)",
+  "new": "held(\"Δa\", da)"
+ },
+ {
+  "label": "mean-update-order",
+  "old": "let db = held(\"E[Δb]\", db)?;\n        Ok((held(\"E[Δa]\", da)?, db))",
+  "new": "let da = held(\"E[Δa]\", da)?;\n        Ok((da, held(\"E[Δb]\", db)?))"
+ },
+ {
+  "label": "mean-step",
+  "old": "Self::advance(s, self.mean_update(s, input)?)",
+  "new": "Self::advance(s, self.update(s, 0.0)?)"
+ },
+ {
+  "label": "objective-check-rule",
+  "old": "        self.check()?;\n        s.check()?;\n        let e = input.expect",
+  "new": "        s.check()?;\n        let e = input.expect"
+ },
+ {
+  "label": "objective-check-neuron",
+  "old": "        s.check()?;\n        let e = input.expect",
+  "new": "        let e = input.expect"
+ },
+ {
+  "label": "objective-u",
+  "old": "let u = s.a * x + s.b;\n            softplus",
+  "new": "let u = s.a * x - s.b;\n            softplus"
+ },
+ {
+  "label": "objective-softplus-minus",
+  "old": "softplus(-u) + softplus(u) + s.rate(x) / self.mu",
+  "new": "softplus(u) + softplus(u) + s.rate(x) / self.mu"
+ },
+ {
+  "label": "objective-mean-term",
+  "old": "softplus(-u) + softplus(u) + s.rate(x) / self.mu",
+  "new": "softplus(-u) + softplus(u) + s.rate(x) * self.mu"
+ },
+ {
+  "label": "objective-held",
+  "old": "held(\"D\", e - input.entropy() - s.a.ln() + self.mu.ln())",
+  "new": "Ok(e - input.entropy() - s.a.ln() + self.mu.ln())"
+ },
+ {
+  "label": "objective-what",
+  "old": "held(\"D\", e - input.entropy()",
+  "new": "held(\"E\", e - input.entropy()"
+ },
+ {
+  "label": "objective-entropy",
+  "old": "held(\"D\", e - input.entropy()",
+  "new": "held(\"D\", e + input.entropy()"
+ },
+ {
+  "label": "objective-ln-a",
+  "old": "- s.a.ln() + self.mu.ln())",
+  "new": "+ s.a.ln() + self.mu.ln())"
+ },
+ {
+  "label": "objective-ln-mu",
+  "old": "- s.a.ln() + self.mu.ln())",
+  "new": "- s.a.ln() - self.mu.ln())"
+ },
+ {
+  "label": "gradient-check-rule",
+  "old": "        self.check()?;\n        s.check()?;\n        let ga",
+  "new": "        s.check()?;\n        let ga"
+ },
+ {
+  "label": "gradient-check-neuron",
+  "old": "        s.check()?;\n        let ga",
+  "new": "        let ga"
+ },
+ {
+  "label": "gradient-inverse-a",
+  "old": "let ga = -1.0 / s.a",
+  "new": "let ga = 1.0 / s.a"
+ },
+ {
+  "label": "gradient-x",
+  "old": "-x + self.k() * x * y - x * y * y / self.mu",
+  "new": "x + self.k() * x * y - x * y * y / self.mu"
+ },
+ {
+  "label": "gradient-xyy",
+  "old": "-x + self.k() * x * y - x * y * y / self.mu",
+  "new": "-x + self.k() * x * y - x * y / self.mu"
+ },
+ {
+  "label": "gradient-kxy",
+  "old": "-x + self.k() * x * y - x * y * y / self.mu",
+  "new": "-x + self.k() * y - x * y * y / self.mu"
+ },
+ {
+  "label": "gradient-b-one",
+  "old": "let gb = -1.0",
+  "new": "let gb = 1.0"
+ },
+ {
+  "label": "gradient-b-yy",
+  "old": "self.k() * y - y * y / self.mu",
+  "new": "self.k() * y + y * y / self.mu"
+ },
+ {
+  "label": "gradient-held-b",
+  "old": "let gb = held(\"∂D/∂b\", gb)?;",
+  "new": "let gb = gb;"
+ },
+ {
+  "label": "gradient-held-a",
+  "old": "Ok((held(\"∂D/∂a\", ga)?, gb))",
+  "new": "Ok((ga, gb))"
+ },
+ {
+  "label": "gradient-what-b",
+  "old": "held(\"∂D/∂b\", gb)",
+  "new": "held(\"∂D/∂a\", gb)"
+ },
+ {
+  "label": "gradient-what-a",
+  "old": "held(\"∂D/∂a\", ga)",
+  "new": "held(\"∂D/∂b\", ga)"
+ },
+ {
+  "label": "gradient-order",
+  "old": "let gb = held(\"∂D/∂b\", gb)?;\n        Ok((held(\"∂D/∂a\", ga)?, gb))",
+  "new": "let ga = held(\"∂D/∂a\", ga)?;\n        Ok((ga, held(\"∂D/∂b\", gb)?))"
+ },
+ {
+  "label": "hessian-check-rule",
+  "old": "        self.check()?;\n        s.check()?;\n        let c = |x: f64|",
+  "new": "        s.check()?;\n        let c = |x: f64|"
+ },
+ {
+  "label": "hessian-check-neuron",
+  "old": "        s.check()?;\n        let c = |x: f64|",
+  "new": "        let c = |x: f64|"
+ },
+ {
+  "label": "hessian-c-two",
+  "old": "(self.k() - 2.0 * y / self.mu)",
+  "new": "(self.k() - y / self.mu)"
+ },
+ {
+  "label": "hessian-c-one-minus",
+  "old": "y * (1.0 - y) * (self.k()",
+  "new": "y * y * (self.k()"
+ },
+ {
+  "label": "hessian-aa-prior",
+  "old": "let aa = 1.0 / (s.a * s.a) + input",
+  "new": "let aa = 1.0 / s.a + input"
+ },
+ {
+  "label": "hessian-aa-weight",
+  "old": "input.expect(|x| x * x * c(x))?;",
+  "new": "input.expect(|x| x * c(x))?;"
+ },
+ {
+  "label": "hessian-ab",
+  "old": "let ab = input.expect(|x| x * c(x))?;",
+  "new": "let ab = input.expect(c)?;"
+ },
+ {
+  "label": "hessian-bb",
+  "old": "let bb = input.expect(c)?;",
+  "new": "let bb = input.expect(|x| x * c(x))?;"
+ },
+ {
+  "label": "hessian-off-sign",
+  "old": "[[held(\"∂²D/∂a²\", aa)?, ab], [ab,",
+  "new": "[[held(\"∂²D/∂a²\", aa)?, -ab], [-ab,"
+ },
+ {
+  "label": "hessian-held-ab",
+  "old": "let ab = held(\"∂²D/∂a∂b\", ab)?;",
+  "new": "let ab = ab;"
+ },
+ {
+  "label": "hessian-held-aa",
+  "old": "[[held(\"∂²D/∂a²\", aa)?, ab]",
+  "new": "[[aa, ab]"
+ },
+ {
+  "label": "hessian-held-bb",
+  "old": "[ab, held(\"∂²D/∂b²\", bb)?]]",
+  "new": "[ab, bb]]"
+ },
+ {
+  "label": "hessian-what-ab",
+  "old": "held(\"∂²D/∂a∂b\", ab)",
+  "new": "held(\"∂²D/∂a²\", ab)"
+ },
+ {
+  "label": "hessian-what-aa",
+  "old": "held(\"∂²D/∂a²\", aa)",
+  "new": "held(\"∂²D/∂b²\", aa)"
+ },
+ {
+  "label": "hessian-what-bb",
+  "old": "held(\"∂²D/∂b²\", bb)",
+  "new": "held(\"∂²D/∂a²\", bb)"
+ },
+ {
+  "label": "fp-initial-d",
+  "old": "let mut d = self.objective(s, input)?;",
+  "new": "let mut d = f64::INFINITY;"
+ },
+ {
+  "label": "fp-loop-bound",
+  "old": "for iterations in 0..Self::NEWTON_STEPS {",
+  "new": "for iterations in 0..Self::NEWTON_STEPS / 2 {"
+ },
+ {
+  "label": "fp-converged",
+  "old": "if norm <= Self::NEWTON_TOLERANCE {",
+  "new": "if norm >= Self::NEWTON_TOLERANCE {"
+ },
+ {
+  "label": "fp-norm",
+  "old": "let norm = g.0.hypot(g.1);",
+  "new": "let norm = g.0.abs();"
+ },
+ {
+  "label": "fp-det",
+  "old": "let det = haa * hbb - hab * hab;",
+  "new": "let det = haa * hbb + hab * hab;"
+ },
+ {
+  "label": "fp-newton-or",
+  "old": "let newton = haa > 0.0 && det > 0.0;",
+  "new": "let newton = haa > 0.0 || det > 0.0;"
+ },
+ {
+  "label": "fp-newton-det-only",
+  "old": "let newton = haa > 0.0 && det > 0.0;",
+  "new": "let newton = det > 0.0;"
+ },
+ {
+  "label": "fp-newton-haa-only",
+  "old": "let newton = haa > 0.0 && det > 0.0;",
+  "new": "let newton = haa > 0.0;"
+ },
+ {
+  "label": "fp-newton-never",
+  "old": "let newton = haa > 0.0 && det > 0.0;",
+  "new": "let newton = false;"
+ },
+ {
+  "label": "fp-step-a",
+  "old": "((hab * g.1 - hbb * g.0) / det,",
+  "new": "((hbb * g.0 - hab * g.1) / det,"
+ },
+ {
+  "label": "fp-step-b",
+  "old": "(hab * g.0 - haa * g.1) / det)",
+  "new": "(haa * g.1 - hab * g.0) / det)"
+ },
+ {
+  "label": "fp-step-cross",
+  "old": "((hab * g.1 - hbb * g.0) / det,",
+  "new": "((-hbb * g.0) / det,"
+ },
+ {
+  "label": "fp-descent",
+  "old": "} else { (-g.0, -g.1) };",
+  "new": "} else { (g.0, g.1) };"
+ },
+ {
+  "label": "fp-descent-b",
+  "old": "} else { (-g.0, -g.1) };",
+  "new": "} else { (-g.0, g.1) };"
+ },
+ {
+  "label": "fp-t-start",
+  "old": "let mut t = 1.0;",
+  "new": "let mut t = 0.5;"
+ },
+ {
+  "label": "fp-halvings-bound",
+  "old": "for _ in 0..Self::HALVINGS {",
+  "new": "for _ in 0..Self::HALVINGS / 4 {"
+ },
+ {
+  "label": "fp-trial-a",
+  "old": "let trial = Sigmoid { a: s.a + t * step.0, b: s.b + t * step.1 };",
+  "new": "let trial = Sigmoid { a: s.a + step.0, b: s.b + t * step.1 };"
+ },
+ {
+  "label": "fp-trial-b",
+  "old": "let trial = Sigmoid { a: s.a + t * step.0, b: s.b + t * step.1 };",
+  "new": "let trial = Sigmoid { a: s.a + t * step.0, b: s.b + step.1 };"
+ },
+ {
+  "label": "fp-trial-check",
+  "old": "if trial.check().is_ok() && self.objective(trial, input)? < d {",
+  "new": "if self.objective(trial, input)? < d {"
+ },
+ {
+  "label": "fp-descent-test",
+  "old": "self.objective(trial, input)? < d {",
+  "new": "self.objective(trial, input)? > d {"
+ },
+ {
+  "label": "fp-break",
+  "old": "accepted = Some(trial);\n                    break;",
+  "new": "accepted = Some(trial);"
+ },
+ {
+  "label": "fp-halve",
+  "old": "t *= 0.5;",
+  "new": "t *= 0.9;"
+ },
+ {
+  "label": "fp-fallback-newton",
+  "old": "if accepted.is_none() && newton {",
+  "new": "if accepted.is_none() && !newton {"
+ },
+ {
+  "label": "fp-fallback-none",
+  "old": "if accepted.is_none() && newton {",
+  "new": "if newton {"
+ },
+ {
+  "label": "fp-fallback-trial-a",
+  "old": "let trial = Sigmoid { a: s.a + step.0, b: s.b + step.1 };",
+  "new": "let trial = Sigmoid { a: s.a - step.0, b: s.b + step.1 };"
+ },
+ {
+  "label": "fp-fallback-trial-b",
+  "old": "let trial = Sigmoid { a: s.a + step.0, b: s.b + step.1 };",
+  "new": "let trial = Sigmoid { a: s.a + step.0, b: s.b - step.1 };"
+ },
+ {
+  "label": "fp-fallback-check",
+  "old": "if trial.check().is_ok() {\n                    let gt",
+  "new": "if true {\n                    let gt"
+ },
+ {
+  "label": "fp-fallback-shorter",
+  "old": "if gt.0.hypot(gt.1) < norm {",
+  "new": "if gt.0.hypot(gt.1) > norm {"
+ },
+ {
+  "label": "fp-fallback-accept",
+  "old": "                        accepted = Some(trial);\n",
+  "new": ""
+ },
+ {
+  "label": "fp-refuse-iterations",
+  "old": "NoFixedPoint { iterations, residual: norm }",
+  "new": "NoFixedPoint { iterations: 1, residual: norm }"
+ },
+ {
+  "label": "fp-refuse-residual",
+  "old": "NoFixedPoint { iterations, residual: norm }",
+  "new": "NoFixedPoint { iterations, residual: 0.0 }"
+ },
+ {
+  "label": "fp-keep-d",
+  "old": "            d = self.objective(s, input)?;\n",
+  "new": ""
+ },
+ {
+  "label": "fp-regrad",
+  "old": "            g = self.gradient(s, input)?;\n",
+  "new": ""
+ },
+ {
+  "label": "fp-final-iterations",
+  "old": "iterations: Self::NEWTON_STEPS, residual: g.0.hypot(g.1)",
+  "new": "iterations: 0, residual: g.0.hypot(g.1)"
+ },
+ {
+  "label": "fp-final-residual",
+  "old": "iterations: Self::NEWTON_STEPS, residual: g.0.hypot(g.1)",
+  "new": "iterations: Self::NEWTON_STEPS, residual: 0.0"
+ },
+ {
+  "label": "optimal-check-rule",
+  "old": "        self.check()?;\n        input.check()?;\n        finite(\"x\", x)?;",
+  "new": "        input.check()?;\n        finite(\"x\", x)?;"
+ },
+ {
+  "label": "optimal-check-input",
+  "old": "        input.check()?;\n        finite(\"x\", x)?;\n        Ok(-self.mu",
+  "new": "        finite(\"x\", x)?;\n        Ok(-self.mu"
+ },
+ {
+  "label": "optimal-check-x",
+  "old": "        finite(\"x\", x)?;\n        Ok(-self.mu",
+  "new": "        Ok(-self.mu"
+ },
+ {
+  "label": "optimal-sign",
+  "old": "Ok(-self.mu * input.ln_survival(x))",
+  "new": "Ok(self.mu * input.ln_survival(x))"
+ },
+ {
+  "label": "finite-lets-nan",
+  "old": "if value.is_finite() { Ok(value) } else { Err(IntrinsicError::NonFinite",
+  "new": "if !value.is_infinite() { Ok(value) } else { Err(IntrinsicError::NonFinite"
+ },
+ {
+  "label": "positive-variant",
+  "old": "else { Err(IntrinsicError::NotPositive { what, value }) }",
+  "new": "else { Err(IntrinsicError::NonFinite { what, value }) }"
+ },
+ {
+  "label": "gain-variant",
+  "old": "else { Err(IntrinsicError::Gain { a }) }",
+  "new": "else { Err(IntrinsicError::NotPositive { what: \"a\", value: a }) }"
+ },
+ {
+  "label": "check-empty-fields",
+  "old": "return Err(IntrinsicError::EmptyInterval { lo, hi });",
+  "new": "return Err(IntrinsicError::EmptyInterval { lo: hi, hi: lo });"
+ },
+ {
+  "label": "panels-error-count",
+  "old": "return Err(IntrinsicError::Panels { panels });",
+  "new": "return Err(IntrinsicError::Panels { panels: 0 });"
+ },
+ {
+  "label": "fig1-gaussian-mean",
+  "old": "pub const FIG1_GAUSSIAN: Self = Self::Gaussian { mean: 0.0, sd: 1.0 };",
+  "new": "pub const FIG1_GAUSSIAN: Self = Self::Gaussian { mean: 0.125, sd: 1.0 };"
+ },
+ {
+  "label": "fig1-gaussian-sd",
+  "old": "pub const FIG1_GAUSSIAN: Self = Self::Gaussian { mean: 0.0, sd: 1.0 };",
+  "new": "pub const FIG1_GAUSSIAN: Self = Self::Gaussian { mean: 0.0, sd: 1.25 };"
+ },
+ {
+  "label": "fig1-uniform-hi",
+  "old": "pub const FIG1_UNIFORM: Self = Self::Uniform { lo: 0.0, hi: 1.0 };",
+  "new": "pub const FIG1_UNIFORM: Self = Self::Uniform { lo: 0.0, hi: 2.0 };"
+ },
+ {
+  "label": "fig1-exponential-mean",
+  "old": "pub const FIG1_EXPONENTIAL: Self = Self::Exponential { mean: 0.1 };",
+  "new": "pub const FIG1_EXPONENTIAL: Self = Self::Exponential { mean: 0.2 };"
+ },
+ {
+  "label": "domain-gauss-upper",
+  "old": "mean + 10.0 * sd)",
+  "new": "mean + 5.0 * sd)"
+ },
+ {
+  "label": "fp-iterations-reported",
+  "old": "return Ok(FixedPoint { sigmoid: s, iterations });",
+  "new": "return Ok(FixedPoint { sigmoid: s, iterations: 0 });"
+ },
+ {
+  "label": "surv-z-sd",
+  "old": "let z = (x - mean) / sd;\n                let t",
+  "new": "let z = x - mean;\n                let t"
+ },
+ {
+  "label": "surv-z-mean",
+  "old": "let z = (x - mean) / sd;\n                let t",
+  "new": "let z = (x + mean) / sd;\n                let t"
+ },
+ {
+  "label": "density-gauss-mean",
+  "old": "(x - mean) / sd;\n                (-0.5",
+  "new": "(x + mean) / sd;\n                (-0.5"
+ },
+ {
+  "label": "fig1-uniform-lo",
+  "old": "pub const FIG1_UNIFORM: Self = Self::Uniform { lo: 0.0, hi: 1.0 };",
+  "new": "pub const FIG1_UNIFORM: Self = Self::Uniform { lo: 0.25, hi: 1.0 };"
+ },
+ {
+  "label": "msg-overshoot-tail",
+  "old": "{next}, where the rule is undefined; the learning rate is too large",
+  "new": "{next}, where the rule is undefined; the step is too large"
+ },
+ {
+  "label": "msg-nofixed-head",
+  "old": "\"Newton's method found no stationary point: after {iterations} steps",
+  "new": "\"Newton found no stationary point: after {iterations} steps"
+ },
+ {
+  "label": "msg-empty-tail",
+  "old": "[{lo}, {hi}] is empty; it needs lo < hi",
+  "new": "[{lo}, {hi}] is empty; it needs lo <= hi"
+ },
+ {
+  "label": "fp-initial-g",
+  "old": "let mut g = self.gradient(s, input)?;",
+  "new": "let mut g = (1.0_f64, 1.0_f64);"
+ },
+ {
+  "label": "surv-lower-exp",
+  "old": "* (-0.5 * z * z).exp()).ln_1p()",
+  "new": "* (-z * z).exp()).ln_1p()"
+ },
+ {
+  "label": "hessian-c-sign",
+  "old": "(self.k() - 2.0 * y / self.mu)",
+  "new": "(self.k() + 2.0 * y / self.mu)"
+ },
+ {
+  "label": "gradient-kxy-sign",
+  "old": "-x + self.k() * x * y",
+  "new": "-x - self.k() * x * y"
+ },
+ {
+  "label": "gradient-b-ky",
+  "old": "self.k() * y - y * y / self.mu",
+  "new": "self.k() - y * y / self.mu"
+ },
+ {
+  "label": "surv-uniform-inf",
+  "old": "                    f64::NEG_INFINITY\n                } else {",
+  "new": "                    f64::NAN\n                } else {"
+ },
+ {
+  "label": "softplus-ln1p",
+  "old": "(-t.abs()).exp().ln_1p()",
+  "new": "(-t.abs()).exp()"
+ },
+ {
+  "label": "rate-numerator",
+  "old": "-> f64 {\n        1.0 / (1.0 + (-(self.a",
+  "new": "-> f64 {\n        2.0 / (1.0 + (-(self.a"
+ },
+ {
+  "label": "entropy-gauss-half",
+  "old": "0.5 * (1.0 + core::f64::consts::TAU.ln())",
+  "new": "(1.0 + core::f64::consts::TAU.ln())"
+ },
+ {
+  "label": "objective-softplus-plus",
+  "old": "+ softplus(u) + s.rate",
+  "new": "+ softplus(-u) + s.rate"
+ }
+]

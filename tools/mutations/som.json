@@ -1,0 +1,792 @@
+[
+ {
+  "label": "the not-positive message drops 'finite'",
+  "old": "write!(f, \"{what} = {value} must be finite and positive\")",
+  "new": "write!(f, \"{what} = {value} must be positive\")"
+ },
+ {
+  "label": "the non-finite message drops the value",
+  "old": "write!(f, \"{what} = {value} is not finite\")",
+  "new": "write!(f, \"{what} is not finite\")"
+ },
+ {
+  "label": "the out-of-range message opens the interval",
+  "old": "write!(f, \"{what} = {value} is outside [{low}, {high}]\")",
+  "new": "write!(f, \"{what} = {value} is outside ({low}, {high})\")"
+ },
+ {
+  "label": "the empty-interval message swaps its ends",
+  "old": "write!(f, \"[{low}, {high}) holds no value to draw\")",
+  "new": "write!(f, \"[{high}, {low}) holds no value to draw\")"
+ },
+ {
+  "label": "the length message swaps expected and got",
+  "old": "write!(f, \"{what} has length {got}; it must be {expected}\")",
+  "new": "write!(f, \"{what} has length {expected}; it must be {got}\")"
+ },
+ {
+  "label": "the too-few message swaps need and got",
+  "old": "write!(f, \"{what}: {got} supplied, at least {need} needed\")",
+  "new": "write!(f, \"{what}: {need} supplied, at least {got} needed\")"
+ },
+ {
+  "label": "the lattice message names the wrong array",
+  "old": "write!(f, \"{what} is defined on a rectangular array, not a hexagonal one\")",
+  "new": "write!(f, \"{what} is defined on a hexagonal array, not a rectangular one\")"
+ },
+ {
+  "label": "the zero-norm message drops the unit",
+  "old": "write!(f, \"unit {unit}: m + alpha x is the zero vector and eq. (3) cannot normalise it\")",
+  "new": "write!(f, \"m + alpha x is the zero vector and eq. (3) cannot normalise it\")"
+ },
+ {
+  "label": "finite admits infinity",
+  "old": "if value.is_finite() { Ok(value) }",
+  "new": "if !value.is_nan() { Ok(value) }"
+ },
+ {
+  "label": "positive admits infinity",
+  "old": "if value.is_finite() && value > 0.0 { Ok(value) }",
+  "new": "if value > 0.0 { Ok(value) }"
+ },
+ {
+  "label": "positive admits zero",
+  "old": "if value.is_finite() && value > 0.0 { Ok(value) }",
+  "new": "if value.is_finite() && value >= 0.0 { Ok(value) }"
+ },
+ {
+  "label": "within does not name a NaN as non-finite",
+  "old": "    finite(what, value)?;\n    if value >= low",
+  "new": "    if value >= low"
+ },
+ {
+  "label": "within excludes its lower end",
+  "old": "if value >= low && value <= high { Ok(value) }",
+  "new": "if value > low && value <= high { Ok(value) }"
+ },
+ {
+  "label": "within excludes its upper end",
+  "old": "if value >= low && value <= high { Ok(value) }",
+  "new": "if value >= low && value < high { Ok(value) }"
+ },
+ {
+  "label": "all_finite checks nothing",
+  "old": "    for &value in v {\n        finite(what, value)?;\n    }",
+  "new": "    for &value in v {\n        let _ = value;\n    }"
+ },
+ {
+  "label": "the random index never reaches the last sample",
+  "old": "(bits % n as u64) as usize",
+  "new": "(bits % (n as u64 - 1).max(1)) as usize"
+ },
+ {
+  "label": "the random draw uses 32 bits",
+  "old": "let bits = (u64::from(rng.next_u32()) << 32) | u64::from(rng.next_u32());",
+  "new": "let bits = u64::from(rng.next_u32());"
+ },
+ {
+  "label": "the random draw overlaps its halves",
+  "old": "let bits = (u64::from(rng.next_u32()) << 32) | u64::from(rng.next_u32());",
+  "new": "let bits = (u64::from(rng.next_u32()) << 16) | u64::from(rng.next_u32());"
+ },
+ {
+  "label": "a grid of width zero is accepted",
+  "old": "        if width == 0 {\n            return Err(SomError::TooFew { what: \"grid width\"",
+  "new": "        if width == 0 && height == 0 {\n            return Err(SomError::TooFew { what: \"grid width\""
+ },
+ {
+  "label": "a grid of height zero is accepted",
+  "old": "        if height == 0 {\n            return Err(SomError::TooFew { what: \"grid height\"",
+  "new": "        if height == 0 && width == 0 {\n            return Err(SomError::TooFew { what: \"grid height\""
+ },
+ {
+  "label": "the width refusal is named the height",
+  "old": "what: \"grid width\", need: 1",
+  "new": "what: \"grid height\", need: 1"
+ },
+ {
+  "label": "the grid swaps width and height",
+  "old": "Ok(Self { lattice, width, height })",
+  "new": "Ok(Self { lattice, width: height, height: width })"
+ },
+ {
+  "label": "a chain is hexagonal",
+  "old": "Self::new(Lattice::Rect, n, 1)",
+  "new": "Self::new(Lattice::Hex, n, 1)"
+ },
+ {
+  "label": "a chain stands on end",
+  "old": "Self::new(Lattice::Rect, n, 1)",
+  "new": "Self::new(Lattice::Rect, 1, n)"
+ },
+ {
+  "label": "the lattice getter is always rectangular",
+  "old": "    pub fn lattice(&self) -> Lattice {\n        self.lattice",
+  "new": "    pub fn lattice(&self) -> Lattice {\n        Lattice::Rect"
+ },
+ {
+  "label": "the width getter returns the height",
+  "old": "    pub fn width(&self) -> usize {\n        self.width",
+  "new": "    pub fn width(&self) -> usize {\n        self.height"
+ },
+ {
+  "label": "the height getter returns the width",
+  "old": "    pub fn height(&self) -> usize {\n        self.height",
+  "new": "    pub fn height(&self) -> usize {\n        self.width"
+ },
+ {
+  "label": "len adds instead of multiplying",
+  "old": "        self.width * self.height",
+  "new": "        self.width + self.height"
+ },
+ {
+  "label": "is_empty inverted",
+  "old": "self.len() == 0",
+  "new": "self.len() != 0"
+ },
+ {
+  "label": "coords swaps column and row",
+  "old": "(i % self.width, i / self.width)",
+  "new": "(i / self.width, i % self.width)"
+ },
+ {
+  "label": "dx has the wrong sign",
+  "old": "let mut dx = ax as f64 - bx as f64;",
+  "new": "let mut dx = bx as f64 - ax as f64;"
+ },
+ {
+  "label": "the rectangular distance takes the hexagonal row pitch",
+  "old": "Lattice::Rect => dx * dx + dy * dy,",
+  "new": "Lattice::Rect => dx * dx + 0.75 * dy * dy,"
+ },
+ {
+  "label": "the row offset applies between rows of the same parity",
+  "old": "if ay % 2 != by % 2 {",
+  "new": "if ay % 2 == by % 2 {"
+ },
+ {
+  "label": "the even rows are the shifted ones",
+  "old": "dx += if ay % 2 == 0 { -0.5 } else { 0.5 };",
+  "new": "dx += if ay % 2 == 0 { 0.5 } else { -0.5 };"
+ },
+ {
+  "label": "the hexagonal rows are a unit apart",
+  "old": "dx * dx + 0.75 * dy * dy",
+  "new": "dx * dx + dy * dy"
+ },
+ {
+  "label": "distance is the squared distance",
+  "old": "self.distance2(a, b).sqrt()",
+  "new": "self.distance2(a, b)"
+ },
+ {
+  "label": "a unit is adjacent to itself",
+  "old": "self.distance2(a, b) == 1.0",
+  "new": "self.distance2(a, b) <= 1.0"
+ },
+ {
+  "label": "the ring distance takes the smaller offset",
+  "old": "ax.abs_diff(bx).max(ay.abs_diff(by))",
+  "new": "ax.abs_diff(bx).min(ay.abs_diff(by))"
+ },
+ {
+  "label": "the bubble excludes its edge",
+  "old": "if d <= width {",
+  "new": "if d < width {"
+ },
+ {
+  "label": "the bubble leaks outside N_c",
+  "old": "                } else {\n                    0.0\n                }",
+  "new": "                } else {\n                    alpha / 64.0\n                }"
+ },
+ {
+  "label": "the Gaussian is SOM_PAK's, exp(-d^2/2s^2)",
+  "old": "alpha * (-(d * d) / (width * width)).exp()",
+  "new": "alpha * (-(d * d) / (2.0 * width * width)).exp()"
+ },
+ {
+  "label": "the Gaussian drops its gain",
+  "old": "Self::Gaussian => alpha * (-(d * d) / (width * width)).exp(),",
+  "new": "Self::Gaussian => (-(d * d) / (width * width)).exp(),"
+ },
+ {
+  "label": "a negative radius is accepted",
+  "old": "Self::Bubble => within(\"radius\", width, 0.0, f64::INFINITY),",
+  "new": "Self::Bubble => within(\"radius\", width, -1.0, f64::INFINITY),"
+ },
+ {
+  "label": "a zero sigma is accepted",
+  "old": "Self::Gaussian => positive(\"sigma\", width),",
+  "new": "Self::Gaussian => within(\"sigma\", width, 0.0, f64::INFINITY),"
+ },
+ {
+  "label": "at does not check the schedule",
+  "old": "        self.check()?;\n        Ok(match *self {",
+  "new": "        Ok(match *self {"
+ },
+ {
+  "label": "the linear fall is not held after T",
+  "old": "(steps - t.min(steps)) as f64",
+  "new": "(steps.wrapping_sub(t)) as f64"
+ },
+ {
+  "label": "the linear fall runs the wrong way",
+  "old": "end + (start - end) * (steps",
+  "new": "end - (start - end) * (steps"
+ },
+ {
+  "label": "the linear fall divides by T + 1",
+  "old": "(steps - t.min(steps)) as f64 / steps as f64",
+  "new": "(steps - t.min(steps)) as f64 / (steps + 1) as f64"
+ },
+ {
+  "label": "the exponential is not held after T",
+  "old": ".powf(t.min(steps) as f64 / steps as f64)",
+  "new": ".powf(t as f64 / steps as f64)"
+ },
+ {
+  "label": "the exponential rises",
+  "old": "start * (end / start).powf(",
+  "new": "start * (start / end).powf("
+ },
+ {
+  "label": "the inverse counts from two",
+  "old": "c / (t as f64 + 1.0)",
+  "new": "c / (t as f64 + 2.0)"
+ },
+ {
+  "label": "a constant schedule is not checked",
+  "old": "Self::Constant(v) => finite(\"schedule value\", v).map(drop),",
+  "new": "Self::Constant(v) => Ok(drop(v)),"
+ },
+ {
+  "label": "a linear start is not checked",
+  "old": "                finite(\"schedule start\", start)?;\n",
+  "new": ""
+ },
+ {
+  "label": "a linear end is not checked",
+  "old": "                finite(\"schedule end\", end)?;\n",
+  "new": ""
+ },
+ {
+  "label": "a linear fall of zero steps is accepted",
+  "old": "finite(\"schedule end\", end)?;\n                if steps == 0 {",
+  "new": "finite(\"schedule end\", end)?;\n                if steps == usize::MAX {"
+ },
+ {
+  "label": "an exponential start is not checked",
+  "old": "                positive(\"schedule start\", start)?;\n",
+  "new": ""
+ },
+ {
+  "label": "an exponential end is not checked",
+  "old": "                positive(\"schedule end\", end)?;\n",
+  "new": ""
+ },
+ {
+  "label": "an exponential of zero steps is accepted",
+  "old": "positive(\"schedule end\", end)?;\n                if steps == 0 {",
+  "new": "positive(\"schedule end\", end)?;\n                if steps == usize::MAX {"
+ },
+ {
+  "label": "the steps refusal is misnamed",
+  "old": "return Err(SomError::TooFew { what: \"schedule steps\", need: 1, got: 0 });\n                }\n                Ok(())\n            }\n            Self::Exponential",
+  "new": "return Err(SomError::TooFew { what: \"schedule length\", need: 1, got: 0 });\n                }\n                Ok(())\n            }\n            Self::Exponential"
+ },
+ {
+  "label": "an inverse-t constant of zero is accepted",
+  "old": "Self::InverseT { c } => positive(\"schedule constant\", c).map(drop),",
+  "new": "Self::InverseT { c } => finite(\"schedule constant\", c).map(drop),"
+ },
+ {
+  "label": "the ordering phase is 999 steps",
+  "old": "            steps: 1000,\n            alpha: Schedule::Linear { start: 0.9,",
+  "new": "            steps: 999,\n            alpha: Schedule::Linear { start: 0.9,"
+ },
+ {
+  "label": "the ordering gain starts at 0.8",
+  "old": "alpha: Schedule::Linear { start: 0.9, end: 0.0, steps: 1000 },",
+  "new": "alpha: Schedule::Linear { start: 0.8, end: 0.0, steps: 1000 },"
+ },
+ {
+  "label": "the ordering gain falls over 2000 steps",
+  "old": "alpha: Schedule::Linear { start: 0.9, end: 0.0, steps: 1000 },",
+  "new": "alpha: Schedule::Linear { start: 0.9, end: 0.0, steps: 2000 },"
+ },
+ {
+  "label": "the ordering radius ignores its argument",
+  "old": "width: Schedule::Linear { start: radius, end: 1.0, steps: 1000 },",
+  "new": "width: Schedule::Linear { start: radius + 1.0, end: 1.0, steps: 1000 },"
+ },
+ {
+  "label": "the ordering radius shrinks to zero",
+  "old": "width: Schedule::Linear { start: radius, end: 1.0, steps: 1000 },",
+  "new": "width: Schedule::Linear { start: radius, end: 0.0, steps: 1000 },"
+ },
+ {
+  "label": "the ordering phase is Gaussian",
+  "old": "width: Schedule::Linear { start: radius, end: 1.0, steps: 1000 },\n            kernel: Kernel::Bubble,",
+  "new": "width: Schedule::Linear { start: radius, end: 1.0, steps: 1000 },\n            kernel: Kernel::Gaussian,"
+ },
+ {
+  "label": "the convergence phase is 400 steps a unit",
+  "old": "let steps = 500 * grid.len();",
+  "new": "let steps = 400 * grid.len();"
+ },
+ {
+  "label": "the convergence gain starts at 0.02",
+  "old": "alpha: Schedule::Linear { start: 0.01, end: 0.0, steps },",
+  "new": "alpha: Schedule::Linear { start: 0.02, end: 0.0, steps },"
+ },
+ {
+  "label": "the convergence radius is two",
+  "old": "            width: Schedule::Constant(1.0),\n            kernel: Kernel::Bubble,",
+  "new": "            width: Schedule::Constant(2.0),\n            kernel: Kernel::Bubble,"
+ },
+ {
+  "label": "the convergence phase is Gaussian",
+  "old": "            width: Schedule::Constant(1.0),\n            kernel: Kernel::Bubble,",
+  "new": "            width: Schedule::Constant(1.0),\n            kernel: Kernel::Gaussian,"
+ },
+ {
+  "label": "Table 1's first phase is 999 steps",
+  "old": "                steps: 1000,\n                alpha: Schedule::Linear { start: 0.5,",
+  "new": "                steps: 999,\n                alpha: Schedule::Linear { start: 0.5,"
+ },
+ {
+  "label": "Table 1's first gain starts at 0.9",
+  "old": "alpha: Schedule::Linear { start: 0.5, end: 0.04, steps: 1000 },",
+  "new": "alpha: Schedule::Linear { start: 0.9, end: 0.04, steps: 1000 },"
+ },
+ {
+  "label": "Table 1's first gain ends at 0.05",
+  "old": "alpha: Schedule::Linear { start: 0.5, end: 0.04, steps: 1000 },",
+  "new": "alpha: Schedule::Linear { start: 0.5, end: 0.05, steps: 1000 },"
+ },
+ {
+  "label": "Table 1's radius starts at seven",
+  "old": "width: Schedule::Linear { start: 6.0, end: 1.0, steps: 1000 },",
+  "new": "width: Schedule::Linear { start: 7.0, end: 1.0, steps: 1000 },"
+ },
+ {
+  "label": "Table 1's first phase is Gaussian",
+  "old": "width: Schedule::Linear { start: 6.0, end: 1.0, steps: 1000 },\n                kernel: Kernel::Bubble,",
+  "new": "width: Schedule::Linear { start: 6.0, end: 1.0, steps: 1000 },\n                kernel: Kernel::Gaussian,"
+ },
+ {
+  "label": "Table 1's second phase is 11 000 steps",
+  "old": "                steps: 10_000,\n",
+  "new": "                steps: 11_000,\n"
+ },
+ {
+  "label": "Table 1's second gain starts at 0.05",
+  "old": "alpha: Schedule::Linear { start: 0.04, end: 0.0, steps: 10_000 },",
+  "new": "alpha: Schedule::Linear { start: 0.05, end: 0.0, steps: 10_000 },"
+ },
+ {
+  "label": "Table 1's second radius is two",
+  "old": "                width: Schedule::Constant(1.0),\n                kernel: Kernel::Bubble,",
+  "new": "                width: Schedule::Constant(2.0),\n                kernel: Kernel::Bubble,"
+ },
+ {
+  "label": "Table 1's second phase is Gaussian",
+  "old": "                width: Schedule::Constant(1.0),\n                kernel: Kernel::Bubble,",
+  "new": "                width: Schedule::Constant(1.0),\n                kernel: Kernel::Gaussian,"
+ },
+ {
+  "label": "data of a partial sample is accepted",
+  "old": "if !data.len().is_multiple_of(dim) {",
+  "new": "if data.len() == usize::MAX {"
+ },
+ {
+  "label": "empty data is accepted",
+  "old": "    if data.is_empty() {\n        return Err(SomError::TooFew { what: \"data samples\"",
+  "new": "    if data.len() == usize::MAX {\n        return Err(SomError::TooFew { what: \"data samples\""
+ },
+ {
+  "label": "data is not checked for finiteness",
+  "old": "    all_finite(\"data\", data)?;\n",
+  "new": ""
+ },
+ {
+  "label": "the sample count is one short",
+  "old": "Ok(data.len() / dim)",
+  "new": "Ok(data.len() / dim - 1)"
+ },
+ {
+  "label": "a zero dimension is accepted",
+  "old": "        if dim == 0 {\n            return Err(SomError::TooFew { what: \"dimension\"",
+  "new": "        if dim == usize::MAX {\n            return Err(SomError::TooFew { what: \"dimension\""
+ },
+ {
+  "label": "too few weights are accepted",
+  "old": "if weights.len() != grid.len() * dim {",
+  "new": "if weights.len() > grid.len() * dim {"
+ },
+ {
+  "label": "weights are not checked for finiteness",
+  "old": "        all_finite(\"weight\", &weights)?;\n",
+  "new": ""
+ },
+ {
+  "label": "an infinite low bound is not named",
+  "old": "        finite(\"low\", low)?;\n",
+  "new": ""
+ },
+ {
+  "label": "a NaN high bound is not named",
+  "old": "        finite(\"high\", high)?;\n",
+  "new": ""
+ },
+ {
+  "label": "an empty interval is accepted",
+  "old": "if !(high > low) {",
+  "new": "if high < low {"
+ },
+ {
+  "label": "the draw ignores the low end of the interval",
+  "old": "low + (high - low) * rng.next_f64()",
+  "new": "low + high * rng.next_f64()"
+ },
+ {
+  "label": "dim reports one more",
+  "old": "    pub fn dim(&self) -> usize {\n        self.dim\n",
+  "new": "    pub fn dim(&self) -> usize {\n        self.dim + 1\n"
+ },
+ {
+  "label": "a unit is read one weight late",
+  "old": "&self.weights[i * self.dim..(i + 1) * self.dim]\n    }\n\n    fn check_x",
+  "new": "&self.weights[i * self.dim + 1..(i + 1) * self.dim + 1]\n    }\n\n    fn check_x"
+ },
+ {
+  "label": "x of the wrong length is accepted",
+  "old": "if x.len() != self.dim {",
+  "new": "if x.len() > self.dim + 1 {"
+ },
+ {
+  "label": "x is not checked for finiteness",
+  "old": "        all_finite(\"x\", x)\n    }\n\n    fn dist2",
+  "new": "        Ok(())\n    }\n\n    fn dist2"
+ },
+ {
+  "label": "the winner is by absolute, not squared, distance",
+  "old": ".map(|(m, v)| (v - m) * (v - m)).sum()",
+  "new": ".map(|(m, v)| (v - m).abs()).sum()"
+ },
+ {
+  "label": "a tie goes to the higher index",
+  "old": "            if d < dc {",
+  "new": "            if d <= dc {"
+ },
+ {
+  "label": "the old best is not demoted to second",
+  "old": "                (s, ds) = (c, dc);\n",
+  "new": ""
+ },
+ {
+  "label": "a tie for second goes to the higher index",
+  "old": "} else if d < ds {",
+  "new": "} else if d <= ds {"
+ },
+ {
+  "label": "best and second swap",
+  "old": "        (c, s, dc)\n",
+  "new": "        (s, c, dc)\n"
+ },
+ {
+  "label": "the winner is the second best",
+  "old": "Ok(self.best_two(x).0)",
+  "new": "Ok(self.best_two(x).1)"
+ },
+ {
+  "label": "step does not check x",
+  "old": "        self.check_x(x)?;\n        within(\"alpha\", alpha, 0.0, 1.0)?;",
+  "new": "        within(\"alpha\", alpha, 0.0, 1.0)?;"
+ },
+ {
+  "label": "step does not check alpha",
+  "old": "        within(\"alpha\", alpha, 0.0, 1.0)?;\n        kernel.check_width(width)?;",
+  "new": "        kernel.check_width(width)?;"
+ },
+ {
+  "label": "step does not check the width",
+  "old": "        kernel.check_width(width)?;\n        let (c, _, _)",
+  "new": "        let (c, _, _)"
+ },
+ {
+  "label": "the kernel reads the squared lattice distance",
+  "old": "let h = kernel.h(self.grid.distance(c, i), alpha, width);",
+  "new": "let h = kernel.h(self.grid.distance2(c, i), alpha, width);"
+ },
+ {
+  "label": "the update moves away from the sample's side",
+  "old": "*mj += h * (xj - *mj);",
+  "new": "*mj += h * (xj + *mj);"
+ },
+ {
+  "label": "the update ignores the kernel",
+  "old": "*mj += h * (xj - *mj);",
+  "new": "*mj += alpha * (xj - *mj);"
+ },
+ {
+  "label": "the last unit is never updated",
+  "old": "for i in 0..self.grid.len() {\n            let h = kernel.h",
+  "new": "for i in 0..self.grid.len() - 1 {\n            let h = kernel.h"
+ },
+ {
+  "label": "step returns the first unit",
+  "old": "        Ok(c)\n    }\n",
+  "new": "        Ok(0)\n    }\n"
+ },
+ {
+  "label": "a phase is not checked before it starts",
+  "old": "        for t in 0..phase.steps {\n            within(\"alpha\", phase.alpha.at(t)?, 0.0, 1.0)?;\n            phase.kernel.check_width(phase.width.at(t)?)?;\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "a phase's gains are not checked before it starts",
+  "old": "            within(\"alpha\", phase.alpha.at(t)?, 0.0, 1.0)?;\n",
+  "new": ""
+ },
+ {
+  "label": "a phase's widths are not checked before it starts",
+  "old": "            phase.kernel.check_width(phase.width.at(t)?)?;\n",
+  "new": ""
+ },
+ {
+  "label": "cyclic order starts at the second sample",
+  "old": "Order::Cyclic => t % n,",
+  "new": "Order::Cyclic => (t + 1) % n,"
+ },
+ {
+  "label": "random order never draws the last sample",
+  "old": "Order::Random(rng) => draw(rng, n),",
+  "new": "Order::Random(rng) => draw(rng, n.max(2) - 1),"
+ },
+ {
+  "label": "a sample is sliced by index, not by index times dimension",
+  "old": "let x = &data[k * self.dim..(k + 1) * self.dim];",
+  "new": "let x = &data[k..k + self.dim];"
+ },
+ {
+  "label": "the gain is read one step late",
+  "old": "self.step(x, phase.kernel, phase.alpha.at(t)?, phase.width.at(t)?)?;",
+  "new": "self.step(x, phase.kernel, phase.alpha.at(t + 1)?, phase.width.at(t)?)?;"
+ },
+ {
+  "label": "the width is read one step late",
+  "old": "self.step(x, phase.kernel, phase.alpha.at(t)?, phase.width.at(t)?)?;",
+  "new": "self.step(x, phase.kernel, phase.alpha.at(t)?, phase.width.at(t + 1)?)?;"
+ },
+ {
+  "label": "the quantisation error is squared",
+  "old": "self.best_two(x).2.sqrt()",
+  "new": "self.best_two(x).2"
+ },
+ {
+  "label": "the quantisation error divides by N + 1",
+  "old": "Ok(sum / n as f64)",
+  "new": "Ok(sum / (n + 1) as f64)"
+ },
+ {
+  "label": "a one-unit map has a topographic error",
+  "old": "if self.grid.len() < 2 {",
+  "new": "if self.grid.len() < 1 {"
+ },
+ {
+  "label": "the topographic error counts adjacent pairs",
+  "old": "!self.grid.adjacent(c, s)",
+  "new": "self.grid.adjacent(c, s)"
+ },
+ {
+  "label": "the topographic error divides by N + 1",
+  "old": "Ok(apart as f64 / n as f64)",
+  "new": "Ok(apart as f64 / (n + 1) as f64)"
+ },
+ {
+  "label": "the topographic error does not check its data",
+  "old": "        let n = samples(self.dim, data)?;\n        let apart",
+  "new": "        let n = data.len() / self.dim;\n        let apart"
+ },
+ {
+  "label": "a chain of vectors is accepted",
+  "old": "if self.dim != 1 {",
+  "new": "if self.dim > 2 {"
+ },
+ {
+  "label": "a two-row sheet is accepted as a chain",
+  "old": "if self.grid.height != 1 {",
+  "new": "if self.grid.height > 2 {"
+ },
+ {
+  "label": "a rising chain may tie",
+  "old": "w.windows(2).all(|p| p[0] < p[1])",
+  "new": "w.windows(2).all(|p| p[0] <= p[1])"
+ },
+ {
+  "label": "a falling chain may tie",
+  "old": "w.windows(2).all(|p| p[0] > p[1])",
+  "new": "w.windows(2).all(|p| p[0] >= p[1])"
+ },
+ {
+  "label": "a chain must rise and fall",
+  "old": "p[0] < p[1]) || w.windows",
+  "new": "p[0] < p[1]) && w.windows"
+ },
+ {
+  "label": "a 1982 unit is read one weight late",
+  "old": "&self.weights[i * self.dim..(i + 1) * self.dim]\n    }\n\n    /// Unit",
+  "new": "&self.weights[i * self.dim + 1..(i + 1) * self.dim + 1]\n    }\n\n    /// Unit"
+ },
+ {
+  "label": "eq. (1) adds instead of multiplying",
+  "old": ".map(|(m, v)| m * v).sum()",
+  "new": ".map(|(m, v)| m + v).sum()"
+ },
+ {
+  "label": "inputs of the wrong length are accepted",
+  "old": "if inputs.len() != units * self.dim {",
+  "new": "if inputs.len() > units * self.dim {"
+ },
+ {
+  "label": "inputs are not checked for finiteness",
+  "old": "        all_finite(\"x\", inputs)\n",
+  "new": "        Ok(())\n"
+ },
+ {
+  "label": "a shared input is checked as one per unit",
+  "old": "        self.check_inputs(x, 1)?;\n        Ok(self.winner_of",
+  "new": "        self.check_inputs(x, self.grid.len())?;\n        Ok(self.winner_of"
+ },
+ {
+  "label": "coherent inputs are checked as one shared input",
+  "old": "        self.check_inputs(inputs, self.grid.len())?;\n        let dim = self.dim;\n        Ok(",
+  "new": "        self.check_inputs(inputs, 1)?;\n        let dim = self.dim;\n        Ok("
+ },
+ {
+  "label": "every unit's winner reads the first unit's input",
+  "old": "Ok(self.winner_of(|i| &inputs[i * dim..(i + 1) * dim]))",
+  "new": "Ok(self.winner_of(|_| &inputs[..dim]))"
+ },
+ {
+  "label": "eq. (2)'s maximum starts at zero",
+  "old": "let (mut k, mut best) = (0, f64::NEG_INFINITY);",
+  "new": "let (mut k, mut best) = (0, 0.0);"
+ },
+ {
+  "label": "an eq. (2) tie goes to the higher index",
+  "old": "if eta > best {",
+  "new": "if eta >= best {"
+ },
+ {
+  "label": "the nearest ring reaches two",
+  "old": "Reach::Nearest => (self.grid.chebyshev(k, i) <= 1).then_some(alpha),",
+  "new": "Reach::Nearest => (self.grid.chebyshev(k, i) <= 2).then_some(alpha),"
+ },
+ {
+  "label": "the nearest ring is the winner alone",
+  "old": "Reach::Nearest => (self.grid.chebyshev(k, i) <= 1).then_some(alpha),",
+  "new": "Reach::Nearest => (self.grid.chebyshev(k, i) < 1).then_some(alpha),"
+ },
+ {
+  "label": "ring one is left out",
+  "old": "0 | 1 => Some(alpha),",
+  "new": "0 => Some(alpha),"
+ },
+ {
+  "label": "ring two gets alpha/2",
+  "old": "2 => Some(alpha / 4.0),",
+  "new": "2 => Some(alpha / 2.0),"
+ },
+ {
+  "label": "rings beyond two move",
+  "old": "_ => None,",
+  "new": "_ => Some(alpha / 16.0),"
+ },
+ {
+  "label": "the disc excludes its edge",
+  "old": "Reach::Radius(r) => (self.grid.distance(k, i) <= r).then_some(alpha),",
+  "new": "Reach::Radius(r) => (self.grid.distance(k, i) < r).then_some(alpha),"
+ },
+ {
+  "label": "a 1982 gain of zero is accepted",
+  "old": "        positive(\"alpha\", alpha)?;\n",
+  "new": "        finite(\"alpha\", alpha)?;\n"
+ },
+ {
+  "label": "a negative 1982 radius is accepted",
+  "old": "Reach::Radius(r) => within(\"radius\", r, 0.0, f64::INFINITY).map(drop),",
+  "new": "Reach::Radius(r) => Ok(drop(r)),"
+ },
+ {
+  "label": "the rings are refused on the rectangle",
+  "old": "if self.grid.lattice == Lattice::Hex => {",
+  "new": "if self.grid.lattice == Lattice::Rect => {"
+ },
+ {
+  "label": "the lattice refusal is misnamed",
+  "old": "what: \"the 1982 paper's ring of nearest neighbours\"",
+  "new": "what: \"the 1982 ring\""
+ },
+ {
+  "label": "the 1982 winner is always unit 0",
+  "old": "let k = self.winner_of(&input);",
+  "new": "let k = 0;"
+ },
+ {
+  "label": "the rings share one gain",
+  "old": ".map(|(m, x)| m + a * x)",
+  "new": ".map(|(m, x)| m + alpha * x)"
+ },
+ {
+  "label": "eq. (3) divides by the squared norm",
+  "old": "let norm = v.iter().map(|c| c * c).sum::<f64>().sqrt();",
+  "new": "let norm = v.iter().map(|c| c * c).sum::<f64>();"
+ },
+ {
+  "label": "a zero norm is divided by",
+  "old": "if !(norm > 0.0) {",
+  "new": "if norm < 0.0 {"
+ },
+ {
+  "label": "the zero norm names the winner",
+  "old": "return Err(SomError::ZeroNorm { unit: i });",
+  "new": "return Err(SomError::ZeroNorm { unit: k });"
+ },
+ {
+  "label": "eq. (3) multiplies by the norm",
+  "old": ".map(|c| c / norm).collect::<Vec<f64>>()",
+  "new": ".map(|c| c * norm).collect::<Vec<f64>>()"
+ },
+ {
+  "label": "a refused step leaves half its neighbourhood stored",
+  "old": "new.push((i, v.into_iter().map(|c| c / norm).collect::<Vec<f64>>()));",
+  "new": "let u: Vec<f64> = v.into_iter().map(|c| c / norm).collect(); self.weights[i * self.dim..(i + 1) * self.dim].copy_from_slice(&u); new.push((i, u));"
+ },
+ {
+  "label": "the first updated unit is not stored",
+  "old": "for (i, v) in new {",
+  "new": "for (i, v) in new.into_iter().skip(1) {"
+ },
+ {
+  "label": "the 1982 step returns unit 0",
+  "old": "        Ok(k)\n",
+  "new": "        Ok(0)\n"
+ },
+ {
+  "label": "the 1982 step does not check its gain or reach",
+  "old": "        self.check_step(alpha, reach)?;\n        self.apply(|_| x",
+  "new": "        self.apply(|_| x"
+ },
+ {
+  "label": "the coherent step does not check its gain or reach",
+  "old": "        self.check_step(alpha, reach)?;\n        let dim = self.dim;",
+  "new": "        let dim = self.dim;"
+ },
+ {
+  "label": "the coherent step feeds every unit the first unit's input",
+  "old": "self.apply(|i| &inputs[i * dim..(i + 1) * dim], alpha, reach)",
+  "new": "self.apply(|_| &inputs[..dim], alpha, reach)"
+ }
+]

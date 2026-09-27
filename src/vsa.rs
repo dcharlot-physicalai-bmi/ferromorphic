@@ -22,8 +22,9 @@
 //! Kanerva, *Hyperdimensional computing: an introduction to computing in distributed representation
 //! with high-dimensional random vectors*, Cognitive Computation 1(2):139–159, 2009, is the
 //! introduction; Plate, *Holographic reduced representations*, IEEE Transactions on Neural Networks
-//! 6(3):623–641, 1995, is the real-valued original; Gayler's multiply-add-permute model and
-//! Kanerva's binary spatter code are the two discrete ones. Kleyko, Rachkovskij, Osipov and Rahimi,
+//! 6(3):623–641, 1995, is the real-valued original; Gayler's multiply-add-permute model (1998)
+//! and Kanerva's binary spatter code (1994–1997), each cited in full on its type, [`Bipolar`] and
+//! [`Binary`], are the two discrete ones. Kleyko, Rachkovskij, Osipov and Rahimi,
 //! *A survey on hyperdimensional computing aka vector symbolic architectures*, ACM Computing Surveys
 //! 55(6) and 55(9), 2022–2023, is the map of the field.
 //!
@@ -76,11 +77,39 @@
 //!
 //! # What this module has NOT reproduced
 //!
-//! - The phasor / complex-valued model that maps onto spike *timing* (Frady and Sommer, PNAS
-//!   116(36):18050–18058, 2019) — the one that runs on Loihi as a rhythmic spike pattern. This
-//!   review located the mapping and did not implement it; the three models here are the ones the
-//!   survey treats as canonical, and the spiking mapping deserves its own closed forms.
-//! - Sparse block codes and the other 2020s variants in the survey's Part II. Named, not built.
+//! - The phasor / complex-valued model that maps onto spike *timing* (E. P. Frady and
+//!   F. T. Sommer, *Robust computation with rhythmic spike patterns*, PNAS 116(36):18050–18059
+//!   (2019), doi:10.1073/pnas.1902653116) — the one that runs on Loihi as a rhythmic spike
+//!   pattern — is not in this module. Its algebra, the spike-time mapping and the threshold phasor
+//!   associative memory are in [`crate::phasor`]. The paper's spiking neuron model and its
+//!   capacity curves are reproduced in neither module.
+//!
+//!   ⚠ CORRECTED. This item used to say that "this review located the mapping and did not
+//!   implement it". That was true when this module was written and stopped being true when the
+//!   crate gained [`crate::phasor`], whose
+//!   [`Phasor::spike_times`](crate::phasor::Phasor::spike_times),
+//!   [`Phasor::from_spike_times`](crate::phasor::Phasor::from_spike_times) and
+//!   [`Tpam`](crate::phasor::Tpam) implement it; the sentence was never updated. The item's page
+//!   range also read 18050–18058, where Crossref, `OpenAlex` and the Europe PMC full text
+//!   (PMC6731666) all give 18050–18059.
+//! - Sparse block codes (M. Laiho, J. H. Poikonen, P. Kanerva and E. Lehtonen, *High-dimensional
+//!   computing with sparse vectors*, 2015 IEEE Biomedical Circuits and Systems Conference
+//!   (`BioCAS`), pp. 1–4 (2015), doi:10.1109/BioCAS.2015.7348414; their theory in E. P. Frady,
+//!   D. Kleyko and F. T. Sommer, *Variable binding for sparse distributed representations: theory
+//!   and applications*, IEEE Transactions on Neural Networks and Learning Systems 34(5):2191–2204
+//!   (2023, online 2021), doi:10.1109/TNNLS.2021.3105949) and the other models catalogued in
+//!   Part I §2.3 of the survey that this module does not build, among them modular composite
+//!   representations, cyclic group representations and GAHRR. Named, not built.
+//!
+//!   ⚠ CORRECTED, against the survey. This item used to read "Sparse block codes and the other
+//!   2020s variants in the survey's Part II", which is wrong twice. The model dates from 2015,
+//!   and it is catalogued in Part I (`arXiv`:2111.06077), whose §2.3.9 opens "The main
+//!   motivation behind the Sparse Block Codes model (SBC), proposed by Laiho et al., is to use
+//!   sparse binary HVs as in SBDR but with a binding operation where the bound HV is not similar
+//!   to the input HVs" and cites Frady, Kleyko and Sommer beside Laiho. Part I's abstract says
+//!   "Part II of this survey is devoted to applications, cognitive computing and architectures,
+//!   as well as directions for future work", and Part II (`arXiv`:2112.15424) mentions sparse
+//!   block codes only in passing.
 //! - Any learned encoder from raw sensor data to a hypervector. The "random projection then
 //!   bundle" classifiers in the literature are two lines on top of this module and their accuracy
 //!   is a property of the dataset, not of the algebra, so no number is claimed here.
@@ -198,7 +227,12 @@ fn tally(field: &mut u64, n: usize) {
 // Bipolar: multiply-add-permute
 // ---------------------------------------------------------------------------------------------
 
-/// The multiply-add-permute model over `{−1, +1}^D` (Gayler, 1998).
+/// The multiply-add-permute model over `{−1, +1}^D`: R. W. Gayler, *Multiplicative binding,
+/// representation operators & analogy* (workshop poster), in K. Holyoak, D. Gentner and
+/// B. Kokinov (eds.), *Advances in Analogy Research: Integration of Theory and Data from the
+/// Cognitive, Computational, and Neural Sciences*, pp. 1–4 (1998). This review did not locate a
+/// DOI for it; a Crossref bibliographic query returns no match. This line used to read
+/// "(Gayler, 1998)", with no title.
 ///
 /// Values are stored as `f64` so that a bundle's integer sums and a similarity's cosine share a
 /// type with the other models; every entry of a vector this type produces is exactly `−1.0` or
@@ -301,7 +335,12 @@ impl Bipolar {
 // Binary: the binary spatter code
 // ---------------------------------------------------------------------------------------------
 
-/// The binary spatter code over `{0, 1}^D` (Kanerva, 1996; 2009).
+/// The binary spatter code over `{0, 1}^D`: P. Kanerva, *Binary spatter-coding of ordered
+/// K-tuples*, Artificial Neural Networks — ICANN 96, Lecture Notes in Computer Science
+/// 1112:869–873 (1996), doi:10.1007/3-540-61510-5_146, and the 2009 introduction cited at the
+/// head of this module. The 1996 paper is one of a series: the survey's Part I says the model
+/// was "developed in a series of papers by Kanerva in the mid 1990s" and cites four, from 1994,
+/// 1995, 1996 and 1997. This line used to read "(Kanerva, 1996; 2009)", with no title for either.
 ///
 /// Stored as `f64` entries of exactly `0.0` or `1.0`, for the same reason [`Bipolar`] is. The two
 /// models are isomorphic under `x ↦ 1 − 2x`, which [`Binary::to_bipolar`] and

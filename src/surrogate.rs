@@ -25,19 +25,25 @@
 //! Primary sources, all open:
 //!
 //! - Neftci, Mostafa & Zenke, "Surrogate Gradient Learning in Spiking Neural Networks",
-//!   IEEE Signal Process. Mag. 36(6):51-63, 2019 — the review, and the source of the
-//!   discrete-time network this module trains.
+//!   IEEE Signal Process. Mag. 36(6):51-63, 2019, arXiv:1901.09948 — the review, and the source
+//!   of the discrete-time network this module trains, which [`LifLayer`] runs in a same-step
+//!   variant and sets beside the paper's equations.
 //! - Zenke & Ganguli, "`SuperSpike`: Supervised Learning in Multilayer Spiking Neural Networks",
 //!   Neural Comput. 30:1514-1541, 2018 — the fast-sigmoid surrogate.
 //! - Wu, Deng, Li, Zhu & Shi, "Spatio-Temporal Backpropagation for Training High-Performance
 //!   Spiking Neural Networks", Front. Neurosci. 12:331, 2018 — the rectangular surrogate (STBP).
 //! - Bellec, Salaj, Subramoney, Legenstein & Maass, "Long short-term memory and learning-to-learn
 //!   in networks of spiking neurons", `NeurIPS` 2018 — the triangular pseudo-derivative.
-//! - Shrestha & Orchard, "SLAYER: Spike Layer Error Reassignment in Time", `NeurIPS` 2018 — the
-//!   exponential surrogate.
+//! - Shrestha & Orchard, "SLAYER: Spike Layer Error Reassignment in Time", `NeurIPS` 2018,
+//!   arXiv:1810.08646 — the exponential surrogate. Its two-parameter form is transcribed from the
+//!   arXiv v1 eq. (15); the `NeurIPS` proceedings print that equation with the scale inverted, and
+//!   [`Exponential::slayer`] says how to reproduce either.
 //! - Bengio, Leonard & Courville, "Estimating or Propagating Gradients Through Stochastic Neurons
-//!   for Conditional Computation", arXiv:1308.3432, 2013 — the straight-through estimator, which
-//!   predates the spiking literature and is where the trick comes from.
+//!   for Conditional Computation", arXiv:1308.3432, 2013, which named and evaluated the
+//!   straight-through estimator. They attribute the idea to Hinton's 2012 Coursera lecture 15b
+//!   (their §4: it "was proposed by Hinton (2012) in his lecture 15b ... We call it the
+//!   straight-through (ST) estimator"). It predates the spiking literature. This line used to call
+//!   the paper "where the trick comes from", which the paper itself does not claim.
 //! - Zenke & Vogels, "The Remarkable Robustness of Surrogate Gradient Learning for Instilling
 //!   Complex Function in Spiking Neural Networks", Neural Comput. 33:899-925, 2021 — the finding
 //!   that the *shape* barely matters and the *scale* does.
@@ -119,13 +125,18 @@
 //! The network's time constants enter in **seconds** at [`LifLayerSpec`] and are converted there to
 //! the dimensionless decay factors `alpha = exp(-dt / tau_syn)`, `beta = exp(-dt / tau_mem)`,
 //! `kappa = exp(-dt / tau_out)`. Inside [`LifLayer`] everything is dimensionless with threshold
-//! `theta = 1`, exactly as Neftci et al. print it, so that the update equations can be compared
-//! against the paper line by line. The surrogates themselves take a dimensionless argument: `x` is
-//! the **absolute** offset `U - theta`, as in every published implementation, so at the default
-//! `theta = 1` a width of `1.0` is one threshold wide. At any other `theta` the widths stay in units
-//! of `U` and not of `theta`: a surrogate whose `fwhm()` reads `1.0` then spans `1 / theta`
-//! thresholds, which `the_surrogate_sees_the_absolute_offset_at_a_non_unit_threshold` pins in both
-//! directions so that nobody has to infer it.
+//! `theta = 1`, the frame Neftci et al. write in: their eq. (5) resets by subtracting `S[n]`
+//! itself, which is one threshold. This paragraph used to add that the update equations "can be
+//! compared against the paper line by line". They cannot: [`LifLayer`] feeds an input into the
+//! current and the current into the membrane in the same step, where the paper delays each by
+//! one, and [`LifLayer`]'s doc sets the two side by side.
+//!
+//! The surrogates themselves take a dimensionless argument: `x` is the **absolute** offset
+//! `U - theta`, as in every published implementation, so at the default `theta = 1` a width of
+//! `1.0` is one threshold wide. At any other `theta` the widths stay in units of `U` and not of
+//! `theta`: a surrogate whose `fwhm()` reads `1.0` then spans `1 / theta` thresholds, which
+//! `the_surrogate_sees_the_absolute_offset_at_a_non_unit_threshold` pins in both directions so
+//! that nobody has to infer it.
 
 use crate::rng::Rng;
 
@@ -428,14 +439,21 @@ impl Surrogate for FastSigmoid {
 
 /// Arctangent surrogate: `alpha / (2 (1 + (pi alpha x / 2)^2))`.
 ///
-/// The derivative of `1/2 + (1/pi) arctan(pi alpha x / 2)`, a Cauchy density in disguise. This is
-/// the default in `SpikingJelly` (`surrogate.ATan`), which is where most published `PyTorch`
-/// spiking results come from; `alpha = 2` is transcribed from that library's default and a reader
-/// comparing against a current release should verify it rather than take this line for it.
+/// The derivative of `1/2 + (1/pi) arctan(pi alpha x / 2)`, a Cauchy density in disguise.
+/// `SpikingJelly` ships it as `surrogate.ATan`, whose constructor defaults to `alpha = 2.0`
+/// (`def __init__(self, alpha=2.0, spiking=True)` in `surrogate.py` on master), and that is the
+/// default here, pinned by `the_transcribed_defaults_hold_their_sources_values`. **It is not
+/// `SpikingJelly`'s default surrogate.** The library's neurons default their `surrogate_function`
+/// to `surrogate.Sigmoid()`, in `neuron/base_node.py` on master and in `neuron.py` at tag
+/// `0.0.0.0.14` alike, and that is [`SigmoidDeriv`] here.
+///
+/// This doc used to say that `ATan` "is the default in `SpikingJelly`", that `SpikingJelly` "is
+/// where most published `PyTorch` spiking results come from", and that the `x^-2` tails below are
+/// "the practical reason these two dominate the literature". The first is false. The other two
+/// leaned on it and cited nothing, so they are withdrawn rather than re-sourced.
 ///
 /// **Normalised by construction**: `mass() == 1` exactly, for every `alpha`. Its tails are as heavy
-/// as [`FastSigmoid`]'s — both fall as `x^-2` — which is the practical reason these two dominate
-/// the literature.
+/// as [`FastSigmoid`]'s — both fall as `x^-2`.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct ArcTan {
     /// Sharpness, one over a threshold. `fwhm == 4 / (pi alpha)`. Finite and strictly positive.
@@ -443,7 +461,8 @@ pub struct ArcTan {
 }
 
 impl Default for ArcTan {
-    /// `alpha = 2`, `SpikingJelly`'s documented default for `ATan`.
+    /// `alpha = 2`, the default of `SpikingJelly`'s `ATan` constructor. Not the library's default
+    /// surrogate, which is `Sigmoid`.
     fn default() -> Self {
         Self { alpha: 2.0 }
     }
@@ -489,7 +508,9 @@ impl Surrogate for ArcTan {
 ///
 /// The oldest choice and the one a reader coming from ordinary neural networks expects: it is what
 /// you get by replacing the step with a sigmoid and differentiating honestly. `SpikingJelly` ships
-/// it as `surrogate.Sigmoid` with `alpha = 4`, transcribed here as the default.
+/// it as `surrogate.Sigmoid` with `alpha = 4`, transcribed here as the default, and it is the
+/// surrogate `SpikingJelly`'s neurons use unless told otherwise: `neuron/base_node.py` on master
+/// defaults `surrogate_function` to `surrogate.Sigmoid()`.
 ///
 /// **Normalised by construction**, since its antiderivative `s(beta x)` runs from 0 to 1. Its tails
 /// are exponential, so a unit far from threshold gets essentially nothing — the "dead neuron"
@@ -659,8 +680,15 @@ pub struct Rectangular {
 }
 
 impl Default for Rectangular {
-    /// `width = 1` threshold. Wu et al. treat `a1` as a tuned hyperparameter rather than publishing
-    /// one value, so this is a round choice in their units and not a transcription.
+    /// `width = 1`, which equals the single value Wu et al. publish for `a1`: their Table 1
+    /// ("Parameters set in our experiments") lists the derivative approximation parameters
+    /// `a1, a2, a3, a4` as `1.0`, and §3.3 sweeps `a1` from `0.1` to `10` and finds `0.5` to `5.0`
+    /// comparable. This doc used to say they treat `a1` as a tuned hyperparameter rather than
+    /// publishing one value. Their `a1` is in membrane-potential units, and the same table gives
+    /// thresholds of `1.5`, `2.0` and `0.2` (MNIST, object detection, N-MNIST), so `1.0` is `0.67`,
+    /// `0.5` and `5` thresholds in their experiments against one threshold here at `theta = 1`. It
+    /// is the same number, not the same width in thresholds.
+    /// `the_transcribed_defaults_hold_their_sources_values` pins the value and those three figures.
     fn default() -> Self {
         Self { width: 1.0 }
     }
@@ -704,9 +732,12 @@ impl Surrogate for Rectangular {
 /// The straight-through estimator: derivative identically `1` inside `|x| <= half_width`, zero
 /// outside.
 ///
-/// Bengio, Leonard & Courville, arXiv:1308.3432, 2013 — it predates the spiking literature by five
-/// years and arrived there from quantised networks, where "pass the gradient through the
-/// non-differentiable op unchanged, but only where the input was in range" is the standard trick.
+/// Named and evaluated by Bengio, Leonard & Courville, arXiv:1308.3432, 2013, who credit the idea
+/// to Hinton's 2012 Coursera lecture 15b: "back-propagate through the hard threshold function ...
+/// as if it had been the identity function" (their §4). That paper predates the 2018 spiking papers
+/// cited here by five years, and the estimator arrived there from quantised networks, where "pass
+/// the gradient through the non-differentiable op unchanged, but only where the input was in
+/// range" is the standard trick.
 /// The clipping window is Hubara et al.'s addition (binarised neural networks, `NeurIPS` 2016);
 /// without it, training diverges because units far outside the window keep receiving full gradient.
 ///
@@ -765,10 +796,15 @@ impl Surrogate for StraightThrough {
 
 /// Exponential (Laplace) surrogate: `(alpha / 2) exp(-alpha |x|)`.
 ///
-/// The shape SLAYER uses (Shrestha & Orchard, `NeurIPS` 2018), whose spike-response derivative is
-/// `(1 / alpha_s) exp(-beta_s |v - theta|)` — a two-parameter form that is this one times a scale.
-/// [`Exponential::slayer`] builds that exact combination as a [`Scaled`] so the scale is visible
-/// rather than folded in.
+/// The shape SLAYER uses (Shrestha & Orchard, `NeurIPS` 2018, arXiv:1810.08646). The arXiv v1
+/// prints its eq. (15) as `rho(t) = (1 / alpha) exp(-beta |u(t) - theta|)` — a two-parameter form
+/// that is this one times a scale. [`Exponential::slayer`] builds that combination as a
+/// [`Scaled`] so the scale is visible rather than folded in.
+///
+/// **The `NeurIPS` proceedings print the same eq. (15) with the scale inverted**, as
+/// `rho(t) = alpha exp(-beta |u(t) - theta|)`, `alpha` multiplying rather than dividing. This doc
+/// used to cite the `NeurIPS` paper for the arXiv form. The shape is the same in both; the scale,
+/// and so the mass, is not.
 ///
 /// **Normalised by construction** in the one-parameter form: `mass() == 1`. Its kink at `x = 0` is
 /// the sharpest peak of any smooth family here, which makes it the most aggressive at concentrating
@@ -796,11 +832,17 @@ impl Exponential {
         Ok(Self { alpha })
     }
 
-    /// SLAYER's two-parameter form `(1 / alpha_s) exp(-beta_s |x|)`, as a scaled Laplace.
+    /// SLAYER's two-parameter form `(1 / alpha_s) exp(-beta_s |x|)`, as a scaled Laplace,
+    /// transcribed from arXiv:1810.08646v1 eq. (15).
     ///
-    /// Its mass is `2 / (alpha_s beta_s)`, which is the number SLAYER's `alpha_s` is really
-    /// setting. Returned as a [`Scaled`] so that number is on the outside of the object where
-    /// [`Surrogate::mass`] reports it.
+    /// Its mass is `2 / (alpha_s beta_s)` under that arXiv v1 form, which is the number `alpha_s`
+    /// is really setting there. Under the `NeurIPS` 2018 form `alpha_s exp(-beta_s |x|)` the mass
+    /// is `2 alpha_s / beta_s`, a factor of `alpha_s^2` apart, so pass `1 / alpha_s` here when
+    /// reproducing the `NeurIPS` parameterisation. This doc used to call `2 / (alpha_s beta_s)`
+    /// "the number SLAYER's `alpha_s` is really setting" while the module cited only the `NeurIPS`
+    /// paper, where it is not. `the_slayer_form_is_a_scaled_laplace_of_the_documented_mass`
+    /// checks both forms. Returned as a [`Scaled`] so the mass is on the outside of the object
+    /// where [`Surrogate::mass`] reports it.
     ///
     /// # Errors
     ///
@@ -849,9 +891,22 @@ impl Surrogate for Exponential {
 /// that reading the surrogate gradient stops being a heuristic and becomes the gradient of an
 /// expectation — the argument Neftci et al. 2019 give for why the trick works at all.
 ///
-/// Yin, Corradi & Bohte (Nature Machine Intelligence 3:905-913, 2021) use a multi-Gaussian variant
-/// with a negative side lobe; this implementation ships the plain Gaussian, and this review did not
-/// locate a single agreed parameterisation of the multi-Gaussian form to transcribe.
+/// Yin, Corradi & Bohte, "Accurate and efficient time-domain classification with adaptive spiking
+/// recurrent neural networks", Nature Machine Intelligence 3:905-913, 2021,
+/// doi:10.1038/s42256-021-00397-w, arXiv:2103.12593, use a multi-Gaussian with negative side
+/// lobes. Their eq. (1) is
+/// `(1 + h) N(u | theta, sigma^2) - h N(u | sigma, (s sigma)^2) - h N(u | -sigma, (s sigma)^2)`,
+/// and their Methods give the values: "we found effective parameter values h=0.15 and s=6. based
+/// on a grid search, and we set sigma to 0.5". The authors' code
+/// (`byin-cwi/Efficient-spiking-networks`) uses the same three values in every task script
+/// checked, and evaluates all three lobes on `u - theta`, which settles where the side lobes sit:
+/// at `theta +/- sigma`. It also multiplies by a gradient scale `gamma = 0.5` that eq. (1)
+/// omits. **It goes negative, and its mass is `1 - h`** — `0.85`, or `0.425` with the code's
+/// `gamma` — so it falls outside this module's mollifier family, and this implementation ships the
+/// plain Gaussian. `yins_multi_gaussian_goes_negative_and_carries_one_minus_h` builds it from eq.
+/// (1) at those values and measures both. This doc used to say that this review "did not locate a
+/// single agreed parameterisation of the multi-Gaussian form to transcribe"; the paper publishes
+/// one.
 ///
 /// **Normalised by construction**: `mass() == 1`. Its tails are the lightest here by far, which is
 /// the dead-neuron problem at its worst — at five sigma the gradient is `3.73e-6` of peak and at ten
@@ -1120,8 +1175,11 @@ pub enum SpikeFn {
 /// Parameters of a recurrent LIF layer, in SI where the quantity is physical.
 ///
 /// Converted once, at [`LifLayerSpec::build`], into the dimensionless decay factors the update
-/// equations use. The conversion happens here and nowhere else, which is what keeps
-/// [`LifLayer`]'s equations comparable line by line against Neftci et al. 2019 eq. (16)-(17).
+/// equations use. The conversion happens here and nowhere else, so [`LifLayer`]'s equations carry
+/// only the dimensionless factors, as Neftci et al. 2019's eqs. (4)-(5) do (arXiv:1901.09948v2
+/// numbering). This doc used to say that this is "what keeps [`LifLayer`]'s equations comparable
+/// line by line against Neftci et al. 2019 eq. (16)-(17)". They are not the paper's line by line,
+/// and (16)-(17) are not its equation numbers; [`LifLayer`] states both.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct LifLayerSpec {
     /// Number of input channels per time step. Must be at least one.
@@ -1154,14 +1212,18 @@ pub struct LifLayerSpec {
     /// Initial weight scale, dimensionless. Weights are drawn uniformly from
     /// `[-w_scale, w_scale] / sqrt(fan_in)`.
     ///
-    /// The default `0.35` is `7 * (1 - beta)` at `tau_mem = 20 ms` and `dt = 1 ms` **rounded to two
-    /// figures**: that heuristic, from Zenke's `spytorch` tutorial accompanying Neftci et al. 2019,
-    /// is `0.341394`, and this default sits 2.5% above it. The rounding is deliberate and the exact
-    /// figure is in `the_default_weight_scale_is_a_rounded_spytorch_heuristic`, because a constant
-    /// described as a transcription and checked against nothing is how a wrong one survives.
-    /// That tutorial draws from a
-    /// normal rather than a uniform; this crate uses a uniform because [`crate::rng::Rng`] provides
-    /// one exactly and a Gaussian would need a transform whose tails are a second thing to verify.
+    /// The default `0.35` is the heuristic `7 * (1 - beta)` from Zenke's `spytorch` tutorials
+    /// accompanying Neftci et al. 2019, evaluated at **this crate's** `tau_mem = 20 ms` and
+    /// `dt = 1 ms`, where it is `0.341394`, and **rounded to two figures**, 2.5% above it. That
+    /// is not where spytorch evaluates it: Tutorials 1-2 apply it at their own `tau_mem = 10 ms`,
+    /// where it is `0.666138`, and Tutorials 3-4 use a weight scale of `0.2` instead. This doc used
+    /// to say "that heuristic, from Zenke's `spytorch` tutorial ..., is `0.341394`", which reads
+    /// the `20 ms` as the tutorial's own. The rounding is deliberate and both figures are in
+    /// `the_default_weight_scale_is_a_rounded_spytorch_heuristic`, because a constant described as
+    /// a transcription and checked against nothing is how a wrong one survives. Those tutorials
+    /// draw from a normal rather than a uniform; this crate uses a uniform because
+    /// [`crate::rng::Rng`] provides one exactly and a Gaussian would need a transform whose tails
+    /// are a second thing to verify.
     pub w_scale: f64,
     /// Initial bias on every unit's input current, dimensionless.
     ///
@@ -1185,9 +1247,14 @@ pub struct LifLayerSpec {
 
 impl Default for LifLayerSpec {
     /// One input channel, sixteen recurrent units, two classes; `dt = 1 ms`, `tau_mem = 20 ms`,
-    /// `tau_syn = 5 ms`, `tau_out = 20 ms`, threshold 1. These are the `spytorch` tutorial's time
-    /// constants, which are themselves the textbook cortical values used throughout
-    /// [`crate::neuron`].
+    /// `tau_syn = 5 ms`, `tau_out = 20 ms`, threshold 1: a round teaching choice, and
+    /// `tau_mem = 20 ms` is also [`crate::neuron::Lif`]'s membrane constant. `spytorch` Tutorials
+    /// 1-4 use `dt = 1 ms`, `tau_mem = 10 ms`, `tau_syn = 5 ms`, and a readout that reuses the
+    /// hidden layer's `alpha` and `beta` rather than having a `tau_out` of its own; Tutorial 5 uses
+    /// `tau_mem = 20 ms` and `tau_syn = 10 ms`. The one 20 ms constant in Tutorials 2-3,
+    /// `tau_eff`, is the input encoder's latency constant and not a neuron's. This doc used to say
+    /// "These are the `spytorch` tutorial's time constants, which are themselves the textbook
+    /// cortical values used throughout [`crate::neuron`]"; no tutorial uses this set.
     fn default() -> Self {
         Self {
             n_in: 1,
@@ -1280,8 +1347,7 @@ impl LifLayerSpec {
 
 /// One recurrent current-based LIF layer with a leaky readout, trainable through time.
 ///
-/// The update, dimensionless, threshold `theta`, exactly Neftci et al. 2019 eq. (16)-(17) with a
-/// bias added:
+/// The update, dimensionless, threshold `theta`, with a bias added:
 ///
 /// ```text
 /// I[t] = alpha I[t-1] + W x[t] + V S[t-1] + b
@@ -1290,14 +1356,47 @@ impl LifLayerSpec {
 /// Y[t] = kappa Y[t-1] + R S[t]                      <- non-spiking readout
 /// ```
 ///
-/// The reset is by **subtraction**, not by clamping to a reset potential. That is the choice the
-/// surrogate-gradient literature makes and it is not cosmetic: a hard reset multiplies the state by
-/// `(1 - S[t-1])`, which puts the non-differentiable spike variable into a *product* with the
-/// membrane, and every implementation that does it detaches that factor from the graph and stops
-/// reporting that it did. Subtraction keeps the whole recurrence differentiable given the
-/// surrogate, which is why this layer's gradient can be checked exactly and a hard-reset layer's
-/// cannot. It also means the membrane is not clamped during a refractory period; this layer has no
-/// refractory period at all, unlike [`crate::neuron::Lif`].
+/// **This is a same-step (zero-delay) variant of Neftci, Mostafa & Zenke 2019, not their
+/// equations.** Their eqs. (4)-(5), in arXiv:1901.09948v2 numbering, are
+///
+/// ```text
+/// I[n+1] = alpha I[n] + W S_in[n] + V S[n]
+/// U[n+1] = beta  U[n] + I[n] - S[n]
+/// ```
+///
+/// so an input reaches the current one step after it arrives and the membrane two steps after.
+/// Here `x[t]` enters `I[t]` and `I[t]` enters `U[t]` in the same step, so an input moves the
+/// membrane on the step it arrives: with no spikes and no bias, this layer's `U[t]` is the paper's
+/// `U[t+2]` exactly. The recurrent term `V S[t-1]` and the reset `theta S[t-1]` keep the paper's
+/// one-step lag. Spytorch, the paper's companion code, keeps both of the paper's delays:
+/// `new_syn = alpha*syn +h1[:,t]`, and `new_mem = (beta*mem +syn)*(1.0-rst)`, which reads the
+/// previous step's `syn`. `an_input_reaches_the_membrane_on_the_step_it_arrives` runs the paper's
+/// two equations beside this layer and checks the two-step shift to the bit.
+///
+/// This doc used to call the update "exactly Neftci et al. 2019 eq. (16)-(17)". It is not exact
+/// in timing, and arXiv v2 has no equation (16): it numbers fifteen, the LIF update is (4)-(5), and
+/// (15) is the non-leaky model neuron. This review did not check the numbering of the IEEE Signal
+/// Process. Mag. version. The code is unchanged, because matching the paper would move every
+/// trained and measured figure in this module; the description is what was wrong.
+///
+/// The reset is by **subtraction**, not by clamping to a reset potential, which is the form
+/// Neftci et al. print: their eq. (5) subtracts `S[n]`. A hard reset instead multiplies the state
+/// by `(1 - S[t-1])`, which puts the spike variable into a *product* with the membrane, and
+/// implementations handle that product in different ways. Spytorch resets hard, detaches the
+/// factor and says so: `rst = out.detach() # We do not want to backprop through the reset`.
+/// `SpikingJelly` makes it optional: its default neuron resets hard (`v_reset = 0.0`) with
+/// `detach_reset = False`, so by default it backpropagates through the product via the surrogate.
+/// Subtraction keeps the spike out of any product with the membrane, so there is no factor to
+/// detach or keep. It also means the membrane is not clamped during a refractory period; this
+/// layer has no refractory period at all, unlike [`crate::neuron::Lif`].
+///
+/// This doc used to call subtraction "the choice the surrogate-gradient literature makes", to say
+/// that every hard-reset implementation "detaches that factor from the graph and stops reporting
+/// that it did", and to conclude that a hard-reset layer's gradient cannot be checked exactly.
+/// The paper's own companion code and `SpikingJelly`'s default neuron both reset hard; spytorch
+/// reports its detach; `SpikingJelly` does not detach by default; and [`crate::plif`] checks
+/// exactly that undetached hard-reset gradient against central finite differences, in
+/// `the_smooth_gradient_is_exact`.
 ///
 /// The loss is softmax cross-entropy on the **time-averaged** readout, `logits[c] = mean_t Y[c][t]`,
 /// which is the rate-coded readout the literature calls "mean over time". A max-over-time readout
@@ -2269,6 +2368,39 @@ mod tests {
         }
     }
 
+    /// The reason [`Gaussian`]'s doc gives for not shipping Yin, Corradi & Bohte's multi-Gaussian
+    /// (Nature Machine Intelligence 3:905-913, 2021, arXiv:2103.12593), measured rather than
+    /// asserted. Their eq. (1) at their published `h = 0.15`, `s = 6`, `sigma = 0.5`, with the side
+    /// lobes at `theta +/- sigma` as their code centres them: it goes negative, so it fails (c)
+    /// above, and its mass is `1 - h` rather than one.
+    #[test]
+    fn yins_multi_gaussian_goes_negative_and_carries_one_minus_h() {
+        let (h, s_ratio, sigma) = (0.15, 6.0, 0.5);
+        let centre = Gaussian::new(sigma).expect("sigma = 0.5");
+        let lobe = Gaussian::new(s_ratio * sigma).expect("s sigma = 3");
+        let multi = |x: f64| {
+            (1.0 + h) * centre.backward(x)
+                - h * lobe.backward(x - sigma)
+                - h * lobe.backward(x + sigma)
+        };
+        // Midpoint rule at a step of 2^-8 over [-64, 64]: the widest lobe has a standard deviation
+        // of 3, so the ends are 21 of them out, and a Gaussian sampled 768 times per standard
+        // deviation is integrated to rounding.
+        let step = 1.0 / 256.0;
+        let (mut mass, mut lowest) = (0.0, f64::INFINITY);
+        for k in 0..32_768 {
+            let x = -64.0 + (f64::from(k) + 0.5) * step;
+            let v = multi(x);
+            mass += v * step;
+            lowest = lowest.min(v);
+        }
+        assert!((mass - (1.0 - h)).abs() < 1e-10, "multi-Gaussian mass {mass}, not 1 - h = 0.85");
+        assert!((0.5 * mass - 0.425).abs() < 1e-10, "with the code's gamma = 0.5: {}", 0.5 * mass);
+        assert!(multi(0.0) > 0.0, "the multi-Gaussian's centre is {}", multi(0.0));
+        assert!(multi(2.0) < 0.0, "four sigma out it is {}, not negative", multi(2.0));
+        assert!(lowest < 0.0, "the multi-Gaussian never went negative (min {lowest})");
+    }
+
     /// The closed-form peak against the implementation. Different expressions, same number.
     #[test]
     fn the_closed_form_peak_matches_the_implementation() {
@@ -2412,12 +2544,15 @@ mod tests {
     }
 
     /// SLAYER's two-parameter form really is a scaled Laplace, and the scale is the number its
-    /// `alpha_s` was setting.
+    /// `alpha_s` was setting — in the arXiv v1 form `(1 / alpha) exp(-beta |x|)` that
+    /// `Exponential::slayer` transcribes. The `NeurIPS` 2018 proceedings print the same eq. (15) as
+    /// `alpha exp(-beta |x|)`, and the doc says to pass `1 / alpha` to reproduce it; the second
+    /// half checks that instruction and the `alpha^2` between the two masses.
     #[test]
     fn the_slayer_form_is_a_scaled_laplace_of_the_documented_mass() {
         let (a_s, b_s) = (5.0, 3.0);
         let s = Exponential::slayer(a_s, b_s).expect("positive parameters");
-        // (1 / alpha_s) exp(-beta_s |x|), checked pointwise against the published expression.
+        // (1 / alpha_s) exp(-beta_s |x|), checked pointwise against the arXiv v1 expression.
         for k in -20..=20 {
             let x = f64::from(k) * 0.1;
             let want = (1.0 / a_s) * (-b_s * x.abs()).exp();
@@ -2427,6 +2562,21 @@ mod tests {
         assert!((s.mass() - want_mass).abs() < 1e-14);
         let num = integrated_mass(&s, DEFAULT_PANELS);
         assert!((num - want_mass).abs() < 1e-3 * want_mass, "quadrature {num} vs {want_mass}");
+
+        // The NeurIPS parameterisation, reached by passing the reciprocal. `alpha = 4` so that
+        // `1 / alpha = 0.25` is exact.
+        let (a_n, b_n) = (4.0, 3.0);
+        let neurips = Exponential::slayer(1.0 / a_n, b_n).expect("positive parameters");
+        for k in -20..=20 {
+            let x = f64::from(k) * 0.125;
+            let want = a_n * (-b_n * x.abs()).exp();
+            assert!((neurips.backward(x) - want).abs() < 1e-13 * a_n, "NeurIPS form at {x}");
+        }
+        let neurips_mass = 2.0 * a_n / b_n;
+        assert!((neurips.mass() - neurips_mass).abs() < 1e-14 * neurips_mass, "{}", neurips.mass());
+        let arxiv = Exponential::slayer(a_n, b_n).expect("positive parameters");
+        let ratio = neurips.mass() / arxiv.mass();
+        assert!((ratio - a_n * a_n).abs() < 1e-12 * a_n * a_n, "the two masses are {ratio} apart");
     }
 
     /// The error function against published values. Four anchors across the range where the series
@@ -2591,6 +2741,70 @@ mod tests {
             "U reached {} rather than b/((1-alpha)(1-beta)) = {ss}",
             tr.u[t_steps - 1]
         );
+    }
+
+    /// [`LifLayer`]'s doc says it is a same-step variant of Neftci, Mostafa & Zenke's eqs. (4)-(5)
+    /// (arXiv:1901.09948v2), and used to say it was those equations exactly. The paper's
+    /// `I[n+1] = alpha I[n] + W S_in[n]` and `U[n+1] = beta U[n] + I[n]` are run here by hand
+    /// beside the layer, with no spikes, no bias and no recurrence, on one input channel:
+    ///
+    /// - a unit impulse is in this layer's `I[0]` and `U[0]` at once, and moves nothing of the
+    ///   paper's until `I[1]` and `U[2]`;
+    /// - on an arbitrary input the layer's `I[t]` is the paper's `I[t+1]` and its `U[t]` is the
+    ///   paper's `U[t+2]`, to the bit, because the two recurrences then perform the same operations
+    ///   in the same order.
+    #[test]
+    fn an_input_reaches_the_membrane_on_the_step_it_arrives() {
+        let spec = LifLayerSpec {
+            n_in: 1,
+            n_rec: 1,
+            n_out: 1,
+            theta: 1e9,
+            b_init: 0.0,
+            w_scale: 0.0,
+            ..LifLayerSpec::default()
+        };
+        let mut layer = spec.build().expect("valid spec");
+        let w = 0.5;
+        let iw = layer.idx_w(0, 0);
+        layer.p[iw] = w;
+        let (alpha, beta) = (layer.alpha, layer.beta);
+        let sur = ArcTan::default();
+
+        // The paper's two equations from a zero initial state, `x.len() + 2` values of each.
+        let paper = |x: &[f64]| {
+            let (mut i, mut u) = (vec![0.0; x.len() + 2], vec![0.0; x.len() + 2]);
+            for n in 0..=x.len() {
+                let drive = if n < x.len() { w * x[n] } else { 0.0 };
+                i[n + 1] = alpha * i[n] + drive;
+                u[n + 1] = beta * u[n] + i[n];
+            }
+            (i, u)
+        };
+
+        let impulse = [1.0, 0.0, 0.0, 0.0];
+        let tr = layer.forward(&sur, &impulse, SpikeFn::Heaviside).expect("valid input");
+        assert!(tr.spike_count() == 0.0, "nothing may spike below a threshold of 1e9");
+        assert!(tr.i_syn[0] == w && tr.u[0] == w, "the impulse is not in I[0], U[0]: {tr:?}");
+        let (pi, pu) = paper(&impulse);
+        assert!(pi[0] == 0.0 && pi[1] == w, "the paper's current: {pi:?}");
+        assert!(pu[0] == 0.0 && pu[1] == 0.0 && pu[2] == w, "the paper's membrane: {pu:?}");
+
+        let x = [
+            1.0, 0.0, 0.5, 0.25, 0.0, 0.75, 1.0, 0.125, 0.0, 0.0, 0.625, 0.5, 0.0, 0.875, 0.25, 0.0,
+        ];
+        let tr = layer.forward(&sur, &x, SpikeFn::Heaviside).expect("valid input");
+        assert!(tr.spike_count() == 0.0, "nothing may spike below a threshold of 1e9");
+        let (pi, pu) = paper(&x);
+        for t in 0..x.len() {
+            let (i, u) = (tr.i_syn[t], tr.u[t]);
+            assert!(i == pi[t + 1], "step {t}: I = {i}, the paper's I[t+1] = {}", pi[t + 1]);
+            assert!(u == pu[t + 2], "step {t}: U = {u}, the paper's U[t+2] = {}", pu[t + 2]);
+        }
+        // The shift of two is the only one that fits: at a shift of zero or of one the paper's
+        // membrane differs from this layer's, so the loop above could have failed.
+        assert!(tr.u[0] != pu[0] && tr.u[1] != pu[1], "a shift of zero fits: {pu:?}");
+        assert!(tr.u[0] != pu[1] && tr.u[1] != pu[2], "a shift of one fits: {pu:?}");
     }
 
     /// A deterministic, reproducible input for the gradient checks: nothing random, nothing
@@ -3461,7 +3675,9 @@ mod tests {
     /// [`LifLayerSpec::w_scale`]'s default is described as Zenke's `spytorch` heuristic
     /// `7 * (1 - beta)`. It is that number ROUNDED, and the doc used to say "is" — which is how a
     /// constant that drifted from its source survives a reader who checks the citation and not the
-    /// arithmetic.
+    /// arithmetic. It is also that heuristic at THIS crate's `tau_mem = 20 ms`, which the doc used
+    /// to leave a reader to assume was spytorch's: Tutorials 1-2 evaluate it at `tau_mem = 10 ms`,
+    /// the second figure here.
     #[test]
     fn the_default_weight_scale_is_a_rounded_spytorch_heuristic() {
         let spec = LifLayerSpec::default();
@@ -3469,10 +3685,32 @@ mod tests {
         assert!(spec.tau_mem == 20e-3 && spec.dt == 1e-3, "the heuristic's conditions moved");
         let heuristic = 7.0 * (1.0 - layer.beta);
         assert!((heuristic - 0.341_394_028).abs() < 1e-9, "7 * (1 - beta) = {heuristic}");
+        let at_spytorch = LifLayerSpec { tau_mem: 10e-3, ..spec }.build().expect("valid spec");
+        let theirs = 7.0 * (1.0 - at_spytorch.beta);
+        assert!((theirs - 0.666_138_074).abs() < 1e-9, "7 * (1 - beta) at 10 ms = {theirs}");
         assert!(spec.w_scale == 0.35, "the default weight scale moved: {}", spec.w_scale);
         assert!(spec.w_scale != heuristic, "these are equal, so the doc should not say 'rounded'");
         let rel = (spec.w_scale - heuristic).abs() / heuristic;
         assert!((rel - 0.025_20).abs() < 1e-4, "the default is {rel} from the heuristic, doc says 2.5%");
+    }
+
+    /// Two defaults whose docs name the value they transcribe, after a correction to each.
+    /// [`Rectangular::default`]'s `width = 1` is the `a1 = 1.0` of Wu et al.'s Table 1, which its
+    /// doc used to say they never published; in their units that is `1 / V_th` thresholds, at the
+    /// table's `V_th` of `1.5`, `2.0` and `0.2`. [`ArcTan::default`]'s `alpha = 2` is
+    /// `SpikingJelly`'s `ATan(alpha=2.0)` constructor default, which its doc used to call the
+    /// library's default surrogate.
+    #[test]
+    fn the_transcribed_defaults_hold_their_sources_values() {
+        let wu_a1 = 1.0;
+        assert!(Rectangular::default().width == wu_a1, "{:?}", Rectangular::default());
+        // The doc's three figures, to the two decimals it prints them with.
+        for (v_th, doc) in [(1.5, 0.67), (2.0, 0.5), (0.2, 5.0)] {
+            let got: f64 = wu_a1 / v_th;
+            let printed = (got * 100.0).round() / 100.0;
+            assert!(printed == doc, "a1 is {got} thresholds at V_th = {v_th}, the doc says {doc}");
+        }
+        assert!(ArcTan::default().alpha == 2.0, "{:?}", ArcTan::default());
     }
 
     /// The surrogate's argument is the ABSOLUTE offset `U - theta`, not `(U - theta) / theta`, and

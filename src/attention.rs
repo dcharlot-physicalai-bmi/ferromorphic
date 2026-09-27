@@ -13,14 +13,17 @@
 //! projection's output through a leaky integrate-and-fire neuron. The attention becomes
 //!
 //! ```text
-//! SSA(Q, K, V) = SN( s · (Q Kᵀ) V )
+//! SSA(Q, K, V) = SN( s · Q Kᵀ V )
 //! ```
 //!
-//! with `s` a fixed scalar and `SN` another layer of spiking neurons. There is no softmax, no
-//! exponential and no division. The paper's argument is that when an operand is binary, the multiply
-//! disappears: `1 · w` is `w` and `0 · w` is nothing, so a multiply-accumulate (`MAC`) collapses into
-//! an **accumulate** (`AC`), and an accumulate is the cheaper primitive on every datapath anyone has
-//! published a number for.
+//! with `s` a fixed scalar and `SN` another layer of spiking neurons — one whose threshold
+//! Spikformer sets to `0.5` where every other neuron's is `1` (see [`Ssa`]). The paper's Eq. (15)
+//! writes the product without parentheses — this formula used to add them, as `(Q Kᵀ) V` — and
+//! its Section 3.3 says either association is valid; [`Order`] is the choice, and it changes the
+//! operation count and not the result. There is no softmax, no exponential and no division. The paper's argument is
+//! that when an operand is binary, the multiply disappears: `1 · w` is `w` and `0 · w` is nothing,
+//! so a multiply-accumulate (`MAC`) collapses into an **accumulate** (`AC`), and an accumulate is
+//! the cheaper primitive on every datapath anyone has published a number for.
 //!
 //! # What it buys, and what it costs
 //!
@@ -86,20 +89,38 @@
 //! initialised model that is set by [`Spec::gain`] — a constant this crate invented and says so.
 //! On the eight-token, sixteen-channel, two-block shape these tests use, with `IAND` shortcuts over
 //! four timesteps, [`Audit::ac_fraction`] runs `0.3962` at a gain of 1, `0.4304` at 4, `0.4579` at
-//! the default 6 and `0.4915` at 12, while [`Audit::synaptic_ac_fraction`] is `1.0` at every one of
+//! the default 6 and `0.4830` at 12, while [`Audit::synaptic_ac_fraction`] is `1.0` at every one of
 //! them. Any single honest fraction quoted without its gain is a number nobody can reproduce, which
 //! is why the test sweeps it instead of pinning one.
+//!
+//! These figures were re-measured when the attention neuron's threshold was corrected to
+//! Spikformer's `0.5` (see [`Ssa`]); the gain-12 figure used to read `0.4915`, measured with that
+//! neuron at `1.0`. The other three did not move, and the reason is a caveat on them: at gains 1
+//! to 6 the attention neuron does not fire once on this shape over these four timesteps, at either
+//! threshold, so those are the fractions of models whose attention branch does no work. The test
+//! asserts that silence rather than leaving it to this paragraph.
 //!
 //! # Units
 //!
 //! There is no ampere in a transformer. A learned weight matrix is dimensionless, so the activations
-//! here are dimensionless and the neuron constants are the paper's own: `tau = 2.0`, `v_th = 1.0`,
-//! `v_reset = 0.0`, kept verbatim where a reader can compare them to Spikformer's section 3.1 rather
-//! than rescaled into volts they do not have. The one physical quantity is the duration of a
-//! timestep, which is not a property of this model at all — it is a property of the deployment, and
-//! it enters only when a caller hands an operation count to a ledger. That is stated here rather than
-//! hidden in a constructor, because a dimensionless neuron in a crate whose other neurons take
-//! seconds and amperes is a trap unless it is announced.
+//! here are dimensionless and the neuron constants are Spikformer's own: `v_th = 1.0`, and `0.5` for
+//! the attention neuron alone (Appendix C.1 of `arXiv`:2209.15425v2); `tau = 2.0`, which comes from
+//! the authors' code (`MultiStepLIFNode(tau=2.0, ...)`) rather than the paper text, where this
+//! review did not locate a numeric `tau`; and `v_reset = 0.0`, a value this review did not locate
+//! in the paper text either (the `attn_lif` call quoted in [`Ssa`] passes none, leaving the
+//! library's default). They are kept verbatim where a reader can compare them to the paper's LIF
+//! equations (1)–(3), in Section 2 of `arXiv` v2, rather than rescaled into volts they do not have.
+//! The one physical quantity is the duration of a timestep, which is not a property of this model
+//! at all — it is a property of the deployment, and it enters only when a caller hands an
+//! operation count to a ledger. That is stated here rather than hidden in a constructor, because a
+//! dimensionless neuron in a crate whose other neurons take seconds and amperes is a trap unless it
+//! is announced.
+//!
+//! ⚠ **Corrected.** This paragraph used to call `tau = 2.0`, `v_th = 1.0` and `v_reset = 0.0` "the
+//! paper's own", "kept verbatim where a reader can compare them to Spikformer's section 3.1", and
+//! the module gave the attention neuron `v_th = 1.0` with the rest. Section 3.1 (Overall
+//! Architecture) states no neuron constant; the LIF equations are in Section 2 and the thresholds,
+//! `1` and `0.5`, are in Appendix C.1.
 //!
 //! For the same reason [`LifLayer`] deliberately does **not** implement [`crate::neuron::Neuron`]:
 //! that trait's `step` takes `dt` in seconds and a current in amperes, and it carries
@@ -843,15 +864,17 @@ impl Tensor {
     }
 
     /// Positional spike table from the sinusoidal encoding of Vaswani et al., *Attention Is All You
-    /// Need*, `NeurIPS` 2017, thresholded at zero: channel `2i` is `sin(pos / 10000^(2i/d))`,
-    /// channel `2i+1` is the matching cosine, and a spike is emitted where the value is `>= 0`.
+    /// Need*, NIPS 2017 (now `NeurIPS`), `arXiv`:1706.03762, thresholded at zero: channel `2i` is
+    /// `sin(pos / 10000^(2i/d))`, channel `2i+1` is the matching cosine, and a spike is emitted
+    /// where the value is `>= 0`. (This citation used to read "`NeurIPS` 2017"; the paper's own
+    /// footer names the 31st Conference on Neural Information Processing Systems "NIPS 2017".)
     ///
     /// **The thresholding is this crate's construction, not a published encoding.** This review did
     /// not locate a standard spiking positional code for a 1-D sequence; Spikformer replaces
-    /// absolute positions with a convolution over neighbours instead, which is
-    /// [`Position::Conditional`]. What this variant has going for it is that it is deterministic,
-    /// parameter-free and checkable against the closed form — row 0 is all ones, because
-    /// `sin(0) = 0 >= 0` and `cos(0) = 1`.
+    /// absolute positions with a convolution over neighbours instead, which
+    /// [`Position::Conditional`] reduces to a depthwise one-dimensional form. What this variant has
+    /// going for it is that it is deterministic, parameter-free and checkable against the closed
+    /// form — row 0 is all ones, because `sin(0) = 0 >= 0` and `cos(0) = 1`.
     ///
     /// # Errors
     ///
@@ -1177,10 +1200,12 @@ fn pow_u32(base: f64, exp: u32) -> f64 {
 /// V[t] = v_reset if S[t] else H[t]
 /// ```
 ///
-/// with the paper's `tau = 2.0`, `v_th = 1.0`, `v_reset = 0.0`. There is no `dt`: one call is one
-/// transformer timestep, and how long a timestep lasts is a property of the deployment rather than
-/// of the model. See this module's header for why this type deliberately does not implement
-/// [`crate::neuron::Neuron`].
+/// which is Eqs. (1)–(3) of the paper. [`Spec::spikformer_like`] runs it at `tau = 2.0` (the
+/// authors' code), `v_th = 1.0` (`0.5` for the attention neuron, Appendix C.1) and
+/// `v_reset = 0.0`; the module header says where each constant comes from. There is no `dt`: one
+/// call is one transformer timestep, and how long a timestep lasts is a property of the deployment
+/// rather than of the model. See this module's header for why this type deliberately does not
+/// implement [`crate::neuron::Neuron`].
 ///
 /// # The closed form it is checked against
 ///
@@ -1398,12 +1423,21 @@ impl LifLayer {
 /// is longer than a head is wide.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Order {
-    /// `(Q Kᵀ) V`, the form Spikformer writes. Costs `n_q · n_k · d + n_q · n_k · d_v`, so it is
-    /// quadratic in sequence length and materialises the `n_q × n_k` score matrix.
+    /// `(Q Kᵀ) V`: the attention-map order Spikformer's text describes first — it calls `Q Kᵀ`
+    /// "the attention map" — and the one the authors' CIFAR-10 and CIFAR10-DVS code computes
+    /// (`attn = (q @ k.transpose(-2, -1))`, then `attn @ v`, with the scale applied to `attn` in
+    /// the first and to `attn @ v` in the second). Costs `n_q · n_k · d + n_q · n_k · d_v`, so it
+    /// is quadratic in sequence length and materialises the `n_q × n_k` score matrix.
+    ///
+    /// ⚠ **Corrected.** This used to be described as "the form Spikformer writes". Eq. (15),
+    /// `SSA'(Q, K, V) = SN(Q Kᵀ V ∗ s)`, has no parentheses, and Section 3.3 says "the order of
+    /// calculation between Q, K and V is changeable: `Q Kᵀ` first and then V, or `Kᵀ V` first and
+    /// then Q". The authors' `ImageNet` code computes the other one, [`Order::ValuesFirst`].
     ScoresFirst,
-    /// `Q (Kᵀ V)`. Costs `d · n_k · d_v + n_q · d · d_v`, so it is linear in sequence length and
-    /// materialises a `d × d_v` matrix instead. Cheaper whenever the sequence is longer than the
-    /// head is wide, which is the usual case.
+    /// `Q (Kᵀ V)`: the order Spikformer's `ImageNet` code computes (`x = k.transpose(-2,-1) @ v`,
+    /// then `x = (q @ x) * self.scale`). Costs `d · n_k · d_v + n_q · d · d_v`, so it is linear in
+    /// sequence length and materialises a `d × d_v` matrix instead. Cheaper whenever the sequence is
+    /// longer than the head is wide, which is the usual case.
     ValuesFirst,
 }
 
@@ -1574,13 +1608,33 @@ pub fn attend(
 /// and writes its output into the same slice, which is how a multi-head attention is a single
 /// projection plus a reshape rather than `h` separate projections.
 ///
+/// # The attention neuron has its own threshold
+///
+/// `SN_a` fires at `attn_v_th`, and the other four neuron layers at `v_th`. Spikformer sets the two
+/// apart: "We set the threshold voltage Vth of the spike neuron layer after `QKᵀV ∗ s` to 0.5,
+/// while the others are set to 1" (Zhou et al., `arXiv`:2209.15425v2, Appendix C.1), and every
+/// released model file builds that neuron as
+/// `MultiStepLIFNode(tau=2.0, v_threshold=0.5, detach_reset=True, backend='cupy')` (`attn_lif` in
+/// the authors' `imagenet`, `cifar10` and `cifar10dvs` model code). The sentence sits in the
+/// appendix's DVS128 Gesture paragraph; the code is why this crate reads it as applying to every
+/// dataset, since each of the three released models sets `0.5` on that one neuron.
+///
+/// ⚠ **Corrected.** This block used to take one threshold and give it to all five neuron layers,
+/// so a model built from Spikformer's hyperparameters ran its attention neuron at `1.0` where the
+/// paper runs it at `0.5`. [`Ssa::new`] now takes `attn_v_th` separately and
+/// [`Spec::spikformer_like`] sets it to `0.5`. The gain sweep in the module header was re-measured
+/// on the corrected threshold: its gain-12 figure moved from `0.4915` to `0.4830`, and the lower
+/// gains did not move because their attention neuron never fires at either threshold.
+///
 /// # Folding the scale into the threshold
 ///
-/// `SN_a(s · Z)` compares `s · Z` against `v_th`. With `v_reset = 0` the membrane recurrence is
-/// linear in its input and the reset is scale-invariant, so running the neuron on `Z` against a
-/// threshold of `v_th / s` gives **the identical spike train** — and when `s` is an exact power of
-/// two, gives it bit for bit, because scaling by a power of two commutes exactly with rounding.
-/// That removes one real multiply per element per timestep from the bill for free.
+/// `SN_a(s · Z)` compares `s · Z` against `attn_v_th`. With `v_reset = 0` the membrane recurrence
+/// is linear in its input and the reset is scale-invariant, so running the neuron on `Z` against a
+/// threshold of `attn_v_th / s` gives **the identical spike train** — and when `s` is an exact
+/// power of two, gives it bit for bit, because scaling by a power of two commutes exactly with
+/// rounding. That removes one real multiply per element per timestep from the bill for free. At
+/// Spikformer's constants the folded threshold is `0.5 / 0.125 = 4`, not the `1 / 0.125 = 8` this
+/// block folded to while it shared one threshold across all five layers.
 ///
 /// [`Ssa::new`] refuses the fold rather than performing it approximately, and there are **three**
 /// conditions, not two:
@@ -1591,8 +1645,8 @@ pub fn attend(
 /// 3. Both paths stay in the range where the rewrite is exact. Every operand of the attention
 ///    product is binary, so an attended element is at most `tokens · d_head` — the number of
 ///    (key, channel) pairs that can contribute a one — and the unfolded path must be able to form
-///    `s · tokens · d_head` finitely, while the folded path must be able to form `v_th / s` as a
-///    normal number. Without this third condition `s = 2^1022` satisfies the first two and the
+///    `s · tokens · d_head` finitely, while the folded path must be able to form `attn_v_th / s`
+///    as a normal number. Without this third condition `s = 2^1022` satisfies the first two and the
 ///    two paths disagree **completely**: on a 2×2 all-ones input the unfolded path overflows to
 ///    infinity and returns [`AttnError::NonFinite`] while the folded path returns a full row of
 ///    spikes.
@@ -1623,16 +1677,18 @@ pub struct Ssa {
 impl Ssa {
     /// Assemble from four `d_model × d_model` projections.
     ///
-    /// `scale` is Spikformer's `s`; the paper uses `0.125`, which is a power of two and therefore
-    /// foldable. A `scale` of exactly `1.0` is not an operation and is charged nothing.
+    /// `v_th` is the threshold of the `Q`, `K`, `V` and output neurons and `attn_v_th` that of the
+    /// neuron after `s · Q Kᵀ V`; Spikformer's are `1.0` and `0.5` (see [`Ssa`]). `scale` is
+    /// Spikformer's `s`; the paper uses `0.125`, which is a power of two and therefore foldable. A
+    /// `scale` of exactly `1.0` is not an operation and is charged nothing.
     ///
     /// # Errors
     ///
     /// [`AttnError::BadShape`] if any projection is not `d_model × d_model`;
     /// [`AttnError::HeadsDoNotDivide`] if `heads` does not divide `d_model`;
     /// [`AttnError::BadParameter`] for a non-finite or non-positive `scale`, or from
-    /// [`LifLayer::new`]; [`AttnError::UnfoldableScale`] if `fold_scale` is set where the fold
-    /// would not be exact.
+    /// [`LifLayer::new`] for either threshold; [`AttnError::UnfoldableScale`] if `fold_scale` is
+    /// set where the fold would not be exact.
     pub fn new(
         tokens: usize,
         heads: usize,
@@ -1642,6 +1698,7 @@ impl Ssa {
         wo: Linear,
         tau: f64,
         v_th: f64,
+        attn_v_th: f64,
         v_reset: f64,
         scale: f64,
         fold_scale: bool,
@@ -1691,14 +1748,14 @@ impl Ssa {
                           unfolded path would return NonFinite where the folded one returns spikes",
                 });
             }
-            if !(v_th / scale).is_normal() {
+            if !(attn_v_th / scale).is_normal() {
                 return Err(AttnError::UnfoldableScale {
                     scale,
-                    why: "v_th / s is not a normal number, so the folded threshold is not exact",
+                    why: "attn_v_th / s is not a normal number, so the folded threshold is not exact",
                 });
             }
         }
-        let attn_th = if fold_scale { v_th / scale } else { v_th };
+        let attn_th = if fold_scale { attn_v_th / scale } else { attn_v_th };
         Ok(Self {
             tokens,
             d_model,
@@ -2170,10 +2227,21 @@ pub enum Position {
     /// is invisible until you audit it, and a reader deserves to see the same model with that one
     /// decision changed.
     OrTable(Tensor),
-    /// Spikformer's relative position embedding: a depthwise convolution over neighbouring
-    /// positions, through a spiking neuron, **added** to the input — so this too widens the stream.
-    /// It follows the conditional positional encoding of Chu et al., *Conditional Positional
-    /// Encodings for Vision Transformers* (`arXiv`:2102.10882), reduced from 2-D to a sequence.
+    /// A depthwise convolution over neighbouring positions, through a spiking neuron, **added** to
+    /// the input — so this too widens the stream. The shape is Spikformer's relative position
+    /// embedding, `RPE = SN(BN(Conv2d(x)))` and `X0 = x + RPE` (Eqs. 5–6), but the convolution is
+    /// **not** Spikformer's: theirs is a full, channel-mixing 3×3 `Conv2d` (`rpe_conv`, no `groups`
+    /// argument, in all three released model files), while this one is depthwise, following the
+    /// depthwise positional encoding generator of Chu et al., *Conditional Positional Encodings for
+    /// Vision Transformers*, ICLR 2023, `arXiv`:2102.10882 ("In the simplest form, we use a single
+    /// depth-wise convolution"), reduced from 2-D to a sequence. It carries no `BatchNorm` shift.
+    ///
+    /// ⚠ **Corrected.** This variant used to be introduced as "Spikformer's relative position
+    /// embedding: a depthwise convolution". The spiking neuron and the addition are Spikformer's;
+    /// the depthwise reduction is this crate's, after Chu et al. A faithful one would mix channels
+    /// and charge `tokens · channels² · k` rather than [`DepthwiseConv1d`]'s
+    /// `tokens · channels · k`, so an audit that includes this encoder undercounts what
+    /// Spikformer's own would cost.
     Conditional(DepthwiseConv1d, LifLayer),
 }
 
@@ -2346,10 +2414,19 @@ impl Model {
 
 /// A model's shape and hyperparameters, with a deterministic random initialiser.
 ///
-/// The defaults are Spikformer's where the paper states one: `tau = 2.0`, `v_th = 1.0`,
-/// `v_reset = 0.0`, `scale = 0.125`, `SpikeAdd` shortcuts. The initialisation gain is **not** from
-/// any paper — it is chosen so that an untrained model fires at all, and a model that never fires
-/// makes every downstream test vacuous.
+/// The defaults are Spikformer's: `v_th = 1.0` for the `Q`, `K`, `V`, output-projection and `MLP`
+/// neurons and `attn_v_th = 0.5` for the neuron after `s · Q Kᵀ V` (Zhou et al.,
+/// `arXiv`:2209.15425v2, Appendix C.1, and `attn_lif` in every released model file), `tau = 2.0`
+/// (from the authors' code, `MultiStepLIFNode(tau=2.0, ...)`; this review did not locate a numeric
+/// `tau` in the paper text), `v_reset = 0.0` (not located in the paper text either; see the module
+/// header), `scale = 0.125`, `SpikeAdd` shortcuts. The initialisation gain is **not** from any
+/// paper — it is chosen so that an untrained model fires at all, and a model that never fires makes
+/// every downstream test vacuous.
+///
+/// ⚠ **Corrected.** This doc used to say the defaults were "Spikformer's where the paper states
+/// one: `tau = 2.0`, `v_th = 1.0`", and the spec had one threshold for all seven neuron layers of a
+/// block. The paper states `0.5` for the attention neuron, and this review did not locate a
+/// numeric `tau` in its text. [`Spec::attn_v_th`] is the field that carries the difference.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Spec {
     /// Sequence positions. Fixed for the life of the model.
@@ -2364,8 +2441,13 @@ pub struct Spec {
     pub depth: usize,
     /// Membrane time constant in timesteps, dimensionless, `>= 1`.
     pub tau: f64,
-    /// Firing threshold, dimensionless.
+    /// Firing threshold of every neuron except the attention neuron — the `Q`, `K`, `V`,
+    /// output-projection and `MLP` neurons — dimensionless.
     pub v_th: f64,
+    /// Firing threshold of the attention neuron, the one after `s · Q Kᵀ V`, dimensionless.
+    /// Spikformer's is `0.5`, half of [`Spec::v_th`]; see [`Ssa`]. With [`Spec::fold_scale`] set
+    /// the neuron runs at `attn_v_th / scale`.
+    pub attn_v_th: f64,
     /// Post-spike membrane, dimensionless. Zero is required to fold the attention scale.
     pub v_reset: f64,
     /// Spikformer's `s`, applied to the attended output before the attention neuron.
@@ -2400,7 +2482,9 @@ pub struct Spec {
 }
 
 impl Spec {
-    /// Spikformer's stated hyperparameters at a given shape, with four-times `MLP` expansion.
+    /// Spikformer's hyperparameters at a given shape, with four-times `MLP` expansion: `v_th = 1.0`,
+    /// `attn_v_th = 0.5`, `tau = 2.0`, `v_reset = 0.0`, `scale = 0.125`. [`Spec`] says which of
+    /// them the paper states and which come from the authors' code.
     #[must_use]
     pub fn spikformer_like(tokens: usize, d_model: usize, heads: usize, depth: usize) -> Self {
         Self {
@@ -2411,6 +2495,7 @@ impl Spec {
             depth,
             tau: 2.0,
             v_th: 1.0,
+            attn_v_th: 0.5,
             v_reset: 0.0,
             scale: 0.125,
             fold_scale: false,
@@ -2452,6 +2537,7 @@ impl Spec {
                 wo,
                 self.tau,
                 self.v_th,
+                self.attn_v_th,
                 self.v_reset,
                 self.scale,
                 self.fold_scale,
@@ -2519,6 +2605,7 @@ mod tests {
             lin(),
             2.0,
             0.5,
+            0.5,
             0.0,
             1.0,
             false,
@@ -2577,6 +2664,7 @@ mod tests {
             lin(),
             lin(),
             2.0,
+            0.5,
             0.5,
             0.0,
             1.0,
@@ -2771,6 +2859,7 @@ mod tests {
             zero(),
             zero(),
             2.0,
+            0.5,
             0.5,
             0.0,
             1.0,
@@ -3006,6 +3095,7 @@ mod tests {
                 lin(),
                 2.0,
                 1.0,
+                1.0,
                 v_reset,
                 scale,
                 true,
@@ -3020,10 +3110,22 @@ mod tests {
         // And the exactly-representable case is accepted.
         assert!(build(0.125, 0.0).is_ok());
         // A scale that is not a positive finite number is refused with or without the fold.
-        assert!(matches!(
-            Ssa::new(2, 1, lin(), lin(), lin(), lin(), 2.0, 1.0, 0.0, 0.0, false, Order::ScoresFirst),
-            Err(AttnError::BadParameter { .. })
-        ));
+        let zero_scale = Ssa::new(
+            2,
+            1,
+            lin(),
+            lin(),
+            lin(),
+            lin(),
+            2.0,
+            1.0,
+            1.0,
+            0.0,
+            0.0,
+            false,
+            Order::ScoresFirst,
+        );
+        assert!(matches!(zero_scale, Err(AttnError::BadParameter { .. })));
     }
 
     // ---------------------------------------------------------------------------------------
@@ -3154,7 +3256,8 @@ mod tests {
         assert_eq!(audit.effective_total().unwrap() - s.effective_total().unwrap(), 112);
     }
 
-    /// ⭐ The headline, on a model built from Spikformer's own stated hyperparameters.
+    /// ⭐ The headline, on a model built from Spikformer's own hyperparameters: the paper's two
+    /// thresholds and the authors' `tau`.
     #[test]
     fn the_honest_fraction_is_lower_than_the_one_the_papers_report() {
         let spec = Spec { residual: Residual::SewIand, ..Spec::spikformer_like(8, 16, 4, 2) };
@@ -3435,6 +3538,7 @@ mod tests {
             scaled(1.0),
             2.0,
             0.5,
+            0.5,
             0.0,
             1.0,
             false,
@@ -3508,13 +3612,13 @@ mod tests {
     #[test]
     fn heads_must_divide_the_channel_count() {
         let lin = || Linear::new(6, 6, eye(6), None).unwrap();
-        let e = Ssa::new(2, 4, lin(), lin(), lin(), lin(), 2.0, 1.0, 0.0, 1.0, false, Order::ScoresFirst)
-            .unwrap_err();
+        let mk = |heads: usize| {
+            let o = Order::ScoresFirst;
+            Ssa::new(2, heads, lin(), lin(), lin(), lin(), 2.0, 1.0, 1.0, 0.0, 1.0, false, o)
+        };
+        let e = mk(4).unwrap_err();
         assert!(matches!(e, AttnError::HeadsDoNotDivide { channels: 6, heads: 4 }), "{e}");
-        assert!(
-            Ssa::new(2, 3, lin(), lin(), lin(), lin(), 2.0, 1.0, 0.0, 1.0, false, Order::ScoresFirst)
-                .is_ok()
-        );
+        assert!(mk(3).is_ok());
     }
 
     /// ⭐ Heads see disjoint channel slices, so a query cannot match a key across a head boundary.
@@ -3528,7 +3632,7 @@ mod tests {
         let d = 4;
         let lin = || Linear::new(d, d, eye(d), None).unwrap();
         let mk = |heads: usize, order: Order| {
-            Ssa::new(2, heads, lin(), lin(), lin(), lin(), 2.0, 0.5, 0.0, 1.0, false, order)
+            Ssa::new(2, heads, lin(), lin(), lin(), lin(), 2.0, 0.5, 0.5, 0.0, 1.0, false, order)
                 .unwrap()
         };
         let x = Tensor::spikes(
@@ -3854,6 +3958,7 @@ mod tests {
             lin(),
             2.0,
             0.5,
+            0.5,
             0.0,
             1.0,
             false,
@@ -3969,7 +4074,9 @@ mod tests {
     fn the_fold_is_refused_where_the_two_paths_would_not_agree() {
         let d = 2;
         let lin = || Linear::new(d, d, eye(d), None).unwrap();
-        let mk = |scale: f64, v_th: f64, fold: bool| {
+        // `v_th = 0.5` for the Q, K, V and output neurons so that a unit input fires them; the
+        // closure's argument is the ATTENTION neuron's threshold, the one the fold rewrites.
+        let mk = |scale: f64, attn_v_th: f64, fold: bool| {
             Ssa::new(
                 2,
                 1,
@@ -3978,7 +4085,8 @@ mod tests {
                 lin(),
                 lin(),
                 2.0,
-                v_th,
+                0.5,
+                attn_v_th,
                 0.0,
                 scale,
                 fold,
@@ -4002,9 +4110,13 @@ mod tests {
             "the unfolded path no longer overflows, so this test has stopped testing anything"
         );
 
-        // A folded threshold that is not a normal number is refused from the other end.
+        // A folded threshold that is not a normal number is refused from the other end. The
+        // attention threshold is what is folded: here `attn_v_th / s = 2^1062` overflows while
+        // the other neurons' `v_th / s = 0.5 / 2^-1022 = 2^1021` would have passed, so a guard
+        // that tested the wrong threshold lets the fold through to a `LifLayer` refusal instead.
         let e = mk(2f64.powi(-1022), 2f64.powi(40), true).unwrap_err();
-        assert!(format!("{e}").contains("v_th / s"), "{e}");
+        assert!(matches!(e, AttnError::UnfoldableScale { .. }), "{e}");
+        assert!(format!("{e}").contains("attn_v_th / s"), "{e}");
 
         // Just inside the bound the fold is still allowed AND still bit-exact: every operand is
         // binary, so an attended element is at most tokens · d_head = 4, and 4 · 2^1020 = 2^1022.
@@ -4015,8 +4127,99 @@ mod tests {
         let b = folded.forward(&ones, "s", &mut Audit::new()).unwrap();
         assert_eq!(a.values(), b.values(), "the two paths disagreed inside the accepted range");
         assert!(a.nonzero() > 0, "both were silent, so the comparison proves nothing");
-        // And the paper's own scale is nowhere near the edge.
-        assert!(mk(0.125, 1.0, true).is_ok(), "Spikformer's s must still fold");
+        // And the paper's own scale and attention threshold are nowhere near the edge.
+        assert!(mk(0.125, 0.5, true).is_ok(), "Spikformer's s must still fold");
+    }
+
+    /// ⭐ Spikformer's attention neuron fires at **half** the threshold of every other neuron.
+    ///
+    /// Appendix C.1 of `arXiv`:2209.15425v2: "We set the threshold voltage Vth of the spike neuron
+    /// layer after `QKᵀV ∗ s` to 0.5, while the others are set to 1", and the authors' `attn_lif` is
+    /// `MultiStepLIFNode(tau=2.0, v_threshold=0.5, ...)` in all three released model files. The
+    /// literals below are those two figures, not the spec read back through itself. This module
+    /// used to build that neuron at `1.0` along with the rest.
+    #[test]
+    fn spikformer_like_gives_the_attention_neuron_the_papers_threshold_of_one_half() {
+        let spec = Spec::spikformer_like(4, 8, 2, 1);
+        assert_eq!(spec.v_th, 1.0, "Appendix C.1: the others are set to 1");
+        assert_eq!(spec.attn_v_th, 0.5, "Appendix C.1: the layer after s·QKᵀV is set to 0.5");
+
+        let m = spec.build(&mut Rng::new(5), Position::None).unwrap();
+        let (attn, mlp) = (&m.blocks[0].attn, &m.blocks[0].mlp);
+        assert_eq!(attn.na.v_th(), 0.5, "the attention neuron was built at the wrong threshold");
+        for (name, n) in
+            [("q", &attn.nq), ("k", &attn.nk), ("v", &attn.nv), ("out", &attn.no), ("mlp1", &mlp.n1)]
+        {
+            assert_eq!(n.v_th(), 1.0, "the {name} neuron took the attention threshold");
+        }
+        assert_eq!(mlp.n2.v_th(), 1.0, "the mlp2 neuron took the attention threshold");
+
+        // Folded, the attention neuron runs at 0.5 / 0.125 = 4 — not at 1 / 0.125 = 8, which is
+        // what the fold gave while one threshold served all five layers.
+        let folded = Spec { fold_scale: true, ..spec }.build(&mut Rng::new(5), Position::None);
+        let folded = folded.unwrap();
+        assert_eq!(folded.blocks[0].attn.na.v_th(), 4.0, "the fold divided the wrong threshold");
+        assert_eq!(folded.blocks[0].attn.nq.v_th(), 1.0, "the fold touched a projection neuron");
+    }
+
+    /// The same correction as a spike, on a block whose every membrane was computed by hand.
+    ///
+    /// Two tokens, six channels, one head, every input bit set, projections `3·I`, no bias,
+    /// `tau = 2`, `v_th = 1`, `s = 0.125`. Each projection neuron integrates `0.5 · 3 = 1.5` and
+    /// fires, so `Q = K = V` are all ones; every score is `6`, every attended element is
+    /// `6 + 6 = 12`, and the attention neuron integrates `0.5 · 0.125 · 12 = 0.75` — above
+    /// Spikformer's `0.5` and below the `1.0` this module used to give it. At `0.5` the output
+    /// projection sees ones, integrates `1.5` and fires everywhere; at `1.0` the attention neuron
+    /// stays silent at `0.75` and so does the block. Every figure is a binary fraction, so each
+    /// comparison is exact.
+    #[test]
+    fn the_attention_neuron_fires_between_spikformers_threshold_and_the_old_one() {
+        let d = 6;
+        let three = || {
+            let mut w = eye(d);
+            for v in &mut w {
+                *v *= 3.0;
+            }
+            Linear::new(d, d, w, None).unwrap()
+        };
+        let mk = |attn_v_th: f64, fold: bool| {
+            Ssa::new(
+                2,
+                1,
+                three(),
+                three(),
+                three(),
+                three(),
+                2.0,
+                1.0,
+                attn_v_th,
+                0.0,
+                0.125,
+                fold,
+                Order::ScoresFirst,
+            )
+            .unwrap()
+        };
+        let x = Tensor::spikes(2, d, &[true; 12]).unwrap();
+
+        let mut paper = mk(0.5, false);
+        let y = paper.forward(&x, "s", &mut Audit::new()).unwrap();
+        assert_eq!(y.values(), &[1.0; 12], "at Spikformer's 0.5 the block passes every spike");
+        assert_eq!(paper.nq.membranes(), &[0.0; 12], "the query neurons did not fire and reset");
+
+        let mut old = mk(1.0, false);
+        let y = old.forward(&x, "s", &mut Audit::new()).unwrap();
+        assert_eq!(y.values(), &[0.0; 12], "at the old 1.0 the attention neuron must stay silent");
+        assert_eq!(old.na.membranes(), &[0.75; 12], "0.5 · 0.125 · 12, held below threshold");
+
+        // Folded, the neuron sees the unscaled 12 and integrates 6 against 0.5 / 0.125 = 4. A
+        // fold of the other neurons' threshold (1 / 0.125 = 8) would leave 6 below it, silent.
+        let mut folded = mk(0.5, true);
+        let y = folded.forward(&x, "s", &mut Audit::new()).unwrap();
+        assert_eq!(y.values(), &[1.0; 12], "the fold changed the corrected block's spikes");
+        let mut folded_old = mk(1.0, true);
+        folded_old.forward(&x, "s", &mut Audit::new()).unwrap();
+        assert_eq!(folded_old.na.membranes(), &[6.0; 12], "0.5 · 12 against a threshold of 8");
     }
 
     /// ⭐ Spikformer puts a `BatchNorm` after every linear layer. At inference the gain folds into
@@ -4064,17 +4267,31 @@ mod tests {
         assert!(honest < bare_honest, "the omitted adds were flattering the fraction");
     }
 
-    /// ⭐ The honest fraction is not a property of the architecture: it moves nearly ten points
+    /// ⭐ The honest fraction is not a property of the architecture: it moves almost nine points
     /// with a constant this crate invented and says so. `Spec::gain` sets the firing density while
     /// the per-neuron overhead is fixed, so the fraction rises with it — which is why it is swept
     /// here rather than pinned once and quoted as *the* number.
+    ///
+    /// Re-measured when the attention neuron's threshold was corrected from `1.0` to Spikformer's
+    /// `0.5`. Only the gain-12 figure moved, from `0.4915` to `0.4830`: at gains 1 to 6 the
+    /// attention neuron does not fire once on this shape over these four timesteps at **either**
+    /// threshold, so the output projection does no work and nothing downstream can tell the two
+    /// apart. That silence is asserted below rather than left as a footnote, because it means the
+    /// low-gain figures are the fractions of models whose attention branch is dead.
     #[test]
     fn the_honest_fraction_moves_with_the_initialisation_gain() {
         let mut rng = Rng::new(22);
         let inputs: Vec<Tensor> = (0..4).map(|_| random_spikes(8, 16, 0.3, &mut rng)).collect();
+        // Every accumulate the two output projections performed: zero exactly when the attention
+        // neuron never fired, because its spikes are those projections' only input.
+        let attention_work = |audit: &Audit| -> u64 {
+            (0..2)
+                .map(|b| audit.site(&format!("block{b}.attn.out_proj"), OpKind::Ac).unwrap().effective)
+                .sum()
+        };
         // Measured on this exact shape and these exact seeds, with the folded shift charged.
         // 2.449 is the Kaiming-uniform bound sqrt(6), which the default 6.0 resembles and is not.
-        let sweep = [(1.0, 0.3962), (2.449, 0.4045), (4.0, 0.4304), (6.0, 0.4579), (12.0, 0.4915)];
+        let sweep = [(1.0, 0.3962), (2.449, 0.4045), (4.0, 0.4304), (6.0, 0.4579), (12.0, 0.4830)];
         let mut seen = Vec::new();
         for (gain, want) in sweep {
             let spec =
@@ -4087,10 +4304,24 @@ mod tests {
             assert!((got - want).abs() < 5e-5, "gain {gain}: {got}, expected {want}");
             // The REPORTED fraction is 1.0 at every gain, so it says nothing about any of this.
             assert_eq!(audit.synaptic_ac_fraction(), Some(1.0), "gain {gain}");
+            // The attention branch is dead below gain 12 and live at it.
+            assert_eq!(attention_work(&audit) > 0, gain > 6.0, "gain {gain}: attention activity");
             seen.push(got);
         }
-        assert!(seen[4] - seen[0] > 0.09, "the sweep collapsed: {seen:?}");
+        assert!(seen[4] - seen[0] > 0.08, "the sweep collapsed: {seen:?}");
         assert!(seen.windows(2).all(|w| w[0] < w[1]), "density did not rise with gain: {seen:?}");
+
+        // What the correction changed, at the one gain where the attention neuron fires: the
+        // shared threshold of 1.0 this module used to build gave 0.4915 here.
+        let old = Spec {
+            gain: 12.0,
+            attn_v_th: 1.0,
+            residual: Residual::SewIand,
+            ..Spec::spikformer_like(8, 16, 4, 2)
+        };
+        let (_, audit) = old.build(&mut Rng::new(21), Position::None).unwrap().run(&inputs).unwrap();
+        let got = audit.ac_fraction().unwrap();
+        assert!((got - 0.4915).abs() < 5e-5, "the old threshold at gain 12: {got}");
     }
 
     /// `Tensor::new` has always refused a shape whose element count does not fit in a `usize`. Two
@@ -4137,6 +4368,7 @@ mod tests {
                 sq(),
                 2.0,
                 1.0,
+                1.0,
                 0.0,
                 1.0,
                 false,
@@ -4155,6 +4387,7 @@ mod tests {
             sq(),
             sq(),
             2.0,
+            1.0,
             1.0,
             0.0,
             1.0,
@@ -4209,6 +4442,7 @@ mod tests {
             sq4(),
             sq4(),
             2.0,
+            1.0,
             1.0,
             0.0,
             1.0,
@@ -4356,6 +4590,7 @@ mod tests {
             lin(),
             lin(),
             2.0,
+            0.25,
             0.25,
             0.0,
             0.5,
@@ -4681,6 +4916,7 @@ mod tests {
             lin(),
             2.0,
             1.0,
+            1.0,
             0.0,
             1.0,
             false,
@@ -4754,6 +4990,7 @@ mod tests {
                 scaled(0.6),
                 scaled(1.0),
                 2.0,
+                0.5,
                 0.5,
                 0.0,
                 1.0,

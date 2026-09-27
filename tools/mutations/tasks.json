@@ -743,7 +743,7 @@
   "label": "a bar that cannot move is given a window anyway",
   "old": "        if !v.is_finite() || v <= 0.0 {\n            return None;\n        }",
   "new": "        if !v.is_finite() || v < 0.0 {\n            return None;\n        }",
-  "equivalent": "The two forms differ for exactly one input: v == 0.0 (and -0.0). Everywhere else they agree — a negative v satisfies both `v < 0.0` and `v <= 0.0`, a positive v satisfies neither. At v == +-0.0 the mutant falls through to `let t = (extent / v).ceil()`, and `extent` is `f64::from(width.max(height)) + f64::from(bar_width)`: a sum of two `u32`-derived f64, so it is finite and >= 0.0 for every reachable config, NaN being unrepresentable there. IEEE-754 division by zero then gives +inf or -inf for extent > 0 and NaN for extent == 0.0, `ceil` preserves all three, and the very next guard — `if !t.is_finite() || t > 1e12 { return None; }`, which is there for the separate case of a speed so small the window would be astronomical — returns None. So both forms return None for every input to `min_ticks`, and `min_ticks` is the only reader of the branch. There is no cost signal either: the fall-through is one division, one ceil and one comparison. Measured on this implementation: min_ticks() is None for speed_px_per_tick = 0.0, for -0.0, and for 1e-320 (whose min_speed underflows to the denormal 8e-321, which is > 0.0 and so takes the identical path under both forms and is refused by the 1e12 ceiling). The `v <= 0.0` form is kept because it says at the place the speed is read that a bar which cannot move has no window, rather than leaving that to an infinity three lines later — but no test can tell the two apart, because they compute the same function."
+  "equivalent": "The two forms differ for exactly one input: v == 0.0 (and -0.0). Everywhere else they agree — a negative v satisfies both `v < 0.0` and `v <= 0.0`, a positive v satisfies neither. At v == +-0.0 the mutant falls through to `let t = (extent / v).ceil()`, and `extent` is `f64::from(width.max(height)) + f64::from(bar_width)`: a sum of two `u32`-derived f64, so it is finite and >= 0.0 for every reachable config, NaN being unrepresentable there. IEEE-754 division by zero then gives +inf or -inf for extent > 0 and NaN for extent == 0.0, `ceil` preserves all three, and the very next guard — `if !t.is_finite() || t > 1e12 { return None; }`, which is there for the separate case of a speed so small the window would be astronomical — returns None. So both forms return None for every input to `min_ticks`, and `min_ticks` is the only reader of the branch. There is no cost signal either: the fall-through is one division, one ceil and one comparison. Measured on this implementation: min_ticks() is None for speed_px_per_tick = 0.0, for -0.0, and for 1e-320 (whose min_speed underflows to the denormal 8e-321, which is > 0.0 and so takes the identical path under both forms and is refused by the 1e12 ceiling). The `v <= 0.0` form is kept because it says at the place the speed is read that a bar which cannot move has no window, rather than leaving that to an infinity three lines later — but no test can tell the two apart, because they compute the same function. Re-measured 2026-09-27 with a fixture that calls the shipped `MovingBar::min_ticks` beside a transcription of this mutant, over 103,680 configurations: width, height and bar width each in {0, 1, 2, 17, 65536, u32::MAX}, 16 speeds (+0.0, -0.0, +-1, 0.5, 0.25, 1e-12, 1e-300, +-5e-324, f64::MIN_POSITIVE, 1e-320, f64::MAX, +-inf, NaN), 10 jitter fractions (0, 0.25, 0.5, 0.75, 1, 1 - 2^-53, 1.5, -0.5, NaN, inf) and 3 start delays (0, 7, u64::MAX). 23,976 of them have min_speed exactly 0.0, the only input on which the guards differ; 0 disagreements. A transcription of the original guard matched the shipped method on all 103,680, so the mutant transcription differs from the shipped code only in the guard."
  },
  {
   "label": "an advance exactly equal to the bar's thickness is refused",
@@ -1017,7 +1017,17 @@
  },
  {
   "label": "a catalogue row names no dataset it stands in for",
-  "old": "        stands_in_for: \"Fuster and Alexander, Science 173:652-654, 1971\",",
+  "old": "        stands_in_for: \"delayed matching-to-sample (Blough 1959; monkeys: Fuster and Jervey 1982)\",",
   "new": "        stands_in_for: \"none\","
+ },
+ {
+  "label": "the delayed-match catalogue row credits the 1971 delayed-response paper again",
+  "old": "        stands_in_for: \"delayed matching-to-sample (Blough 1959; monkeys: Fuster and Jervey 1982)\",",
+  "new": "        stands_in_for: \"Fuster and Alexander, Science 173:652-654, 1971\","
+ },
+ {
+  "label": "the delayed-match dataset credits the 1971 delayed-response paper again",
+  "old": "            \"the working-memory assay of delayed matching-to-sample (Blough 1959; delay activity \\\n             in monkeys: Fuster and Jervey 1982); no public spiking dataset of it\",",
+  "new": "            \"the working-memory assay of Fuster and Alexander, Science 173:652-654, 1971; no \\\n             public spiking dataset of it\","
  }
 ]

@@ -3,9 +3,25 @@
 //! A benchmark is a claim about what a model can do, and a claim is only worth as much as the
 //! reader's ability to re-run it. The standard spiking-network datasets — `N-MNIST`, `DVS-Gesture`,
 //! `SHD` — are real recordings, which is their strength and also the reason they cannot live in a
-//! zero-dependency library: they are hundreds of megabytes, they are under licences that forbid
-//! redistribution, and fetching them needs a network stack this crate does not have. A student on a
-//! train, a CI runner with no egress, and a browser tab compiled to `wasm32` all fail the same way.
+//! zero-dependency library: they are hundreds of megabytes, and fetching them needs a network stack
+//! this crate does not have. A student on a train, a CI runner with no egress, and a browser tab
+//! compiled to `wasm32` all fail the same way.
+//!
+//! **Corrected: the licences permit redistribution.** This paragraph used to give a third reason,
+//! that the three datasets "are under licences that forbid redistribution". None of the three
+//! licences forbids it. The `N-MNIST` page, <https://www.garrickorchard.com/datasets/n-mnist>,
+//! says "The dataset is released under the Creative Commons Attribution-`ShareAlike` 4.0 license",
+//! and the `LICENSE.txt` in its Mendeley Data record, doi:10.17632/468j46mzdv.1, names the same
+//! licence, though that record's `DataCite` metadata gives CC BY 4.0; both permit redistribution
+//! with attribution. The `SHD` page,
+//! <https://zenkelab.org/resources/spiking-heidelberg-datasets-shd/>, says "The datasets are
+//! released under the Creative Commons Attribution 4.0 International License". For
+//! `DVS-Gesture`, Cramer, Stradmann, Schemmel and Zenke write in arXiv:1910.07407v3,
+//! the preprint of the `SHD` paper cited under Provenance below, that "IBM has released the DVS128
+//! Gesture Dataset [Amir et al., 2017] under a Creative Commons license"; this review did not
+//! locate the text of that licence itself. Bundling the recordings would bring obligations into an
+//! Apache-2.0 crate — attribution, and `N-MNIST`'s share-alike term — and not a prohibition. The
+//! size and the fetch are the reasons that stand.
 //!
 //! So this module **generates** the equivalents. Every task here is a closed-form recipe plus a
 //! seed: the same seed gives the same spikes on every platform and every release, the whole corpus
@@ -77,9 +93,15 @@
 //! codes is the framing in Maass, *Networks of Spiking Neurons: The Third Generation of Neural
 //! Network Models*, Neural Networks 10(9):1659-1671, 1997, and is the standard demonstration
 //! problem in the surrogate-gradient literature. Coincidence detection as the elementary spiking
-//! primitive is Abeles, *Corticonics*, Cambridge University Press, 1991. Delayed match-to-sample is
-//! Fuster and Alexander, Science 173:652-654, 1971. Rate discrimination and its Poisson optimum are
-//! the psychophysical staple; the optimal-observer derivation reproduced in
+//! primitive is Abeles, *Corticonics*, Cambridge University Press, 1991. Delayed matching goes back
+//! at least to Blough, *Delayed matching in the pigeon*, J. Exp. Anal. Behav. 2:151-160 (1959),
+//! doi:10.1901/jeab.1959.2-151. Delay-period firing recorded in monkeys performing it is Fuster
+//! and Jervey, *Neuronal firing in the inferotemporal cortex of the monkey in a visual memory
+//! task*, J. Neurosci. 2:361-375 (1982), doi:10.1523/jneurosci.02-03-00361.1982. This paragraph
+//! used to say "Delayed match-to-sample is Fuster and Alexander, Science 173:652-654, 1971"; that
+//! paper recorded during a delayed-RESPONSE task, and [`DelayedMatch`] gives the correction in
+//! full. Rate discrimination and its Poisson optimum are the psychophysical staple; the
+//! optimal-observer derivation reproduced in
 //! [`RateDiscrimination::poisson_optimal_accuracy`] is elementary and is worked in Dayan and
 //! Abbott, *Theoretical Neuroscience*, MIT Press, 2001, chapter 3. The real datasets these stand in
 //! for are Orchard et al., Frontiers in Neuroscience 9:437, 2015 (`N-MNIST`), Amir et al., CVPR
@@ -1156,21 +1178,44 @@ impl Coincidence {
 
 /// **Delayed match-to-sample**: a symbol, a silent delay, a second symbol — were they the same?
 ///
-/// Fuster and Alexander, Science 173:652-654, 1971, is the original; it is the standard assay for
-/// working memory because the answer is not a function of anything present at the moment it is
-/// asked. During `delay_ticks` there is **no input at all** (with `distractor_cues` at zero), so
-/// any network that solves it is holding the sample symbol in its state. The invariant is asserted:
-/// `delayed_match_holds_an_empty_delay_window` checks that not one spike lands in the delay.
+/// It is the standard assay for working memory because the answer is not a function of anything
+/// present at the moment it is asked. The paradigm goes back at least to Blough, *Delayed matching
+/// in the pigeon*, J. Exp. Anal. Behav. 2:151-160 (1959), doi:10.1901/jeab.1959.2-151. The
+/// delay-period firing it is used to study was recorded "in monkeys performing a visual delayed
+/// matching-to-sample task" by Fuster and Jervey, *Neuronal firing in the inferotemporal cortex of
+/// the monkey in a visual memory task*, J. Neurosci. 2:361-375 (1982),
+/// doi:10.1523/jneurosci.02-03-00361.1982. During `delay_ticks` there is **no input at all** (with
+/// `distractor_cues` at zero), so any network that solves it is holding the sample symbol in its
+/// state. The invariant is asserted: `delayed_match_holds_an_empty_delay_window` checks that not
+/// one spike lands in the delay.
+///
+/// **Corrected attribution.** This doc used to say "Fuster and Alexander, Science 173:652-654,
+/// 1971, is the original", and both this task's `stands_in_for` and its [`CATALOGUE`] row named
+/// that paper as the source. It is not a delayed-match experiment. Fuster and Alexander, *Neuron
+/// activity related to short-term memory*, Science 173(3997):652-654 (1971),
+/// doi:10.1126/science.173.3997.652, report in their abstract that cells in the prefrontal cortex
+/// and the mediodorsal thalamus "show changes of firing frequency associated with the performance
+/// of a delayed response test", and that "Most cells increase firing during the cue presentation
+/// period or at the beginning of the ensuing delay". What the paper reports is delay-period firing,
+/// the phenomenon this task exists to teach, recorded during a delayed-RESPONSE task. This review
+/// read the abstracts of the two Fuster papers and only the bibliographic record of Blough's. No
+/// generator, constant or threshold changed; the two `stands_in_for` strings did, and
+/// `the_delayed_match_rows_credit_the_paradigm_not_the_delayed_response_paper` holds them.
 ///
 /// # What the delay demands, quantitatively
 ///
 /// [`DelayedMatch::required_memory_seconds`] is `delay_ticks * dt`. A [`crate::neuron::Lif`] with
 /// `tau_m = 20 ms` still holds `exp(-0.1 / 0.02) = 0.67%` of an input 100 ms later — it has lost
 /// 99.3% of it — so a feedforward network of default `Lif` cells cannot carry a 100 ms delay in
-/// its membranes. The mechanisms that
-/// can are recurrence, the adapting threshold of [`crate::neuron::AdaptiveLif`] (Bellec et al.,
-/// 2018, whose whole point is exactly this), or a synapse with a long time constant. That is the
-/// lesson; the task is the instrument for it.
+/// its membranes. The mechanisms that can are recurrence, the adapting threshold of
+/// [`crate::neuron::AdaptiveLif`] (Bellec, Salaj, Subramoney, Legenstein & Maass, *Long short-term
+/// memory and learning-to-learn in networks of spiking neurons*, `NeurIPS` 2018, arXiv:1803.09574,
+/// whose whole point is exactly this), or a synapse with a long time constant. That is the lesson;
+/// the task is the instrument for it.
+///
+/// That citation used to read "Bellec et al., 2018", which names two papers: Bellec, Kappel, Maass
+/// and Legenstein, *Deep Rewiring: Training very sparse deep networks*, ICLR 2018,
+/// arXiv:1711.05136, is also Bellec's and also 2018.
 ///
 /// # An honest caveat, stated beside the task rather than beneath it
 ///
@@ -1392,8 +1437,8 @@ impl DelayedMatch {
             ticks,
             self.dt,
             self.seed,
-            "the working-memory assay of Fuster and Alexander, Science 173:652-654, 1971; no \
-             public spiking dataset of it",
+            "the working-memory assay of delayed matching-to-sample (Blough 1959; delay activity \
+             in monkeys: Fuster and Jervey 1982); no public spiking dataset of it",
             "a real delayed-match trial has sensory variability within a symbol, a variable delay, \
              and an animal that can look away; here a symbol is one clean channel",
         ))
@@ -2515,7 +2560,7 @@ pub const CATALOGUE: [TaskCard; 7] = [
         name: "delayed_match_to_sample",
         classes: 2,
         chance: 0.5,
-        stands_in_for: "Fuster and Alexander, Science 173:652-654, 1971",
+        stands_in_for: "delayed matching-to-sample (Blough 1959; monkeys: Fuster and Jervey 1982)",
         isolates: "holding a symbol across a silent delay",
     },
     TaskCard {
@@ -3631,6 +3676,26 @@ mod tests {
         isolates.sort_unstable();
         isolates.dedup();
         assert_eq!(isolates.len(), CATALOGUE.len(), "two catalogue rows isolate the same thing");
+    }
+
+    /// Both delayed-match `stands_in_for` strings credit the paradigm, not the 1971 paper.
+    ///
+    /// Fuster and Alexander (1971) recorded during "a delayed response test" (its abstract), and
+    /// both strings used to name it as the source of delayed match-to-sample. Blough (1959) is
+    /// *Delayed matching in the pigeon*; Fuster and Jervey (1982) recorded "in monkeys performing
+    /// a visual delayed matching-to-sample task". The catalogue row is found by the generated
+    /// dataset's own name, so a renamed row fails here rather than going unchecked.
+    #[test]
+    fn the_delayed_match_rows_credit_the_paradigm_not_the_delayed_response_paper() {
+        let d = DelayedMatch::default().generate().unwrap();
+        let card = CATALOGUE.iter().find(|c| c.name == d.name).expect("no catalogue row");
+        for s in [d.stands_in_for, card.stands_in_for] {
+            assert!(s.contains("matching-to-sample"), "{s}");
+            assert!(s.contains("Blough 1959"), "{s}");
+            assert!(s.contains("Fuster and Jervey 1982"), "{s}");
+            assert!(!s.contains("Alexander"), "{s}");
+            assert!(!s.contains("1971"), "{s}");
+        }
     }
 
     #[test]

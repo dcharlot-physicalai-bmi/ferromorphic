@@ -48,7 +48,12 @@
 //! tau_m dV/dt = -(V - mu) + sigma sqrt(tau_m) eta(t),   <eta(t) eta(t')> = delta(t - t')
 //! ```
 //!
-//! which is Brunel's own convention (J. Comput. Neurosci. 8:183-208, 2000, section 2). Note what
+//! which is Brunel's own convention: his eq. (1), `tau V' = -V + R I`, with eq. (3),
+//! `R I(t) = mu(t) + sigma sqrt(tau) eta(t)` and `<eta(t) eta(t')> = delta(t - t')` (Brunel,
+//! *Dynamics of sparsely connected networks of excitatory and inhibitory spiking neurons*,
+//! J. Comput. Neurosci. 8(3):183-208, 2000, doi:10.1023/A:1008925309027). This paragraph used to
+//! cite "section 2" for it. Section 2, "The Model", gives eq. (1) and the spike sum of eq. (2) but
+//! no noise term; the noise normalisation is eq. (3), in section 3, "Formalism". Note what
 //! `sigma` is **not**: the stationary standard deviation of the free membrane potential under this
 //! equation is `sigma / sqrt(2)`, not `sigma`. Papers differ on this factor and a `sqrt(2)` in the
 //! wrong place moves a predicted rate by tens of percent while leaving every plot looking sane.
@@ -59,11 +64,16 @@
 //!
 //! | Mechanism | Source | Checked against |
 //! |---|---|---|
-//! | Siegert stationary rate | Brunel 2000 eq. 22; Ricciardi 1977 | a direct `Lif` simulation, and `Lif::isi` in the zero-noise limit |
+//! | Siegert stationary rate | Brunel 2000 eq. 21 (eq. 22 is its low-rate asymptote); Ricciardi 1977 | a direct `Lif` simulation, and `Lif::isi` in the zero-noise limit |
 //! | Balanced network | van Vreeswijk & Sompolinsky, Science 274:1724, 1996 | `sigma` exactly independent of `K`; the linear balance equations solved to machine precision |
-//! | Phase diagram | Brunel 2000 | the `g * gamma = 1` boundary, exactly |
+//! | Phase diagram | Brunel 2000 Fig. 2, Fig. 7 | silence only: the prediction declines Fig. 7's four simulated points, and the Fig. 7 and Fig. 2C points where `g * gamma < 1` is not SR |
 //! | Refractory density | Gerstner, Neural Comput. 12:43, 2000 | stationary activity equals `1 / mean ISI` to 1e-13 |
 //! | Avalanches and criticality | Beggs & Plenz, J. Neurosci. 23:11167, 2003 | the Borel distribution, whose `-3/2` tail is exact |
+//!
+//! Two rows of this table used to read differently. The Siegert row cited Brunel's eq. 22, which
+//! is the `(theta - mu0) >> sigma0` asymptote of the integral; the integral is eq. 21. The
+//! phase-diagram row claimed "the `g * gamma = 1` boundary, exactly", and Brunel's own diagrams
+//! contradict it: [`BrunelNetwork::predicted_regime`] carries the correction.
 //!
 //! # Two results in fifteen lines
 //!
@@ -399,10 +409,15 @@ pub fn siegert_integral(p: f64, q: f64) -> Option<f64> {
 /// ```
 ///
 /// Brunel, *Dynamics of sparsely connected networks of excitatory and inhibitory spiking neurons*,
-/// J. Comput. Neurosci. 8:183-208, 2000, eq. (22); the first-passage result itself is older —
-/// Siegert, Phys. Rev. 81:617, 1951, and Ricciardi, *Diffusion Processes and Related Topics in
-/// Biology*, 1977. The integral is [`siegert_integral`], after the substitution `w = -u` that turns
+/// J. Comput. Neurosci. 8(3):183-208, 2000, doi:10.1023/A:1008925309027, eq. (21), where his `mu0`
+/// and `sigma0` are the network's stationary drive of eq. (20); the first-passage result itself is
+/// older — Siegert, Phys. Rev. 81:617, 1951, and Ricciardi, *Diffusion Processes and Related Topics
+/// in Biology*, 1977. The integral is [`siegert_integral`], after the substitution `w = -u` that turns
 /// `exp(u^2)(1 + erf(u))` into `erfcx(w)`.
+///
+/// This doc used to cite eq. (22). That is the next equation, the one Brunel introduces with "In
+/// the regime `(theta - mu0) >> sigma0` (low firing rates), Eq. (21) becomes": the low-rate
+/// asymptote, not the integral implemented here.
 ///
 /// # Why the rate is not just `Lif::isi`
 ///
@@ -794,9 +809,11 @@ impl BoxMuller {
 /// sigma^2 = tau_m j^2 (c_exc (nu + nu_ext) + g^2 c_inh nu)
 /// ```
 ///
-/// (Brunel 2000 eqs. 5-6.) Note the asymmetry that is the whole subject: inhibition **subtracts**
-/// from the mean and **adds** to the variance. That is what makes balance possible and what makes
-/// it interesting — cancelling the mean does not cancel the noise, it doubles it.
+/// (Brunel 2000 eqs. 4-5, with `c_inh = gamma c_exc`; the stationary form is his eq. 20. This line
+/// used to cite eqs. 5-6, and his eq. 6 is the Fokker-Planck equation, not a moment.) Note the
+/// asymmetry that is the whole subject: inhibition **subtracts** from the mean and **adds** to the
+/// variance. That is what makes balance possible and what makes it interesting — cancelling the
+/// mean does not cancel the noise, it doubles it.
 ///
 /// `mu` here is an offset **above the resting potential**, because that is the quantity the input
 /// produces; add `v_rest` to put it on the same scale as `v_th`. [`Self::siegert`] does that for
@@ -1141,9 +1158,17 @@ impl BalanceMatrix {
 /// The dynamical states of a sparse random network of excitatory and inhibitory
 /// integrate-and-fire neurons.
 ///
-/// Brunel 2000 Fig. 1 and Fig. 8. The two axes of the classification are independent: *synchrony*
-/// asks whether neurons fire together, *regularity* asks whether each one fires like a clock. All
-/// four combinations occur in the same network at different `(g, nu_ext)`.
+/// Brunel 2000 names the four states in his Introduction and maps them in Fig. 2 (phase diagrams
+/// for four delays), Fig. 4 (the effect of distributed delays) and Fig. 7 (the phase diagram for
+/// the Fig. 8 parameters); Fig. 8 simulates one point in each of four regions, and Fig. 1C gives
+/// the regularity contrast, a CV near zero at `g < 4` jumping above 2 near `g = 4`. This doc used
+/// to cite "Fig. 1 and Fig. 8". Fig. 1 characterises the stationary state and names no dynamical
+/// state; the phase diagrams that carry the labels are Fig. 2, Fig. 4 and Fig. 7.
+///
+/// The two axes of the classification are independent: *synchrony* asks whether neurons fire
+/// together, *regularity* asks whether each one fires like a clock. All four combinations occur in
+/// the same network at different `(g, nu_ext)`: Fig. 2C, at a delay of 2 ms, carries all four
+/// labels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Regime {
     /// Neurons fire together and each one fires like a clock. Excitation dominates, rates approach
@@ -1154,16 +1179,28 @@ pub enum Regime {
     /// delay rather than by any membrane constant, is the one that resembles cortical gamma.
     SynchronousIrregular,
     /// The state usually claimed for cortex: the population rate is flat in time and every neuron
-    /// fires with a coefficient of variation near 1. Requires inhibition-dominated recurrence.
+    /// fires with a coefficient of variation near 1. It lives where inhibition dominates the
+    /// recurrence or nearly balances it: Fig. 2's caption places it at `g > 4`, and on Fig. 7 it
+    /// reaches left of `g = 4`, to between 3 and 3.5 at `nu_ext / nu_thr = 2`. This doc used to say
+    /// it "requires inhibition-dominated recurrence"; Fig. 7, drawn for the network this module's
+    /// tests build, is the counterexample.
     AsynchronousIrregular,
     /// Every neuron a metronome at its own phase, so the population rate is flat while no
     /// individual train is.
     ///
-    /// **Not one of the three labels Brunel's phase diagram carries.** It is here because
-    /// [`classify`] takes two independent binary measurements and a two-by-two grid has four cells;
-    /// reporting this corner as one of the other three would be inventing a classification the
-    /// measurements do not support. It arises with heterogeneous drive, where each cell is
-    /// mean-driven at a rate of its own.
+    /// One of Brunel's four named states. His Introduction lists "Asynchronous regular (AR) states,
+    /// with stationary global activity and quasi-regular individual neuron firing when excitation
+    /// dominates inhibition and synaptic time distributions are broadly peaked". It is labelled on
+    /// Fig. 2C, where the delay equals the 2 ms refractory period, and on Fig. 4B, where delays
+    /// are uniform on 0 to 3 ms and "the network settles in a AR (asynchronous regular) state" over
+    /// the whole low-`g` region. It does not appear on Fig. 7, the diagram for a single 1.5 ms
+    /// delay.
+    ///
+    /// ⚠ **Correction.** This doc used to say this was "not one of the three labels Brunel's phase
+    /// diagram carries" and that it "arises with heterogeneous drive". Both were wrong: Fig. 2A, B
+    /// and D and Fig. 7 carry three labels, but Fig. 2C and Fig. 4B carry this one, and Brunel's
+    /// mechanism is the spread of synaptic delays (or a delay commensurate with the refractory
+    /// period), not heterogeneous drive.
     AsynchronousRegular,
     /// Neither the external drive nor the recurrence sustains firing. Not a dynamical state so much
     /// as its absence, and it is reported separately because a near-zero rate makes both synchrony
@@ -1173,9 +1210,11 @@ pub enum Regime {
 
 /// Population rate below which [`classify`] reports [`Regime::NearlySilent`], hertz.
 ///
-/// **This crate's convention, not a published boundary.** Brunel classified by eye from rasters. One
-/// hertz is chosen because below it a 1-second window holds too few intervals to estimate a
-/// coefficient of variation, so the other two axes of the classification stop meaning anything.
+/// **This crate's convention, not a published boundary.** Brunel's boundaries are bifurcation lines
+/// computed from his mean-field equations, not cuts on a measured rate; see [`classify`], which
+/// also records that this doc used to say he "classified by eye from rasters". One hertz is chosen
+/// because below it a 1-second window holds too few intervals to estimate a coefficient of
+/// variation, so the other two axes of the classification stop meaning anything.
 pub const SILENCE_RATE_HZ: f64 = 1.0;
 
 /// Coefficient of variation above which [`classify`] calls a train irregular.
@@ -1197,9 +1236,19 @@ pub const SYNCHRONY_INDEX: f64 = 0.3;
 /// Takes the three numbers a simulation can actually produce: the mean single-neuron rate in hertz,
 /// the mean coefficient of variation of the intervals ([`Train::cv`]), and the synchrony index
 /// ([`synchrony`]). The thresholds are [`SILENCE_RATE_HZ`], [`IRREGULARITY_CV`] and
-/// [`SYNCHRONY_INDEX`], and **they are this crate's conventions rather than the paper's** — Brunel
-/// classified by looking at rasters, and this implementation did not locate published numerical cuts
-/// for the boundaries.
+/// [`SYNCHRONY_INDEX`], and **they are this crate's conventions rather than the paper's**.
+/// Brunel's boundaries are the Hopf bifurcation lines of his linear-stability analysis ("The
+/// outcome of the analysis are Hopf bifurcation lines on which the stationary state destabilizes
+/// due to an oscillatory instability"), drawn with the saddle-node lines of his stationary-state
+/// analysis in the `(g, nu_ext / nu_thr)` plane in Fig. 2 and Fig. 7. His synchrony is a property
+/// of the rate, not of a score: states "for which `nu` is constant in time will be termed
+/// asynchronous, while those for which `nu` varies in time will be termed synchronous". He computes
+/// the CV analytically (his Fig. 1C) and simulates one point per region (Fig. 8) to illustrate the
+/// prediction. He publishes no cut on a measured CV or synchrony index, and this review did not
+/// locate one elsewhere, so these thresholds are this crate's.
+///
+/// This doc used to say Brunel "classified by looking at rasters". He did not: the rasters of his
+/// Fig. 8 illustrate regions the analysis had already drawn.
 ///
 /// `None` for a non-finite argument or a negative rate.
 #[must_use]
@@ -1417,21 +1466,52 @@ impl BrunelNetwork {
         Ok(0.5 * (lo + hi))
     }
 
-    /// What the **closed-form** boundaries decide about the regime, or `None` where they do not.
+    /// What the stationary rate alone decides about the regime, or `None` where it does not.
     ///
-    /// Two boundaries here have exact expressions and the third does not:
+    /// One boundary here is computed and the others are not:
     ///
-    /// - `g * gamma < 1`: the recurrent loop is net excitatory, the rate runs to near the refractory
-    ///   ceiling, and the state is [`Regime::SynchronousRegular`]. Exact.
     /// - The self-consistent rate falls below [`SILENCE_RATE_HZ`]: [`Regime::NearlySilent`].
-    ///   Computed, not guessed.
-    /// - **Everything else returns `None`.** Separating [`Regime::AsynchronousIrregular`] from
-    ///   [`Regime::SynchronousIrregular`] requires the linear stability of the asynchronous state
-    ///   under delayed interaction, which Brunel & Hakim (Neural Comput. 11:1621, 1999) derive as a
-    ///   transcendental condition on the transfer function's complex susceptibility. **This
-    ///   implementation did not locate a form of that boundary it could reduce to a closed form and
-    ///   check**, so it declines rather than transcribing a curve off a figure. Use [`classify`] on
-    ///   a measured [`synchrony`] to decide it empirically, which is how the paper decided it.
+    ///   Computed, not guessed, though the one-hertz cut is this crate's convention.
+    /// - **Everything else returns `None`, excitation-dominated networks included.** Each boundary
+    ///   between one of Brunel's synchronous states and an asynchronous one is a Hopf bifurcation
+    ///   line of the linear stability of the asynchronous state under delayed interaction. (No line
+    ///   divides AR from AI on Fig. 2C: they are the high- and low-activity stationary states, and
+    ///   Brunel calls the transition between those "smooth (see Fig. 1A) but becomes more and more
+    ///   abrupt as `C_E` increases".) A Hopf line is where a root of his eigenvalue equation (46)
+    ///   crosses into the right half-plane, a transcendental condition on the transfer function's
+    ///   complex susceptibility; for the purely inhibitory network the same analysis is Brunel &
+    ///   Hakim, *Fast global oscillations in networks of integrate-and-fire neurons with low firing
+    ///   rates*, Neural Comput. 11:1621-1671 (1999).
+    ///   **This implementation did not locate a form of those lines it could reduce to a closed
+    ///   form and check**, so it declines rather than transcribing a curve off a figure. Use
+    ///   [`classify`] on a measured CV and [`synchrony`] to decide it empirically, knowing that its
+    ///   thresholds are this crate's and not the paper's.
+    ///
+    /// ⚠ **Correction, and a change of behaviour.** This function used to return
+    /// [`Regime::SynchronousRegular`] for every network with `g * gamma < 1` above the silence cut,
+    /// and this doc called that boundary "Exact". Brunel's diagrams contradict it in two ways:
+    ///
+    /// - The line between SR and AI is a Hopf line, not `g * gamma = 1`, and it moves with the
+    ///   delay and the drive. Fig. 7 is drawn for exactly the network this module's tests build
+    ///   (`C_E = 1000`, `C_I = 250`, `J = 0.1` mV, `D = 1.5` ms), and Brunel's section 6 says that,
+    ///   compared with the higher-connectivity network of Fig. 2, "the line separating the AI from
+    ///   the SR state has slightly moved toward the left". Read off Fig. 7, at
+    ///   `nu_ext / nu_thr = 2` it sits between `g = 3` and `g = 3.5`, so a network at `g = 3.75` is
+    ///   AI there and the old rule called it SR. On Fig. 2A, at the same delay, the line lies just
+    ///   right of `g = 4`.
+    /// - With a delay commensurate with the refractory period the low-`g` region is AR, not SR.
+    ///   Brunel's section 5.1.3: the instabilities near `g = 4` "usually appear for `nu_ext > 1`,
+    ///   `g ~ 4`, except when `D / tau_rp` is an integer or very close to it. In this case the
+    ///   instability lines are pushed toward lower values of g". On Fig. 2C (`D = tau_rp = 2` ms)
+    ///   SR survives only in a wedge under a curve that falls from `nu_ext / nu_thr` of about 2 at
+    ///   `g = 0` to about 0.9 at `g = 4`, and everything above it at `g < 4` is labelled AR.
+    ///   Fig. 4B, delays uniform on 0 to 3 ms, is AR over the whole low-`g` region.
+    ///
+    /// Neither shift has a closed form here, and a margin around `g * gamma = 1` or around
+    /// `delay = t_ref` would be a number read off a figure, so the excitation-dominated corner now
+    /// returns `None` like the rest. The old doc also said that deciding by measured synchrony "is
+    /// how the paper decided it"; Brunel decided it by the stability analysis, and the simulations
+    /// of his Fig. 8 illustrate the result.
     ///
     /// # Errors
     ///
@@ -1441,10 +1521,7 @@ impl BrunelNetwork {
         if nu < SILENCE_RATE_HZ {
             return Ok(Some(Regime::NearlySilent));
         }
-        match self.balance_index() {
-            Some(b) if b < 1.0 => Ok(Some(Regime::SynchronousRegular)),
-            _ => Ok(None),
-        }
+        Ok(None)
     }
 
     /// The frequency band the fast synchronous-irregular oscillation is reported in, hertz.
@@ -2003,17 +2080,36 @@ pub fn branching_parameter(avalanches: &[Avalanche]) -> Option<f64> {
     Some(offspring as f64 / parents as f64)
 }
 
-/// Beggs and Plenz's own estimator: the ratio of the mean second-generation size to the mean first.
+/// The two-frame ratio Beggs and Plenz give as an approximation to their branching parameter, taken
+/// here as total second-frame events over total first-frame events.
 ///
-/// Their `sigma` — the "average number of descendants from one ancestor" — read off the first two
-/// frames of each avalanche (J. Neurosci. 23:11167, 2003, and Beggs & Plenz, J. Neurosci. 24:5216,
-/// 2004). Avalanches with only one generation contribute a zero to the numerator and must be
-/// included; dropping them is the same survival-conditioning error [`branching_parameter`] warns
-/// about, and it is why this function takes every avalanche rather than the ones that lasted.
+/// Their `sigma` is the "average number of descendants from one ancestor", read off the first two
+/// time bins of each avalanche (Beggs & Plenz, *Neuronal avalanches in neocortical circuits*,
+/// J. Neurosci. 23(35):11167-11177, 2003, doi:10.1523/JNEUROSCI.23-35-11167.2003; and Beggs &
+/// Plenz, J. Neurosci. 24:5216, 2004). Their Discussion states the approximation this function
+/// computes: "This average number of descendants can be approximated by the ratio of descendant
+/// electrodes to ancestor electrodes for two successive time bins at the beginning of an
+/// avalanche". This function reads that as a ratio of totals over avalanches,
+/// `sum(n_d) / sum(n_a)`; the sentence itself does not say whether the ratio is of totals or
+/// averaged per avalanche. Avalanches with only one generation contribute a zero to the numerator
+/// and must be included; dropping them is the same survival-conditioning error
+/// [`branching_parameter`] warns about, and it is why this function takes every avalanche rather
+/// than the ones that lasted.
+///
+/// **It is not their estimator.** Their Methods, eqs. (1)-(3), compute `sigma = sum_d d p(d)` with
+/// `d = round(n_d / n_a)` taken per avalanche, and weight each avalanche's share of `p(d)` by
+/// `(n_max - 1) / (n_max - n_a)`,
+/// "a factor that provided an approximate correction for the reduced number of electrodes
+/// available in the next time bin because of refractoriness", with `n_max` the number of
+/// electrodes. Without the rounding and the correction those equations reduce to the ratio here.
+/// An [`Avalanche`] carries no electrode count, so the correction cannot be applied to one. The
+/// factor exceeds 1 whenever `n_a > 1`, so on its own it raises their estimate above this ratio
+/// whenever an avalanche with more than one ancestor has a descendant; the rounding can move it
+/// either way. This doc used to call the ratio "Beggs and Plenz's own estimator".
 ///
 /// It uses two frames where [`branching_parameter`] uses all of them, so it is noisier by roughly
-/// the square root of the mean duration — it is here because it is what the founding paper reported,
-/// not because it is the better estimator.
+/// the square root of the mean duration. It is here because it is the founding paper's stated
+/// approximation, not because it is the better estimator.
 ///
 /// `None` for an empty slice or a zero first-generation total.
 #[must_use]
@@ -3577,26 +3673,79 @@ mod tests {
         }
     }
 
-    /// The regime prediction decides exactly the two boundaries it has closed forms for and refuses
-    /// the third. The refusal is the point: an implementation that returned
-    /// `AsynchronousIrregular` for everything inhibition-dominated would pass a looser test and
-    /// would be claiming a boundary it does not have.
+    /// The regime prediction decides the one boundary it can compute and refuses the others, and
+    /// the points it refuses are Brunel's own. The refusal is the point: an implementation that
+    /// returned `AsynchronousIrregular` for everything inhibition-dominated, or
+    /// `SynchronousRegular` for everything excitation-dominated, would be claiming a boundary it
+    /// does not have.
+    ///
+    /// Brunel 2000 Fig. 7 is drawn for exactly the network `brunel_net` builds (`C_E = 1000`,
+    /// `C_I = 250`, `J = 0.1` mV, `D = 1.5` ms), and its four diamonds are the simulations of
+    /// Fig. 8: (a) `g = 3`, `nu_ext / nu_thr = 2`, SR; (b) 6 and 4, SI with the fast oscillation;
+    /// (c) 5 and 2, AI; (d) 4.5 and 0.9, SI with the slow one. None is silent and none has a closed
+    /// form here, so every one must come back `None`.
+    ///
+    /// This test used to be called
+    /// `the_predicted_regime_decides_only_the_boundaries_that_have_closed_forms` and asserted
+    /// `SynchronousRegular` at `g = 2`, from the rule `g * gamma < 1`. Point (a) is SR, so a test
+    /// on it alone could not tell the rule from the truth; the two fixtures after the loop are
+    /// where Brunel's diagrams and that rule disagree.
     #[test]
-    fn the_predicted_regime_decides_only_the_boundaries_that_have_closed_forms() {
+    fn the_predicted_regime_decides_only_silence_and_declines_brunels_own_points() {
+        for &(g, ratio, point) in &[
+            (3.0, 2.0, "(a), SR"),
+            (6.0, 4.0, "(b), SI fast"),
+            (5.0, 2.0, "(c), AI"),
+            (4.5, 0.9, "(d), SI slow"),
+        ] {
+            let net = brunel_net(g, ratio);
+            let nu = net.self_consistent_rate().unwrap();
+            assert!(
+                nu >= super::SILENCE_RATE_HZ,
+                "Fig. 7 point {point} solved to {nu} Hz, so this would test the silence branch"
+            );
+            assert_eq!(net.predicted_regime().unwrap(), None, "Fig. 7 point {point}");
+        }
+
+        // Fig. 7 at nu_ext / nu_thr = 2: the SR-to-AI line sits between g = 3 and g = 3.5 (section
+        // 6: compared with Fig. 2 it "has slightly moved toward the left"), so g = 3.75 is AI
+        // although g * gamma = 0.9375 is below 1.
+        let left_of_balance = brunel_net(3.75, 2.0);
+        assert_eq!(left_of_balance.balance_index(), Some(0.9375));
+        assert!(left_of_balance.self_consistent_rate().unwrap() >= super::SILENCE_RATE_HZ);
         assert_eq!(
-            brunel_net(2.0, 2.0).predicted_regime().unwrap(),
-            Some(Regime::SynchronousRegular),
-            "g * gamma < 1 is excitation dominated"
+            left_of_balance.predicted_regime().unwrap(),
+            None,
+            "Fig. 7 puts g = 3.75 in AI; the old g * gamma < 1 rule called it SR"
         );
+
+        // Fig. 2C: a delay equal to the 2 ms refractory period, and the low-g region is AR. Fig. 2's
+        // caption states no C_E or J; section 6 calls it "a network with higher connectivity" than
+        // Fig. 7's. The parameters the paper does state for its section 4 figures are Fig. 1's,
+        // C_E = 4000 and J = 0.2 mV, and section 5 says "the precise location of the Hopf
+        // bifurcations is only weakly dependent on the value of C_E and J", so this uses those. At
+        // g = 2 and nu_ext / nu_thr = 3 the point sits well above the SR curve, which on Fig. 2C
+        // meets the axis at g = 0 near nu_ext / nu_thr = 2.
+        let commensurate = BrunelNetwork {
+            c_exc: 4000.0,
+            c_inh: 1000.0,
+            j: 0.2e-3,
+            delay: 2e-3,
+            ..brunel_net(2.0, 3.0)
+        };
+        assert_eq!(commensurate.delay, commensurate.neuron.t_ref);
+        assert_eq!(commensurate.balance_index(), Some(0.5));
+        assert!(commensurate.self_consistent_rate().unwrap() >= super::SILENCE_RATE_HZ);
+        assert_eq!(
+            commensurate.predicted_regime().unwrap(),
+            None,
+            "Fig. 2C labels this point AR; the old g * gamma < 1 rule called it SR"
+        );
+
         assert_eq!(
             brunel_net(6.0, 0.8).predicted_regime().unwrap(),
             Some(Regime::NearlySilent),
             "below the threshold drive with dominant inhibition"
-        );
-        assert_eq!(
-            brunel_net(5.0, 2.0).predicted_regime().unwrap(),
-            None,
-            "the asynchronous-to-synchronous boundary has no closed form here"
         );
         // A neuron without a refractory period has no bracket, and that is an error rather than a
         // guess at a ceiling.
@@ -4151,7 +4300,8 @@ mod tests {
             let avalanches: Vec<_> = (0..20_000).map(|_| p.avalanche(&mut rng, 20_000)).collect();
             let got = branching_parameter(&avalanches).unwrap();
             assert!((got - m).abs() < 0.01, "m = {m}: estimated {got}");
-            // Beggs and Plenz's two-frame ratio is noisier but unbiased, so it needs a wider band.
+            // The two-frame ratio, the approximation Beggs and Plenz state in their Discussion, is
+            // noisier but unbiased, so it needs a wider band.
             let bp = beggs_plenz_ratio(&avalanches).unwrap();
             assert!((bp - m).abs() < 0.05, "m = {m}: Beggs-Plenz ratio {bp}");
             // The mean size against 1/(1-m), where that exists. This is the second, independent

@@ -1,0 +1,1149 @@
+[
+ {
+  "label": "msg NotPositive",
+  "old": "\"{what} = {value} must be finite and positive\"",
+  "new": "\"{what} = {value} must be positive\""
+ },
+ {
+  "label": "msg Negative",
+  "old": "\"{what} = {value} must be finite and not negative\"",
+  "new": "\"{what} = {value} must not be negative\""
+ },
+ {
+  "label": "msg NonFinite",
+  "old": "\"{what} = {value} is not finite\"",
+  "new": "\"{what} = {value} is not a number\""
+ },
+ {
+  "label": "msg OutOfRange",
+  "old": "\"{what} = {value} is outside [{low}, {high}]\"",
+  "new": "\"{what} = {value} is outside ({low}, {high})\""
+ },
+ {
+  "label": "msg Subthreshold",
+  "old": "\"drive I = {drive} does not exceed the threshold 1, so an uncoupled cell never fires\"",
+  "new": "\"drive I = {drive} does not exceed the threshold 1\""
+ },
+ {
+  "label": "msg Overdriven",
+  "old": "\"drive I = {drive} is not below {limit}, where the synchronous period reaches the spike width\"",
+  "new": "\"drive I = {drive} is not below {limit}\""
+ },
+ {
+  "label": "msg PeriodTooShort",
+  "old": "\"period T = {period} must exceed {limit}\"",
+  "new": "\"period T = {period} must be at least {limit}\""
+ },
+ {
+  "label": "msg AboveThreshold",
+  "old": "\"cell {cell} starts at v = {value}, not below the threshold 1\"",
+  "new": "\"cell {cell} starts at v = {value}\""
+ },
+ {
+  "label": "msg Uncoupled",
+  "old": "write!(f, \"g_c = 0 and g_s = 0: with no coupling every phase difference is locked\")",
+  "new": "write!(f, \"no coupling\")"
+ },
+ {
+  "label": "msg TooFew",
+  "old": "\"{what} = {value} must be at least {min}\"",
+  "new": "\"{what} = {value} is below {min}\""
+ },
+ {
+  "label": "msg Empty",
+  "old": "\"the interval ({low}, {high}) is empty\"",
+  "new": "\"the interval [{low}, {high}] is empty\""
+ },
+ {
+  "label": "msg Mismatch",
+  "old": "\"{drives} drives and {voltages} starting voltages: one of each per cell\"",
+  "new": "\"{drives} drives and {voltages} starting voltages\""
+ },
+ {
+  "label": "msg Stalled",
+  "old": "\"the run used up its event budget at t = {time}; sample more finely\"",
+  "new": "\"the run stalled at t = {time}\""
+ },
+ {
+  "label": "finite accepts anything",
+  "old": "if value.is_finite() { Ok(value) } else { Err(GapError::NonFinite { what, value }) }",
+  "new": "if true { Ok(value) } else { Err(GapError::NonFinite { what, value }) }"
+ },
+ {
+  "label": "positive accepts zero",
+  "old": "if value.is_finite() && value > 0.0 { Ok(value) } else { Err(GapError::NotPositive { what, value }) }",
+  "new": "if value.is_finite() && value >= 0.0 { Ok(value) } else { Err(GapError::NotPositive { what, value }) }"
+ },
+ {
+  "label": "positive accepts infinity",
+  "old": "if value.is_finite() && value > 0.0 { Ok(value) }",
+  "new": "if value > 0.0 { Ok(value) }"
+ },
+ {
+  "label": "non_negative refuses zero",
+  "old": "if value.is_finite() && value >= 0.0 { Ok(value) }",
+  "new": "if value.is_finite() && value > 0.0 { Ok(value) }"
+ },
+ {
+  "label": "non_negative accepts infinity",
+  "old": "if value.is_finite() && value >= 0.0 {",
+  "new": "if value >= 0.0 {"
+ },
+ {
+  "label": "at_least strict",
+  "old": "if value >= min { Ok(value) }",
+  "new": "if value > min { Ok(value) }"
+ },
+ {
+  "label": "phi1 limit 0",
+  "old": "if y == 0.0 { 1.0 } else { y.exp_m1() / y }",
+  "new": "if y == 0.0 { 0.0 } else { y.exp_m1() / y }"
+ },
+ {
+  "label": "phi1 formula",
+  "old": "{ 1.0 } else { y.exp_m1() / y }",
+  "new": "{ 1.0 } else { y.exp() / y }"
+ },
+ {
+  "label": "phi2 never series",
+  "old": "if y.abs() < 0.5 {",
+  "new": "if y.abs() < 0.0 {"
+ },
+ {
+  "label": "phi2 term start",
+  "old": "let mut term = 0.5;",
+  "new": "let mut term = 0.25;"
+ },
+ {
+  "label": "phi2 sum start",
+  "old": "let mut sum = 0.5;",
+  "new": "let mut sum = 0.0;"
+ },
+ {
+  "label": "phi2 fewer terms",
+  "old": "for k in 1..18 {",
+  "new": "for k in 1..8 {"
+ },
+ {
+  "label": "phi2 term ratio",
+  "old": "term *= y / (k + 2) as f64;",
+  "new": "term *= y / (k + 1) as f64;"
+ },
+ {
+  "label": "phi2 term weight",
+  "old": "sum += (k + 1) as f64 * term;",
+  "new": "sum += k as f64 * term;"
+ },
+ {
+  "label": "phi2 closed form sign",
+  "old": "(y * y.exp() - y.exp_m1()) / (y * y)",
+  "new": "(y * y.exp() + y.exp_m1()) / (y * y)"
+ },
+ {
+  "label": "alpha_response branch",
+  "old": "    let d = kappa - alpha;\n    if d > 0.0 {",
+  "new": "    let d = kappa - alpha;\n    if d < 0.0 {"
+ },
+ {
+  "label": "alpha_response d sign",
+  "old": "let d = kappa - alpha;",
+  "new": "let d = alpha - kappa;"
+ },
+ {
+  "label": "alpha_response rearranged q term",
+  "old": "(p * a + q * s * (a - b))",
+  "new": "(p * a + q * s * (a + b))"
+ },
+ {
+  "label": "alpha_response direct q term",
+  "old": "q * s * phi2(d * s))",
+  "new": "q * s * phi1(d * s))"
+ },
+ {
+  "label": "s_periodic tail sign",
+  "old": "alpha * alpha / (one_q * one_q) * (-alpha * u).exp() * (u * one_q + period * q)",
+  "new": "alpha * alpha / (one_q * one_q) * (-alpha * u).exp() * (u * one_q - period * q)"
+ },
+ {
+  "label": "s_periodic q",
+  "old": "fn s_periodic(alpha: f64, period: f64, u: f64) -> f64 {\n    let q = (-alpha * period).exp();",
+  "new": "fn s_periodic(alpha: f64, period: f64, u: f64) -> f64 {\n    let q = (-alpha * period * 0.5).exp();"
+ },
+ {
+  "label": "leaky_s shift",
+  "old": "let scale = alpha * alpha / (one_q * one_q) * (-alpha * t0).exp();",
+  "new": "let scale = alpha * alpha / (one_q * one_q) * (alpha * t0).exp();"
+ },
+ {
+  "label": "leaky_s p term",
+  "old": "scale * (t0 * one_q + period * q)",
+  "new": "scale * (t0 * one_q - period * q)"
+ },
+ {
+  "label": "bisect too few halvings",
+  "old": "for _ in 0..1100 {",
+  "new": "for _ in 0..60 {"
+ },
+ {
+  "label": "bisect no-progress break removed",
+  "old": "        if m <= lo || m >= hi {\n            break;\n        }\n",
+  "new": "",
+  "equivalent": "The break only stops iterating once no float lies strictly between lo and hi. Under bisect's contract, below(lo) holds and below(hi) does not, every later pass computes m equal to lo (below true, lo = m: no change) or to hi (below false, hi = m: no change), so the result is the same bits, only later. Every caller meets the contract: roots bisects towards the sign found at the bracket's lower end, both crossing searches start from a voltage below threshold (idle cells are below 1 at every step start), and eq. (11)'s q is below beta > 0 at every point the search visits. Fixture tools/equivalence/gapjunction_bisect.rs, built with rustc -O and run: both versions on 1,000,000 random brackets and monotone predicates meeting the contract, scales 1e-300 to 1e300, both signs, a fifth of the thresholds within one ulp of an end: 0 disagreements."
+ },
+ {
+  "label": "bisect moves the wrong end",
+  "old": "if below(m) {\n            lo = m;\n        } else {\n            hi = m;\n        }",
+  "new": "if below(m) {\n            hi = m;\n        } else {\n            lo = m;\n        }"
+ },
+ {
+  "label": "bisect returns lo",
+  "old": "        }\n    }\n    hi\n}",
+  "new": "        }\n    }\n    lo\n}"
+ },
+ {
+  "label": "roots sign change test",
+  "old": "if (prev.1 < 0.0) != (now.1 < 0.0) {\n            let neg = prev.1 < 0.0;",
+  "new": "if (prev.1 < 0.0) == (now.1 < 0.0) {\n            let neg = prev.1 < 0.0;"
+ },
+ {
+  "label": "roots bisect side",
+  "old": "let neg = prev.1 < 0.0;",
+  "new": "let neg = now.1 < 0.0;"
+ },
+ {
+  "label": "roots never advances",
+  "old": "            out.push(bisect(|m| (f(m) < 0.0) == neg, prev.0, now.0));\n        }\n        prev = now;",
+  "new": "            out.push(bisect(|m| (f(m) < 0.0) == neg, prev.0, now.0));\n        }\n        prev = (prev.0, prev.1);"
+ },
+ {
+  "label": "roots last interval skipped",
+  "old": "for n in 1..=samples {\n        let x = a + (b - a) * n as f64 / samples as f64;",
+  "new": "for n in 1..samples {\n        let x = a + (b - a) * n as f64 / samples as f64;"
+ },
+ {
+  "label": "combined rho half-open",
+  "old": "if !(0.0..=1.0).contains(&rho) {",
+  "new": "if !(0.0..1.0).contains(&rho) {"
+ },
+ {
+  "label": "combined g_s share",
+  "old": "Self::new(drive, rho * g_tot, beta, (1.0 - rho) * g_tot, alpha)",
+  "new": "Self::new(drive, rho * g_tot, beta, (1.0 + rho) * g_tot, alpha)"
+ },
+ {
+  "label": "check drive NaN let through",
+  "old": "        finite(\"I\", self.drive)?;\n        if self.drive <= 1.0 {",
+  "new": "        if self.drive <= 1.0 {"
+ },
+ {
+  "label": "check drive 1 allowed",
+  "old": "if self.drive <= 1.0 {\n            return Err(GapError::Subthreshold { drive: self.drive });",
+  "new": "if self.drive < 1.0 {\n            return Err(GapError::Subthreshold { drive: self.drive });"
+ },
+ {
+  "label": "check g_c unchecked",
+  "old": "        non_negative(\"g_c\", self.g_c)?;\n",
+  "new": ""
+ },
+ {
+  "label": "check beta unchecked",
+  "old": "        non_negative(\"beta\", self.beta)?;\n",
+  "new": ""
+ },
+ {
+  "label": "check g_s unchecked",
+  "old": "        finite(\"g_s\", self.g_s)?;\n",
+  "new": ""
+ },
+ {
+  "label": "check alpha unchecked",
+  "old": "        positive(\"alpha\", self.alpha)?;\n",
+  "new": ""
+ },
+ {
+  "label": "period formula",
+  "old": "(self.drive / (self.drive - 1.0)).ln()",
+  "new": "(self.drive / (self.drive + 1.0)).ln()"
+ },
+ {
+  "label": "limit cycle sign",
+  "old": "Ok(self.drive * -(-u).exp_m1())",
+  "new": "Ok(self.drive * (-u).exp_m1())"
+ },
+ {
+  "label": "prc zero at spike",
+  "old": "Ok(if u > 0.0 { u.exp() / (self.drive * period) } else { 0.0 })",
+  "new": "Ok(if u >= 0.0 { u.exp() / (self.drive * period) } else { 0.0 })"
+ },
+ {
+  "label": "prc shape",
+  "old": "Ok(if u > 0.0 { u.exp() / (self.drive * period) }",
+  "new": "Ok(if u > 0.0 { (-u).exp() / (self.drive * period) }"
+ },
+ {
+  "label": "phase advance knock-over at 1",
+  "old": "Ok(if v >= 1.0 { (period - u) / period }",
+  "new": "Ok(if v > 1.0 { (period - u) / period }"
+ },
+ {
+  "label": "phase advance log",
+  "old": "(self.drive / (self.drive - eps * u.exp())).ln() / period",
+  "new": "(self.drive / (self.drive + eps * u.exp())).ln() / period"
+ },
+ {
+  "label": "H ohmic sign",
+  "old": "let sub = self.g_c / period * (1.0 - (1.0 - p) * (-p * period).exp() - p * ((1.0 - p) * period).exp());",
+  "new": "let sub = self.g_c / period * (1.0 - (1.0 - p) * (-p * period).exp() + p * ((1.0 - p) * period).exp());"
+ },
+ {
+  "label": "H ohmic scale",
+  "old": "let sub = self.g_c / period * (1.0 -",
+  "new": "let sub = self.g_c * period * (1.0 -"
+ },
+ {
+  "label": "H kick at zero phase",
+  "old": "let spike = if p > 0.0 { self.g_c * self.beta",
+  "new": "let spike = if p >= 0.0 { self.g_c * self.beta"
+ },
+ {
+  "label": "H kick dropped at the wrap to 1",
+  "old": "let spike = if p > 0.0 { self.g_c * self.beta * ((1.0 - p)",
+  "new": "let spike = if p > 0.0 && p < 1.0 { self.g_c * self.beta * ((1.0 - p)"
+ },
+ {
+  "label": "H kick exponent",
+  "old": "self.g_c * self.beta * ((1.0 - p) * period).exp() / (i * period * period) } else { 0.0 };",
+  "new": "self.g_c * self.beta * (p * period).exp() / (i * period * period) } else { 0.0 };"
+ },
+ {
+  "label": "H inhibition sign",
+  "old": "sub + spike - self.g_s * self.j(p) / (i * period * period)",
+  "new": "sub + spike + self.g_s * self.j(p) / (i * period * period)"
+ },
+ {
+  "label": "J wrap-around term",
+  "old": "(-p * period).exp() * (f(period) + period.exp_m1() * f(p * period))",
+  "new": "(-p * period).exp() * (f(period) - period.exp_m1() * f(p * period))"
+ },
+ {
+  "label": "J F uses phi2",
+  "old": "k * (one_q * x * x * phi2((1.0 - a) * x) + period * q * x * phi1((1.0 - a) * x))",
+  "new": "k * (one_q * x * x * phi1((1.0 - a) * x) + period * q * x * phi1((1.0 - a) * x))"
+ },
+ {
+  "label": "H' ohmic term",
+  "old": "(e_lo + (1.0 - p) * period * e_lo - e_hi + p * period * e_hi)",
+  "new": "(e_lo + (1.0 - p) * period * e_lo + e_hi + p * period * e_hi)"
+ },
+ {
+  "label": "H' kick sign",
+  "old": "let spike = -self.g_c * self.beta * e_hi / (i * period);",
+  "new": "let spike = self.g_c * self.beta * e_hi / (i * period);"
+ },
+ {
+  "label": "H' inhibition J'",
+  "old": "let dj = period * (period.exp_m1() * s_periodic(self.alpha, period, p * period) - self.j(p));",
+  "new": "let dj = period * (period.exp_m1() * s_periodic(self.alpha, period, p * period) + self.j(p));"
+ },
+ {
+  "label": "h period wrap",
+  "old": "Ok(self.h_at(finite(\"psi\", psi)?.rem_euclid(1.0)))",
+  "new": "Ok(self.h_at(finite(\"psi\", psi)?.rem_euclid(2.0)))"
+ },
+ {
+  "label": "G is H(-phi) - H(phi)",
+  "old": "Ok(self.h_at((-phi).rem_euclid(1.0)) - self.h_at(phi.rem_euclid(1.0)))",
+  "new": "Ok(self.h_at((-phi).rem_euclid(1.0)) + self.h_at(phi.rem_euclid(1.0)))"
+ },
+ {
+  "label": "G' ends at zero",
+  "old": "let (lo, hi) = if p > 0.0 { (p, 1.0 - p) } else { (0.0, 1.0) };",
+  "new": "let (lo, hi) = if p > 0.0 { (p, 1.0 - p) } else { (0.0, 0.0) };"
+ },
+ {
+  "label": "G' sum",
+  "old": "Ok(-self.h_slope_at(hi) - self.h_slope_at(lo))",
+  "new": "Ok(-self.h_slope_at(hi) + self.h_slope_at(lo))"
+ },
+ {
+  "label": "uncoupled needs both zero",
+  "old": "if self.g_c == 0.0 && self.g_s == 0.0 {",
+  "new": "if self.g_c == 0.0 || self.g_s == 0.0 {"
+ },
+ {
+  "label": "locked states minimum samples",
+  "old": "let samples = at_least(\"samples\", samples, 3)?;",
+  "new": "let samples = at_least(\"samples\", samples, 2)?;"
+ },
+ {
+  "label": "locked states half range",
+  "old": "roots(|x| self.h_at(1.0 - x) - self.h_at(x), step, 0.5 - step, samples - 2)",
+  "new": "roots(|x| self.h_at(1.0 - x) - self.h_at(x), step, 0.25 - step, samples - 2)"
+ },
+ {
+  "label": "interior stability sign",
+  "old": ".map(|z| LockedState { phase: z, stable: -self.h_slope_at(1.0 - z) - self.h_slope_at(z) < 0.0 })",
+  "new": ".map(|z| LockedState { phase: z, stable: -self.h_slope_at(1.0 - z) - self.h_slope_at(z) > 0.0 })"
+ },
+ {
+  "label": "sync stable at beta 0",
+  "old": "let sync = self.g_c * self.beta > 0.0 ||",
+  "new": "let sync = self.g_c * self.beta >= 0.0 ||"
+ },
+ {
+  "label": "sync needs kick and slope",
+  "old": "let sync = self.g_c * self.beta > 0.0 || -self.h_slope_at(1.0) - self.h_slope_at(0.0) < 0.0;",
+  "new": "let sync = self.g_c * self.beta > 0.0 && -self.h_slope_at(1.0) - self.h_slope_at(0.0) < 0.0;"
+ },
+ {
+  "label": "sync slope sign",
+  "old": "|| -self.h_slope_at(1.0) - self.h_slope_at(0.0) < 0.0;",
+  "new": "|| -self.h_slope_at(1.0) - self.h_slope_at(0.0) > 0.0;"
+ },
+ {
+  "label": "antiphase stability sign",
+  "old": "stable: -2.0 * self.h_slope_at(0.5) < 0.0 });",
+  "new": "stable: -2.0 * self.h_slope_at(0.5) > 0.0 });"
+ },
+ {
+  "label": "mirror stability",
+  "old": "LockedState { phase: 1.0 - s.phase, stable: s.stable }",
+  "new": "LockedState { phase: 1.0 - s.phase, stable: !s.stable }"
+ },
+ {
+  "label": "probability when sync unstable",
+  "old": "if !states[0].stable {\n            return Ok(0.0);",
+  "new": "if !states[0].stable {\n            return Ok(1.0);"
+ },
+ {
+  "label": "probability basin edge",
+  "old": "states[1..].iter().find(|s| !s.stable)",
+  "new": "states[1..].iter().find(|s| s.stable)"
+ },
+ {
+  "label": "probability basin width",
+  "old": "Ok(2.0 * states[1..]",
+  "new": "Ok(1.0 * states[1..]"
+ },
+ {
+  "label": "critical drives low unchecked",
+  "old": "        Self { drive: low, ..*self }.check()?;\n",
+  "new": ""
+ },
+ {
+  "label": "critical drives high unchecked",
+  "old": "        Self { drive: high, ..*self }.check()?;\n",
+  "new": ""
+ },
+ {
+  "label": "critical drives empty strict",
+  "old": "        Self { drive: high, ..*self }.check()?;\n        if low >= high {",
+  "new": "        Self { drive: high, ..*self }.check()?;\n        if low > high {"
+ },
+ {
+  "label": "critical drives zero samples",
+  "old": "return Err(GapError::Empty { low, high });\n        }\n        let samples = at_least(\"samples\", samples, 1)?;\n        Ok(roots(|i|",
+  "new": "return Err(GapError::Empty { low, high });\n        }\n        let samples = at_least(\"samples\", samples, 0)?;\n        Ok(roots(|i|"
+ },
+ {
+  "label": "critical drives at antiphase",
+  "old": "Ok(roots(|i| Self { drive: i, ..*self }.h_slope_at(0.5), low, high, samples))",
+  "new": "Ok(roots(|i| Self { drive: i, ..*self }.h_slope_at(0.25), low, high, samples))"
+ },
+ {
+  "label": "eq11 series never used",
+  "old": "            if x < 1.0 {\n                let (mut term, mut c) = (1.0, 0.0);",
+  "new": "            if x < 0.0 {\n                let (mut term, mut c) = (1.0, 0.0);"
+ },
+ {
+  "label": "eq11 series short",
+  "old": "for n in 1..=10 {",
+  "new": "for n in 1..=4 {"
+ },
+ {
+  "label": "eq11 series ratio",
+  "old": "term *= x * x / ((2 * n) * (2 * n + 1)) as f64;",
+  "new": "term *= x * x / ((2 * n) * (2 * n + 2)) as f64;"
+ },
+ {
+  "label": "eq11 series weight",
+  "old": "c += (2 * n) as f64 * term;",
+  "new": "c += term;"
+ },
+ {
+  "label": "eq11 series sinh",
+  "old": "x * c / x.sinh()",
+  "new": "x * c / x.cosh()"
+ },
+ {
+  "label": "eq11 direct branch",
+  "old": "x / x.tanh() - 1.0",
+  "new": "x / x.tanh() + 1.0"
+ },
+ {
+  "label": "eq11 bracket",
+  "old": "let x = bisect(|x| q(x) < beta, 0.0, 1.0 + beta);",
+  "new": "let x = bisect(|x| q(x) < beta, 0.0, 0.5 + beta);"
+ },
+ {
+  "label": "eq11 drive from period",
+  "old": "Ok(1.0 / -(-2.0 * x).exp_m1())",
+  "new": "Ok(1.0 / -(-x).exp_m1())"
+ },
+ {
+  "label": "eq11 beta unchecked",
+  "old": "let beta = positive(\"beta\", beta)?;",
+  "new": "let beta = finite(\"beta\", beta)?;"
+ },
+ {
+  "label": "orbit mu",
+  "old": "let (i, a, k, mu) = (self.drive, self.alpha, self.g_c * self.beta, 1.0 + 2.0 * self.g_c);",
+  "new": "let (i, a, k, mu) = (self.drive, self.alpha, self.g_c * self.beta, 1.0 + self.g_c);"
+ },
+ {
+  "label": "orbit kick",
+  "old": "let (i, a, k, mu) = (self.drive, self.alpha, self.g_c * self.beta,",
+  "new": "let (i, a, k, mu) = (self.drive, self.alpha, 0.0 * self.beta,"
+ },
+ {
+  "label": "orbit v- synaptic difference",
+  "old": "let d = leaky_s(a, t, mu, h, h) - leaky_s(a, t, mu, 0.0, h);",
+  "new": "let d = leaky_s(a, t, mu, h, h) + leaky_s(a, t, mu, 0.0, h);"
+ },
+ {
+  "label": "orbit u kick sign",
+  "old": "(1.0 - k * (-mu * h).exp() - self.g_s * d) / (1.0 + (-mu * h).exp())",
+  "new": "(1.0 + k * (-mu * h).exp() - self.g_s * d) / (1.0 + (-mu * h).exp())"
+ },
+ {
+  "label": "orbit u inhibition sign",
+  "old": "(1.0 - k * (-mu * h).exp() - self.g_s * d)",
+  "new": "(1.0 - k * (-mu * h).exp() + self.g_s * d)"
+ },
+ {
+  "label": "orbit v+ synaptic sum",
+  "old": "let s = leaky_s(a, t, 1.0, 0.0, h) + leaky_s(a, t, 1.0, h, h);",
+  "new": "let s = leaky_s(a, t, 1.0, 0.0, h) - leaky_s(a, t, 1.0, h, h);"
+ },
+ {
+  "label": "orbit kick decays",
+  "old": "(u + k) * (-h).exp() - 2.0 * i * (-h).exp_m1() - self.g_s * s - (u + 1.0)",
+  "new": "(u - k) * (-h).exp() - 2.0 * i * (-h).exp_m1() - self.g_s * s - (u + 1.0)"
+ },
+ {
+  "label": "orbit inhibition sign",
+  "old": "- 2.0 * i * (-h).exp_m1() - self.g_s * s - (u + 1.0)",
+  "new": "- 2.0 * i * (-h).exp_m1() + self.g_s * s - (u + 1.0)"
+ },
+ {
+  "label": "orbit capture test",
+  "old": "Ok(if u + k < 1.0 { Some(Orbit { period, u }) } else { None })",
+  "new": "Ok(if u < 1.0 { Some(Orbit { period, u }) } else { None })"
+ },
+ {
+  "label": "orbit t_max unchecked",
+  "old": "        let t_max = positive(\"t_max\", t_max)?;\n        let samples = at_least(\"samples\", samples, 1)?;\n        let (i, a, k, mu)",
+  "new": "        let samples = at_least(\"samples\", samples, 1)?;\n        let (i, a, k, mu)"
+ },
+ {
+  "label": "sync period inhibition sign",
+  "old": "-self.drive * (-t).exp_m1() - self.g_s * leaky_s(self.alpha, t, 1.0, 0.0, t) - 1.0",
+  "new": "-self.drive * (-t).exp_m1() + self.g_s * leaky_s(self.alpha, t, 1.0, 0.0, t) - 1.0"
+ },
+ {
+  "label": "sync period drive term",
+  "old": "let residual = |t: f64| -self.drive * (-t).exp_m1()",
+  "new": "let residual = |t: f64| self.drive * (-t).exp_m1()"
+ },
+ {
+  "label": "pair start at threshold allowed",
+  "old": "if v >= 1.0 {\n                return Err(GapError::AboveThreshold { cell, value: v });\n            }\n        }\n        Ok(Self { model, time: 0.0, v: v0,",
+  "new": "if v > 1.0 {\n                return Err(GapError::AboveThreshold { cell, value: v });\n            }\n        }\n        Ok(Self { model, time: 0.0, v: v0,"
+ },
+ {
+  "label": "pair model unchecked",
+  "old": "        model.check()?;\n        for (cell, &v) in v0.iter().enumerate() {\n            finite(\"v0\", v)?;\n            if v >= 1.0 {\n                return Err(GapError::AboveThreshold { cell, value: v });\n            }\n        }\n        Ok(Self { model, time: 0.0, v: v0,",
+  "new": "        for (cell, &v) in v0.iter().enumerate() {\n            finite(\"v0\", v)?;\n            if v >= 1.0 {\n                return Err(GapError::AboveThreshold { cell, value: v });\n            }\n        }\n        Ok(Self { model, time: 0.0, v: v0,"
+ },
+ {
+  "label": "pair difference rate",
+  "old": "let r = 1.0 + 2.0 * m.g_c;",
+  "new": "let r = 1.0 + m.g_c;"
+ },
+ {
+  "label": "pair sum synaptic sign",
+  "old": "(sum0 - 2.0 * m.drive) * (-s).exp() - m.g_s * alpha_response(1.0, m.alpha, s, p, q)",
+  "new": "(sum0 - 2.0 * m.drive) * (-s).exp() + m.g_s * alpha_response(1.0, m.alpha, s, p, q)"
+ },
+ {
+  "label": "pair sum drive",
+  "old": "let sum = 2.0 * m.drive + (sum0 - 2.0 * m.drive)",
+  "new": "let sum = 2.0 * m.drive + (sum0 - m.drive)"
+ },
+ {
+  "label": "pair difference synaptic sign",
+  "old": "diff0 * (-r * s).exp() - m.g_s * alpha_response(r, m.alpha, s, dp, dq)",
+  "new": "diff0 * (-r * s).exp() + m.g_s * alpha_response(r, m.alpha, s, dp, dq)"
+ },
+ {
+  "label": "pair cells swapped",
+  "old": "[0.5 * (sum + diff), 0.5 * (sum - diff)]",
+  "new": "[0.5 * (sum - diff), 0.5 * (sum + diff)]"
+ },
+ {
+  "label": "pair synaptic difference",
+  "old": "let (dp, dq) = (self.syn[0][0] - self.syn[1][0],",
+  "new": "let (dp, dq) = (self.syn[0][0] + self.syn[1][0],"
+ },
+ {
+  "label": "pair synaptic sum q",
+  "old": "let (p, q) = (self.syn[0][0] + self.syn[1][0], self.syn[0][1] + self.syn[1][1]);",
+  "new": "let (p, q) = (self.syn[0][0] + self.syn[1][0], self.syn[0][1] - self.syn[1][1]);"
+ },
+ {
+  "label": "pair synaptic reframe",
+  "old": "*syn = [(syn[0] + syn[1] * s) * decay, syn[1] * decay];",
+  "new": "*syn = [(syn[0] + syn[1]) * decay, syn[1] * decay];"
+ },
+ {
+  "label": "pair synaptic decay",
+  "old": "let decay = (-self.model.alpha * s).exp();",
+  "new": "let decay = (-self.model.alpha * s * 0.5).exp();"
+ },
+ {
+  "label": "pair advance time",
+  "old": "self.v = self.after(s);\n        let decay",
+  "new": "self.v = self.after(0.5 * s);\n        let decay"
+ },
+ {
+  "label": "fire kick sign",
+  "old": "self.v[k] += kick;",
+  "new": "self.v[k] -= kick;"
+ },
+ {
+  "label": "fire reset",
+  "old": "self.v[j] = 0.0;\n        self.v[k] += kick;",
+  "new": "self.v[j] = 0.1;\n        self.v[k] += kick;"
+ },
+ {
+  "label": "fire synapse target",
+  "old": "self.syn[k][1] += rate;",
+  "new": "self.syn[j][1] += rate;"
+ },
+ {
+  "label": "fire synapse rate",
+  "old": "let (kick, rate) = (self.model.g_c * self.model.beta, self.model.alpha * self.model.alpha);",
+  "new": "let (kick, rate) = (self.model.g_c * self.model.beta, self.model.alpha);"
+ },
+ {
+  "label": "capture never",
+  "old": "if self.v[k] >= 1.0 {\n            self.v[k] = 0.0;",
+  "new": "if self.v[k] >= 2.0 {\n            self.v[k] = 0.0;"
+ },
+ {
+  "label": "capture reset",
+  "old": "if self.v[k] >= 1.0 {\n            self.v[k] = 0.0;",
+  "new": "if self.v[k] >= 1.0 {\n            self.v[k] = 0.5;"
+ },
+ {
+  "label": "capture inhibition not sent",
+  "old": "self.syn[j][1] += rate;\n            out.push",
+  "new": "self.syn[j][1] += 0.0;\n            out.push"
+ },
+ {
+  "label": "capture spike cell",
+  "old": "out.push(Spike { time: self.time, cell: k });",
+  "new": "out.push(Spike { time: self.time, cell: j });"
+ },
+ {
+  "label": "run steps ignore samples",
+  "old": "let steps = (duration * samples as f64 / self.model.t()).ceil() as usize;",
+  "new": "let steps = (duration / self.model.t()).ceil() as usize;"
+ },
+ {
+  "label": "run budget halved",
+  "old": "self.run_within(duration, samples, 8 * (steps + 1))",
+  "new": "self.run_within(duration, samples, 4 * (steps + 1))"
+ },
+ {
+  "label": "run duration unchecked",
+  "old": "let duration = positive(\"duration\", duration)?;\n        let samples = at_least(\"samples\", samples, 1)?;\n        let steps",
+  "new": "let samples = at_least(\"samples\", samples, 1)?;\n        let steps"
+ },
+ {
+  "label": "pair ends early or never",
+  "old": "            if left <= 0.0 {\n                return Ok(out);",
+  "new": "            if left < 0.0 {\n                return Ok(out);"
+ },
+ {
+  "label": "pair step overshoots end",
+  "old": "let s = h.min(left);",
+  "new": "let s = h;"
+ },
+ {
+  "label": "pair crossing threshold",
+  "old": "let t = bisect(|m| self.after(m)[j] < 1.0, 0.0, s);",
+  "new": "let t = bisect(|m| self.after(m)[j] < 0.9, 0.0, s);"
+ },
+ {
+  "label": "pair earliest crossing",
+  "old": "if first.is_none_or(|(t0, _)| t < t0) {",
+  "new": "if first.is_none_or(|(t0, _)| t > t0) {"
+ },
+ {
+  "label": "pair fires the wrong cell",
+  "old": "self.advance(t);\n                    self.fire(j, &mut out);",
+  "new": "self.advance(t);\n                    self.fire(1 - j, &mut out);"
+ },
+ {
+  "label": "CK v_A unchecked",
+  "old": "        non_negative(\"v_A\", self.v_a)?;\n",
+  "new": ""
+ },
+ {
+  "label": "CK xi unchecked",
+  "old": "        positive(\"xi\", self.xi)?;\n",
+  "new": ""
+ },
+ {
+  "label": "CK Delta unchecked",
+  "old": "        positive(\"Delta\", self.width)?;\n",
+  "new": ""
+ },
+ {
+  "label": "CK g unchecked",
+  "old": "        non_negative(\"g\", self.g)?;\n",
+  "new": ""
+ },
+ {
+  "label": "CK v_M unchecked",
+  "old": "        finite(\"v_M\", self.v_m())?;\n",
+  "new": ""
+ },
+ {
+  "label": "spike kernel denominator",
+  "old": "self.v_a / (r + self.xi) * ((self.xi * t).exp() - (-r * t).exp())",
+  "new": "self.v_a / (r - self.xi) * ((self.xi * t).exp() - (-r * t).exp())"
+ },
+ {
+  "label": "spike voltage range half-open",
+  "old": "if !(0.0..=self.width).contains(&t) {",
+  "new": "if !(0.0..self.width).contains(&t) {"
+ },
+ {
+  "label": "spike voltage printed (2.6)",
+  "old": "Ok(1.0 - (drive - 1.0) * (-t).exp_m1() + self.spike_part(t, 1.0))",
+  "new": "Ok(1.0 - drive * (-t).exp_m1() + self.spike_part(t, 1.0))"
+ },
+ {
+  "label": "kernel tail coefficient",
+  "old": "-(1.0 + self.v_m() - self.spike_part(self.width, r))",
+  "new": "-(1.0 + self.v_m() + self.spike_part(self.width, r))"
+ },
+ {
+  "label": "kernel zero before spike",
+  "old": "    fn eta_at(&self, t: f64, r: f64) -> f64 {\n        if t <= 0.0 {",
+  "new": "    fn eta_at(&self, t: f64, r: f64) -> f64 {\n        if t < 0.0 {",
+  "equivalent": "At t = 0 exactly the spike branch returns v_A/(r + xi) * (e^0 - e^-0) = v_A/(r + xi) * 0 = +0.0 for v_A >= 0 (check() refuses a negative v_A), the same bits as the guard's 0.0; for t < 0 both versions take the guard and for t > 0 neither does. Fixture tools/equivalence/gapjunction_eta.rs, built with rustc -O and run: both versions compared bit for bit on 1,000,000 random (t, r, v_A, xi, Delta), a quarter of them at t = +0.0 or -0.0 exactly: 0 disagreements."
+ },
+ {
+  "label": "kernel spike value at Delta",
+  "old": "        } else if t <= self.width {\n            self.spike_part(t, r)",
+  "new": "        } else if t < self.width {\n            self.spike_part(t, r)"
+ },
+ {
+  "label": "kernel tail decay",
+  "old": "\n            self.tail(r) * (-r * (t - self.width)).exp()",
+  "new": "\n            self.tail(r) * (-r * t).exp()"
+ },
+ {
+  "label": "kernel slope in spike",
+  "old": "self.v_a * ((self.xi * (self.xi * t).exp() + r * (-r * t).exp()) / (r + self.xi))",
+  "new": "self.v_a * ((self.xi * (self.xi * t).exp() - r * (-r * t).exp()) / (r + self.xi))"
+ },
+ {
+  "label": "kernel slope from the left at Delta",
+  "old": "    fn eta_slope_at(&self, t: f64, r: f64) -> f64 {\n        if t <= self.width {",
+  "new": "    fn eta_slope_at(&self, t: f64, r: f64) -> f64 {\n        if t < self.width {"
+ },
+ {
+  "label": "kernel slope denominator",
+  "old": "+ r * (-r * t).exp()) / (r + self.xi))",
+  "new": "+ r * (-r * t).exp()) / (1.0 + self.xi))"
+ },
+ {
+  "label": "kernel slope rise term",
+  "old": "self.v_a * ((self.xi * (self.xi * t).exp() +",
+  "new": "self.v_a * (((self.xi * t).exp() +"
+ },
+ {
+  "label": "kernel slope reset term rate",
+  "old": "+ r * (-r * t).exp()) / (r",
+  "new": "+ (-r * t).exp()) / (r"
+ },
+ {
+  "label": "kernel slope tail sign",
+  "old": "-r * self.tail(r) * (-r * (t - self.width)).exp()",
+  "new": "r * self.tail(r) * (-r * (t - self.width)).exp()"
+ },
+ {
+  "label": "lattice head at Delta",
+  "old": "let (head, l0) = if first > self.width {",
+  "new": "let (head, l0) = if first >= self.width {"
+ },
+ {
+  "label": "lattice first index",
+  "old": "(0.0, 1.0)\n        } else if slope {",
+  "new": "(0.0, 2.0)\n        } else if slope {"
+ },
+ {
+  "label": "lattice slope head",
+  "old": "(self.eta_slope_at(first, r), 2.0)",
+  "new": "(self.eta_at(first, r), 2.0)"
+ },
+ {
+  "label": "lattice tail coefficient",
+  "old": "let coef = if slope { -r * self.tail(r) } else { self.tail(r) };",
+  "new": "let coef = if slope { r * self.tail(r) } else { self.tail(r) };"
+ },
+ {
+  "label": "lattice geometric sum",
+  "old": "head + coef * (-r * (l0 * period + c - self.width)).exp() / -(-r * period).exp_m1()",
+  "new": "head + coef * (-r * (l0 * period + c - self.width)).exp() / (-r * period).exp_m1()"
+ },
+ {
+  "label": "mode rate",
+  "old": "1.0 + n as f64 * self.g",
+  "new": "1.0 + self.g"
+ },
+ {
+  "label": "network gamma_s weight",
+  "old": "(self.eta_at(t, 1.0) + (nf - 1.0) * self.eta_at(t, self.rate(n))) / nf",
+  "new": "(self.eta_at(t, 1.0) + (nf - 2.0) * self.eta_at(t, self.rate(n))) / nf"
+ },
+ {
+  "label": "network gamma_c normalisation",
+  "old": "(self.eta_at(t, 1.0) - self.eta_at(t, self.rate(n))) / nf",
+  "new": "(self.eta_at(t, 1.0) - self.eta_at(t, self.rate(n))) / 2.0"
+ },
+ {
+  "label": "delta_c rate",
+  "old": "Ok(1.0 + self.v_m() - self.spike_part(self.width, self.rate(2)))",
+  "new": "Ok(1.0 + self.v_m() - self.spike_part(self.width, self.rate(1)))"
+ },
+ {
+  "label": "check_period allows Delta",
+  "old": "if period > self.width { Ok(period) }",
+  "new": "if period >= self.width { Ok(period) }"
+ },
+ {
+  "label": "G behind sign",
+  "old": "own + ahead - behind",
+  "new": "own + ahead + behind"
+ },
+ {
+  "label": "G' behind sign",
+  "old": "own + ahead + behind",
+  "new": "own + ahead - behind"
+ },
+ {
+  "label": "locking half",
+  "old": "Ok(0.5 * self.g_at(c, period))",
+  "new": "Ok(self.g_at(c, period))"
+ },
+ {
+  "label": "locking slope period",
+  "old": "Ok(0.5 * period * self.g_slope_at(c, period))",
+  "new": "Ok(0.5 * self.g_slope_at(c, period))"
+ },
+ {
+  "label": "F own weight",
+  "old": "0.25 * own + 0.5 * reset + 0.25 * partner",
+  "new": "0.5 * own + 0.5 * reset + 0.25 * partner"
+ },
+ {
+  "label": "F reset weight",
+  "old": "0.25 * own + 0.5 * reset",
+  "new": "0.25 * own + 0.25 * reset"
+ },
+ {
+  "label": "F reset sum",
+  "old": "let reset = self.lattice(0.0, period, 1.0, false) + self.lattice(0.0, period, r, false);",
+  "new": "let reset = self.lattice(0.0, period, 1.0, false) - self.lattice(0.0, period, r, false);"
+ },
+ {
+  "label": "F partner behind sign",
+  "old": "+ self.lattice(-c, period, 1.0, false)\n            - self.lattice(-c, period, r, false);",
+  "new": "- self.lattice(-c, period, 1.0, false)\n            - self.lattice(-c, period, r, false);"
+ },
+ {
+  "label": "sync period drive 1 allowed",
+  "old": "if finite(\"I\", drive)? <= 1.0 {",
+  "new": "if finite(\"I\", drive)? < 1.0 {"
+ },
+ {
+  "label": "sync period limit",
+  "old": "let limit = 1.0 + 1.0 / -(-self.width).exp_m1();",
+  "new": "let limit = 1.0 + 1.0 / self.width.exp_m1();"
+ },
+ {
+  "label": "sync period limit inclusive",
+  "old": "if drive >= limit {",
+  "new": "if drive > limit {"
+ },
+ {
+  "label": "sync period formula",
+  "old": "Ok(((drive - 1.0 + self.width.exp()) / (drive - 1.0)).ln())",
+  "new": "Ok(((drive + 1.0 + self.width.exp()) / (drive - 1.0)).ln())"
+ },
+ {
+  "label": "antiphase period t_max at Delta",
+  "old": "if t_max <= self.width {",
+  "new": "if t_max < self.width {"
+ },
+ {
+  "label": "antiphase period phase",
+  "old": "roots(|t| self.f_at(0.5 * t, t) - (1.0 - drive), self.width, t_max, samples)",
+  "new": "roots(|t| self.f_at(0.25 * t, t) - (1.0 - drive), self.width, t_max, samples)"
+ },
+ {
+  "label": "antiphase period drive sign",
+  "old": "self.f_at(0.5 * t, t) - (1.0 - drive)",
+  "new": "self.f_at(0.5 * t, t) - (1.0 + drive)"
+ },
+ {
+  "label": "slope switches empty strict",
+  "old": "let phi = finite(\"phi\", phi)?.rem_euclid(1.0);\n        if low >= high {",
+  "new": "let phi = finite(\"phi\", phi)?.rem_euclid(1.0);\n        if low > high {"
+ },
+ {
+  "label": "slope switches period",
+  "old": "Ok(roots(|t| self.g_slope_at(phi * t, t), low, high, samples))",
+  "new": "Ok(roots(|t| self.g_slope_at(phi * t, 2.0 * t), low, high, samples))"
+ },
+ {
+  "label": "slope switches high unchecked",
+  "old": "let high = finite(\"high\", high)?;",
+  "new": "let high = high;"
+ },
+ {
+  "label": "t_min denominator",
+  "old": "Ok(self.width + (dc * (1.0 + 2.0 * g)).ln() / (2.0 * g))",
+  "new": "Ok(self.width + (dc * (1.0 + 2.0 * g)).ln() / g)"
+ },
+ {
+  "label": "t_min g zero allowed",
+  "old": "let g = positive(\"g\", self.g)?;",
+  "new": "let g = non_negative(\"g\", self.g)?;"
+ },
+ {
+  "label": "partner peak limit",
+  "old": "let limit = 2.0 * self.width;",
+  "new": "let limit = 1.0 * self.width;"
+ },
+ {
+  "label": "partner peak limit inclusive",
+  "old": "if period <= limit {",
+  "new": "if period < limit {"
+ },
+ {
+  "label": "partner peak drive",
+  "old": "let drive = 1.0 - self.f_at(0.5 * period, period);",
+  "new": "let drive = 1.0 + self.f_at(0.5 * period, period);"
+ },
+ {
+  "label": "partner peak time",
+  "old": "let at = 0.5 * period + self.width;",
+  "new": "let at = 0.5 * period - self.width;"
+ },
+ {
+  "label": "partner peak own modes",
+  "old": "self.eta_at(at, 1.0) + self.eta_at(at, r) +",
+  "new": "self.eta_at(at, 1.0) - self.eta_at(at, r) +"
+ },
+ {
+  "label": "partner peak partner modes",
+  "old": "self.eta_at(self.width, 1.0) - self.eta_at(self.width, r)",
+  "new": "self.eta_at(self.width, 1.0) + self.eta_at(self.width, r)"
+ },
+ {
+  "label": "partner peak half",
+  "old": "Ok(drive + 0.5 * (own + partner))",
+  "new": "Ok(drive + (own + partner))"
+ },
+ {
+  "label": "splay rate",
+  "old": "let r = self.rate(n);\n        let own",
+  "new": "let r = self.rate(2);\n        let own"
+ },
+ {
+  "label": "splay own weight",
+  "old": "(self.lattice(0.0, period, 1.0, false) + (nf - 1.0) * self.lattice(0.0, period, r, false)) / nf",
+  "new": "(self.lattice(0.0, period, 1.0, false) + (nf - 2.0) * self.lattice(0.0, period, r, false)) / nf"
+ },
+ {
+  "label": "splay counts itself",
+  "old": "for j in 1..n {",
+  "new": "for j in 0..n {"
+ },
+ {
+  "label": "splay partner offset sign",
+  "old": "let c = -(j as f64) * period / nf;",
+  "new": "let c = (j as f64) * period / nf;"
+ },
+ {
+  "label": "splay partner modes",
+  "old": "others += (self.lattice(c, period, 1.0, false) - self.lattice(c, period, r, false)) / nf;",
+  "new": "others += (self.lattice(c, period, 1.0, false) + self.lattice(c, period, r, false)) / nf;"
+ },
+ {
+  "label": "splay result sign",
+  "old": "Ok(1.0 - own - others)",
+  "new": "Ok(1.0 - own + others)"
+ },
+ {
+  "label": "net length check",
+  "old": "if v0.len() != n {",
+  "new": "if v0.len() < n {"
+ },
+ {
+  "label": "net drives unchecked",
+  "old": "            finite(\"I\", d)?;\n",
+  "new": ""
+ },
+ {
+  "label": "net start at threshold allowed",
+  "old": "if v >= 1.0 {\n                return Err(GapError::AboveThreshold { cell, value: v });\n            }\n        }\n        Ok(Self { model, time: 0.0, drives,",
+  "new": "if v > 1.0 {\n                return Err(GapError::AboveThreshold { cell, value: v });\n            }\n        }\n        Ok(Self { model, time: 0.0, drives,"
+ },
+ {
+  "label": "net reset rule ignored",
+  "old": "self.reset = reset;",
+  "new": "let _ = reset;"
+ },
+ {
+  "label": "net mode rate",
+  "old": "let big_r = m.rate(self.v.len());",
+  "new": "let big_r = m.rate(2);"
+ },
+ {
+  "label": "net spike current phase",
+  "old": "m.v_a * (m.xi * (self.time - t0)).exp()",
+  "new": "m.v_a * (m.xi * (self.time + t0)).exp()"
+ },
+ {
+  "label": "net mean spike response",
+  "old": "let (k1, kr) = ((ex - e1) / (m.xi + 1.0),",
+  "new": "let (k1, kr) = ((ex - e1) / (m.xi - 1.0),"
+ },
+ {
+  "label": "net deviation spike response",
+  "old": "(ex - er) / (m.xi + big_r));",
+  "new": "(ex - er) / (m.xi + 1.0));"
+ },
+ {
+  "label": "net mean spike sign",
+  "old": "let common = i_bar + (v_bar - i_bar) * e1 + a_bar * k1;",
+  "new": "let common = i_bar + (v_bar - i_bar) * e1 - a_bar * k1;"
+ },
+ {
+  "label": "net drive deviation",
+  "old": "let fixed = (self.drives[i] - i_bar) / big_r;",
+  "new": "let fixed = (self.drives[i] - i_bar) * big_r;"
+ },
+ {
+  "label": "net deviation decay",
+  "old": "common + fixed + (self.v[i] - v_bar - fixed) * er + (a[i] - a_bar) * kr",
+  "new": "common + fixed + (self.v[i] - v_bar + fixed) * er + (a[i] - a_bar) * kr"
+ },
+ {
+  "label": "net spike deviation",
+  "old": "(self.v[i] - v_bar - fixed) * er + (a[i] - a_bar) * kr",
+  "new": "(self.v[i] - v_bar - fixed) * er + (a[i] + a_bar) * kr"
+ },
+ {
+  "label": "net budget without spikes",
+  "old": "self.run_within(duration, step, steps + 4 * spikes + 1)",
+  "new": "self.run_within(duration, step, steps + 1)"
+ },
+ {
+  "label": "net budget without steps",
+  "old": "self.run_within(duration, step, steps + 4 * spikes + 1)",
+  "new": "self.run_within(duration, step, 4 * spikes + 1)"
+ },
+ {
+  "label": "net step unchecked",
+  "old": "let step = positive(\"step\", step)?;",
+  "new": "let step = step;"
+ },
+ {
+  "label": "net spikes restart mid-spike",
+  "old": "if self.ends[i].is_none() && self.v[i] >= 1.0 {",
+  "new": "if self.v[i] >= 1.0 {"
+ },
+ {
+  "label": "net spike width",
+  "old": "self.ends[i] = Some(self.time + width);",
+  "new": "self.ends[i] = Some(self.time + 0.5 * width);"
+ },
+ {
+  "label": "net end of run strict",
+  "old": "if self.time >= end {\n                return Ok(out);",
+  "new": "if self.time > end {\n                return Ok(out);"
+ },
+ {
+  "label": "net horizon",
+  "old": "let horizon = self.ends.iter().flatten().fold(end, |a, &b| a.min(b));",
+  "new": "let horizon = self.ends.iter().flatten().fold(end, |a, &b| a.max(b));"
+ },
+ {
+  "label": "net step ignores horizon",
+  "old": "let target = (self.time + step).min(horizon);",
+  "new": "let target = self.time + step;"
+ },
+ {
+  "label": "net crossing ignores spiking cells",
+  "old": "if self.ends[i].is_none() && v[i] >= 1.0 {",
+  "new": "if v[i] >= 1.0 {"
+ },
+ {
+  "label": "net crossing threshold",
+  "old": "let t = bisect(|m| self.after(m)[i] < 1.0, 0.0, s);",
+  "new": "let t = bisect(|m| self.after(m)[i] < 0.9, 0.0, s);"
+ },
+ {
+  "label": "net earliest crossing",
+  "old": "if first.is_none_or(|t0| t < t0) {",
+  "new": "if first.is_none_or(|t0| t > t0) {"
+ },
+ {
+  "label": "net drift",
+  "old": "let drift = -(-width).exp_m1();",
+  "new": "let drift = (-width).exp_m1();"
+ },
+ {
+  "label": "net ToZero extra",
+  "old": "let extra = if self.reset == Reset::ToZero { (self.drives[i] - 1.0) * drift } else { 0.0 };",
+  "new": "let extra = if self.reset != Reset::ToZero { (self.drives[i] - 1.0) * drift } else { 0.0 };"
+ },
+ {
+  "label": "net ToZero drive",
+  "old": "{ (self.drives[i] - 1.0) * drift }",
+  "new": "{ self.drives[i] * drift }"
+ },
+ {
+  "label": "net reset amount",
+  "old": "self.v[i] -= 1.0 + self.model.v_m() + extra;",
+  "new": "self.v[i] -= 1.0 + self.model.v_m() - extra;"
+ },
+ {
+  "label": "net reset matches end",
+  "old": "if self.ends[i] == Some(target) {",
+  "new": "if self.ends[i] != Some(target) {"
+ },
+ {
+  "label": "net advance time",
+  "old": "fn advance(&mut self, s: f64) {\n        self.v = self.after(s);\n        self.time += s;",
+  "new": "fn advance(&mut self, s: f64) {\n        self.v = self.after(s);\n        self.time += 0.5 * s;"
+ }
+]

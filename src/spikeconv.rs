@@ -51,20 +51,41 @@
 //! is where the literature quietly disagrees with itself; [`MaxPolicy`] states the disagreement
 //! rather than picking a side silently.
 //!
-//! **tdBN** ([`TdBn`], Zheng, Wu, Deng, Yan & Li, *Going Deeper with Directly-Trained Larger
-//! Spiking Neural Networks*, `AAAI` 2021). Ordinary batch normalisation targets unit variance.
+//! **tdBN** ([`TdBn`]; Zheng, Wu, Deng, Hu & Li, *Going Deeper With Directly-Trained Larger
+//! Spiking Neural Networks*, Proc. `AAAI` 35(12):11062-11070 (2021),
+//! doi:10.1609/aaai.v35i12.17320). Ordinary batch normalisation targets unit variance.
 //! A spiking layer does not care about unit variance, it cares about variance **relative to the
 //! firing threshold**: too small and the population never fires, too large and every unit
 //! saturates and the surrogate gradient vanishes on both sides. tdBN targets a standard deviation
-//! of `alpha * V_th` and normalises over the time axis as well as the batch. It is the single
-//! change that took directly-trained spiking networks from roughly ten layers to fifty.
+//! of `alpha * V_th` and normalises over the time axis as well as the batch. Together with a
+//! modified residual shortcut (a tdBN on the shortcut, and a tdBN before the addition), tdBN is
+//! what Zheng et al. credit for taking directly-trained spiking networks from under ten layers to
+//! fifty.
+//!
+//! This paragraph used to call tdBN "the single change" that did it, and it named the fourth
+//! author as Yan. The paper's abstract credits two things: "With the proposed method and
+//! elaborated shortcut connection, we significantly extend directly-trained SNNs from a shallow
+//! structure (<10 layer) to a very deep structure (50 layers)." The fourth author is Yifan Hu, in
+//! the Crossref record for the DOI and in the header of `arXiv`:2011.05280v2.
 //!
 //! **Residual connections** ([`ResidualBlock`], [`ResidualStyle`]; Fang, Yu, Chen, Huang, Masquelier
-//! & Tian, *Deep Residual Learning in Spiking Neural Networks*, `NeurIPS` 2021). See
-//! [`ResidualStyle`] for what `SEW` changes and why. The short version: the naive spiking residual
-//! **cannot represent the identity**, for any choice of shortcut gain, because the neuron it passes
-//! the sum through has a reset and a refractory period. This module demonstrates that rather than
-//! asserting it — `the_naive_residual_cannot_be_the_identity_even_with_a_tuned_gain` runs both.
+//! & Tian, *Deep Residual Learning in Spiking Neural Networks*, `NeurIPS` 2021,
+//! `arXiv`:2102.04159). See [`ResidualStyle`] for what `SEW` changes and why. The short version:
+//! for this crate's [`crate::neuron::Lif`], which has a 2 ms refractory period, the naive spiking
+//! residual **cannot reproduce a constant spike train**, for any choice of shortcut gain. At
+//! `dt = 1 ms` it fires on one timestep in three. The cause is the refractory period, not the
+//! reset: with `t_ref = 0` the same block reproduces its input spike for spike.
+//! `the_naive_residual_cannot_be_the_identity_even_with_a_tuned_gain` runs both rather than
+//! asserting them.
+//!
+//! Fang et al. make a narrower claim, and this paragraph used to attribute the broader one to them,
+//! with the reset and the refractory period as its cause. Their §3.2 says the naive block does
+//! reach the identity for an IF neuron with `0 < V_th <= 1` and reset to zero ("It works for IF
+//! neuron described by Eq. (4)"), and that it is hard to reach for neurons "with complex neuronal
+//! dynamics", their example being a `LIF` with a learnable membrane time constant. This review did
+//! not locate any mention of refractoriness in the paper; the refractory argument is this crate's
+//! own and is specific to its neuron. Fang et al.'s second objection is the vanishing or exploding
+//! shortcut gradient, which [`identity_path_gain`] computes.
 //!
 //! **Initialisation** ([`Init`]). Fan-in scaling, with the fan-in stated as
 //! `C_in * k_h * k_w` and the threshold-aware variant derived in [`Init::ThresholdScaled`] from a
@@ -599,7 +620,11 @@ pub enum Init {
     ///
     /// The spirit — scale the initialisation against the threshold rather than against unity — is
     /// the initialisation half of the argument Zheng et al. 2021 make for [`TdBn`] and that Rathi &
-    /// Roy make in *`DIET-SNN`* (`IEEE TNNLS`, 2021) for learning the threshold instead. This exact
+    /// Roy make for learning the threshold instead (Rathi & Roy, *`DIET-SNN`: A Low-Latency Spiking
+    /// Neural Network With Direct Input Encoding and Leakage and Threshold Optimization*,
+    /// `IEEE TNNLS` 34(6):3174-3182 (2023, online 2021), doi:10.1109/TNNLS.2021.3111897). This
+    /// citation used to give the year as 2021 alone, which is the year the paper appeared online;
+    /// the Crossref record for the DOI places it in volume 34, issue 6, June 2023. This exact
     /// expression is an elementary second moment rather than any one paper's formula, and it is
     /// stated that way so nobody cites it to a source that does not contain it.
     ThresholdScaled {
@@ -707,9 +732,11 @@ impl Conv2d {
     /// An all-zero kernel: the layer that passes nothing.
     ///
     /// Not a degenerate case to be tolerated but the one [`ResidualBlock`]'s identity argument
-    /// needs — a residual branch that emits no spikes is what "identity mapping" means in
-    /// Fang et al. 2021, and a block that is not exactly the identity under it is not a residual
-    /// block in their sense.
+    /// needs — a residual branch that emits no spikes is how Fang et al. 2021 reach "identity
+    /// mapping" in their `ADD` and `IAND` blocks, and one of those that is not exactly the identity
+    /// under it is not a residual block in their sense. Their `AND` block reaches it the other way,
+    /// with a branch that fires on every timestep (see [`ResidualStyle`]); this line used to say
+    /// the silent branch was what identity mapping means for every block.
     ///
     /// # Errors
     ///
@@ -1287,7 +1314,10 @@ impl SpikingMaxPool {
     }
 }
 
-/// Threshold-dependent batch normalisation — Zheng, Wu, Deng, Yan & Li, `AAAI` 2021.
+/// Threshold-dependent batch normalisation — Zheng, Wu, Deng, Hu & Li, `AAAI` 2021.
+///
+/// Full citation in the module doc. This line used to name the fourth author as Yan; the paper's
+/// fourth author is Yifan Hu.
 ///
 /// # The lesson
 ///
@@ -1321,14 +1351,29 @@ impl SpikingMaxPool {
 /// [`crate::neuron::Neuron::bump`]. That is the boundary conversion; nothing inside the expression
 /// is rescaled, so it can be read line by line against the paper.
 ///
-/// # What this implementation is unsure of
+/// # Which layers take which `alpha`
 ///
-/// `alpha` defaults to `1.0`, which is the value the paper's main experiments use. The paper also
-/// discusses scaling the shortcut branch of a residual block by `1 / sqrt(2)` so that the summed
-/// branches keep the target variance — the elementary reason being that two independent variables
-/// of variance `s^2` sum to `2 s^2`. **This review did not locate an unambiguous statement of which
-/// blocks take which `alpha` in every architecture the paper reports**, so `1 / sqrt(2)` is offered
-/// as [`TdBn::residual_alpha`] with that caveat attached rather than applied silently.
+/// `alpha` defaults to `1.0`, the paper's value for a serial network and for the tdBN layers in a
+/// residual block that do not feed the addition. The paper's spiking `ResNet`s (`ResNet-17`,
+/// `ResNet-19`, `ResNet-34` and `ResNet-50`) set `alpha = 1 / sqrt(2)` on the tdBN just before the
+/// addition and on the tdBN on the shortcut, so that the two summed branches keep the target
+/// variance: two independent variables of variance `s^2` sum to `2 s^2`. The general rule is
+/// `alpha = 1 / sqrt(n)` for `n` parallel branches. The paper's tdBN section states the rule with
+/// the serial case beside it: "In the serial neural network, the hyper-parameter α is 1. For a
+/// local parallel network structure having n branches, α will be 1/√n." Its deep-residual section
+/// places it: "the hyper-parameters α in tdBN layers before the final activation layer or in the
+/// shortcut are set as 1/√2, the other tdBN layers' hyper-parameter α is defined as 1." Its
+/// Fig. 5(b) labels the tdBN after the second convolution and the tdBN on the shortcut
+/// "tdBN,α = 1/√2", and the tdBN after the first convolution "tdBN,α = 1".
+/// [`TdBn::residual_alpha`] is that `1 / sqrt(2)`.
+///
+/// This section used to say that `alpha = 1` is "the value the paper's main experiments use", that
+/// the paper scales "the shortcut branch" alone, and that this review "did not locate an unambiguous
+/// statement of which blocks take which `alpha`". The paper's `ResNet` experiments use both values,
+/// its one plain-network experiment (the 20-layer network of its Fig. 2) takes `1` by the serial
+/// rule, the scaling applies to both summed branches, and the placement is stated in the sentences
+/// quoted above. `alpha = 1` is still the right default for a standalone or serial tdBN layer, so no
+/// value changed; [`ResidualBlock`] does not use tdBN at all.
 #[derive(Debug, Clone, PartialEq)]
 pub struct TdBn {
     /// Channels, which is the number of independent statistics kept.
@@ -1359,11 +1404,16 @@ pub struct TdBn {
 }
 
 impl TdBn {
-    /// The residual-branch `alpha` of `1 / sqrt(2)`, offered with the caveat in the struct doc.
+    /// The `alpha` of `1 / sqrt(2)` for **both** summed branches of the paper's spiking `ResNet`
+    /// basic block: the tdBN just before the addition, which ends the residual branch, and the tdBN
+    /// on the shortcut.
     ///
     /// Two independent variables of variance `s^2` sum to variance `2 s^2`, so scaling each by
-    /// `1 / sqrt(2)` restores the target. That much is arithmetic. Whether it is what the paper
-    /// applies to every block is what this review could not settle.
+    /// `1 / sqrt(2)` restores the target; it is the `n = 2` case of the paper's rule
+    /// `alpha = 1 / sqrt(n)` for `n` parallel branches. This doc used to call it "the
+    /// residual-branch `alpha`", with a caveat that this review could not settle whether the paper
+    /// applies it to every block. The paper states the placement, as the struct doc quotes, so the
+    /// caveat is gone. The value did not change.
     #[must_use]
     pub fn residual_alpha() -> f64 {
         1.0 / 2.0_f64.sqrt()
@@ -1837,19 +1887,37 @@ impl<N: Neuron> SpikingConv2d<N> {
 /// the residual branch's pre-activation, then pass the sum through the block's last spiking neuron.
 /// `out = SN(F(x) + g * x)`. Two things go wrong.
 ///
-/// *It cannot represent the identity.* For `out` to equal `x` the neuron must fire exactly where
-/// the shortcut spikes — but the neuron resets after firing and holds a refractory period, so a run
-/// of consecutive input spikes comes out as one spike followed by silence. No choice of `g` fixes
-/// this, because the failure is in the state, not the gain.
-/// `the_naive_residual_cannot_be_the_identity_even_with_a_tuned_gain` runs it: a shortcut spiking on
-/// every timestep comes out at one third of its rate under
-/// [`crate::neuron::Lif::default`] at `dt = 1 ms`.
+/// *With this crate's `LIF` it cannot represent the identity.* For `out` to equal `x` the neuron
+/// must fire exactly where the shortcut spikes. [`crate::neuron::Lif::default`] holds a 2 ms
+/// refractory period after every spike, during which it ignores its input, so at `dt = 1 ms` a run
+/// of consecutive shortcut spikes comes out as one spike in every three timesteps. No choice of `g`
+/// fixes this, because the failure is in the refractory state, not the gain. Nor is it the reset:
+/// the neuron resets to rest, from where one shortcut spike fires it again, so with `t_ref = 0`
+/// and a gain that fires the neuron from rest in one timestep the same block reproduces an
+/// irregular input spike for spike.
+/// `the_naive_residual_cannot_be_the_identity_even_with_a_tuned_gain` runs the one-in-three train,
+/// the gain that cannot fix it and the `t_ref = 0` identity.
+///
+/// Fang et al. make a narrower claim, in §3.2 of `arXiv`:2102.04159v6. The naive block reaches the
+/// identity for an IF neuron with `0 < V_th <= 1` and reset to zero — "It works for IF neuron
+/// described by Eq. (4)" — and is hard to reach for neurons "with complex neuronal dynamics". Their
+/// example is a `LIF` whose membrane time constant is learned: "It is difficult to find a firing
+/// threshold that ensures `H[t] > Vth` as τ is being changed in training by the optimizer." This
+/// paragraph used to give the reset and the refractory period as the reason and to present the
+/// whole as their argument. The reset is part of their IF case, which works, and this review did
+/// not locate any mention of refractoriness in the paper. The refractory argument is this crate's
+/// own, and it is specific to its neuron.
 ///
 /// *The shortcut gradient is attenuated per block.* Differentiating through the neuron gives
 /// `d out / d x = sigma'(u - theta) * (g + d F / d x)`, so the shortcut path carries a factor
 /// `sigma'(u - theta) * g` at **every** block and a stack of `L` blocks multiplies it `L` times.
 /// With a surrogate whose peak is below `1 / g` this decays geometrically — which is precisely the
-/// vanishing-gradient problem the residual connection was invented to remove.
+/// vanishing-gradient problem the residual connection was invented to remove — and where
+/// `sigma'(u - theta) * g` exceeds `1` the product grows geometrically instead. This objection is
+/// Fang et al.'s own, and they make it even where the identity holds: "Spiking `ResNet` suffers
+/// from the problems of vanishing/exploding gradient", their Eq. (8) taking a stack of blocks in
+/// which "the identity mapping condition is met, e.g., the spiking neurons are the IF neurons with
+/// `0 < Vth ≤ 1`".
 ///
 /// `SEW` (spike-element-wise) moves the neuron **inside** the branch and merges two spike tensors:
 /// `out = g(SN(F(x)), x)`. A silent branch now leaves `x` untouched under [`ResidualStyle::SewAdd`],
@@ -1861,11 +1929,20 @@ impl<N: Neuron> SpikingConv2d<N> {
 /// [`ResidualStyle::SewAdd`]'s output is **not binary**. One block gives values in `{0, 1, 2}` and
 /// `L` stacked blocks reach `L + 1`. Everything downstream is then a multiply-accumulate rather
 /// than an accumulate, and a fabric that routes one-bit events cannot carry it without a graded
-/// spike — which `Loihi 2` has and most do not. `AND` and `IAND` stay binary and pay elsewhere:
-/// `AND` zeroes the shortcut whenever the branch is silent, so it cannot represent the identity at
-/// all, and `IAND` inverts the branch. Fang et al. report `ADD` as the best-performing variant,
-/// which is the one that leaves the binary regime — a result worth reporting alongside the accuracy
-/// rather than under it.
+/// spike — which `Loihi 2` has and most do not. `AND` and `IAND` stay binary and pay elsewhere.
+/// `AND` passes the shortcut only where the branch fires, so it reaches the identity only if the
+/// branch fires on every timestep. Fang et al. build exactly that (§3.3): they zero the last
+/// batch-norm's weights and set its bias "to a large enough constant to cause spikes, e.g.,
+/// setting the bias as Vth when the last SN is IF neurons". A silent branch zeroes the output, and
+/// a refractory neuron cannot hold the always-on state, so under [`crate::neuron::Lif::default`] a
+/// `SEW`-AND block cannot reproduce a constant spike train; with `t_ref = 0` the same construction
+/// is the identity, and `a_zero_weight_sew_block_is_exactly_the_identity` runs both. In general
+/// `AND` suffers what Fang et al. call the silence problem (§4.1): "it is hard to keep
+/// `SN(F^l(O^{l-1}[t])) ≡ 1` at each time-step t", and in their Fig. 5(b) the neurons "in deep
+/// layers of SEW AND `ResNet` keep silent". This paragraph used to say that `AND` "cannot
+/// represent the identity at all", which the §3.3 construction refutes. `IAND` inverts the branch.
+/// Fang et al. report `ADD` as the best-performing variant, which is the one that leaves the binary
+/// regime — a result worth reporting alongside the accuracy rather than under it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResidualStyle {
     /// `out = SN(F(x) + g * x)`: the shortcut joins in volts, before the block's last neuron.
@@ -1875,8 +1952,9 @@ pub enum ResidualStyle {
     Naive,
     /// `out = SN(F(x)) + x`, element-wise. Represents the identity exactly; leaves `{0, 1}`.
     SewAdd,
-    /// `out = SN(F(x)) * x`, element-wise. Stays binary; cannot represent the identity, because a
-    /// silent branch zeroes the output.
+    /// `out = SN(F(x)) * x`, element-wise. Stays binary; represents the identity only while the
+    /// branch fires on every timestep, which a silent branch breaks and a refractory neuron cannot
+    /// hold (see the enum doc). This line used to say it cannot represent the identity at all.
     SewAnd,
     /// `out = (1 - SN(F(x))) * x`, element-wise. Stays binary and **does** represent the identity
     /// under a silent branch — the branch gates the shortcut off rather than on.
@@ -2684,6 +2762,8 @@ mod tests {
     /// (d) A zero-weight branch makes a `SEW`-ADD block bit-exactly the identity, for every
     /// timestep of a run — and `AND` and `IAND` behave exactly as their doc says under the same
     /// branch. Three different answers from one construction, so the test cannot pass by accident.
+    /// Then `AND` under the always-on branch Fang et al. build for it: the identity without a
+    /// refractory period, and not the identity with this crate's default one.
     #[test]
     fn a_zero_weight_sew_block_is_exactly_the_identity() {
         let spec = Conv2dSpec::same_padding(1, 1, 3, 3).expect("valid");
@@ -2734,10 +2814,52 @@ mod tests {
             assert_eq!(b.first.units[0].potential(), Lif::default().v_rest);
             assert_eq!(b.units[0].refractory_left(), 0.0);
         }
+
+        // `AND`'s own route to the identity, Fang et al. §3.3: zero the last layer's weights and
+        // set its bias high enough that the branch fires on every timestep, so `1 AND x = x`. The
+        // bias is 20 mV a timestep, above the 15.77 mV that fires `Lif::default` from rest (see the
+        // naive test below). Under the default 2 ms refractory period at dt = 1 ms the branch
+        // fires on timesteps 0 and 3 only, so the block passes frames 0 and 3 and zeroes frames 1
+        // and 2: not the identity. With `t_ref = 0` the branch fires on all five timesteps and the
+        // same construction IS the identity. That pair is the corrected `SewAnd` doc, run.
+        let always_on = |t_ref: f64| -> Vec<Vec<f64>> {
+            let mut second = Conv2d::zeros(spec).expect("valid");
+            second.bias[0] = 20e-3;
+            let mut b = ResidualBlock::new(
+                Conv2d::zeros(spec).expect("valid"),
+                second,
+                2,
+                2,
+                Lif { t_ref, ..Lif::default() },
+                1e-3,
+                ResidualStyle::SewAnd,
+                0.0,
+            )
+            .expect("shape preserving");
+            frames.iter().map(|f| b.step(&t(1, 2, 2, f), ActivationKind::Spiking).expect("fits").data).collect()
+        };
+        let refractory = always_on(Lif::default().t_ref);
+        assert_eq!(refractory[0], frames[0].to_vec(), "the branch fires on the first timestep");
+        assert_eq!(refractory[1], vec![0.0; 4], "refractory: the shortcut's spikes are dropped");
+        assert_eq!(refractory[2], vec![0.0; 4], "refractory: the shortcut's spikes are dropped");
+        assert_eq!(refractory[3], frames[3].to_vec(), "the refractory period has expired");
+        assert_eq!(refractory[4], vec![0.0; 4]);
+        let free = always_on(0.0);
+        assert_eq!(free.len(), frames.len());
+        for (got, f) in free.iter().zip(frames.iter()) {
+            assert_eq!(got, &f.to_vec(), "t_ref = 0: the always-on branch is the identity");
+        }
     }
 
-    /// (d) The naive residual CANNOT be the identity, for any shortcut gain — the Fang et al. 2021
-    /// argument, run rather than quoted.
+    /// (d) The naive residual CANNOT be the identity for this crate's refractory `LIF`, for any
+    /// shortcut gain, and the refractory period is the whole reason: with `t_ref = 0` the same
+    /// block reproduces an irregular train spike for spike.
+    ///
+    /// This doc used to call the first half "the Fang et al. 2021 argument". It is narrower than
+    /// theirs and not the same: their §3.2 has the naive block reach the identity for an IF neuron
+    /// that resets to zero, which is what the `t_ref = 0` case below reproduces for this crate's
+    /// `LIF`, and fail for neurons with complex dynamics such as a learnable time constant. See
+    /// [`ResidualStyle`].
     ///
     /// The gain is chosen so a single shortcut spike fires the neuron from rest with margin: the
     /// bump is applied before the step's decay, so the threshold gain is
@@ -2786,7 +2908,7 @@ mod tests {
         // The naive block fires once every three timesteps: one spike, then two refractory.
         assert_eq!(naive_out, vec![1., 0., 0., 1., 0., 0., 1., 0., 0.]);
         // And the gain cannot fix it: a hundred times the critical gain gives the same train,
-        // because the failure is in the reset and the refractory period, not in the drive.
+        // because the failure is in the refractory period, not in the drive.
         naive.shortcut_gain = 2.0;
         naive.reset();
         let mut retry = Vec::new();
@@ -2794,6 +2916,31 @@ mod tests {
             retry.push(naive.step(&on, ActivationKind::Spiking).expect("fits").data[0]);
         }
         assert_eq!(retry, naive_out);
+
+        // Nor is it the reset. The neuron resets to `v_reset = v_rest`, from where one 20 mV bump
+        // fires it, so with the refractory period removed the same block at the same gain fires
+        // exactly where the shortcut spikes — on an IRREGULAR train, so a block that fired on
+        // every timestep regardless of its input could not pass. This paragraph's train has runs
+        // of two and three consecutive spikes, each of which a 2 ms refractory period would cut to
+        // one spike.
+        assert_eq!(lif.v_reset, lif.v_rest);
+        let mut free = ResidualBlock::new(
+            Conv2d::zeros(spec).expect("valid"),
+            Conv2d::zeros(spec).expect("valid"),
+            1,
+            1,
+            Lif { t_ref: 0.0, ..lif },
+            1e-3,
+            ResidualStyle::Naive,
+            20e-3,
+        )
+        .expect("shape preserving");
+        let train = [1., 1., 0., 1., 1., 1., 0., 0., 1.];
+        let mut free_out = Vec::new();
+        for &s in &train {
+            free_out.push(free.step(&t(1, 1, 1, &[s]), ActivationKind::Spiking).expect("fits").data[0]);
+        }
+        assert_eq!(free_out, train.to_vec(), "t_ref = 0: the naive block is the identity");
     }
 
     /// The shortcut gradient: exactly 1 per block for `SEW`-ADD at any depth, geometric decay for
@@ -4002,11 +4149,12 @@ mod tests {
 
     /// The naive shortcut drives a unit only where the shortcut SPIKED — `g * x`, not `g`.
     ///
-    /// `the_naive_residual_cannot_be_the_identity_even_with_a_tuned_gain` runs on a `1x1` map whose
-    /// shortcut is `1.0` at every timestep, and `g * 1` is the same number as `g`. So dropping the
-    /// shortcut from the product left the naive block firing everywhere on every timestep with
-    /// every test green — a block that ignores its own input and calls itself a residual
-    /// connection.
+    /// `the_naive_residual_cannot_be_the_identity_even_with_a_tuned_gain` ran, when this test was
+    /// written, only on a `1x1` map whose shortcut is `1.0` at every timestep, and `g * 1` is the
+    /// same number as `g`. So dropping the shortcut from the product left the naive block firing
+    /// everywhere on every timestep with every test green — a block that ignores its own input and
+    /// calls itself a residual connection. That test's `t_ref = 0` case, added since, drives an
+    /// irregular train and so sees the same defect; this one still pins it on a `2x2` map.
     ///
     /// Both convolutions are silent here, so the drive is the shortcut term alone: `20 mV` where
     /// the input spiked and exactly `0` where it did not, which is also the difference between a

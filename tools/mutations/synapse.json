@@ -403,5 +403,40 @@
   "label": "the facilitating preset's two time constants are swapped",
   "old": "        Self { u_rest: 0.15, tau_d: 0.13, tau_f: 0.53, u: 0.0, x: 1.0 }",
   "new": "        Self { u_rest: 0.15, tau_d: 0.53, tau_f: 0.13, u: 0.0, x: 1.0 }"
+ },
+ {
+  "label": "a kinetic release during a running pulse is ignored, the 1994 source's rule",
+  "old": "    pub fn release(&mut self) {\n        self.pulse_left = self.t_pulse;\n    }\n\n    /// Advance by `dt` seconds, exactly, splitting the step at the end of the transmitter pulse.",
+  "new": "    pub fn release(&mut self) {\n        if self.pulse_left <= 0.0 {\n            self.pulse_left = self.t_pulse;\n        }\n    }\n\n    /// Advance by `dt` seconds, exactly, splitting the step at the end of the transmitter pulse."
+ },
+ {
+  "label": "the cascade's release extends the pulse instead of restarting it",
+  "old": "    pub fn release(&mut self) {\n        self.pulse_left = self.t_pulse;\n    }\n\n    /// Advance by `dt` seconds, splitting the step at the end of the transmitter pulse.",
+  "new": "    pub fn release(&mut self) {\n        self.pulse_left += self.t_pulse;\n    }\n\n    /// Advance by `dt` seconds, splitting the step at the end of the transmitter pulse."
+ },
+ {
+  "label": "the cascade's release during a running pulse is ignored, the 1994 source's rule",
+  "old": "    pub fn release(&mut self) {\n        self.pulse_left = self.t_pulse;\n    }\n\n    /// Advance by `dt` seconds, splitting the step at the end of the transmitter pulse.",
+  "new": "    pub fn release(&mut self) {\n        if self.pulse_left <= 0.0 {\n            self.pulse_left = self.t_pulse;\n        }\n    }\n\n    /// Advance by `dt` seconds, splitting the step at the end of the transmitter pulse."
+ },
+ {
+  "label": "the cascade's K1 is left per molar, as the 1998 chapter prints it",
+  "old": "            k1: 90.0,\n",
+  "new": "            k1: 90000.0,\n"
+ },
+ {
+  "label": "the cascade's K2 is the 1995 three-variable model's 20/s",
+  "old": "            k2: 1.2,\n",
+  "new": "            k2: 20.0,\n"
+ },
+ {
+  "label": "the cascade's pulse is the 0.3 ms of the authors' NEURON files",
+  "old": "            t_pulse: 1e-3,\n            pulse_left: 0.0,\n        }\n    }\n}",
+  "new": "            t_pulse: 0.3e-3,\n            pulse_left: 0.0,\n        }\n    }\n}"
+ },
+ {
+  "label": "the facilitating preset takes MWT98 Fig. 4D's U = 0.03",
+  "old": "        Self { u_rest: 0.15, tau_d: 0.13, tau_f: 0.53, u: 0.0, x: 1.0 }",
+  "new": "        Self { u_rest: 0.03, tau_d: 0.13, tau_f: 0.53, u: 0.0, x: 1.0 }"
  }
 ]

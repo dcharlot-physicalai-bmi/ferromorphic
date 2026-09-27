@@ -1,0 +1,902 @@
+[
+ {
+  "label": "MAX_STEPS 1e8 -> 1e9",
+  "old": "pub const MAX_STEPS: f64 = 1e8;",
+  "new": "pub const MAX_STEPS: f64 = 1e9;"
+ },
+ {
+  "label": "DP gamma_p",
+  "old": "gamma_p: 321.808,",
+  "new": "gamma_p: 321.809,"
+ },
+ {
+  "label": "DP delay",
+  "old": "delay: 0.0137,",
+  "new": "delay: 0.0138,"
+ },
+ {
+  "label": "DPD c_pre",
+  "old": "c_pre: 0.9,\n        c_post: 0.9,",
+  "new": "c_pre: 0.8,\n        c_post: 0.9,"
+ },
+ {
+  "label": "DPD gamma_d",
+  "old": "gamma_d: 250.0,",
+  "new": "gamma_d: 260.0,"
+ },
+ {
+  "label": "DPD' theta_p",
+  "old": "theta_p: 2.5,",
+  "new": "theta_p: 2.6,"
+ },
+ {
+  "label": "DPD' delay",
+  "old": "delay: 0.0022,",
+  "new": "delay: 0.0023,"
+ },
+ {
+  "label": "P gamma_p",
+  "old": "gamma_p: 257.447,",
+  "new": "gamma_p: 257.446,"
+ },
+ {
+  "label": "P c_pre",
+  "old": "c_pre: 2.0,",
+  "new": "c_pre: 1.9,"
+ },
+ {
+  "label": "D sigma",
+  "old": "sigma: 5.6568,",
+  "new": "sigma: 5.6569,"
+ },
+ {
+  "label": "D gamma_d",
+  "old": "gamma_d: 500.0,",
+  "new": "gamma_d: 510.0,"
+ },
+ {
+  "label": "D' gamma_d",
+  "old": "gamma_d: 60.0,",
+  "new": "gamma_d: 61.0,"
+ },
+ {
+  "label": "D' theta_p",
+  "old": "theta_p: 3.5,",
+  "new": "theta_p: 3.4,"
+ },
+ {
+  "label": "hippocampal slices theta_d",
+  "old": "c_post: 0.275865,\n        theta_d: 1.0,",
+  "new": "c_post: 0.275865,\n        theta_d: 1.1,"
+ },
+ {
+  "label": "hippocampal slices rho_star",
+  "old": "tau: 688.355,\n        rho_star: 0.5,",
+  "new": "tau: 688.355,\n        rho_star: 0.4,"
+ },
+ {
+  "label": "hippocampal slices beta",
+  "old": "beta: 0.7,",
+  "new": "beta: 0.6,"
+ },
+ {
+  "label": "hippocampal slices tau",
+  "old": "tau: 688.355,",
+  "new": "tau: 688.356,"
+ },
+ {
+  "label": "hippocampal cultures tau_ca",
+  "old": "tau_ca: 0.0119536,",
+  "new": "tau_ca: 0.0119537,"
+ },
+ {
+  "label": "hippocampal cultures b",
+  "old": "b: 36.0263,",
+  "new": "b: 36.0264,"
+ },
+ {
+  "label": "cortical slices c_pre",
+  "old": "c_pre: 0.5617539,",
+  "new": "c_pre: 0.5617538,"
+ },
+ {
+  "label": "cortical slices delay",
+  "old": "delay: 0.0046098,",
+  "new": "delay: 0.0046099,"
+ },
+ {
+  "label": "cortical slices sigma",
+  "old": "sigma: 3.3501,",
+  "new": "sigma: 3.3502,"
+ },
+ {
+  "label": "S3 DPD' c_post",
+  "old": "c_post: 1.3,",
+  "new": "c_post: 1.4,"
+ },
+ {
+  "label": "S3 DPD' gamma_p",
+  "old": "gamma_p: 310.0,",
+  "new": "gamma_p: 311.0,"
+ },
+ {
+  "label": "S3 DP gamma_p",
+  "old": "gamma_p: 241.356,",
+  "new": "gamma_p: 241.357,"
+ },
+ {
+  "label": "S3 DP delay",
+  "old": "delay: 0.0138,",
+  "new": "delay: 0.0137,"
+ },
+ {
+  "label": "message NotPositive",
+  "old": "\"{what} = {value} must be finite and positive\"",
+  "new": "\"{what} = {value} must be positive\""
+ },
+ {
+  "label": "message Negative",
+  "old": "\"{what} = {value} must be finite and non-negative\"",
+  "new": "\"{what} = {value} must be non-negative\""
+ },
+ {
+  "label": "message NonFinite",
+  "old": "\"{what} = {value} is not finite\"",
+  "new": "\"{what} = {value} is infinite\""
+ },
+ {
+  "label": "message OutOfRange",
+  "old": "\"{what} = {value} must lie in {range}\"",
+  "new": "\"{what} = {value} must be in {range}\""
+ },
+ {
+  "label": "message TooManySteps",
+  "old": "\"t_end = {t_end} s at dt = {dt} s is more than {MAX_STEPS} Euler-Maruyama steps\"",
+  "new": "\"t_end = {t_end} s at dt = {dt} s is more than {MAX_STEPS} steps\""
+ },
+ {
+  "label": "finite: accepts non-finite",
+  "old": "if value.is_finite() { Ok(value) } else { Err(CalciumError::NonFinite",
+  "new": "if !value.is_nan() { Ok(value) } else { Err(CalciumError::NonFinite"
+ },
+ {
+  "label": "positive: > to >=",
+  "old": "value.is_finite() && value > 0.0",
+  "new": "value.is_finite() && value >= 0.0"
+ },
+ {
+  "label": "positive: drops finite",
+  "old": "if value.is_finite() && value > 0.0 {",
+  "new": "if value > 0.0 {"
+ },
+ {
+  "label": "non_negative: >= to >",
+  "old": "value.is_finite() && value >= 0.0",
+  "new": "value.is_finite() && value > 0.0"
+ },
+ {
+  "label": "non_negative: drops finite",
+  "old": "if value.is_finite() && value >= 0.0 {",
+  "new": "if value >= 0.0 {"
+ },
+ {
+  "label": "unit_closed: half open",
+  "old": "(0.0..=1.0).contains(&value)",
+  "new": "(0.0..1.0).contains(&value)"
+ },
+ {
+  "label": "unit_closed: range text",
+  "old": "range: \"[0, 1]\"",
+  "new": "range: \"[0, 1)\""
+ },
+ {
+  "label": "phi: zero limit",
+  "old": "if x == 0.0 { 1.0 }",
+  "new": "if x == 0.0 { 0.0 }"
+ },
+ {
+  "label": "phi: formula",
+  "old": "-(-x).exp_m1() / x",
+  "new": "(x).exp_m1() / x"
+ },
+ {
+  "label": "fraction_above: tau_ca unchecked",
+  "old": "positive(\"tau_ca\", tau_ca)?;\n    positive(\"period\", period)?;",
+  "new": "positive(\"period\", period)?;"
+ },
+ {
+  "label": "fraction_above: period name",
+  "old": "positive(\"period\", period)?;",
+  "new": "positive(\"interval\", period)?;"
+ },
+ {
+  "label": "fraction_above: theta unchecked",
+  "old": "positive(\"theta\", theta)?;\n    let mut at",
+  "new": "let mut at"
+ },
+ {
+  "label": "fraction_above: no reduction mod period",
+  "old": "finite(\"transient time\", tr.time)?.rem_euclid(period);",
+  "new": "finite(\"transient time\", tr.time)?;"
+ },
+ {
+  "label": "fraction_above: amplitude unchecked",
+  "old": "at.push((s, non_negative(\"transient amplitude\", tr.amplitude)?));",
+  "new": "at.push((s, tr.amplitude));"
+ },
+ {
+  "label": "fraction_above: no sort",
+  "old": "    at.sort_by(|a, b| a.0.total_cmp(&b.0));\n",
+  "new": ""
+ },
+ {
+  "label": "fraction_above: gain dropped",
+  "old": "1.0 / -(-period / tau_ca).exp_m1())?;",
+  "new": "1.0)?;"
+ },
+ {
+  "label": "fraction_above: gain sign",
+  "old": "1.0 / -(-period / tau_ca).exp_m1())?;",
+  "new": "1.0 / (period / tau_ca).exp_m1())?;"
+ },
+ {
+  "label": "fraction_above: gain unchecked",
+  "old": "let gain = finite(\"steady-state gain 1/(1 - exp(-period/tau_ca))\", 1.0 / -(-period / tau_ca).exp_m1())?;",
+  "new": "let gain = 1.0 / -(-period / tau_ca).exp_m1();"
+ },
+ {
+  "label": "fraction_above: gain name",
+  "old": "\"steady-state gain 1/(1 - exp(-period/tau_ca))\"",
+  "new": "\"gain\""
+ },
+ {
+  "label": "fraction_above: age not wrapped",
+  "old": "a * (-(s - m).rem_euclid(period) / tau_ca).exp()",
+  "new": "a * (-(s - m).abs() / tau_ca).exp()"
+ },
+ {
+  "label": "fraction_above: age sign",
+  "old": "a * (-(s - m).rem_euclid(period) / tau_ca).exp()",
+  "new": "a * (-(m - s).rem_euclid(period) / tau_ca).exp()"
+ },
+ {
+  "label": "fraction_above: last segment misses the wrap",
+  "old": "at[0].0 + period };",
+  "new": "period };"
+ },
+ {
+  "label": "fraction_above: segment end off by one",
+  "old": "if k + 1 < at.len() { at[k + 1].0 }",
+  "new": "if k + 1 <= at.len() && k + 1 < at.len() { at[k].0 }"
+ },
+ {
+  "label": "fraction_above: crossing uses theta/top",
+  "old": "(tau_ca * (top / theta).ln()).clamp(0.0, end - s)",
+  "new": "(tau_ca * (theta / top).ln()).clamp(0.0, end - s)"
+ },
+ {
+  "label": "fraction_above: no upper clamp",
+  "old": "(tau_ca * (top / theta).ln()).clamp(0.0, end - s)",
+  "new": "(tau_ca * (top / theta).ln()).max(0.0)"
+ },
+ {
+  "label": "fraction_above: no lower clamp",
+  "old": "(tau_ca * (top / theta).ln()).clamp(0.0, end - s)",
+  "new": "(tau_ca * (top / theta).ln()).min(end - s)"
+ },
+ {
+  "label": "fraction_above: no cap at 1",
+  "old": "Ok((above / period).min(1.0))",
+  "new": "Ok(above / period)"
+ },
+ {
+  "label": "fraction_above: not divided by period",
+  "old": "Ok((above / period).min(1.0))",
+  "new": "Ok(above.min(1.0))"
+ },
+ {
+  "label": "calcium: tau_ca unchecked",
+  "old": "positive(\"tau_ca\", tau_ca)?;\n    finite(\"t\", t)?;",
+  "new": "finite(\"t\", t)?;"
+ },
+ {
+  "label": "calcium: t unchecked",
+  "old": "finite(\"t\", t)?;\n    let mut c",
+  "new": "let mut c"
+ },
+ {
+  "label": "calcium: transient at t not counted",
+  "old": "if at <= t {",
+  "new": "if at < t {"
+ },
+ {
+  "label": "calcium: future transients counted",
+  "old": "if at <= t {",
+  "new": "if at <= t + 1.0 {"
+ },
+ {
+  "label": "calcium: decay sign",
+  "old": "c += amplitude * (-(t - at) / tau_ca).exp();",
+  "new": "c += amplitude * ((t - at) / tau_ca).exp();"
+ },
+ {
+  "label": "calcium: amplitude dropped",
+  "old": "c += amplitude * (-(t - at) / tau_ca).exp();",
+  "new": "c += (-(t - at) / tau_ca).exp();"
+ },
+ {
+  "label": "calcium: amplitude unchecked",
+  "old": "(finite(\"transient time\", tr.time)?, non_negative(\"transient amplitude\", tr.amplitude)?)",
+  "new": "(finite(\"transient time\", tr.time)?, tr.amplitude)"
+ },
+ {
+  "label": "check: tau_ca",
+  "old": "        positive(\"tau_ca\", self.tau_ca)?;\n        non_negative(\"c_pre\"",
+  "new": "        non_negative(\"c_pre\""
+ },
+ {
+  "label": "check: c_pre",
+  "old": "        non_negative(\"c_pre\", self.c_pre)?;\n",
+  "new": ""
+ },
+ {
+  "label": "check: c_post",
+  "old": "        non_negative(\"c_post\", self.c_post)?;\n",
+  "new": ""
+ },
+ {
+  "label": "check: theta_d",
+  "old": "        positive(\"theta_d\", self.theta_d)?;\n",
+  "new": ""
+ },
+ {
+  "label": "check: theta_p",
+  "old": "        positive(\"theta_p\", self.theta_p)?;\n",
+  "new": ""
+ },
+ {
+  "label": "check: gamma_d",
+  "old": "        non_negative(\"gamma_d\", self.gamma_d)?;\n",
+  "new": ""
+ },
+ {
+  "label": "check: gamma_p",
+  "old": "        non_negative(\"gamma_p\", self.gamma_p)?;\n",
+  "new": ""
+ },
+ {
+  "label": "check: sigma",
+  "old": "        non_negative(\"sigma\", self.sigma)?;\n",
+  "new": ""
+ },
+ {
+  "label": "check: tau",
+  "old": "        positive(\"tau\", self.tau)?;\n",
+  "new": ""
+ },
+ {
+  "label": "check: rho_star > to >=",
+  "old": "self.rho_star > 0.0 && self.rho_star < 1.0",
+  "new": "self.rho_star >= 0.0 && self.rho_star < 1.0"
+ },
+ {
+  "label": "check: rho_star < to <=",
+  "old": "self.rho_star > 0.0 && self.rho_star < 1.0",
+  "new": "self.rho_star > 0.0 && self.rho_star <= 1.0"
+ },
+ {
+  "label": "check: rho_star range text",
+  "old": "range: \"(0, 1)\"",
+  "new": "range: \"[0, 1]\""
+ },
+ {
+  "label": "check: delay",
+  "old": "        non_negative(\"delay\", self.delay)?;\n",
+  "new": ""
+ },
+ {
+  "label": "check: beta",
+  "old": "        unit_closed(\"beta\", self.beta)?;\n",
+  "new": ""
+ },
+ {
+  "label": "check: b",
+  "old": "        positive(\"b\", self.b)?;\n",
+  "new": ""
+ },
+ {
+  "label": "transients: unchecked synapse",
+  "old": "        self.check()?;\n        let mut out",
+  "new": "        let mut out"
+ },
+ {
+  "label": "transients: delay sign",
+  "old": "finite(\"pre spike time\", t)? + self.delay",
+  "new": "finite(\"pre spike time\", t)? - self.delay"
+ },
+ {
+  "label": "transients: post name",
+  "old": "finite(\"post spike time\", t)?",
+  "new": "finite(\"spike time\", t)?"
+ },
+ {
+  "label": "transients: pre name",
+  "old": "finite(\"pre spike time\", t)?",
+  "new": "finite(\"spike time\", t)?"
+ },
+ {
+  "label": "transients: no sort",
+  "old": "        out.sort_by(|a, b| a.time.total_cmp(&b.time));\n",
+  "new": ""
+ },
+ {
+  "label": "pairs: half period to strict",
+  "old": "if !(dt.abs() <= 0.5 * period) {",
+  "new": "if !(dt.abs() < 0.5 * period) {"
+ },
+ {
+  "label": "pairs: whole period",
+  "old": "if !(dt.abs() <= 0.5 * period) {",
+  "new": "if !(dt.abs() <= period) {"
+ },
+ {
+  "label": "pairs: pre at k/f",
+  "old": "(f64::from(k) + 0.5) * period",
+  "new": "f64::from(k) * period"
+ },
+ {
+  "label": "pairs: post before pre",
+  "old": "pre.iter().map(|t| t + dt)",
+  "new": "pre.iter().map(|t| t - dt)"
+ },
+ {
+  "label": "pairs: range text",
+  "old": "range: \"[-1/(2f), 1/(2f)]\"",
+  "new": "range: \"[-1/f, 1/f]\""
+ },
+ {
+  "label": "burst: unchecked synapse",
+  "old": "        self.check()?;\n        finite(\"dt\", dt)?;",
+  "new": "        finite(\"dt\", dt)?;"
+ },
+ {
+  "label": "burst: dt unchecked",
+  "old": "        finite(\"dt\", dt)?;\n        let period",
+  "new": "        let period"
+ },
+ {
+  "label": "burst: interval unchecked",
+  "old": "        non_negative(\"burst interval\", interval)?;\n",
+  "new": ""
+ },
+ {
+  "label": "burst: pre transient not delayed",
+  "old": "vec![Transient { time: self.delay, amplitude: self.c_pre }]",
+  "new": "vec![Transient { time: 0.0, amplitude: self.c_pre }]"
+ },
+ {
+  "label": "burst: burst after the last spike",
+  "old": "time: dt - f64::from(j) * interval",
+  "new": "time: dt + f64::from(j) * interval"
+ },
+ {
+  "label": "burst: alpha_p against theta_d",
+  "old": "alpha_p: fraction_above(self.tau_ca, period, &tr, self.theta_p)?",
+  "new": "alpha_p: fraction_above(self.tau_ca, period, &tr, self.theta_d)?"
+ },
+ {
+  "label": "burst: alpha_d against theta_p",
+  "old": "alpha_d: fraction_above(self.tau_ca, period, &tr, self.theta_d)?",
+  "new": "alpha_d: fraction_above(self.tau_ca, period, &tr, self.theta_p)?"
+ },
+ {
+  "label": "rates: unchecked synapse",
+  "old": "        self.check()?;\n        unit_closed(\"alpha_d\"",
+  "new": "        unit_closed(\"alpha_d\""
+ },
+ {
+  "label": "rates: alpha_d unchecked",
+  "old": "        unit_closed(\"alpha_d\", f.alpha_d)?;\n",
+  "new": ""
+ },
+ {
+  "label": "rates: alpha_p unchecked",
+  "old": "        unit_closed(\"alpha_p\", f.alpha_p)?;\n",
+  "new": ""
+ },
+ {
+  "label": "rates: swapped",
+  "old": "Ok((self.gamma_d * f.alpha_d, self.gamma_p * f.alpha_p))",
+  "new": "Ok((self.gamma_d * f.alpha_p, self.gamma_p * f.alpha_d))"
+ },
+ {
+  "label": "rho_bar: gd over g",
+  "old": "Ok(if g > 0.0 { Some(gp / g) } else { None })",
+  "new": "Ok(if g > 0.0 { Some(gd / g) } else { None })"
+ },
+ {
+  "label": "rho_bar: g >= 0",
+  "old": "Ok(if g > 0.0 { Some(gp / g) } else { None })",
+  "new": "Ok(if g >= 0.0 { Some(gp / g) } else { None })"
+ },
+ {
+  "label": "sigma_rho_sq: sigma not squared",
+  "old": "Some(self.sigma * self.sigma * (f.alpha_p + f.alpha_d) / g)",
+  "new": "Some(self.sigma * (f.alpha_p + f.alpha_d) / g)"
+ },
+ {
+  "label": "sigma_rho_sq: alpha_p only",
+  "old": "Some(self.sigma * self.sigma * (f.alpha_p + f.alpha_d) / g)",
+  "new": "Some(self.sigma * self.sigma * f.alpha_p / g)"
+ },
+ {
+  "label": "sigma_rho_sq: g >= 0",
+  "old": "Ok(if g > 0.0 { Some(self.sigma",
+  "new": "Ok(if g >= 0.0 { Some(self.sigma"
+ },
+ {
+  "label": "tau_eff: gp only",
+  "old": "Ok(self.tau / (gd + gp))",
+  "new": "Ok(self.tau / gp)"
+ },
+ {
+  "label": "mean: t_total unchecked",
+  "old": "        non_negative(\"t_total\", t_total)?;\n        finite(\"rho0\", rho0)?;",
+  "new": "        finite(\"rho0\", rho0)?;"
+ },
+ {
+  "label": "mean: rho0 unchecked",
+  "old": "        finite(\"rho0\", rho0)?;\n        let x = t_total * (gd + gp) / self.tau;\n        Ok(rho0",
+  "new": "        let x = t_total * (gd + gp) / self.tau;\n        Ok(rho0"
+ },
+ {
+  "label": "mean: start does not decay",
+  "old": "Ok(rho0 * (-x).exp() + gp * t_total / self.tau * phi(x))",
+  "new": "Ok(rho0 + gp * t_total / self.tau * phi(x))"
+ },
+ {
+  "label": "mean: gd drives up",
+  "old": "Ok(rho0 * (-x).exp() + gp * t_total / self.tau * phi(x))",
+  "new": "Ok(rho0 * (-x).exp() + gd * t_total / self.tau * phi(x))"
+ },
+ {
+  "label": "mean: phi(2x)",
+  "old": "Ok(rho0 * (-x).exp() + gp * t_total / self.tau * phi(x))",
+  "new": "Ok(rho0 * (-x).exp() + gp * t_total / self.tau * phi(2.0 * x))"
+ },
+ {
+  "label": "mean: rate from gp only",
+  "old": "let x = t_total * (gd + gp) / self.tau;\n        Ok(rho0",
+  "new": "let x = t_total * gp / self.tau;\n        Ok(rho0"
+ },
+ {
+  "label": "variance: t_total unchecked",
+  "old": "        non_negative(\"t_total\", t_total)?;\n        let x = t_total * (gd + gp) / self.tau;\n        Ok(self.sigma",
+  "new": "        let x = t_total * (gd + gp) / self.tau;\n        Ok(self.sigma"
+ },
+ {
+  "label": "variance: phi(x) not phi(2x)",
+  "old": "(f.alpha_p + f.alpha_d) * t_total / self.tau * phi(2.0 * x))",
+  "new": "(f.alpha_p + f.alpha_d) * t_total / self.tau * phi(x))"
+ },
+ {
+  "label": "variance: alpha_d only",
+  "old": "Ok(self.sigma * self.sigma * (f.alpha_p + f.alpha_d) * t_total",
+  "new": "Ok(self.sigma * self.sigma * f.alpha_d * t_total"
+ },
+ {
+  "label": "variance: twice",
+  "old": "Ok(self.sigma * self.sigma * (f.alpha_p + f.alpha_d) * t_total",
+  "new": "Ok(2.0 * self.sigma * self.sigma * (f.alpha_p + f.alpha_d) * t_total"
+ },
+ {
+  "label": "z: gap sign",
+  "old": "let gap = self.mean(f, t_total, rho0)? - self.rho_star;",
+  "new": "let gap = self.rho_star - self.mean(f, t_total, rho0)?;"
+ },
+ {
+  "label": "z: spread not doubled",
+  "old": "let spread = (2.0 * self.variance(f, t_total)?).sqrt();",
+  "new": "let spread = self.variance(f, t_total)?.sqrt();"
+ },
+ {
+  "label": "z: on rho_star not split",
+  "old": "Ok(if gap == 0.0 { 0.0 } else { gap / spread })",
+  "new": "Ok(gap / spread)"
+ },
+ {
+  "label": "up: sign",
+  "old": "Ok(0.5 * (1.0 + erf(self.z(f, t_total, rho0)?)))",
+  "new": "Ok(0.5 * (1.0 - erf(self.z(f, t_total, rho0)?)))"
+ },
+ {
+  "label": "down: sign",
+  "old": "Ok(0.5 * (1.0 - erf(self.z(f, t_total, rho0)?)))",
+  "new": "Ok(0.5 * (1.0 + erf(-self.z(f, t_total, rho0)?)) * 0.5 + 0.25)"
+ },
+ {
+  "label": "change: up from 1",
+  "old": "let up = self.up(f, t_total, 0.0)?;",
+  "new": "let up = self.up(f, t_total, 1.0)?;"
+ },
+ {
+  "label": "change: down from 0",
+  "old": "let down = self.down(f, t_total, 1.0)?;",
+  "new": "let down = self.down(f, t_total, 0.0)?;"
+ },
+ {
+  "label": "change: beta and 1-beta swapped in DOWN term",
+  "old": "(1.0 - up) * beta + down * (1.0 - beta)",
+  "new": "(1.0 - up) * (1.0 - beta) + down * beta"
+ },
+ {
+  "label": "change: UP term without b",
+  "old": "+ b * (up * beta + (1.0 - down) * (1.0 - beta))",
+  "new": "+ (up * beta + (1.0 - down) * (1.0 - beta))"
+ },
+ {
+  "label": "change: UP term 1-down to down",
+  "old": "+ b * (up * beta + (1.0 - down) * (1.0 - beta))",
+  "new": "+ b * (up * beta + down * (1.0 - beta))"
+ },
+ {
+  "label": "change: denominator",
+  "old": "/ (beta + (1.0 - beta) * b))",
+  "new": "/ (beta * b + (1.0 - beta)))"
+ },
+ {
+  "label": "balance: unchecked",
+  "old": "        self.check()?;\n        let above",
+  "new": "        let above"
+ },
+ {
+  "label": "balance: no ln+ floor",
+  "old": "(self.c_post / th).ln().max(0.0) + (self.c_pre / th).ln().max(0.0)",
+  "new": "(self.c_post / th).ln().max(0.0) + (self.c_pre / th).ln()"
+ },
+ {
+  "label": "balance: post only",
+  "old": "(self.c_post / th).ln().max(0.0) + (self.c_pre / th).ln().max(0.0)",
+  "new": "(self.c_post / th).ln().max(0.0)"
+ },
+ {
+  "label": "balance: ratio inverted",
+  "old": "Balance::Ratio(d / p)",
+  "new": "Balance::Ratio(p / d)"
+ },
+ {
+  "label": "balance: p >= 0",
+  "old": "Ok(if p > 0.0 {",
+  "new": "Ok(if p >= 0.0 {"
+ },
+ {
+  "label": "balance: d >= 0",
+  "old": "} else if d > 0.0 {",
+  "new": "} else if d >= 0.0 {"
+ },
+ {
+  "label": "walk: unchecked synapse",
+  "old": "        self.check()?;\n        let mut ev",
+  "new": "        let mut ev"
+ },
+ {
+  "label": "walk: negative times allowed",
+  "old": "time: non_negative(\"transient time\", tr.time)?,",
+  "new": "time: finite(\"transient time\", tr.time)?,"
+ },
+ {
+  "label": "walk: amplitude unchecked",
+  "old": "amplitude: non_negative(\"transient amplitude\", tr.amplitude)?,",
+  "new": "amplitude: tr.amplitude,"
+ },
+ {
+  "label": "walk: transients after t_end arrive",
+  "old": "ev.retain(|e| e.time < t_end);",
+  "new": "ev.retain(|e| e.time.is_finite());"
+ },
+ {
+  "label": "walk: no sort",
+  "old": "        ev.sort_by(|a, b| a.time.total_cmp(&b.time));\n        ev.push",
+  "new": "        ev.push"
+ },
+ {
+  "label": "walk: no final segment to t_end",
+  "old": "        ev.push(Transient { time: t_end, amplitude: 0.0 });\n",
+  "new": ""
+ },
+ {
+  "label": "walk: lo and hi swapped",
+  "old": "let (lo, hi) = (self.theta_d.min(self.theta_p), self.theta_d.max(self.theta_p));",
+  "new": "let (hi, lo) = (self.theta_d.min(self.theta_p), self.theta_d.max(self.theta_p));"
+ },
+ {
+  "label": "walk: middle band always d",
+  "old": "let d_is_lo = self.theta_d <= self.theta_p;",
+  "new": "let d_is_lo = true;"
+ },
+ {
+  "label": "walk: crossing inverted",
+  "old": "(self.tau_ca * (c / th).ln()).clamp(0.0, gap)",
+  "new": "(self.tau_ca * (th / c).ln()).clamp(0.0, gap)"
+ },
+ {
+  "label": "walk: crossing unclamped above",
+  "old": "(self.tau_ca * (c / th).ln()).clamp(0.0, gap)",
+  "new": "(self.tau_ca * (c / th).ln()).max(0.0)"
+ },
+ {
+  "label": "walk: crossing floored at -gap, not 0",
+  "old": "(self.tau_ca * (c / th).ln()).clamp(0.0, gap)",
+  "new": "(self.tau_ca * (c / th).ln()).clamp(-gap, gap)"
+ },
+ {
+  "label": "walk: middle band as both",
+  "old": "visit(b_lo - b_hi, d_is_lo, !d_is_lo);",
+  "new": "visit(b_lo - b_hi, true, true);"
+ },
+ {
+  "label": "walk: middle band flags swapped",
+  "old": "visit(b_lo - b_hi, d_is_lo, !d_is_lo);",
+  "new": "visit(b_lo - b_hi, !d_is_lo, d_is_lo);"
+ },
+ {
+  "label": "walk: quiet band counted above",
+  "old": "visit(gap - b_lo, false, false);",
+  "new": "visit(gap - b_lo, true, false);"
+ },
+ {
+  "label": "walk: no decay",
+  "old": "c = c * (-gap / self.tau_ca).exp() + e.amplitude;",
+  "new": "c += e.amplitude;"
+ },
+ {
+  "label": "walk: amplitude not added",
+  "old": "c = c * (-gap / self.tau_ca).exp() + e.amplitude;",
+  "new": "c *= (-gap / self.tau_ca).exp();"
+ },
+ {
+  "label": "time_above: t_end unchecked",
+  "old": "        non_negative(\"t_end\", t_end)?;\n        let (mut d, mut p)",
+  "new": "        let (mut d, mut p)"
+ },
+ {
+  "label": "time_above: d counts every band",
+  "old": "            if on_d {\n                d += len;",
+  "new": "            if on_d || on_p {\n                d += len;"
+ },
+ {
+  "label": "time_above: p counts every band",
+  "old": "            if on_p {\n                p += len;",
+  "new": "            if on_p || on_d {\n                p += len;"
+ },
+ {
+  "label": "simulate: t_end unchecked",
+  "old": "        non_negative(\"t_end\", t_end)?;\n        finite(\"rho0\", rho0)?;\n        positive(\"dt\", dt)?;",
+  "new": "        finite(\"rho0\", rho0)?;\n        positive(\"dt\", dt)?;"
+ },
+ {
+  "label": "simulate: rho0 unchecked",
+  "old": "        finite(\"rho0\", rho0)?;\n        positive(\"dt\", dt)?;",
+  "new": "        positive(\"dt\", dt)?;"
+ },
+ {
+  "label": "simulate: dt name",
+  "old": "positive(\"dt\", dt)?;\n        if t_end",
+  "new": "positive(\"step\", dt)?;\n        if t_end"
+ },
+ {
+  "label": "simulate: step limit >=",
+  "old": "if t_end / dt > MAX_STEPS {",
+  "new": "if t_end / dt >= MAX_STEPS {"
+ },
+ {
+  "label": "simulate: step limit dropped",
+  "old": "if t_end / dt > MAX_STEPS {",
+  "new": "if t_end / dt > 1e300 {"
+ },
+ {
+  "label": "simulate: above_d counts p",
+  "old": "above_d += len * td;",
+  "new": "above_d += len * tp;"
+ },
+ {
+  "label": "simulate: above_p counts d",
+  "old": "above_p += len * tp;",
+  "new": "above_p += len * td;"
+ },
+ {
+  "label": "simulate: corrected without the root",
+  "old": "Noise::Corrected => (td + tp).sqrt(),",
+  "new": "Noise::Corrected => td + tp,"
+ },
+ {
+  "label": "simulate: corrected as the printed",
+  "old": "Noise::Corrected => (td + tp).sqrt(),",
+  "new": "Noise::Corrected => td.max(tp),"
+ },
+ {
+  "label": "simulate: printed as the sum",
+  "old": "Noise::Printed => td.max(tp),",
+  "new": "Noise::Printed => td + tp,"
+ },
+ {
+  "label": "simulate: printed as theta_d only",
+  "old": "Noise::Printed => td.max(tp),",
+  "new": "Noise::Printed => td,"
+ },
+ {
+  "label": "simulate: commented-out sum as the corrected",
+  "old": "Noise::CommentedSum => td + tp,",
+  "new": "Noise::CommentedSum => (td + tp).sqrt(),"
+ },
+ {
+  "label": "simulate: commented-out sum as the printed",
+  "old": "Noise::CommentedSum => td + tp,",
+  "new": "Noise::CommentedSum => td.max(tp),"
+ },
+ {
+  "label": "simulate: floor of steps",
+  "old": "let n = (len / dt).ceil();",
+  "new": "let n = (len / dt).floor();"
+ },
+ {
+  "label": "simulate: step is dt",
+  "old": "let h = len / n;",
+  "new": "let h = dt;"
+ },
+ {
+  "label": "simulate: kick not square-rooted",
+  "old": "let kick = s.sigma * (h / s.tau).sqrt() * g;",
+  "new": "let kick = s.sigma * (h / s.tau) * g;"
+ },
+ {
+  "label": "simulate: kick without g",
+  "old": "let kick = s.sigma * (h / s.tau).sqrt() * g;",
+  "new": "let kick = s.sigma * (h / s.tau).sqrt();"
+ },
+ {
+  "label": "simulate: cubic sign",
+  "old": "let drift = -rho * (1.0 - rho) * (s.rho_star - rho)",
+  "new": "let drift = rho * (1.0 - rho) * (s.rho_star - rho)"
+ },
+ {
+  "label": "simulate: cubic about 1/2",
+  "old": "let drift = -rho * (1.0 - rho) * (s.rho_star - rho)",
+  "new": "let drift = -rho * (1.0 - rho) * (0.5 - rho)"
+ },
+ {
+  "label": "simulate: potentiation toward 0",
+  "old": "+ s.gamma_p * (1.0 - rho) * tp",
+  "new": "+ s.gamma_p * rho * tp"
+ },
+ {
+  "label": "simulate: potentiation on theta_d",
+  "old": "+ s.gamma_p * (1.0 - rho) * tp",
+  "new": "+ s.gamma_p * (1.0 - rho) * td"
+ },
+ {
+  "label": "simulate: depression on theta_p",
+  "old": "- s.gamma_d * rho * td;",
+  "new": "- s.gamma_d * rho * tp;"
+ },
+ {
+  "label": "simulate: depression toward 1",
+  "old": "- s.gamma_d * rho * td;",
+  "new": "- s.gamma_d * (1.0 - rho) * td;"
+ },
+ {
+  "label": "simulate: drift step not over tau",
+  "old": "rho += h / s.tau * drift;",
+  "new": "rho += h * drift;"
+ },
+ {
+  "label": "simulate: noise below both",
+  "old": "if on_d || on_p {\n                    rho += kick",
+  "new": "if true {\n                    rho += kick"
+ },
+ {
+  "label": "simulate: noise only above both",
+  "old": "if on_d || on_p {\n                    rho += kick",
+  "new": "if on_d && on_p {\n                    rho += kick"
+ }
+]

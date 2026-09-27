@@ -81,14 +81,16 @@
 //! The kinetic scheme behind the shapes is [`KineticTwoState`], from Destexhe, Mainen &
 //! Sejnowski, *Neural Computation* 6:14-18, 1994, with the rate constants as tabulated in
 //! Destexhe, Mainen & Sejnowski, "Kinetic models of synaptic transmission", in *Methods in
-//! Neuronal Modeling* (2nd ed.), 1998. [`GabaBCascade`] is the **two-variable** G-protein cascade
-//! of Destexhe & Sejnowski, *PNAS* 92:9515-9519, 1995 — `r` and `G`, plus a fourth-power Hill
-//! readout, which is an algebraic function of `G` and not a third state. (The fuller form in that
-//! literature carries desensitised receptor states as well; it is not what is implemented here,
-//! and calling this one "four-variable", as an earlier version of this doc did, was the `n = 4` of
-//! the Hill term migrating into the variable count.) `GABA_B` is genuinely a second-messenger
-//! cascade with a fourth-power cooperativity, and a bi-exponential conductance is a fit to it
-//! rather than the mechanism.
+//! Neuronal Modeling* (2nd ed.), 1998. [`GabaBCascade`] is the **two-variable** simplified
+//! `GABA_B` model of that 1998 chapter (ch. 1 §4.4, Eqs. 22) — `r` and `G`, plus a fourth-power
+//! Hill readout, which is an algebraic function of `G` and not a third state. The chapter obtains
+//! it by dropping the desensitised state from the three-variable `(R, D, G)` model of Destexhe &
+//! Sejnowski, *PNAS* 92:9515-9519 (1995), doi:10.1073/pnas.92.21.9515, which is not what is
+//! implemented here and has different rate constants. An earlier version of this doc credited the
+//! two-variable form itself to the 1995 paper, whose Eq. 3 has three variables; a version before
+//! that called it "four-variable", which was the `n = 4` of the Hill term migrating into the
+//! variable count. `GABA_B` is genuinely a second-messenger cascade with a fourth-power
+//! cooperativity, and a bi-exponential conductance is a fit to it rather than the mechanism.
 //!
 //! # Short-term plasticity
 //!
@@ -107,13 +109,14 @@
 //!
 //! # Units
 //!
-//! SI at every interface: seconds, volts, amperes, siemens. Two documented exceptions, both inside
+//! SI at every interface: seconds, volts, amperes, siemens. Three documented exceptions, all inside
 //! the models where a reader compares them against the source. The magnesium block's `0.062` and
 //! `3.57` are **per millivolt** and **millimolar** as Jahr & Stevens, *J. Neurosci.* 10:3178-3182,
 //! 1990 print them, and [`MgBlock::open_fraction`] converts volts to millivolts at its boundary.
 //! The kinetic rate constants are per second and per millimolar, because transmitter concentration
 //! is millimolar everywhere in that literature and rewriting `1.1e6 M⁻¹s⁻¹` into molar-SI makes it
-//! unrecognisable against the table it came from.
+//! unrecognisable against the table it came from. And [`GabaBCascade`]'s activated G-protein
+//! concentration is **micromolar**, as the 1998 chapter prints it, so its `Kd` is `100 μM⁴`.
 //!
 //! # What is verified, and what is not
 //!
@@ -122,9 +125,11 @@
 //! bi-exponential's peak time and its alpha limit, the incremental forms against their own
 //! analytic responses to floating-point noise, the `Tsodyks`-`Markram` steady state at six rates
 //! for two parameter sets, the limiting transmission rate, the two-state kinetic scheme's
-//! analytic solution and its pulse-restart semantics, the `GABA_B` cascade's steady state **and
-//! its single-pulse transient**, against both the two-exponential closed form and an independent
-//! Runge-Kutta integration, and the magnesium block's half-block potential.
+//! analytic solution and the pulse-restart rule this crate chose for it (the 1994 source instead
+//! starts no new pulse while one is running; see [`KineticTwoState::release`]), the `GABA_B`
+//! cascade's steady state **and its single-pulse transient**, against both the two-exponential
+//! closed form and an independent Runge-Kutta integration, and the magnesium block's half-block
+//! potential.
 //!
 //! **Not verified: the constants themselves.** A steady-state test checks the integrator against
 //! the model, never the model against a cell. Every numeric receptor parameter here is transcribed
@@ -136,9 +141,17 @@
 //! [`AMPA`] and [`GABA_A`], both `0.5e-3`, are round placeholders and are in **neither** cited
 //! source — `AMPA`'s paper models an instantaneous rise and the kinetic scheme has no rise
 //! constant at all. The whole of the [`GABA_B`] row is a phenomenological fit to no particular
-//! trace, the [`GabaBCascade`] rate constants are transcribed from the secondary literature and
-//! unchecked against the 1995 figures, and both [`TsodyksMarkram`] parameter sets are round values
-//! rather than table entries. Everything else names a paper and a number in it.
+//! trace. The depressing [`TsodyksMarkram`] set is round central values, not a fitted connection,
+//! and the facilitating set is a demonstration set **outside** what its cited paper prints: its
+//! `U = 0.15` is above every facilitating `U` that paper gives, and its `τ_f` is below every
+//! per-connection `τ_facil` it prints — see [`TsodyksMarkram::facilitating`]. Everything else
+//! names a paper and a number in it.
+//!
+//! This paragraph used to call both [`TsodyksMarkram`] sets "round values rather than table
+//! entries", which for the facilitating set implied a range it is not inside. It also listed the
+//! [`GabaBCascade`] rate constants as transcribed from the secondary literature and unchecked
+//! against the 1995 figures. They are not the 1995 figures at all: they are the 1998 chapter's
+//! §4.4 values, they have since been read against that chapter, and they match it.
 //!
 //! ```
 //! use ferromorphic::synapse::{AMPA, Drive};
@@ -1484,7 +1497,9 @@ pub const RECEPTORS: [Receptor; 4] = [AMPA, NMDA, GABA_A, GABA_B];
 ///
 /// It also gives the thing a fitted kernel cannot: **saturation**. Two spikes 0.2 ms apart arrive
 /// while the receptors are still open, and the second one adds far less than the first. A linear
-/// kernel superposes without limit; this does not.
+/// kernel superposes without limit; this does not. How much that second spike adds depends on what
+/// a release during a running pulse does, and that rule is this crate's, not the source's — see
+/// [`KineticTwoState::release`].
 ///
 /// # The closed form, which is what the test checks
 ///
@@ -1576,8 +1591,26 @@ impl KineticTwoState {
 
     /// Release transmitter: start (or restart) a pulse of `t_pulse` seconds.
     ///
-    /// Restarting rather than extending is what the source's idealisation does, and it is why the
-    /// scheme saturates — a second spike during a pulse does not double the transmitter.
+    /// ⚠ **Restarting is this crate's choice, not the source's.** A release that arrives while a
+    /// pulse is running resets the clock to a full `t_pulse`, so two [`AMPA`] releases 0.2 ms apart
+    /// hold transmitter on over `[0, 1.2 ms)` and end the pulse at `r = 0.671`. In the source a
+    /// release that arrives while a pulse is running starts no new pulse: "pulse initiation was
+    /// inhibited for 1 msec following event detection", with a 1 ms pulse (Destexhe, Mainen &
+    /// Sejnowski, *An efficient method for computing synaptic conductances based on a kinetic
+    /// model of receptor binding*, *Neural Computation* 6:14-18 (1994),
+    /// doi:10.1162/neco.1994.6.1.14, Fig. 1 legend), and the authors' archived `NEURON` mechanism
+    /// for `GABA_A` (`gabaa.mod`) does nothing in its `release()` while a pulse is still running.
+    /// Under that rule the same two spikes end the pulse at 1.0 ms with `r = 0.618`, the
+    /// single-spike peak. `a_second_release_restarts_the_pulse_rather_than_extending_it` pins both
+    /// numbers.
+    ///
+    /// An earlier version of this doc said restarting "is what the source's idealisation does, and
+    /// it is why the scheme saturates". Both halves were wrong. The source neither restarts nor
+    /// extends, and its saturation is the open fraction's own bound: "Response saturation occurs
+    /// naturally as r approaches 1 (all channels reach the open state)". What restarting shares
+    /// with the source's rule is that a second spike never raises the transmitter above one
+    /// pulse's `t_max_mm` — the concentration is set, not added — so whatever a second spike adds
+    /// here comes from a longer pulse, not a higher one.
     pub fn release(&mut self) {
         self.pulse_left = self.t_pulse;
     }
@@ -1624,18 +1657,38 @@ impl KineticTwoState {
 /// The `GABA_B` G-protein cascade: **two state variables** and a fourth-power cooperativity.
 ///
 /// `r` and `G` are integrated; the Hill term is an algebraic readout of `G`, not a third variable,
-/// and the equation block below lists all three lines. The fuller model in this literature carries
-/// desensitised receptor states too and is **not** implemented here — an earlier version of this
-/// line said "four variables", which was `n = 4` migrating into the variable count.
+/// and the equation block below lists all three lines. An earlier version of this line said "four
+/// variables", which was `n = 4` migrating into the variable count.
 ///
-/// Destexhe & Sejnowski, *PNAS* 92:9515-9519, 1995, in the form tabulated by Destexhe, Mainen &
-/// Sejnowski, *Methods in Neuronal Modeling* (2nd ed.), 1998:
+/// This is the two-variable simplified `GABA_B` model, Eqs. 22, of Destexhe, Mainen & Sejnowski,
+/// *Kinetic models of synaptic transmission*, in *Methods in Neuronal Modeling* (2nd ed.), MIT
+/// Press, ch. 1 §4.4, pp. 1-25 (1998):
 ///
 /// ```text
 /// dr/dt = K1·[T]·(1 - r) - K2·r        receptor activation
-/// dG/dt = K3·r - K4·G                  G-protein concentration
+/// dG/dt = K3·r - K4·G                  G-protein concentration, μM
 /// g/g_max = G^n / (G^n + Kd)           channel opening, n = 4
 /// ```
+///
+/// The chapter obtains it from the three-variable `(R, D, G)` model of Destexhe & Sejnowski, *G
+/// protein activation kinetics and spillover of gamma-aminobutyric acid may account for
+/// differences between inhibitory responses in the hippocampus and thalamus*, *PNAS*
+/// 92:9515-9519 (1995), doi:10.1073/pnas.92.21.9515, by dropping its desensitised state `D`. The
+/// chapter writes the desensitising model as its Eqs. 16 and says of the simplified one: "The main
+/// difference between this model and Eqs. 16 is the absence of a desensitized state for the
+/// receptor". The 1995 model is **not** what is implemented here, and its rate constants are
+/// different (its Eq. 3: `K1 = 6.6e5 M⁻¹s⁻¹`, `K2 = 20 s⁻¹`, `K3 = 5.3 s⁻¹`, `K4 = 17 s⁻¹`,
+/// `K5 = 8.3e-5 M·s⁻¹`, `K6 = 7.9 s⁻¹`); its `Kd = 100 μM^n` and `n = 4` are the chapter's too.
+/// What the 1995 paper does contribute is the mechanism, the `n = 4` G-protein cooperativity, and
+/// the 1998 chapter credits it for that. The chapter credits its two-variable fit (its Fig. 3D) to
+/// Destexhe, Bal, `McCormick` & Sejnowski, *Ionic mechanisms underlying synchronized oscillations
+/// and propagating waves in a model of ferret thalamic slices*, *J. Neurophysiol.* 76:2049-2070
+/// (1996), doi:10.1152/jn.1996.76.3.2049.
+///
+/// An earlier version of this doc credited the two-variable form and its constants to the 1995
+/// paper, "in the form tabulated by" the 1998 chapter. The 1995 paper's `GABA_B` model has three
+/// variables, the two-variable form first appears in the 1998 chapter, and the shipped `K1..K4`
+/// are that chapter's.
 ///
 /// # What the cascade buys that a kernel cannot
 ///
@@ -1648,13 +1701,22 @@ impl KineticTwoState {
 ///
 /// # ⚠ Confidence in these constants
 ///
-/// The rate constants shipped in [`GabaBCascade::default`] are transcribed from the secondary
-/// literature in millisecond units — `K1 = 0.09 ms⁻¹mM⁻¹`, `K2 = 0.0012 ms⁻¹`, `K3 = 0.18 ms⁻¹`,
-/// `K4 = 0.034 ms⁻¹`, `Kd = 100`, `n = 4` — and converted to SI here. **This implementation did not
-/// verify them against the original figures in the 1995 paper.** The steady-state test in this
-/// module checks the integrator against the model's own closed form, which validates the arithmetic
-/// and says nothing about whether the constants describe a real synapse. Treat the shape as
-/// qualitative until you have checked the table yourself.
+/// The constants shipped in [`GabaBCascade::default`] have been read against the 1998 chapter
+/// (§4.4, below Eqs. 22) and **match it**: "Kd = 100 μM^4, K1 = 9 × 10^4 M^-1 s^-1, K2 = 1.2 s^-1,
+/// K3 = 180 s^-1 and K4 = 34 s^-1 with n = 4 binding sites". `K1` is shipped as `90 mM⁻¹s⁻¹`,
+/// the same rate in this module's millimolar units; the other three are per second as printed.
+/// The transmitter pulse is that chapter's too: "a pulse of 1 mM and 1 ms duration in all cases"
+/// (its Fig. 3 legend). `the_cascade_constants_are_the_1998_chapters_section_4_4_values` pins all
+/// of them against the printed figures.
+///
+/// This section used to say the constants were transcribed from the secondary literature in
+/// millisecond units and that this implementation "did not verify them against the original
+/// figures in the 1995 paper". The 1995 paper was the wrong place to look — its rate constants
+/// belong to the three-variable model above and none of them is shipped here.
+///
+/// What still holds: a transcription that matches its source says nothing about whether the model
+/// describes a real synapse, and the steady-state and transient tests in this module check the
+/// integrator against the model's own closed forms — the arithmetic, not the physiology.
 ///
 /// # Integration
 ///
@@ -1674,32 +1736,48 @@ pub struct GabaBCascade {
     pub k1: f64,
     /// Receptor unbinding rate, **per second**.
     pub k2: f64,
-    /// G-protein production rate from activated receptor, **per second**.
+    /// G-protein production rate from activated receptor. The source prints it in `s⁻¹`; with `r`
+    /// dimensionless and `G` in micromolar it is dimensionally `μM·s⁻¹`, so 180 here is
+    /// `180 μM·s⁻¹`, and this is where `G`'s micromolar scale lives.
     pub k3: f64,
     /// G-protein decay rate, **per second**. Its reciprocal, about 29 ms, sets the tail.
     pub k4: f64,
-    /// Dissociation constant of the Hill term, in the same arbitrary units as `G^n`. Dimensionless
-    /// here because the source's `G` is not given a concentration scale.
+    /// Dissociation constant of the Hill term, **`μM^n`**: `100 μM⁴` in the source (`n = 4`),
+    /// where `G` is an activated G-protein concentration in micromolar. The source prints `K3` in
+    /// `s⁻¹`, so `G`'s micromolar scale is implicit in `K3` (`180 μM·s⁻¹` with `r` dimensionless).
+    ///
+    /// This doc used to say `Kd` was dimensionless, in "the same arbitrary units as `G^n`",
+    /// because "the source's `G` is not given a concentration scale". It is given one: "\[G\] (in
+    /// μM) is the concentration of activated G-protein" (1998 chapter, §3.4), and "Kd = 100 μM^4"
+    /// (§4.4). The value was right; the unit was not.
     pub kd: f64,
     /// Hill coefficient — the number of G-protein subunits that must bind. `4` in the source, and
     /// the reason the response is a nonlinear function of burst length rather than a sum.
     pub n: u32,
     /// Fraction of receptors activated, dimensionless, invariant `0 <= r <= 1`.
     pub r: f64,
-    /// G-protein concentration in the source's arbitrary units, invariant `g_conc >= 0`.
+    /// Activated G-protein concentration, **micromolar** as in the source, invariant
+    /// `g_conc >= 0`. An earlier version of this doc called its units arbitrary.
     pub g_conc: f64,
-    /// Transmitter pulse amplitude, **millimolar**.
+    /// Transmitter pulse amplitude, **millimolar**. 1 mM, the 1998 chapter's Fig. 3 pulse.
     pub t_max_mm: f64,
-    /// Transmitter pulse duration, **seconds**. `GABA_B` uses a longer pulse than `GABA_A` in the
-    /// source — 0.3 ms to several ms depending on the fit; 1 ms here.
+    /// Transmitter pulse duration, **seconds**. 1 ms at 1 mM, the pulse the 1998 source used for
+    /// every simplified fit including `GABA_B`'s — "Transmitter time course was a pulse of 1 mM and
+    /// 1 ms duration in all cases" (its Fig. 3 legend) — and the same as `GABA_A`'s.
+    ///
+    /// This doc used to say `GABA_B` uses a longer pulse than `GABA_A` in the source, "0.3 ms to
+    /// several ms depending on the fit". The chapter fits both with the same 1 ms pulse. The
+    /// authors' archived `NEURON` mechanisms use 0.3 ms at 0.5 mM for `GABA_B`, the same length
+    /// as their `GABA_A` pulse or shorter — never longer.
     pub t_pulse: f64,
     /// Seconds of transmitter pulse still to run.
     pub pulse_left: f64,
 }
 
 impl Default for GabaBCascade {
-    /// The constants named in the type's doc, converted from the source's millisecond units. Read
-    /// the confidence warning there before citing any of them.
+    /// The 1998 chapter's §4.4 constants named in the type's doc, `K1` converted from `M⁻¹s⁻¹` to
+    /// `mM⁻¹s⁻¹`, and its Fig. 3 pulse. Read the confidence section there for what matching the
+    /// source does and does not establish.
     fn default() -> Self {
         Self {
             k1: 90.0,
@@ -1776,6 +1854,12 @@ impl GabaBCascade {
     }
 
     /// Release transmitter: start (or restart) a pulse of `t_pulse` seconds.
+    ///
+    /// ⚠ Restarting is this crate's choice, as it is at [`KineticTwoState::release`], and not the
+    /// source's: the 1994 pulse method starts no new pulse while one is running. This review did
+    /// not locate a statement in the 1998 chapter of how it handles overlapping pulses. No other
+    /// test here tells the two rules apart — the steady-state test releases every step and the
+    /// transient tests release once — so `a_cascade_release_restarts_its_pulse` pins it.
     pub fn release(&mut self) {
         self.pulse_left = self.t_pulse;
     }
@@ -1936,20 +2020,34 @@ impl TsodyksMarkram {
 
     /// A facilitating synapse: `U = 0.15`, `τ_d = 130 ms`, `τ_f = 530 ms`.
     ///
-    /// ⚠ **Round values inside the range** Markram, Wang & Tsodyks, *PNAS* 95:5323-5328, 1998
-    /// report for facilitating pyramidal-to-interneuron connections. This implementation did not
-    /// refit them to a specific table entry in that paper, and the individual synapses fitted there
-    /// span more than a factor of two in every parameter. Use them for a demonstration of the
-    /// regime, not as a measurement of a connection.
+    /// ⚠ **A demonstration set, not one inside the measured range.** It is chosen to show both
+    /// regimes — it facilitates 1.83-fold at 20 Hz and falls to 0.49 of its first response at
+    /// 100 Hz — and it is not a connection from the paper it is drawn from, Markram, Wang &
+    /// Tsodyks, *Differential signaling via the same axon of neocortical pyramidal neurons*,
+    /// *PNAS* 95:5323-5328 (1998), doi:10.1073/pnas.95.9.5323, "MWT98" below:
     ///
-    /// ⚠ **And the three are not equally round**, which makes the set look more like a table entry
-    /// than it is. 130 ms and 530 ms are the two figures that circulate in this literature as a
-    /// facilitating triple; the `U` they circulate with is `0.16`, not the `0.15` here. This
-    /// implementation has not checked any of the three against the paper's own table — so it has
-    /// not moved `U` to `0.16` either, because transcribing from what circulates is the mistake
-    /// this warning exists to prevent, and moving a shipped constant on that basis would change
-    /// every user's result to match a number nobody here has verified. If you want the circulating
-    /// triple, build it and own it: `TsodyksMarkram::new(0.16, 0.13, 0.53)`.
+    /// - `U = 0.15` is above every facilitating `U` this review located in MWT98: 0.1, 0.03 and
+    ///   0.12 for the three connections of its Fig. 3, 0.03 in its Fig. 4D, and the mean ± SD its
+    ///   Results give, "U, 0.049 ± 0.037".
+    /// - `τ_d = 130 ms` and `τ_f = 530 ms` are the paper's Fig. 4D model parameters, which it pairs
+    ///   with `U = 0.03`: "Model parameters, Ase = 1,540 pA, U = 0.03, τrec = 130 ms, τfacil =
+    ///   530 ms".
+    /// - `τ_f = 530 ms` is also below every per-connection `τ_facil` the paper prints, 1,700 to
+    ///   3,900 ms in its Fig. 3.
+    ///
+    /// The paper's own triple, `TsodyksMarkram::new(0.03, 0.13, 0.53)`, facilitates at **both**
+    /// rates — 5.52-fold at 20 Hz and 2.36-fold at 100 Hz by [`TsodyksMarkram::steady_state`] —
+    /// so it cannot show the rate flip this preset exists to show, which is why the preset keeps
+    /// its own `U`. The two share a limiting transmission rate, `1/τ_d = 7.69` releases per second.
+    /// `the_papers_fig_4d_triple_facilitates_at_both_rates` pins all four ratios.
+    ///
+    /// This doc used to call the set "round values inside the range" MWT98 reports for
+    /// facilitating pyramidal-to-interneuron connections, and to say 130 ms and 530 ms circulate in
+    /// the literature as a facilitating triple with `U = 0.16`, unchecked against "the paper's own
+    /// table". This review did not locate a parameter table in MWT98: its figures are in the
+    /// Results text and the Fig. 3 and Fig. 4 legends, and there the two time constants appear
+    /// together only in the Fig. 4D legend, with `U = 0.03`. Neither 0.15 nor 0.16 is the paper's.
+    /// This review did not check secondary sources for the 0.16.
     #[must_use]
     pub fn facilitating() -> Self {
         Self { u_rest: 0.15, tau_d: 0.13, tau_f: 0.53, u: 0.0, x: 1.0 }
@@ -3373,6 +3471,10 @@ mod tests {
     /// while receptors are still bound. An [`Alpha`] kernel at the same separation superposes
     /// almost exactly, and the difference between those two numbers is the whole reason to pay for
     /// a kinetic model.
+    ///
+    /// `two > one` holds because of this crate's restart rule, not the source's: under the 1994
+    /// source's rule a release during a running pulse is ignored, the second spike adds nothing,
+    /// and `two == one`. See `KineticTwoState::release`.
     #[test]
     fn the_kinetic_scheme_saturates_where_a_linear_kernel_superposes() {
         let dt = 1e-6;
@@ -3418,9 +3520,15 @@ mod tests {
         assert!(a_peak > 1.9 * a_one, "the linear kernel should nearly double: {a_one}, {a_peak}");
     }
 
-    /// A second release **restarts** the transmitter pulse rather than extending it, which is what
-    /// the source's idealisation does and is the mechanism behind the saturation the test above
-    /// measures.
+    /// A second release **restarts** the transmitter pulse rather than extending it. That is the
+    /// rule this crate chose, and this test pins it so it cannot drift; it is **not** the source's
+    /// rule. In Destexhe, Mainen & Sejnowski, *Neural Computation* 6:14-18 (1994), a release during
+    /// a running pulse starts no new pulse ("pulse initiation was inhibited for 1 msec following
+    /// event detection", Fig. 1 legend), and the last assertions here compute where that rule ends:
+    /// the single-spike peak, 0.618, at 1.0 ms. An earlier version of this doc said restarting "is
+    /// what the source's idealisation does and is the mechanism behind the saturation the test
+    /// above measures". It is neither; the source's saturation is `r` approaching 1 — see
+    /// `KineticTwoState::release`.
     ///
     /// Changing `=` to `+=` in `release` left that test green: two spikes 0.2 ms apart then reach
     /// 0.769 open against one spike's 0.618, and `two < 1.5 * one` does not separate restart from
@@ -3472,6 +3580,57 @@ mod tests {
             "an extending pulse would reach {if_extended} against the restarting {r_at_end}, \
              which is the gap this test exists to see"
         );
+        // The source's rule, for the record the release doc cites: the second release is ignored,
+        // so the pulse ends at 1.0 ms at the single-pulse peak. 0.6180 against the restarted
+        // 0.6714, 0.053 apart.
+        let if_ignored = r_inf * (1.0 - (-rate * k.t_pulse).exp());
+        assert!((if_ignored - 0.618).abs() < 0.001, "the source's rule would end at {if_ignored}");
+        assert!(
+            r_at_end - if_ignored > 0.05,
+            "restarting ends at {r_at_end} against the source's {if_ignored}"
+        );
+    }
+
+    /// The cascade's release restarts its pulse, the same rule as `KineticTwoState::release` and
+    /// the same departure from the 1994 source, which starts no new pulse while one is running.
+    ///
+    /// Nothing else asks. The transient tests release once, and the steady-state test releases
+    /// every step and passes whether a release restarts the pulse, extends it or is ignored while
+    /// one runs. Each of the last two was applied as a mutation, and each failed this test and no
+    /// other. The mid-pulse step is `2⁻¹¹` s (0.49 ms), a binary fraction, so the step itself is
+    /// exact and only the pulse clock's subtraction rounds.
+    #[test]
+    fn a_cascade_release_restarts_its_pulse() {
+        let mut c = GabaBCascade::default();
+        c.release();
+        assert_eq!(c.pulse_left, c.t_pulse);
+        c.advance(1.0 / 2048.0);
+        assert!(c.pulse_left > 0.0 && c.pulse_left < c.t_pulse, "mid-pulse: {}", c.pulse_left);
+        c.release();
+        assert_eq!(c.pulse_left, c.t_pulse, "a release mid-pulse must restart the full pulse");
+        c.advance(c.t_pulse);
+        assert_eq!(c.pulse_left, 0.0, "the restarted pulse runs exactly t_pulse and no longer");
+    }
+
+    /// The cascade's shipped constants are the 1998 chapter's §4.4 values, converted from the units
+    /// it prints — the check this module's docs once said nobody had made.
+    ///
+    /// Destexhe, Mainen & Sejnowski, *Kinetic models of synaptic transmission*, *Methods in
+    /// Neuronal Modeling* (2nd ed.), ch. 1 (1998), below Eqs. 22: "Kd = 100 μM^4, K1 = 9 × 10^4
+    /// M^-1 s^-1, K2 = 1.2 s^-1, K3 = 180 s^-1 and K4 = 34 s^-1 with n = 4 binding sites"; and
+    /// its Fig. 3 legend, "a pulse of 1 mM and 1 ms duration in all cases". The 1995 *PNAS*
+    /// three-variable model's constants (`K1 = 6.6e5 M⁻¹s⁻¹`, `K2 = 20 s⁻¹`, `K3 = 5.3 s⁻¹`,
+    /// `K4 = 17 s⁻¹`) are the ones the old citation would have led a reader to, and none is
+    /// shipped.
+    #[test]
+    fn the_cascade_constants_are_the_1998_chapters_section_4_4_values() {
+        let c = GabaBCascade::default();
+        // K1 as printed is per molar; this module's unit is per millimolar.
+        let k1_per_molar_per_second = 9.0e4;
+        assert_eq!(c.k1, k1_per_molar_per_second / 1000.0);
+        assert_eq!((c.k2, c.k3, c.k4), (1.2, 180.0, 34.0));
+        assert_eq!((c.kd, c.n), (100.0, 4));
+        assert_eq!((c.t_max_mm, c.t_pulse), (1.0, 1e-3));
     }
 
     /// The `GABA_B` cascade's steady state under sustained transmitter, against its closed form.
@@ -3765,6 +3924,40 @@ mod tests {
         let f100 = ratio(fac, 100.0);
         assert!(f100 < 1.0, "the facilitating set did not depress at 100 Hz: ratio {f100}");
         assert!(f100 < f20, "the ratio should fall with rate: {f20} then {f100}");
+    }
+
+    /// Markram, Wang & Tsodyks, *PNAS* 95:5323-5328 (1998), Fig. 4D legend: "U = 0.03, τrec =
+    /// 130 ms, τfacil = 530 ms". The preset shares the two time constants and not the `U`, and the
+    /// `U` is what decides whether the rate flip is visible: the paper's triple facilitates at
+    /// 20 Hz **and** at 100 Hz, so it could not stand in for the preset in the test above.
+    ///
+    /// The four ratios — steady-state release over the first — are the figures the preset's doc
+    /// quotes, recomputed from the closed form outside this crate: 5.5162 and 2.3623 for the
+    /// paper's triple, 1.8304 and 0.4898 for the preset.
+    #[test]
+    fn the_papers_fig_4d_triple_facilitates_at_both_rates() {
+        let paper = TsodyksMarkram::new(0.03, 0.13, 0.53).expect("the Fig. 4D triple is valid");
+        let preset = TsodyksMarkram::facilitating();
+        assert_eq!((preset.tau_d, preset.tau_f), (paper.tau_d, paper.tau_f));
+        assert_eq!(preset.u_rest, 0.15, "the preset's own U, which the paper does not print");
+
+        let ratio = |s: TsodyksMarkram, rate: f64| {
+            s.steady_state(rate).expect("positive rate").release / s.u_rest
+        };
+        for (s, rate, want) in [
+            (paper, 20.0, 5.5162),
+            (paper, 100.0, 2.3623),
+            (preset, 20.0, 1.8304),
+            (preset, 100.0, 0.4898),
+        ] {
+            let got = ratio(s, rate);
+            assert!(
+                (got - want).abs() < 1e-4,
+                "U = {}, {rate} Hz: steady state over first is {got}, the doc says {want}",
+                s.u_rest
+            );
+        }
+        assert_eq!(paper.limiting_transmission_rate(), preset.limiting_transmission_rate());
     }
 
     /// The limiting transmission rate: `A*·r → 1/τ_d` as the presynaptic rate goes to infinity,

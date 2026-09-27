@@ -638,5 +638,25 @@
   "label": "unit-mass scaling accepts a surrogate with no mass",
   "old": "        let m = inner.mass();\n        check_positive(\"inner mass\", m)?;\n        Self::new(inner, 1.0 / m)",
   "new": "        let m = inner.mass();\n        Self::new(inner, 1.0 / m)"
+ },
+ {
+  "label": "the input reaches the current one step late, the delay Neftci et al.'s eq. (4) has",
+  "old": "                    drive += self.p[self.idx_w(j, i)] * x[t * self.n_in + i];",
+  "new": "                    if t > 0 {\n                        drive += self.p[self.idx_w(j, i)] * x[(t - 1) * self.n_in + i];\n                    }"
+ },
+ {
+  "label": "the membrane reads the previous step's current, the delay Neftci et al.'s eq. (5) has",
+  "old": "                let u_now = self.beta * u_prev + i_now - self.theta * s_prev;",
+  "new": "                let u_now = self.beta * u_prev + i_prev - self.theta * s_prev;"
+ },
+ {
+  "label": "the boxcar default is not the a1 = 1.0 of Wu et al.'s Table 1",
+  "old": "        Self { width: 1.0 }",
+  "new": "        Self { width: 1.25 }"
+ },
+ {
+  "label": "the arctangent default is not SpikingJelly's ATan(alpha=2.0)",
+  "old": "        Self { alpha: 2.0 }\n    }\n}\n\nimpl ArcTan {",
+  "new": "        Self { alpha: 2.5 }\n    }\n}\n\nimpl ArcTan {"
  }
 ]

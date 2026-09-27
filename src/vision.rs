@@ -11,8 +11,9 @@
 //! log-intensity and fires an event the instant the log-intensity moves past a contrast threshold
 //! `C`, independently of every other pixel (Lichtsteiner, Posch and Delbruck, *A 128x128 120 dB 15
 //! us Latency Asynchronous Temporal Contrast Vision Sensor*, IEEE Journal of Solid-State Circuits
-//! 43(2), 2008). What you buy is microsecond latency, a dynamic range past 120 dB, and a data rate
-//! proportional to *scene motion* rather than to pixel count.
+//! 43(2):566-576 (2008), doi:10.1109/JSSC.2007.914337). What you buy is microsecond latency, a
+//! dynamic range past 120 dB, and a data rate proportional to *scene motion* rather than to pixel
+//! count.
 //!
 //! What you pay is that **there is no image**. Every frame-based algorithm — convolution, corner
 //! detection, optical flow, feature tracking — has to be re-derived on an asynchronous point
@@ -29,15 +30,16 @@
 //! - A moving straight edge sweeps each pixel once, at a time linear in position, so its events
 //!   lie on a **plane** in `(x, y, t)` — and the plane's gradient is the reciprocal velocity
 //!   (Benosman, Clercq, Lagorce, Ieng and Bartolozzi, *Event-Based Visual Flow*, IEEE Transactions
-//!   on Neural Networks and Learning Systems 25(2), 2014).
+//!   on Neural Networks and Learning Systems 25(2):407-417 (2014), doi:10.1109/TNNLS.2013.2273537).
 //! - The cloud's *most recent arrival time* at each pixel is a scalar field — the **surface of
 //!   active events** — and decaying it exponentially gives the **time surface** that every
-//!   descriptor here is built on (Lagorce, Orchard, Gallupi, Shi and Benosman, *HOTS: A Hierarchy
+//!   descriptor here is built on (Lagorce, Orchard, Galluppi, Shi and Benosman, *HOTS: A Hierarchy
 //!   of Event-Based Time-Surfaces for Pattern Recognition*, IEEE Transactions on Pattern Analysis
-//!   and Machine Intelligence 39(7), 2017).
+//!   and Machine Intelligence 39(7):1346-1359 (2017), doi:10.1109/TPAMI.2016.2574707).
 //! - Undoing a candidate motion shears the cloud; the **correct** motion is the one whose shear
 //!   makes the cloud's projection onto the image plane sharpest (Gallego, Rebecq and Scaramuzza,
-//!   *A Unifying Contrast Maximization Framework for Event Cameras*, CVPR 2018).
+//!   *A Unifying Contrast Maximization Framework for Event Cameras, with Applications to Motion,
+//!   Depth, and Optical Flow Estimation*, CVPR 2018, pp. 3867-3876, doi:10.1109/CVPR.2018.00407).
 //!
 //! # The aperture problem is not a detail here, it is the answer
 //!
@@ -61,9 +63,13 @@
 //! this module does not have. So the boundary is stated rather than guessed — flow is px/s, and a
 //! caller with a focal length in pixels can divide.
 //!
-//! The dimensionless constants of the papers reproduced here — `HOTS`'s `0.01` and `20000`,
-//! `Harris`'s `0.04`, `eFAST`'s arc-length ranges — stay **verbatim inside the model** where a
-//! reader can compare them against the source, and the conversion happens at the boundary.
+//! The dimensionless constants of the papers reproduced here — `HOTS`'s `0.01` and `20000`, the
+//! `Harris` constant `0.04` of the event-based `Harris` detector of Mueggler, Bartolozzi and
+//! Scaramuzza (`BMVC` 2017, eq. 4), `eFAST`'s arc-length ranges — stay **verbatim inside the
+//! model** where a reader can compare them against the source, and the conversion happens at the
+//! boundary. The `0.04` is compared against Mueggler et al., not against `Harris` and Stephens
+//! 1988: that paper defines `R = Det - k Tr^2`, and this review did not locate a value for `k` in
+//! it. An earlier revision of this doc listed it as "`Harris`'s `0.04`".
 //!
 //! # What is checked, and against what
 //!
@@ -83,13 +89,40 @@
 //!
 //! # What this implementation is unsure about
 //!
-//! The transcriptions of `HOTS`'s online clustering rule and of `HATS`'s default parameters are
+//! The transcriptions of `HOTS`'s online clustering rule and of `HATS`'s averaging divisor are
 //! from the papers as this implementation reads them; **this implementation did not locate an
 //! author-released reference implementation of either to check the transcription against**, and
-//! the items concerned say so in their own docs. The `eFAST` circle offsets and arc-length ranges
-//! are the standard `FAST` `Bresenham` circles and the ranges Mueggler et al. print, and the
-//! *behaviour* they are supposed to produce — half-circle arcs on an edge, quarter-circle arcs on
-//! a corner — is asserted directly rather than taken on trust.
+//! the items concerned say so in their own docs. `HATS`'s `N-CARS` parameters are no longer in
+//! that category: [`Hats::n_cars`] cites the page and the table each one is read from. The
+//! `eFAST` circle offsets and arc-length ranges are the standard `FAST` `Bresenham` circles and the
+//! ranges Mueggler et al. print, and the *behaviour* they are supposed to produce — half-circle
+//! arcs on an edge, quarter-circle arcs on a corner — is asserted directly rather than taken on
+//! trust.
+//!
+//! # Corrections
+//!
+//! An audit against the primaries changed two behaviours and several claims. Each item's own doc
+//! says what it used to say and what the source prints; this is the index.
+//!
+//! - [`Hats::n_cars`]: `tau` was `1` s, from reading the paper's `10^9` as nanoseconds. Sironi et
+//!   al. print `tau = 10^9 µs`, which is `1000` s.
+//! - [`Hats::descriptor`]: each event used to add its own `exp(0) = 1` to its centre bin. The
+//!   paper's neighbourhood (eq. 4) is `t_j` in `[t_i - window_s, t_i)`, which excludes the event
+//!   itself and any earlier event with the same timestamp.
+//! - [`Frame::sum_of_squares`] was attributed to the "image area" loss; it is the Mean Square
+//!   loss of Gallego, Gehrig and Scaramuzza 2019 (eq. 9).
+//! - [`Motion::warp`] said a rotation can collapse the cloud onto one pixel. An in-plane
+//!   rotation keeps every event's distance from its centre and cannot. The paper that analyses
+//!   *event collapse* under that name is Shiba, Aoki and Gallego 2022; this review did not locate
+//!   the term in the two Gallego papers this module cites (CVPR 2018 and CVPR 2019).
+//! - [`EHarris::K_HARRIS`] was attributed to `Harris` and Stephens 1988; this review did not
+//!   locate a value for `k` in that paper. The `0.04` is Mueggler et al.'s.
+//! - [`EFast`] was said to run at full sensor rate on a microcontroller. Its paper reports one
+//!   core of a laptop processor, and this review did not locate a microcontroller measurement in
+//!   it.
+//! - Citations: the third `HOTS` author is Galluppi, not "Gallupi"; the CVPR 2018 title was
+//!   truncated; page ranges and DOIs were missing. The references above are checked against
+//!   Crossref.
 //!
 //! # Example
 //!
@@ -765,8 +798,17 @@ impl Frame {
         self.data.iter().sum()
     }
 
-    /// Sum of squares over all pixels — the objective Gallego et al. 2019 call *image area* when
-    /// normalised, and one of the two focus measures [`Objective`] offers.
+    /// Sum of squares over all pixels. Divided by the pixel count, this is the Mean Square (MS)
+    /// loss of Gallego, Gehrig and Scaramuzza (*Focus Is All You Need: Loss Functions for
+    /// Event-Based Vision*, CVPR 2019, pp. 12272-12281, doi:10.1109/CVPR.2019.01256,
+    /// arXiv:1904.07235; eq. 9,
+    /// `MS(I) = ||I(x; theta)||^2 / |Omega|`), and it is one of the two focus measures
+    /// [`Objective`] offers.
+    ///
+    /// An earlier revision of this doc called it what that paper calls *image area*. That is a
+    /// different loss: Image Area (eq. 8) is the support of the image, `supp(I) = integral of
+    /// (F(I) - F(0))`, and the paper's Table 1 lists it as minimised where Mean Square is
+    /// maximised. Image Area is not implemented here.
     #[must_use]
     pub fn sum_of_squares(&self) -> f64 {
         self.data.iter().map(|v| v * v).sum()
@@ -1057,7 +1099,8 @@ pub enum FlowOutcome {
     },
 }
 
-/// Per-event normal flow by local plane fitting (Benosman et al., IEEE `TNNLS` 25(2), 2014).
+/// Per-event normal flow by local plane fitting (Benosman et al., IEEE `TNNLS`
+/// 25(2):407-417 (2014), doi:10.1109/TNNLS.2013.2273537).
 ///
 /// # The algorithm, and where this implementation departs from the paper
 ///
@@ -1310,8 +1353,8 @@ pub fn flow_error(
 // HOTS: a hierarchy of event-based time surfaces
 // ---------------------------------------------------------------------------------------------
 
-/// One `HOTS` layer: online clustering of local time-surface patches (Lagorce, Orchard, Gallupi,
-/// Shi and Benosman, IEEE `TPAMI` 39(7), 2017).
+/// One `HOTS` layer: online clustering of local time-surface patches (Lagorce, Orchard, Galluppi,
+/// Shi and Benosman, IEEE `TPAMI` 39(7):1346-1359 (2017), doi:10.1109/TPAMI.2016.2574707).
 ///
 /// # What it is for
 ///
@@ -1537,7 +1580,8 @@ impl Hots {
 
 /// `HATS`: histograms of averaged time surfaces (Sironi, Brambilla, Bourdis, Lagorce and Benosman,
 /// *`HATS`: Histograms of Averaged Time Surfaces for Robust Event-based Object Classification*,
-/// CVPR 2018).
+/// CVPR 2018, pp. 1731-1740, doi:10.1109/CVPR.2018.00186; arXiv:1803.07913, whose page numbers
+/// the page references below use).
 ///
 /// # What it adds over a plain time surface
 ///
@@ -1548,21 +1592,37 @@ impl Hots {
 /// surface over all events in a cell, giving one fixed-length histogram per cell per polarity that
 /// a plain linear classifier can consume.
 ///
+/// "Earlier" is strict. The paper's neighbourhood (eq. 4) is
+/// `N(z,q)(e_i) = {e_j : x_j = x_i + z, t_j in [t_i - Delta t, t_i), p_j = q}`, with
+/// `Delta t = window_s`, and its Algorithm 1 computes `T_ei` from the cell's memory (line 6)
+/// before adding `e_i` to it (line 8). So the current event contributes nothing to its own
+/// surface, a cell holding exactly one event has an all-zero histogram, and an earlier event with
+/// the *same* timestamp is outside the half-open interval too. The lower bound is closed, which is
+/// the inclusive window below.
+///
 /// The price is history. Where a time surface is `O(1)` per event, this is `O(k)` in the number of
 /// recent events in the cell — the implementation here is the straightforward quadratic pass over
 /// each cell, which is right for teaching and wrong for a 640x480 sensor at 10 Mev/s. A production
 /// version keeps a per-pixel ring buffer; the arithmetic is identical and the doc says so instead
 /// of the code hiding it.
 ///
-/// # The defaults, and what is uncertain about them
+/// # The `N-CARS` defaults, and where each is printed
 ///
-/// The paper's reported settings for `N-CARS` are `radius = 3` (a 7x7 neighbourhood),
-/// `cell_px = 10`, `window_s = 0.1` and a `tau` this implementation reads as `1e9` nanoseconds,
-/// i.e. **1 second**. [`Hats::n_cars`] carries those. A one-second time constant against a
-/// hundred-millisecond window means the exponential barely decays inside the window, so the
-/// descriptor is close to a plain event count — which may well be the paper's intent and may
-/// equally be this implementation misreading the units. **It is flagged rather than presented
-/// confidently**, and a reader with the paper should check.
+/// Sironi et al. give the `N-CARS` settings on p. 7 ("For the N-CARS dataset, the HATS parameters
+/// used are K = 10, rho = 3 and tau = 10^9 µs") and again in Table 5 of the supplementary material
+/// (openaccess.thecvf.com, `content_cvpr_2018/Supplemental/1083-supp.pdf`: "HATS parameters used
+/// in the experiments of Section 6", columns `K`, `rho`, `tau (µs)`,
+/// `Delta t (ms)`, `N-CARS` row `10 3 10^9 100`). So `cell_px = 10`, `radius = 3` (a 7x7
+/// neighbourhood), `window_s = 0.1` and `tau_s = 1000.0`. [`Hats::n_cars`] carries those.
+///
+/// Against a 0.1 s window, a 1000 s time constant weights every neighbour by at least
+/// `exp(-0.1 / 1000) = exp(-1e-4)`, so the descriptor is within one part in ten thousand of a
+/// plain count of recent same-polarity neighbours per offset. That is what the paper prints; it
+/// is not a unit this implementation chose.
+///
+/// An earlier revision read the `10^9` as **nanoseconds** and set `tau_s = 1.0`, flagging the
+/// reading as uncertain. The unit the paper prints is microseconds, in the text and in the
+/// table's column head, which makes `tau` a thousand times longer than that revision had it.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Hats {
     /// Cell side `K` in pixels. The sensor is tiled by `ceil(width/K)` by `ceil(height/K)` cells
@@ -1574,19 +1634,22 @@ pub struct Hats {
     /// Exponential time constant, **seconds**.
     pub tau_s: f64,
     /// Memory window, **seconds**: events older than this contribute nothing. The boundary is
-    /// **inclusive** — an event exactly `window_s` old is the last one that counts — which is
-    /// pinned by a test rather than left to whichever comparison someone writes next.
+    /// **inclusive** — an event exactly `window_s` old is the last one that counts, the closed
+    /// lower end of eq. 4's `[t_i - window_s, t_i)` — which is pinned by a test rather than left
+    /// to whichever comparison someone writes next.
     pub window_s: f64,
     /// Whether `On` and `Off` get separate histograms. The paper keeps them separate.
     pub split_polarity: bool,
 }
 
 impl Hats {
-    /// The settings this implementation reads from the paper's `N-CARS` experiment. See the type
-    /// doc for the uncertainty about `tau`.
+    /// The paper's `N-CARS` settings: `K = 10`, `rho = 3`, `tau = 10^9 µs = 1000 s` (p. 7 and
+    /// supplementary Table 5) and `Delta t = 100 ms` (Table 5), with the polarities kept apart.
+    /// The type doc quotes both sources. `tau_s` was `1.0` before the `10^9` was read in the
+    /// microseconds the paper prints.
     #[must_use]
     pub fn n_cars() -> Self {
-        Self { cell_px: 10, radius: 3, tau_s: 1.0, window_s: 0.1, split_polarity: true }
+        Self { cell_px: 10, radius: 3, tau_s: 1000.0, window_s: 0.1, split_polarity: true }
     }
 
     /// Bins per cell per polarity plane, `(2 * radius + 1)^2`.
@@ -1661,14 +1724,25 @@ impl Hats {
     /// plainly, because it is not what "the average of the plane's time surfaces" would mean: an
     /// `On`-dominated cell and a balanced cell with **identical `On` texture** produce different
     /// `On` planes, scaled by the polarity mix. [`Hats::descriptor`]'s own test asserts exactly
-    /// that — one `On` and one `Off` event in a cell give `0.5`, not `1.0`, in each plane's centre
-    /// bin.
+    /// that: two `On` events at one pixel `dt` apart give `exp(-dt/tau) / 2` in the `On` centre
+    /// bin, and adding two `Off` events elsewhere in the cell turns the same `On` content into
+    /// `exp(-dt/tau) / 4`.
     ///
     /// **This implementation did not locate an author-released reference implementation to check
     /// that reading against**, and it is a place where the arithmetic is a decision rather than a
     /// derivation — unlike the memory surface itself, which the paper writes out. It is flagged
-    /// here for the same reason the `tau` reading is flagged on the type doc: a reader with the
-    /// paper should check, and this is where a disagreement should be recorded.
+    /// here so that a reader with the paper can check it, and this is where a disagreement should
+    /// be recorded.
+    ///
+    /// # What the current event contributes: nothing
+    ///
+    /// The surface of `e_i` sums over `t_j` in `[t_i - window_s, t_i)` (eq. 4), so `e_i` itself is
+    /// not in it and neither is an earlier event in the slice with the same timestamp. A cell
+    /// holding one event, or only simultaneous ones, is counted in the divisor and adds nothing to
+    /// the histogram. Before the correction this function added `exp(0) = 1` to the centre bin for
+    /// every event, on the reading that the surface includes the current event; with
+    /// `split_polarity` that put `n_q / n_cell` into each plane's centre bin, and `1` into the one
+    /// centre bin without it.
     ///
     /// # Errors
     ///
@@ -1699,15 +1773,17 @@ impl Hats {
             let plane = e.plane(self.split_polarity);
             let base = (cell * planes + plane) * bins;
             per_cell[cell] += 1;
-            // The event's own contribution: `exp(0) = 1` at the centre bin. The paper's local
-            // memory time surface includes the current event, so a cell holding exactly one event
-            // has a histogram that is exactly the centre-bin indicator — which is the closed form
-            // this is tested against.
-            out[base + rho as usize * side + rho as usize] += 1.0;
+            // No term for `e` itself: eq. (4) sums over `t_j` in `[t_i - window_s, t_i)`, and
+            // Algorithm 1 computes the surface before adding `e_i` to the cell's memory.
             for e_j in events[..i].iter().rev() {
                 let dt = e.t_s - e_j.t_s;
                 if dt > self.window_s {
                     break;
+                }
+                // Open at `t_i`: an earlier event with the same timestamp is not a neighbour.
+                // Skipped, not a `break`: the older events behind it are still in the window.
+                if dt == 0.0 {
+                    continue;
                 }
                 if self.split_polarity && e_j.polarity != e.polarity {
                     continue;
@@ -1764,12 +1840,13 @@ pub struct Corner {
 ///
 /// # The idea
 ///
-/// `Harris`'s 1988 detector asks whether the local image gradient has *two* strong directions. That
-/// question survives the move to events intact, because it only needs a local binary pattern — and
-/// an event camera gives one for free: the set of pixels that fired recently. So: take the `(2r+1)`
-/// window around the incoming event, mark 1 where the `SAE` says the pixel fired within
-/// `window_s`, run `Sobel`, accumulate the structure tensor `M = sum [Ix^2, IxIy; IxIy, Iy^2]`, and
-/// score it as `det(M) - k * trace(M)^2`.
+/// The `Harris` detector (`Harris` and Stephens, *A Combined Corner and Edge Detector*, Proceedings
+/// of the Alvey Vision Conference 1988, Manchester, pp. 147-151, doi:10.5244/C.2.23) asks whether
+/// the local image gradient has *two* strong directions. That question survives the move to events
+/// intact, because it only needs a local binary pattern — and an event camera gives one for free:
+/// the set of pixels that fired recently. So: take the `(2r+1)` window around the incoming event,
+/// mark 1 where the `SAE` says the pixel fired within `window_s`, run `Sobel`, accumulate the
+/// structure tensor `M = sum [Ix^2, IxIy; IxIy, Iy^2]`, and score it as `det(M) - k * trace(M)^2`.
 ///
 /// # The sign property this is tested on, rather than a tuned threshold
 ///
@@ -1798,7 +1875,14 @@ pub struct EHarris {
 }
 
 impl EHarris {
-    /// `Harris`'s own sensitivity constant, dimensionless, as the 1988 paper prints it: `0.04`.
+    /// The `Harris` sensitivity constant `k`, dimensionless: `0.04`. This is the value Mueggler,
+    /// Bartolozzi and Scaramuzza use for the event-based `Harris` detector they compare `eFAST`
+    /// against (*Fast Event-based Corner Detection*, `BMVC` 2017, eq. 4:
+    /// "`H = det(M) - k * trace(M)^2`, where `k = 0.04` is a user-defined parameter").
+    ///
+    /// An earlier revision of this doc called it "`Harris`'s own sensitivity constant, as the 1988
+    /// paper prints it". `Harris` and Stephens 1988 define `R = Det - k Tr^2` (p. 150), and this
+    /// review did not locate a numerical value for `k` in that paper, nor a range for it.
     ///
     /// # What the number decides
     ///
@@ -2067,15 +2151,22 @@ pub fn newest_arc(times: &[f64], lo: usize, hi: usize) -> Option<usize> {
 }
 
 /// `eFAST`: corner detection by arc length on the surface of active events (Mueggler, Bartolozzi
-/// and Scaramuzza, *Fast Event-based Corner Detection*, `BMVC` 2017).
+/// and Scaramuzza, *Fast Event-based Corner Detection*, `BMVC` 2017, doi:10.5244/C.31.33).
 ///
 /// # Why this is cheap
 ///
 /// No gradients, no structure tensor, no floating-point convolution — just timestamp comparisons on
-/// 36 pixels. That is what makes it the one event-based corner detector that runs comfortably at
-/// full sensor rate on a microcontroller, and it is why it is here beside [`EHarris`] rather than
-/// instead of it: [`EHarris`] gives a continuous score that can be ranked, `eFAST` gives a binary
-/// verdict very fast.
+/// 36 pixels. Mueggler et al. report 780 ns per event on one core of an Intel i7-3720QM at
+/// 2.60 GHz, "allowing rates of up to 1.2 million events per second — more than an order of
+/// magnitude higher than previous methods" (§3.4). That is still below the peaks of 8 million
+/// events per second they cite for the Event Camera Dataset. The speed is why it is here beside
+/// [`EHarris`] rather than instead of it: [`EHarris`] gives a continuous score that can be ranked,
+/// `eFAST` gives a binary verdict fast.
+///
+/// An earlier revision called it "the one event-based corner detector that runs comfortably at
+/// full sensor rate on a microcontroller". This review did not locate a microcontroller, embedded
+/// or low-power measurement in the paper, and the one laptop-processor core it does measure on
+/// does not keep up with the peak rate it quotes.
 ///
 /// # The criterion
 ///
@@ -2296,13 +2387,29 @@ impl Motion {
     ///
     /// # The known pathology
     ///
-    /// Every non-translational family here has a **degenerate global maximum**: a rotation or
-    /// expansion large enough collapses the whole cloud onto one pixel, which is perfectly sharp
-    /// and completely wrong. Gallego et al. discuss it as *event collapse*; the remedies in the
-    /// literature are a bounded search range, a regulariser, or a different objective. This module
-    /// takes the first — [`search_translation`] and [`sweep`] are bounded, and the bound is the
-    /// caller's — and this doc is here so nobody is surprised by a search that runs away when the
-    /// bound is widened.
+    /// The expansion family can have a **degenerate maximum**: a warp that contracts toward the
+    /// centre can pile events into a few pixels, which is sharp and wrong. Shiba, Aoki and Gallego
+    /// (*Event Collapse in Contrast Maximization Frameworks*, Sensors 22(14):5190 (2022),
+    /// doi:10.3390/s22145190) analyse this failure mode as *event collapse*, "an undesired solution
+    /// where events are warped into too few pixels". They show it for a 1-DOF zoom warp,
+    /// `x' = (1 - t h_z) x`, which is multiplicative; [`Motion::RadialExpansion`] is a linear
+    /// radial shift, so their result applies here by analogy rather than to this exact warp.
+    ///
+    /// The in-plane [`Motion::Rotation`] family turns each event about `(cx, cy)`: every event
+    /// keeps its distance from the centre, so no rotation can contract the cloud toward a point,
+    /// let alone onto one pixel. Shiba et al. class rotational warps as well posed ("rotational
+    /// (which does not suffer from event collapse)", §4.1.1).
+    ///
+    /// The remedies in the literature are a bounded search range, a regulariser, or a different
+    /// objective. This module takes the first — [`search_translation`] and [`sweep`] are bounded,
+    /// and the bound is the caller's — and this doc is here so nobody is surprised by an expansion
+    /// search that runs away when the bound is widened.
+    ///
+    /// An earlier revision said every non-translational family, rotation included, could collapse
+    /// the whole cloud onto one pixel, and credited the term *event collapse* to Gallego et al.
+    /// This review did not locate the word "collapse" in the text of either Gallego paper this
+    /// module cites (CVPR 2018, CVPR 2019); the paper that analyses the failure under that name is
+    /// Shiba et al. 2022, where Gallego is the last author.
     ///
     /// For [`Motion::RadialExpansion`], a point warped past the centre emerges on the far side
     /// rather than being clamped. That is what the linear radial model says happens and clamping
@@ -4695,16 +4802,18 @@ mod tests {
     /// **The closed form `HATS` is checked against**, in three cases whose answers can be written
     /// down.
     ///
-    /// One event in a cell: its local memory time surface is its own contribution alone, `exp(0)`,
-    /// so the averaged histogram is *exactly* the centre-bin indicator.
+    /// One event in a cell: its local memory time surface sums over earlier events only (eq. 4,
+    /// `t_j` in `[t_i - window_s, t_i)`), and there are none, so the histogram is *exactly* zero
+    /// while the descriptor keeps its full length. Before the correction this case was the
+    /// centre-bin indicator, from an `exp(0)` self-term the paper does not have.
     ///
-    /// Two events at the same pixel `dt` apart: the first sees only itself, the second sees itself
-    /// plus the first at `exp(-dt/tau)`. The average over the cell's two events is therefore
-    /// `1 + exp(-dt/tau)/2` at the centre and exactly zero everywhere else.
+    /// Two events at the same pixel `dt` apart: the first sees nothing, the second sees the first
+    /// at `exp(-dt/tau)`. The average over the cell's two events is therefore `exp(-dt/tau) / 2`
+    /// at the centre and exactly zero everywhere else.
     ///
     /// Two events one pixel apart: the later one records the earlier at the bin for offset
-    /// `(-1, 0)`, and **not** at `(+1, 0)`. That asymmetry is the whole content of the sign
-    /// convention, and a test on a symmetric stimulus cannot see it.
+    /// `(-1, 0)`, and **not** at `(+1, 0)` and not at the centre. That asymmetry is the whole
+    /// content of the sign convention, and a test on a symmetric stimulus cannot see it.
     #[test]
     fn hats_reproduces_its_local_memory_surface_in_closed_form() {
         let g = geom(20, 20);
@@ -4717,8 +4826,7 @@ mod tests {
         let one = h.descriptor(g, &[PixelEvent { t_s: 0.0, x: 5, y: 5, polarity: Polarity::On }])
             .unwrap();
         assert_eq!(one.len(), h.descriptor_len(g).unwrap());
-        assert_eq!(one[centre_bin], 1.0, "a single event's own contribution is not exp(0)");
-        assert_eq!(one.iter().filter(|v| **v != 0.0).count(), 1);
+        assert!(one.iter().all(|v| *v == 0.0), "a lone event contributed to its own surface");
 
         // Two at the same pixel.
         let dt = 0.02;
@@ -4728,7 +4836,7 @@ mod tests {
                 PixelEvent { t_s: dt, x: 5, y: 5, polarity: Polarity::On },
             ])
             .unwrap();
-        let want = 1.0 + (-dt / h.tau_s).exp() / 2.0;
+        let want = (-dt / h.tau_s).exp() / 2.0;
         assert!((two[centre_bin] - want).abs() < 1e-14, "{} against {want}", two[centre_bin]);
         assert_eq!(two.iter().filter(|v| **v != 0.0).count(), 1);
 
@@ -4741,48 +4849,57 @@ mod tests {
             .unwrap();
         let left_bin = 3 * 7 + 2; // offset (-1, 0)
         let right_bin = 3 * 7 + 4; // offset (+1, 0)
-        assert_eq!(off[centre_bin], 1.0, "each event's own contribution, averaged over two");
+        assert_eq!(off[centre_bin], 0.0, "an event's own position was counted");
         assert!(
             (off[left_bin] - (-dt / h.tau_s).exp() / 2.0).abs() < 1e-14,
             "the neighbour landed at {} in the (-1, 0) bin",
             off[left_bin]
         );
         assert_eq!(off[right_bin], 0.0, "the offset sign is mirrored");
+        assert_eq!(off.iter().filter(|v| **v != 0.0).count(), 1);
     }
 
     /// The memory window is a hard cut-off and the cell tiling is a hard partition. Both are
     /// asserted with exact zeros, because both are places where an off-by-one would produce a
-    /// descriptor that is merely slightly wrong.
+    /// descriptor that is merely slightly wrong. Each zero has a control beside it that is not
+    /// zero, so the zeros cannot come from a descriptor that records nothing at all.
     #[test]
     fn hats_forgets_past_its_window_and_does_not_leak_between_cells() {
         let g = geom(20, 20);
         let h = Hats { cell_px: 10, radius: 3, tau_s: 1.0, window_s: 0.1, split_polarity: false };
-        let centre_bin = 3 * 7 + 3;
-        // The earlier event is 0.2 s back — twice the window — so it contributes exactly nothing
-        // and the average is over two events each seeing only itself.
-        let d = h
-            .descriptor(g, &[
+        let left_bin = 3 * 7 + 2; // offset (-1, 0)
+        let pair = |t1: f64| {
+            h.descriptor(g, &[
                 PixelEvent { t_s: 0.0, x: 5, y: 5, polarity: Polarity::On },
-                PixelEvent { t_s: 0.2, x: 6, y: 5, polarity: Polarity::On },
+                PixelEvent { t_s: t1, x: 6, y: 5, polarity: Polarity::On },
             ])
-            .unwrap();
-        assert_eq!(d[centre_bin], 1.0);
-        assert_eq!(d.iter().filter(|v| **v != 0.0).count(), 1, "something crossed the window");
+            .unwrap()
+        };
+        // The control: 0.05 s back is inside the window, and the neighbour is recorded.
+        let near = pair(0.05);
+        assert!((near[left_bin] - (-0.05f64).exp() / 2.0).abs() < 1e-15, "{}", near[left_bin]);
+        assert_eq!(near.iter().filter(|v| **v != 0.0).count(), 1);
+        // 0.2 s back is twice the window, so the earlier event contributes exactly nothing.
+        let far = pair(0.2);
+        assert!(far.iter().all(|v| *v == 0.0), "something crossed the window");
 
-        // Cells: (5, 5) is in cell 0, (14, 5) in cell 1, and they are three pixels apart in neither
-        // sense — the point is that even a NEIGHBOURING pixel across a cell boundary does not
-        // contribute. (9, 5) and (10, 5) are adjacent and in different cells.
+        // Cells: x = 8 and 9 are in cell 0, x = 10 and 11 in cell 1, all on one row and all within
+        // `radius = 3` of each other, so every pair would be a neighbour if the partition leaked.
+        // Inside each cell the later event sees the earlier one at (-1, 0), 0.01 s back.
         let (cells_x, cells_y) = h.cell_grid(g).unwrap();
         assert_eq!((cells_x, cells_y), (2, 2));
         let d = h
             .descriptor(g, &[
-                PixelEvent { t_s: 0.0, x: 9, y: 5, polarity: Polarity::On },
-                PixelEvent { t_s: 0.01, x: 10, y: 5, polarity: Polarity::On },
+                PixelEvent { t_s: 0.0, x: 8, y: 5, polarity: Polarity::On },
+                PixelEvent { t_s: 0.01, x: 9, y: 5, polarity: Polarity::On },
+                PixelEvent { t_s: 0.02, x: 10, y: 5, polarity: Polarity::On },
+                PixelEvent { t_s: 0.03, x: 11, y: 5, polarity: Polarity::On },
             ])
             .unwrap();
         let bins = h.bins_per_cell();
-        assert_eq!(d[centre_bin], 1.0, "cell 0");
-        assert_eq!(d[bins + centre_bin], 1.0, "cell 1");
+        let want = (-0.01f64).exp() / 2.0;
+        assert!((d[left_bin] - want).abs() < 1e-15, "cell 0: {}", d[left_bin]);
+        assert!((d[bins + left_bin] - want).abs() < 1e-15, "cell 1: {}", d[bins + left_bin]);
         assert_eq!(d.iter().filter(|v| **v != 0.0).count(), 2, "a cell boundary leaked");
 
         // And a cell with no events keeps its exact zeros rather than dividing by zero.
@@ -4801,16 +4918,21 @@ mod tests {
         let evs = [
             PixelEvent { t_s: 0.0, x: 5, y: 5, polarity: Polarity::On },
             PixelEvent { t_s: 0.01, x: 5, y: 5, polarity: Polarity::Off },
+            PixelEvent { t_s: 0.02, x: 5, y: 5, polarity: Polarity::On },
         ];
         let d = split.descriptor(g, &evs).unwrap();
-        // 9 bins per plane; Off is plane 0 and On is plane 1. Each event sees only itself, and the
-        // cell's two events are averaged over both planes together, so each centre reads 0.5.
+        // 9 bins per plane; Off is plane 0 and On is plane 1. Split, the `Off` event has no
+        // earlier `Off` event to see, and the second `On` event sees only the first `On`, 0.02 s
+        // back. The cell's three events divide both planes.
         assert_eq!(d.len(), 18);
-        assert_eq!(d[4], 0.5, "the Off plane's centre bin");
-        assert_eq!(d[9 + 4], 0.5, "the On plane's centre bin");
-        // Joined, the later event sees the earlier one and the centre carries both.
+        assert_eq!(d[4], 0.0, "the Off event saw an On event");
+        let want = (-0.02f64).exp() / 3.0;
+        assert!((d[9 + 4] - want).abs() < 1e-15, "the On plane's centre bin: {}", d[9 + 4]);
+        assert_eq!(d.iter().filter(|v| **v != 0.0).count(), 1, "the planes mixed");
+        // Joined, every event sees every earlier one: the `Off` event sees the first `On` 0.01 s
+        // back, and the last event sees the `Off` 0.01 s back and the first `On` 0.02 s back.
         let j = joint.descriptor(g, &evs).unwrap();
-        let want = 1.0 + (-0.01f64 / joint.tau_s).exp() / 2.0;
+        let want = (2.0 * (-0.01f64 / joint.tau_s).exp() + (-0.02f64).exp()) / 3.0;
         assert!((j[4] - want).abs() < 1e-14, "{} against {want}", j[4]);
     }
 
@@ -5320,8 +5442,10 @@ mod tests {
             .unwrap();
         assert!(matches!(past, FlowOutcome::TooFew { found: 1 }), "{past:?}");
 
-        // HATS: two events at one pixel, exactly `window_s` apart. Inclusive, the later one sees
-        // the earlier at exp(-1) and the cell average is 1 + exp(-1)/2; exclusive, it is 1.
+        // HATS: two events at one pixel, exactly `window_s` apart. Inclusive — the closed lower
+        // end of eq. 4's `[t_i - window_s, t_i)` — the later one sees the earlier at exp(-1) and
+        // the cell average is exp(-1)/2; exclusive, it is 0. Both times are binary fractions, so
+        // `dt` is exactly `window_s`.
         let g = geom(10, 10);
         let h = Hats { cell_px: 10, radius: 1, tau_s: 0.25, window_s: 0.25, split_polarity: false };
         let d = h
@@ -5330,16 +5454,16 @@ mod tests {
                 PixelEvent { t_s: 0.25, x: 5, y: 5, polarity: Polarity::On },
             ])
             .unwrap();
-        let want = 1.0 + (-1.0f64).exp() / 2.0;
-        assert!((d[4] - want).abs() < 1e-14, "at the boundary: {} against {want}", d[4]);
-        // Just past it, the earlier event is forgotten and each event sees only itself.
+        let want = (-1.0f64).exp() / 2.0;
+        assert!((d[4] - want).abs() < 1e-15, "at the boundary: {} against {want}", d[4]);
+        // Just past it, the earlier event is forgotten and neither event sees anything.
         let d = h
             .descriptor(g, &[
                 PixelEvent { t_s: 0.0, x: 5, y: 5, polarity: Polarity::On },
-                PixelEvent { t_s: 0.26, x: 5, y: 5, polarity: Polarity::On },
+                PixelEvent { t_s: 0.25 + 1.0 / 1024.0, x: 5, y: 5, polarity: Polarity::On },
             ])
             .unwrap();
-        assert_eq!(d[4], 1.0, "past the window the earlier event still contributed");
+        assert!(d.iter().all(|v| *v == 0.0), "past the window the earlier event still contributed");
     }
 
     /// **Mutation found: replacing `beta` with the constant `1.0` in [`Hots::learn`] survived every
@@ -5612,7 +5736,7 @@ mod tests {
     /// the *recurrence structure*, which is a different and worthwhile claim — but it held to
     /// 1e-12 with `ALPHA_DECAY` halved, because it built its closed form out of `alpha_for`.
     ///
-    /// Lagorce, Orchard, Gallupi, Shi and Benosman, IEEE `TPAMI` 39(7), 2017, print
+    /// Lagorce, Orchard, Galluppi, Shi and Benosman, IEEE `TPAMI` 39(7):1346-1359 (2017), print
     /// `alpha = 0.01 / (1 + p_k / 20000)`.
     #[test]
     fn the_hots_learning_rate_is_the_papers_two_constants() {
@@ -5961,20 +6085,22 @@ mod tests {
         assert_eq!(h.cell_grid(geom(30, 31)).unwrap(), (3, 4));
         assert_eq!(h.cell_grid(geom(1, 1)).unwrap(), (1, 1));
 
-        // And the last column really is addressed by the last cell: an event at (303, 239) lands
-        // in cell (23, 30) of a 31-wide grid, inside the descriptor rather than past its end.
-        let last = [PixelEvent { t_s: 0.0, x: 303, y: 239, polarity: Polarity::On }];
-        let d = h.descriptor(atis, &last).unwrap();
+        // And the last column really is addressed by the last cell: two events at (303, 239)
+        // land in cell (23, 30) of a 31-wide grid, inside the descriptor rather than past its
+        // end. The second sees the first at the centre offset, 0.05 s back, and the cell's two
+        // events divide it: `exp(-0.05 / tau) / 2` with the paper's `tau = 1000` s.
+        let at = |t_s: f64, x: u16| PixelEvent { t_s, x, y: 239, polarity: Polarity::On };
+        let want = (-0.05f64 / 1000.0).exp() / 2.0;
+        let d = h.descriptor(atis, &[at(0.0, 303), at(0.05, 303)]).unwrap();
         assert_eq!(d.len(), 72912);
         let cell = 23 * 31 + 30;
         let centre = (cell * 2 + 1) * 49 + 3 * 7 + 3;
-        assert_eq!(d[centre], 1.0, "the bottom-right event did not reach the bottom-right cell");
+        assert_eq!(d[centre], want, "the bottom-right events did not reach the bottom-right cell");
         assert_eq!(d.iter().filter(|v| **v != 0.0).count(), 1);
         // The cell to its left is a different cell, which is what "30.4 cells" has to mean.
-        let left = [PixelEvent { t_s: 0.0, x: 299, y: 239, polarity: Polarity::On }];
-        let dl = h.descriptor(atis, &left).unwrap();
+        let dl = h.descriptor(atis, &[at(0.0, 299), at(0.05, 299)]).unwrap();
         let centre_left = ((23 * 31 + 29) * 2 + 1) * 49 + 3 * 7 + 3;
-        assert_eq!(dl[centre_left], 1.0);
+        assert_eq!(dl[centre_left], want);
         assert_eq!(dl[centre], 0.0, "x = 299 and x = 303 landed in the same cell");
     }
 
@@ -6003,8 +6129,8 @@ mod tests {
         // Straight out along -x, exactly on the ring: offset (-3, 0), bin (0 + 3) * 7 + 0 = 21.
         let side = pair(1, 4, 4, 4);
         assert!((side[21] - decay / 2.0).abs() < 1e-14, "the (-3, 0) bin holds {}", side[21]);
-        assert_eq!(side[centre_bin], 1.0);
-        assert_eq!(side.iter().filter(|v| **v != 0.0).count(), 2);
+        assert_eq!(side[centre_bin], 0.0, "an event's own position was counted");
+        assert_eq!(side.iter().filter(|v| **v != 0.0).count(), 1);
         // The near corner of the ring, offset (-3, -3): bin 0, the very first entry of the cell.
         let corner = pair(1, 1, 4, 4);
         assert!((corner[0] - decay / 2.0).abs() < 1e-14, "the (-3, -3) bin holds {}", corner[0]);
@@ -6021,12 +6147,7 @@ mod tests {
         // And one pixel further out is OUTSIDE the neighbourhood and contributes nothing, which is
         // what stops this test from passing for a detector that simply counts everything.
         let outside = pair(0, 4, 4, 4);
-        assert_eq!(outside[centre_bin], 1.0);
-        assert_eq!(
-            outside.iter().filter(|v| **v != 0.0).count(),
-            1,
-            "a neighbour at |dx| = 4 was counted"
-        );
+        assert!(outside.iter().all(|v| *v == 0.0), "a neighbour at |dx| = 4 was counted");
     }
 
     /// **The `HATS` divisor is the cell's TOTAL event count, not the plane's, and the consequence
@@ -6034,31 +6155,41 @@ mod tests {
     ///
     /// An `On`-dominated cell and a balanced cell with **identical `On` texture** produce different
     /// `On` planes. That follows from the averaging step as this implementation reads it, it could
-    /// not be checked against an author-released reference, and it is now flagged on
-    /// [`Hats::descriptor`] for the same reason the `tau` reading is flagged on the type. With a
-    /// per-plane divisor every number below would be 1.0.
+    /// not be checked against an author-released reference, and it is flagged on
+    /// [`Hats::descriptor`]. With a per-plane divisor the `On` centre below would stay at
+    /// `w / 2` throughout and the `Off` centre would be `exp(-1/32) / 2`.
+    ///
+    /// The `On` texture is two `On` events at one pixel `1/64` s apart, which puts
+    /// `w = exp(-1/64)` into the `On` centre bin before averaging. (It used to be one `On` event's
+    /// own `exp(0)`, a self-term the paper's eq. 4 excludes.) Every time is a binary fraction and
+    /// every divisor below is a small integer, so each expected value is the same `f64` operation
+    /// the descriptor performs, and the comparisons are exact.
     #[test]
     fn hats_normalises_a_polarity_plane_by_the_cells_total() {
         let g = geom(10, 10);
         let h = Hats { cell_px: 10, radius: 1, tau_s: 1.0, window_s: 1.0, split_polarity: true };
         // Plane 1 is `On`, nine bins per plane, centre of a 3x3 neighbourhood is index 4.
-        let on_centre = 9 + 4;
-        let on = PixelEvent { t_s: 0.0, x: 5, y: 5, polarity: Polarity::On };
+        let (off_centre, on_centre) = (4, 9 + 4);
+        let on = |t: f64| PixelEvent { t_s: t, x: 5, y: 5, polarity: Polarity::On };
         let off = |t: f64, x: u16, y: u16| PixelEvent { t_s: t, x, y, polarity: Polarity::Off };
+        let w = (-1.0f64 / 64.0).exp();
 
-        // One `On` event alone in the cell: its own contribution over a divisor of one.
-        assert_eq!(h.descriptor(g, &[on]).unwrap()[on_centre], 1.0);
+        // Two `On` events alone in the cell.
+        let alone = h.descriptor(g, &[on(0.0), on(1.0 / 64.0)]).unwrap();
+        assert_eq!(alone[on_centre], w / 2.0);
         // The SAME `On` texture with one `Off` event added elsewhere in the cell. The `On` plane's
-        // content has not changed; its divisor has.
-        let mixed = h.descriptor(g, &[on, off(0.01, 8, 8)]).unwrap();
-        assert_eq!(mixed[on_centre], 0.5, "the On plane was divided by its own count");
-        // Three `Off` events, and the same `On` plane is divided by four.
-        let mixed3 = h
-            .descriptor(g, &[on, off(0.01, 8, 8), off(0.02, 8, 0), off(0.03, 0, 8)])
+        // content has not changed; its divisor has. The lone `Off` event sees no earlier `Off`.
+        let mixed = h.descriptor(g, &[on(0.0), on(1.0 / 64.0), off(1.0 / 32.0, 8, 8)]).unwrap();
+        assert_eq!(mixed[on_centre], w / 3.0, "the On plane was divided by its own count");
+        assert!(mixed[..9].iter().all(|v| *v == 0.0), "a lone Off event filled its plane");
+        // A second `Off` event at the same pixel, 1/32 s after the first: the same `On` plane is
+        // divided by four, and so is the `Off` plane's one entry.
+        let mixed2 = h
+            .descriptor(g, &[on(0.0), on(1.0 / 64.0), off(1.0 / 32.0, 8, 8), off(1.0 / 16.0, 8, 8)])
             .unwrap();
-        assert_eq!(mixed3[on_centre], 0.25);
-        // The `Off` plane of that last descriptor carries three own-contributions over four.
-        assert_eq!(mixed3[4], 0.75);
+        assert_eq!(mixed2[on_centre], w / 4.0);
+        assert_eq!(mixed2[off_centre], (-1.0f64 / 32.0).exp() / 4.0);
+        assert_eq!(mixed2.iter().filter(|v| **v != 0.0).count(), 2);
     }
 
     /// **Every `# Errors` branch below had no test at all.** Each of these mutations survived all
@@ -6539,10 +6670,15 @@ mod tests {
     ///
     /// whose eigenvalues are `4128 +/- sqrt(1440^2 + 3456^2) = 4128 +/- 3744`, i.e. `7872` and
     /// `384`: a ratio of exactly **20.5:1**. That sits between `rho_max(0.06) = 14.598` and
-    /// `rho_max(0.04) = 22.956`, so the response is positive at the paper's constant and negative
-    /// at the other end of `Harris`'s stated range — which is the doc's quantitative claim, as a
-    /// test. The doc used to say `0.04` admits "about 19:1"; that was wrong, and this is the check
-    /// that would have caught it.
+    /// `rho_max(0.04) = 22.956`, so the response is positive at `k = 0.04` (the value Mueggler et
+    /// al., `BMVC` 2017, eq. 4, use) and negative at `k = 0.06` — which is the doc's quantitative
+    /// claim, as a test. The doc used to say `0.04` admits "about 19:1"; that was wrong, and this
+    /// is the check that would have caught it.
+    ///
+    /// This doc used to call `0.06` "the other end of `Harris`'s stated range". It is a value the
+    /// 1988 paper does not print: this review did not locate a numerical `k` in `Harris` and
+    /// Stephens, nor a range for it. `0.06` is here as a second point on the far side of the
+    /// 20.5:1 boundary, and the arithmetic below does not depend on where it came from.
     #[test]
     fn the_harris_constant_sets_the_eigenvalue_ratio_its_doc_names() {
         let g = geom(32, 32);
@@ -6564,7 +6700,7 @@ mod tests {
         assert!((score(0.5) - (3022848.0 - 0.5 * trace_sq)).abs() < 1e-6, "{}", score(0.5));
 
         // THE CLAIM. A 20.5:1 corner is a corner at 0.04 and is not one at 0.06.
-        assert_eq!(EHarris::K_HARRIS, 0.04, "not the constant the 1988 paper prints");
+        assert_eq!(EHarris::K_HARRIS, 0.04, "not the k = 0.04 of Mueggler et al., BMVC 2017, eq. 4");
         let at_04 = score(EHarris::K_HARRIS);
         let at_06 = score(0.06);
         assert!(at_04 > 0.0, "a 20.5:1 corner scored {at_04} at k = 0.04");
@@ -6748,15 +6884,45 @@ mod tests {
             Err(VisionError::OutOfOrder { t_s: 0.5, now_s: 1.0 })
         );
 
-        // Through the consumer, with the arithmetic a simultaneous pair produces. One cell, one
-        // plane, nine bins: each event writes 1.0 into the centre bin (index 4), and the second
-        // event also sees the first at `dt = 0`, one pixel to its left — bin `(0 + 1) * 3 + 0 = 3`
-        // — weighted `exp(-0 / tau) = 1`. The cell's two events then divide both.
+        // Through the consumer. A simultaneous pair is described rather than refused, and it
+        // describes to zeros: eq. 4's neighbourhood is `t_j` in `[t_i - window_s, t_i)`, open at
+        // `t_i`, so neither event is the other's neighbour and neither is its own. The arithmetic
+        // of the open bound is in the test after this one.
         let g = geom(10, 10);
         let h = Hats { cell_px: 10, radius: 1, tau_s: 1.0, window_s: 1.0, split_polarity: false };
         let d = h.descriptor(g, &[at(1.0, 4), at(1.0, 5)]).expect("simultaneous events describe");
-        assert_eq!(d[4], 1.0, "each event's own centre contribution, over a divisor of two");
-        assert_eq!(d[3], 0.5, "the simultaneous neighbour at full weight, over a divisor of two");
+        assert_eq!(d.len(), 9);
+        assert!(d.iter().all(|v| *v == 0.0), "a simultaneous event was counted as a neighbour");
+    }
+
+    /// **`HATS`'s neighbourhood is half-open at the current event's time, as eq. 4 writes it.**
+    ///
+    /// Sironi et al. define `N(z,q)(e_i) = {e_j : x_j = x_i + z, t_j in [t_i - Delta t, t_i),
+    /// p_j = q}`, with `Delta t = window_s`. Before the correction this implementation summed over
+    /// `[t_i - window_s, t_i]` in slice order, so of two simultaneous events the second saw the
+    /// first at full weight and the first did not see the second: the descriptor depended on the
+    /// order a sensor happened to emit one instant's events in.
+    ///
+    /// The stimulus has an older event behind the simultaneous one, so it tells a skip from a
+    /// `break`. One cell, one plane, `radius = 1`, nine bins with the centre at 4:
+    ///
+    /// - `A` at `t = 0.5`, `x = 5`: nothing earlier.
+    /// - `B` at `t = 1.0`, `x = 4`: sees `A` 0.5 s back at offset `(+1, 0)`, bin 5.
+    /// - `C` at `t = 1.0`, `x = 5`: `B` is simultaneous and excluded; `A` is 0.5 s back at the
+    ///   centre, bin 4. Counting `B` would put `exp(0) = 1` in bin 3, offset `(-1, 0)`; stopping
+    ///   the scan at `B` would lose `A`.
+    ///
+    /// All times are binary fractions, so `dt` is exactly `0.5` or exactly `0`.
+    #[test]
+    fn hats_excludes_a_simultaneous_earlier_event_but_not_the_ones_behind_it() {
+        let g = geom(10, 10);
+        let h = Hats { cell_px: 10, radius: 1, tau_s: 1.0, window_s: 1.0, split_polarity: false };
+        let at = |t_s: f64, x: u16| PixelEvent { t_s, x, y: 5, polarity: Polarity::On };
+        let d = h.descriptor(g, &[at(0.5, 5), at(1.0, 4), at(1.0, 5)]).unwrap();
+        let want = (-0.5f64).exp() / 3.0;
+        assert_eq!(d[3], 0.0, "C counted B, which has C's own timestamp");
+        assert_eq!(d[4], want, "C did not see A behind the simultaneous B");
+        assert_eq!(d[5], want, "B did not see A");
         assert_eq!(d.iter().filter(|v| **v != 0.0).count(), 2);
     }
 
@@ -6937,30 +7103,37 @@ mod tests {
         assert!((want4 - halved).abs() > 1e-3, "the two readings differ by {}", want4 - halved);
     }
 
-    /// **The two `N-CARS` numbers nothing read.**
+    /// **The `N-CARS` settings, each against the page it is printed on.**
     ///
-    /// [`hats_refuses_what_it_cannot_describe`] checks `cell_px` and `bins_per_cell` (which is
-    /// `radius`), and the descriptor tests build their own [`Hats`] literals — so `tau_s` and
-    /// `window_s` of [`Hats::n_cars`] were read by no assertion anywhere, and the one call that
-    /// used the constructor handed it a stream that errored before either number was reached.
+    /// Sironi et al., arXiv:1803.07913 p. 7: "For the N-CARS dataset, the HATS parameters used are
+    /// K = 10, rho = 3 and tau = 10^9 µs." Supplementary Table 5, `N-CARS` row, columns `K`, `rho`,
+    /// `tau (µs)`, `Delta t (ms)`: `10 3 10^9 100`. So `tau = 10^9 µs = 1000 s` and
+    /// `Delta t = 0.1 s`.
     ///
-    /// They are pinned here **through the arithmetic**, not as field reads: a neighbour 0.05 s back
-    /// is weighted `exp(-0.05 / tau)`, which is 0.951 at the one-second `tau` this implementation
-    /// reads and 0.607 at a hundred-millisecond one; and a neighbour 0.45 s back is outside a
-    /// hundred-millisecond memory window and inside a one-second one.
+    /// The test exists because `tau_s` and `window_s` of [`Hats::n_cars`] were once read by no
+    /// assertion anywhere: [`hats_refuses_what_it_cannot_describe`] checks `cell_px` and
+    /// `bins_per_cell`, and the descriptor tests build their own [`Hats`] literals.
     ///
-    /// The type doc flags the `tau` reading as uncertain and asks a reader with the paper to check
-    /// it; this review did not locate an author-released reference implementation to check the
-    /// transcription against. What this test pins is that changing the transcription is a visible
-    /// change rather than a silent one.
+    /// This test used to pin `tau_s = 1.0`, the value an earlier revision got by reading the
+    /// `10^9` as nanoseconds. It now pins the microseconds the paper prints, **through the
+    /// arithmetic** as well as the field: a neighbour 0.05 s back is weighted
+    /// `exp(-0.05 / 1000) = 0.99995`, where the old one-second reading gave `0.951` and a
+    /// hundred-millisecond one `0.607`; and a neighbour 0.45 s back is outside the 100 ms memory
+    /// window and would be inside a one-second one.
+    ///
+    /// It also pins the type doc's consequence: against the 0.1 s window, every weight is at least
+    /// `exp(-1e-4)`, so the descriptor is a count to one part in ten thousand.
     #[test]
-    fn the_n_cars_settings_are_the_ones_this_implementation_reads_from_the_paper() {
+    fn the_n_cars_settings_are_the_ones_the_paper_prints() {
         let h = Hats::n_cars();
-        assert_eq!(h.cell_px, 10);
-        assert_eq!(h.radius, 3);
-        assert_eq!(h.tau_s, 1.0, "the N-CARS time constant this implementation reads");
-        assert_eq!(h.window_s, 0.1, "the N-CARS memory window this implementation reads");
-        assert!(h.split_polarity);
+        assert_eq!(h.cell_px, 10, "K, p. 7 and supplementary Table 5");
+        assert_eq!(h.radius, 3, "rho, p. 7 and supplementary Table 5");
+        assert_eq!(h.tau_s, 1e9 / 1e6, "tau = 10^9 µs in seconds, p. 7 and supplementary Table 5");
+        assert_eq!(h.tau_s, 1000.0);
+        assert_eq!(h.window_s, 100.0 / 1000.0, "Delta t = 100 ms, supplementary Table 5");
+        assert!(h.split_polarity, "eq. 3 fills polarity plane q only when q = p_i");
+        let weakest = (-h.window_s / h.tau_s).exp();
+        assert!(weakest > 1.0 - 1e-4 && weakest < 1.0, "exp(-window/tau) = {weakest}");
 
         // One 10x10 cell, 7x7 = 49 bins per plane, two planes; the `On` plane is the second, so
         // its base is 49 and its centre bin is 3 * 7 + 3 = 24.
@@ -6969,15 +7142,16 @@ mod tests {
         let d = h.descriptor(g, &[on(0.0, 4), on(0.05, 5), on(0.5, 6)]).unwrap();
         assert_eq!(d.len(), 98);
         let (base, centre) = (49usize, 3 * 7 + 3);
-        // Three events in the cell, each contributing its own `exp(0) = 1` at the centre.
-        assert_eq!(d[base + centre], 1.0);
-        // The second event's neighbour is one pixel to its left and 0.05 s back: bin 3 * 7 + 2.
-        let want = (-0.05f64 / 1.0).exp() / 3.0;
-        assert!((d[base + centre - 1] - want).abs() < 1e-15, "{}", d[base + centre - 1]);
+        // No event contributes to its own surface, so the centre bin is empty.
+        assert_eq!(d[base + centre], 0.0);
+        // The second event's neighbour is one pixel to its left and 0.05 s back: bin 3 * 7 + 2,
+        // over the cell's three events.
+        let want = (-0.05f64 / 1000.0).exp() / 3.0;
+        assert_eq!(d[base + centre - 1], want, "tau is not the paper's 1000 s");
         // The third event's neighbours are 0.45 s and 0.5 s back, outside a 0.1 s memory window.
         // Two pixels to its left is bin 3 * 7 + 1, and it is exactly zero.
         assert_eq!(d[base + centre - 2], 0.0, "an event 0.5 s back reached inside the window");
-        assert_eq!(d.iter().filter(|v| **v != 0.0).count(), 2);
+        assert_eq!(d.iter().filter(|v| **v != 0.0).count(), 1);
     }
 
     /// **The averaging step divides each cell's own block, and a cell's block is `planes * bins`
@@ -6995,26 +7169,31 @@ mod tests {
         let g = geom(20, 10);
         let h = Hats { cell_px: 10, radius: 1, tau_s: 1.0, window_s: 2.0, split_polarity: true };
         let ev = |t_s: f64, x: u16, polarity: Polarity| PixelEvent { t_s, x, y: 5, polarity };
-        // Cell 0 (x < 10) holds one `On` event; cell 1 holds one `On` and two `Off`.
+        // Cell 0 (x < 10) holds two `On` events at one pixel; cell 1 holds two `On` at one pixel
+        // and two `Off` one pixel apart. Within each pair the later event sees the earlier one
+        // 0.25 s back, which is `w = exp(-0.25)` before averaging. (Before the correction this
+        // fixture used single events, whose `exp(0)` self-term the paper's eq. 4 excludes.)
         let d = h
             .descriptor(g, &[
                 ev(0.0, 5, Polarity::On),
-                ev(0.25, 15, Polarity::On),
-                ev(0.5, 16, Polarity::Off),
-                ev(0.75, 17, Polarity::Off),
+                ev(0.25, 5, Polarity::On),
+                ev(0.5, 15, Polarity::On),
+                ev(0.75, 15, Polarity::On),
+                ev(1.0, 16, Polarity::Off),
+                ev(1.25, 17, Polarity::Off),
             ])
             .unwrap();
         assert_eq!(d.len(), 2 * 2 * 9);
         // Block base is `(cell * planes + plane) * bins`, `Off` is plane 0 and `On` is plane 1,
         // and the centre of a 3x3 neighbourhood is bin 4.
         let block = |cell: usize, plane: usize| (cell * 2 + plane) * 9;
-        assert_eq!(d[block(0, 1) + 4], 1.0, "cell 0's single On event, over a divisor of one");
-        assert_eq!(d[block(1, 1) + 4], 1.0 / 3.0, "cell 1's On plane, over cell 1's three events");
-        assert_eq!(d[block(1, 0) + 4], 2.0 / 3.0, "cell 1's two Off events, over three");
-        // The later `Off` event sees the earlier one, one pixel to its left, 0.25 s back.
-        assert_eq!(d[block(1, 0) + 3], (-0.25f64).exp() / 3.0);
-        assert_eq!(d[block(0, 0) + 4], 0.0, "cell 0 has no Off event");
-        assert_eq!(d.iter().filter(|v| **v != 0.0).count(), 4);
+        let w = (-0.25f64).exp();
+        assert_eq!(d[block(0, 1) + 4], w / 2.0, "cell 0's On plane, over cell 0's two events");
+        assert_eq!(d[block(1, 1) + 4], w / 4.0, "cell 1's On plane, over cell 1's four events");
+        // The later `Off` event sees the earlier one, one pixel to its left: bin 3.
+        assert_eq!(d[block(1, 0) + 3], w / 4.0, "cell 1's Off plane, over four");
+        assert!(d[block(0, 0)..block(0, 1)].iter().all(|v| *v == 0.0), "cell 0 has no Off event");
+        assert_eq!(d.iter().filter(|v| **v != 0.0).count(), 3);
     }
 
     /// **The `eHarris` constructor's two unexercised refusals: a window too small to hold a
