@@ -869,5 +869,145 @@
   "label": "the cached decay always reports itself current",
   "old": "        self.decay == (-self.dt / self.tau).exp()",
   "new": "        true"
+ },
+ {
+  "label": "legendre's degree zero is not one",
+  "old": "    if n == 0 {\n        return 1.0;\n    }\n    for k in 1..n {",
+  "new": "    if n == 0 {\n        return 0.0;\n    }\n    for k in 1..n {"
+ },
+ {
+  "label": "legendre's recurrence drops the lower term",
+  "old": "let p2 = ((2.0 * k + 1.0) * u * p1 - k * p0) / (k + 1.0);",
+  "new": "let p2 = ((2.0 * k + 1.0) * u * p1) / (k + 1.0);"
+ },
+ {
+  "label": "legendre's recurrence has 2k for 2k + 1",
+  "old": "let p2 = ((2.0 * k + 1.0) * u * p1 - k * p0) / (k + 1.0);",
+  "new": "let p2 = ((2.0 * k) * u * p1 - k * p0) / (k + 1.0);"
+ },
+ {
+  "label": "legendre is not normalised",
+  "old": "    (2.0 * f64::from(n) + 1.0).sqrt() * p1",
+  "new": "    p1"
+ },
+ {
+  "label": "legendre's recurrence runs one step short",
+  "old": "    for k in 1..n {\n        let k = f64::from(k);",
+  "new": "    for k in 2..n {\n        let k = f64::from(k);"
+ },
+ {
+  "label": "ipc accepts an input outside [-1, 1]",
+  "old": "if let Some(i) = input.iter().position(|u| !(-1.0..=1.0).contains(u)) {",
+  "new": "if let Some(i) = input.iter().position(|u| !(-2.0..=2.0).contains(u)) {"
+ },
+ {
+  "label": "ipc accepts a ragged state",
+  "old": "    for s in states {\n        shape(s.len(), n, \"state\")?;",
+  "new": "    for s in states {\n        let _ = shape(s.len(), n, \"state\");"
+ },
+ {
+  "label": "ipc accepts a non-finite state",
+  "old": "        shape(s.len(), n, \"state\")?;\n        finite(s, \"state\")?;",
+  "new": "        shape(s.len(), n, \"state\")?;\n        let _ = finite(s, \"state\");"
+ },
+ {
+  "label": "ipc accepts a zero max_degree",
+  "old": "    if max_degree == 0 {\n        return Err(ReservoirError::OutOfRange { what: \"max_degree\"",
+  "new": "    if false {\n        return Err(ReservoirError::OutOfRange { what: \"max_degree\""
+ },
+ {
+  "label": "ipc accepts a negative threshold",
+  "old": "&& !(t.is_finite() && t >= 0.0)",
+  "new": "&& !(t.is_finite())"
+ },
+ {
+  "label": "ipc accepts a single sample",
+  "old": "    if samples < 2 {\n        return Err(ReservoirError::OutOfRange {\n            what: \"samples after the delay\",",
+  "new": "    if samples < 1 {\n        return Err(ReservoirError::OutOfRange {\n            what: \"samples after the delay\","
+ },
+ {
+  "label": "ipc uses the rows before the delay",
+  "old": "    let rows = &states[max_delay..];",
+  "new": "    let rows = &states[..states.len() - max_delay];"
+ },
+ {
+  "label": "ipc does not centre",
+  "old": "        col.into_iter().map(|x| x - mean).collect()",
+  "new": "        col.into_iter().map(|x| x - 0.0 * mean).collect()"
+ },
+ {
+  "label": "ipc does not orthogonalise",
+  "old": "            let d: f64 = q.iter().zip(&v).map(|(a, b)| a * b).sum();",
+  "new": "            let d: f64 = 0.0 * q.iter().zip(&v).map(|(a, b)| a * b).sum::<f64>();"
+ },
+ {
+  "label": "ipc keeps a column that adds nothing",
+  "old": "        if norm > 1e-9 * norm0 && norm > 0.0 {",
+  "new": "        if norm > 0.0 {"
+ },
+ {
+  "label": "ipc does not normalise the basis",
+  "old": "            basis.push(v.into_iter().map(|x| x / norm).collect());",
+  "new": "            basis.push(v.into_iter().map(|x| x / norm0).collect());"
+ },
+ {
+  "label": "ipc omits delay zero",
+  "old": "        for k in next..=max_delay {",
+  "new": "        for k in next.max(1)..=max_delay {"
+ },
+ {
+  "label": "ipc omits the largest delay",
+  "old": "        for k in next..=max_delay {",
+  "new": "        for k in next..max_delay {"
+ },
+ {
+  "label": "ipc lets a delay repeat within a target",
+  "old": "                stack.push((k + 1, used + d, f));",
+  "new": "                stack.push((k, used + d, f));"
+ },
+ {
+  "label": "ipc stops a degree short",
+  "old": "            for d in 1..=max_degree - used {",
+  "new": "            for d in 1..max_degree - used {"
+ },
+ {
+  "label": "the chance threshold forgets the targets",
+  "old": "        let (r, x) = (rank as f64, (20.0 * factor_sets.len() as f64).ln());",
+  "new": "        let (r, x) = (rank as f64, 20.0f64.ln());"
+ },
+ {
+  "label": "the chance threshold drops its cross term",
+  "old": "        (r + 2.0 * (r * x).sqrt() + 2.0 * x) / samples as f64",
+  "new": "        (r + 2.0 * x) / samples as f64"
+ },
+ {
+  "label": "the chance threshold is not divided by the samples",
+  "old": "        (r + 2.0 * (r * x).sqrt() + 2.0 * x) / samples as f64",
+  "new": "        (r + 2.0 * (r * x).sqrt() + 2.0 * x) / 1000.0"
+ },
+ {
+  "label": "a target reads the input one step late",
+  "old": ".map(|&(k, d)| legendre(d, input[t - k])).product::<f64>())",
+  "new": ".map(|&(k, d)| legendre(d, input[t - k.saturating_sub(1)])).product::<f64>())"
+ },
+ {
+  "label": "the capacity is not squared",
+  "old": ".map(|q| q.iter().zip(&z).map(|(a, b)| a * b).sum::<f64>().powi(2)).sum();",
+  "new": ".map(|q| q.iter().zip(&z).map(|(a, b)| a * b).sum::<f64>().abs()).sum();"
+ },
+ {
+  "label": "the capacity is not capped at one",
+  "old": "        let capacity = if zz > 0.0 { (explained / zz).min(1.0) } else { 0.0 };",
+  "new": "        let capacity = if zz > 0.0 { explained / zz } else { 0.0 };"
+ },
+ {
+  "label": "a capacity at the threshold is discarded",
+  "old": "        if capacity < threshold {\n            below_threshold += 1;",
+  "new": "        if capacity <= threshold {\n            below_threshold += 1;"
+ },
+ {
+  "label": "a target's degree is its factor count",
+  "old": "        let degree = factors.iter().map(|&(_, d)| d).sum::<u32>();",
+  "new": "        let degree = factors.len() as u32;"
  }
 ]

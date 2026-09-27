@@ -9,7 +9,7 @@ hardware constraint models, analog device non-idealities, NIR, event-camera deco
 metrics, teaching tasks — and a joules ledger that charges for the memory traffic a synaptic
 operation needs.
 
-**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 84 modules, 2,856 tests.**
+**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 84 modules, 2,866 tests.**
 
 Run it in a browser without installing anything:
 **[energy.physicalai-bmi.org/neuromorphic](https://energy.physicalai-bmi.org/neuromorphic)** — the
@@ -44,7 +44,7 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 | `surrogate` | surrogate gradients (`SuperSpike`, arctan, triangular, boxcar, straight-through) and a working BPTT path |
 | `plif` | the parametric LIF of Fang et al. as SpikingJelly writes it: a learned leak `1/τ = sigmoid(w)`, hard and soft reset, input decay on or off, and a reverse-mode gradient shown exact against finite differences — then gradient descent recovering `τ = 5` from `τ = 2` |
 | `convert` | ANN-to-SNN: threshold balancing, percentile normalisation, reset-by-subtraction vs reset-to-zero; the half-threshold start that rounds where rest floors (`1/(2T)`, not `1/T`), and Bu et al.'s quantization-clip-floor-shift activation, reproduced exactly at `T = L` and with an expected error of `(φ − 1/2)(1/T − 1/L)` — zero at the half shift for every `T` — plus their three-outputs-from-one-rate unevenness example |
-| `reservoir` | liquid state machines and echo state networks, with a pure-Rust ridge solve and power iteration |
+| `reservoir` | liquid state machines and echo state networks, with a pure-Rust ridge solve and power iteration; and Dambre et al.'s information processing capacity over normalised Legendre products of the past input — equal to the authors' own code to 1.6e-5 (the difference is their uncentred denominator), 15/19 and 4/19 on Kubota et al.'s worked example, a linear reservoir's whole rank in degree 1, no even-degree capacity in an odd one |
 | `encode`, `coding` | rate, latency, delta; population, rank-order, phase, burst, BSA/HSA, temporal contrast — and their decoders |
 | `topology` | Erdős-Rényi, Watts-Strogatz, Barabási-Albert, distance-dependent, layered, winner-take-all, Dale's law |
 | `hardware` | constraint models for Loihi, Loihi 2, `TrueNorth`, `NorthPole`, Akida, `SpiNNaker`, Xylo, Speck, ODIN, DYNAP and more — ten graded figures per part, each with its provenance string |
@@ -167,9 +167,10 @@ reproduce published numbers in order to argue with them and hiding it would not 
 ### What this crate does not claim
 
 Measured joules for spiking workloads are not unheard of, and saying so would be false. The
-**NeuroBench** system track mandates and publishes them — SynSense Xylo Audio 2 at 0.028 mJ per
-inference against an Arduino Nano 33 BLE at 0.934 mJ, idle and active and dynamic power reported
-separately, analog front end priced on its own. **Rockpool**'s `XyloSamna(record_power=True)`
+**NeuroBench** system track mandates and publishes them — SynSense Xylo Audio 2 at 0.028 mJ of
+dynamic energy per inference, measured on the ASIC alone, against an Arduino Nano 33 BLE at
+0.934 mJ measured over the whole board (Yik et al., Nature Communications 16:1545, 2025, Table 6),
+idle and active and dynamic power reported separately, analog front end priced on its own. **Rockpool**'s `XyloSamna(record_power=True)`
 returns per-rail watts off the board, and BrainChip's tooling divides on-SoC power-meter samples by
 frames. Those are real, and all three do more than this crate: **ferromorphic measures nothing and
 has no hardware.**
@@ -285,7 +286,7 @@ rather than assumed.
 - **A sub-threshold current returns `None`, not a large number.** "Fires rarely" and "does not fire"
   are different statements and a rate-coded readout cannot recover the difference later.
 
-2,856 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
+2,866 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
 `#![forbid(unsafe_code)]`, and `cargo build --target wasm32-unknown-unknown` compiles the library
 unchanged. Three of the four `examples/` are verification gates that exit non-zero when a check fails. Two of them run
 a closed form against the simulator — the LIF's analytic inter-spike interval, and the STDP pair
@@ -336,7 +337,7 @@ be reproduced cannot be checked against anything, including itself.
 
 ## Status
 
-**Today:** eighty-four modules, 2,856 tests, and **9,252 recorded mutations — one list per
+**Today:** eighty-four modules, 2,866 tests, and **9,305 recorded mutations — one list per
 module**, every one applicable to today's source by `python3 tools/mutate.py`.
 `python3 tools/readme_numbers.py` recomputes those figures from the repository and refuses if this
 paragraph disagrees with it, because the last time they were typed by hand the test count was 423

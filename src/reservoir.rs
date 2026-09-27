@@ -126,11 +126,19 @@
 //! diagonal pair so that all three axes are in the comparison, and the `C` table is checked **per
 //! ordered type pair**, because `Σ p` over the whole column is invariant under transposing it.
 //!
+//! [`information_processing_capacity`] generalises that memory to every polynomial of the past
+//! input (Dambre et al. 2012; Kubota, Takahashi and Nakajima 2021): its degree-1 capacities are
+//! [`memory_capacity`]'s `r²` to 1e-6 on the same run, Kubota et al.'s worked example
+//! `x_t = u_{t−1} + u²_{t−2}` splits its one unit of capacity 15/19 to 4/19 as their Eq. 25 says, a
+//! linear reservoir spends its whole rank on degree 1, and an odd one has no capacity of even
+//! degree.
+//!
 //! # A note on this file's size
 //!
-//! It is about 4050 lines against a 400–900 line house target, and a reviewer should know that
+//! It is about 5,300 lines against a 400–900 line house target, and a reviewer should know that
 //! before opening it rather than after. It carries two unrelated reservoir families — Jaeger's rate
-//! model and Maass's spiking column — plus the only linear algebra in the crate, because
+//! model and Maass's spiking column — the capacity measures that grade them, plus the only linear
+//! algebra in the crate, because
 //! [`Ridge`] and [`power_iteration`] have no other home in a zero-dependency library and both of
 //! them exist to serve the readout. Splitting it would put the solver a module away from its only
 //! caller.
@@ -1637,6 +1645,204 @@ fn r2(a: &[f64], b: &[f64]) -> f64 {
 }
 
 // ---------------------------------------------------------------------------------------------
+// Information processing capacity: every function of the past input a linear readout can compute.
+// ---------------------------------------------------------------------------------------------
+
+/// The Legendre polynomial of degree `n` normalised to unit variance under the uniform law on
+/// `[−1, 1]`: `√(2n + 1) · P_n(u)`, from the three-term recurrence
+/// `(k + 1) P_{k+1} = (2k + 1) u P_k − k P_{k−1}`. These are Dambre et al.'s orthonormal basis for a
+/// uniform input (Eq. 12).
+#[must_use]
+pub fn legendre(n: u32, u: f64) -> f64 {
+    let (mut p0, mut p1) = (1.0, u);
+    if n == 0 {
+        return 1.0;
+    }
+    for k in 1..n {
+        let k = f64::from(k);
+        let p2 = ((2.0 * k + 1.0) * u * p1 - k * p0) / (k + 1.0);
+        (p0, p1) = (p1, p2);
+    }
+    (2.0 * f64::from(n) + 1.0).sqrt() * p1
+}
+
+/// One target of [`information_processing_capacity`]: a product of normalised Legendre
+/// polynomials of past inputs, and the share of it a linear readout of the state recovers.
+#[derive(Debug, Clone, PartialEq)]
+pub struct IpcTerm {
+    /// `(delay, degree)` pairs: the factor `legendre(degree, u(t − delay))`, delays distinct and
+    /// increasing.
+    pub factors: Vec<(usize, u32)>,
+    /// The sum of the factors' degrees.
+    pub degree: u32,
+    /// `C = 1 − min MSE / ⟨z²⟩`, in `[0, 1]`.
+    pub capacity: f64,
+}
+
+/// What [`information_processing_capacity`] measured.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Ipc {
+    /// Every target whose capacity reached the threshold, in enumeration order.
+    pub terms: Vec<IpcTerm>,
+    /// The sum of [`Ipc::terms`]' capacities — at most [`Ipc::rank`], and equal to it for a
+    /// fading-memory system once enough degrees and delays are counted.
+    pub total: f64,
+    /// That sum split by degree: `per_degree[d]` for `d = 1 ..= max_degree`, index 0 unused.
+    pub per_degree: Vec<f64>,
+    /// The rank of the centred state matrix.
+    pub rank: usize,
+    /// Targets whose capacity fell below the threshold, and so were counted as zero.
+    pub below_threshold: usize,
+    /// Samples the capacities were computed over: the states after the first `max_delay`.
+    pub samples: usize,
+    /// The threshold the capacities were held to: the caller's, or the chance level (see
+    /// [`information_processing_capacity`]).
+    pub threshold: f64,
+}
+
+/// Dambre, Verstraeten, Schrauwen and Massar's information processing capacity (*Information
+/// processing capacity of dynamical systems*, Scientific Reports 2:514, 2012), in Kubota, Takahashi
+/// and Nakajima's form (*Unifying framework for information processing in stochastically driven
+/// dynamical systems*, Physical Review Research 3:043135, 2021).
+///
+/// `states[t]` is the state after the input `input[t]`, and the input is i.i.d. uniform on
+/// `[−1, 1]`. For every product of normalised Legendre polynomials of `u(t − k)`, `k` from 0 to
+/// `max_delay`, of total degree 1 to `max_degree`, the capacity is the fraction of its variance a
+/// linear readout of the state explains: `C = |Q^T z|² / |z|²`, with `z` and the state columns
+/// centred and `Q` an orthonormal basis of the states, found by modified Gram–Schmidt. A readout
+/// with a bias, then — the same as the crate's [`memory_capacity`], whose `r²` per delay is this
+/// function's degree-1 capacity at that delay. The authors' code (github.com/kubota0130/ipc)
+/// divides by the uncentred `|z|²` instead; the two differ by the factor `|z|²/|z − z̄|²`, which is
+/// `1 + O(1/T)` for these zero-mean targets, and agree to 1.6e-5 on 20,000 samples.
+///
+/// Capacities below the threshold count as zero. With `T` samples, a target the state cannot
+/// represent still shows a capacity of about `χ²_r/T` by chance — `r` the rank — and among
+/// thousands of targets the largest of those is several times `r/T`, enough to lift a total past the
+/// rank it is bounded by. Dambre et al. discard capacities below a fixed `ε`; Kubota et al. compare
+/// each against shuffled surrogates. `threshold: None` uses this crate's choice instead, a
+/// Laurent–Massart tail bound for `χ²_r` (Annals of Statistics 28:1302–1338, 2000, Lemma 1):
+/// `(r + 2√(r x) + 2x)/T` with `x = ln(20 M)` for `M` targets, so that fewer than one target in
+/// twenty is let in by chance if `T·C` is `χ²_r` — the large-`T` limit, not an exact law for
+/// products of Legendre polynomials. The TOTAL is bounded by the rank of the states (Dambre's
+/// Theorem 4) and reaches it for a fading-memory system whose states are functions of the past
+/// input (their Theorem 7; Kubota et al.'s Eq. 25).
+///
+/// # Errors
+///
+/// [`ReservoirError::ShapeMismatch`] for an input whose length is not the number of states, or a
+/// state of the wrong width; [`ReservoirError::Empty`] for no states or zero width;
+/// [`ReservoirError::NonFinite`] for a state or input that is not finite;
+/// [`ReservoirError::OutOfRange`] for an input outside `[−1, 1]`, a `max_degree` of zero, fewer
+/// than two samples after the delay, or a threshold that is negative or not finite.
+pub fn information_processing_capacity(
+    states: &[Vec<f64>],
+    input: &[f64],
+    max_degree: u32,
+    max_delay: usize,
+    threshold: Option<f64>,
+) -> Result<Ipc, ReservoirError> {
+    let n = states.first().map_or(0, Vec::len);
+    if states.is_empty() || n == 0 {
+        return Err(ReservoirError::Empty { what: "states" });
+    }
+    shape(input.len(), states.len(), "input")?;
+    finite(input, "input")?;
+    if let Some(i) = input.iter().position(|u| !(-1.0..=1.0).contains(u)) {
+        return Err(ReservoirError::OutOfRange { what: "input", value: input[i], low: -1.0, high: 1.0 });
+    }
+    for s in states {
+        shape(s.len(), n, "state")?;
+        finite(s, "state")?;
+    }
+    if max_degree == 0 {
+        return Err(ReservoirError::OutOfRange { what: "max_degree", value: 0.0, low: 1.0, high: f64::INFINITY });
+    }
+    if let Some(t) = threshold
+        && !(t.is_finite() && t >= 0.0)
+    {
+        return Err(ReservoirError::OutOfRange { what: "threshold", value: t, low: 0.0, high: 1.0 });
+    }
+    let samples = states.len().saturating_sub(max_delay);
+    if samples < 2 {
+        return Err(ReservoirError::OutOfRange {
+            what: "samples after the delay",
+            value: samples as f64,
+            low: 2.0,
+            high: f64::INFINITY,
+        });
+    }
+    let rows = &states[max_delay..];
+    let centred = |col: Vec<f64>| -> Vec<f64> {
+        let mean = col.iter().sum::<f64>() / col.len() as f64;
+        col.into_iter().map(|x| x - mean).collect()
+    };
+    // Orthonormal basis of the centred state columns; a column whose residual is a negligible
+    // share of its own norm adds nothing to the span and is dropped.
+    let mut basis: Vec<Vec<f64>> = Vec::new();
+    for j in 0..n {
+        let mut v = centred(rows.iter().map(|s| s[j]).collect());
+        let norm0 = norm2(&v);
+        for q in &basis {
+            let d: f64 = q.iter().zip(&v).map(|(a, b)| a * b).sum();
+            for (x, qi) in v.iter_mut().zip(q) {
+                *x -= d * qi;
+            }
+        }
+        let norm = norm2(&v);
+        if norm > 1e-9 * norm0 && norm > 0.0 {
+            basis.push(v.into_iter().map(|x| x / norm).collect());
+        }
+    }
+    let rank = basis.len();
+
+    // Every set of distinct delays with degrees summing to 1 ..= max_degree.
+    let mut factor_sets: Vec<Vec<(usize, u32)>> = Vec::new();
+    // (next delay allowed, degree used so far, factors so far).
+    type Partial = (usize, u32, Vec<(usize, u32)>);
+    let mut stack: Vec<Partial> = vec![(0, 0, Vec::new())];
+    while let Some((next, used, factors)) = stack.pop() {
+        if !factors.is_empty() {
+            factor_sets.push(factors.clone());
+        }
+        for k in next..=max_delay {
+            for d in 1..=max_degree - used {
+                let mut f = factors.clone();
+                f.push((k, d));
+                stack.push((k + 1, used + d, f));
+            }
+        }
+    }
+    factor_sets.sort();
+    let threshold = threshold.unwrap_or_else(|| {
+        let (r, x) = (rank as f64, (20.0 * factor_sets.len() as f64).ln());
+        (r + 2.0 * (r * x).sqrt() + 2.0 * x) / samples as f64
+    });
+
+    let mut terms = Vec::new();
+    let mut per_degree = vec![0.0; max_degree as usize + 1];
+    let mut below_threshold = 0usize;
+    for factors in factor_sets {
+        let z = centred(
+            (max_delay..states.len())
+                .map(|t| factors.iter().map(|&(k, d)| legendre(d, input[t - k])).product::<f64>())
+                .collect(),
+        );
+        let zz: f64 = z.iter().map(|x| x * x).sum();
+        let explained: f64 = basis.iter().map(|q| q.iter().zip(&z).map(|(a, b)| a * b).sum::<f64>().powi(2)).sum();
+        let capacity = if zz > 0.0 { (explained / zz).min(1.0) } else { 0.0 };
+        if capacity < threshold {
+            below_threshold += 1;
+            continue;
+        }
+        let degree = factors.iter().map(|&(_, d)| d).sum::<u32>();
+        per_degree[degree as usize] += capacity;
+        terms.push(IpcTerm { factors, degree, capacity });
+    }
+    let total = per_degree.iter().sum();
+    Ok(Ipc { terms, total, per_degree, rank, below_threshold, samples, threshold })
+}
+
+// ---------------------------------------------------------------------------------------------
 // The liquid state machine: Maass's spiking reservoir.
 // ---------------------------------------------------------------------------------------------
 
@@ -2329,8 +2535,8 @@ impl SpikeFilter {
 mod tests {
     use super::{
         Cell, Cholesky, Esn, EsnSpec, Liquid, LiquidSpec, Readout, ReservoirError, Ridge,
-        SpikeFilter, approximation_residual, cholesky, echo_state_check, memory_capacity,
-        power_iteration, separation, separation_ratio,
+        SpikeFilter, approximation_residual, cholesky, echo_state_check, information_processing_capacity, legendre,
+        memory_capacity, power_iteration, separation, separation_ratio, sym,
     };
     use crate::neuron::Lif;
     use crate::rng::Rng;
@@ -4909,4 +5115,225 @@ mod tests {
         assert_eq!(spikes, 0, "the event-driven arm advanced a cell nothing had touched");
     }
 
+    /// Uniform draws on `[−1, 1]` from a seed.
+    fn uniform_input(seed: u64, n: usize) -> Vec<f64> {
+        let mut rng = Rng::new(seed);
+        (0..n).map(|_| sym(&mut rng)).collect()
+    }
+
+    /// The normalised Legendre polynomials are the closed forms `√3 u`, `√5 (3u² − 1)/2`,
+    /// `√7 (5u³ − 3u)/2`, and orthonormal under the uniform law: `⟨P_m P_n⟩ = δ_mn` for `m, n ≤ 6`, by
+    /// composite Simpson over `[−1, 1]` on 20,000 panels, whose error on the degree-12 product
+    /// `P6²` is a few parts in 10¹³ (on 4,000 panels it was 1.3e-10).
+    #[test]
+    fn legendre_is_orthonormal_under_the_uniform_law() {
+        for u in [-1.0, -0.37, 0.0, 0.5, 0.91, 1.0] {
+            assert!((legendre(0, u) - 1.0).abs() < 1e-15);
+            assert!((legendre(1, u) - 3f64.sqrt() * u).abs() < 1e-15);
+            assert!((legendre(2, u) - 5f64.sqrt() * (3.0 * u * u - 1.0) / 2.0).abs() < 1e-14);
+            assert!((legendre(3, u) - 7f64.sqrt() * (5.0 * u * u * u - 3.0 * u) / 2.0).abs() < 1e-14);
+        }
+        let panels = 20_000usize;
+        let h = 2.0 / panels as f64;
+        for m in 0..=6u32 {
+            for n in 0..=6u32 {
+                let f = |u: f64| legendre(m, u) * legendre(n, u) / 2.0;
+                let mut sum = f(-1.0) + f(1.0);
+                for k in 1..panels {
+                    sum += f(-1.0 + k as f64 * h) * if k % 2 == 1 { 4.0 } else { 2.0 };
+                }
+                let inner = sum * h / 3.0;
+                let want = if m == n { 1.0 } else { 0.0 };
+                assert!((inner - want).abs() < 1e-11, "⟨P{m} P{n}⟩ = {inner}");
+            }
+        }
+    }
+
+    /// Kubota, Takahashi and Nakajima's worked example (Physical Review Research 3:043135, after
+    /// Eq. 25): the one-dimensional state `x_t = u_{t−1} + u²_{t−2}` of a uniform input is
+    /// `P1(u_{t−1})/√3 + 2 P2(u_{t−2})/(3√5) + 1/3`, whose two variances are 1/3 and 4/45, so its
+    /// one unit of capacity splits 15/19 to 4/19 and nothing else is there. Measured on 200,000
+    /// samples: 0.78873 and 0.21030, no third target past the chance threshold, total 0.99903.
+    #[test]
+    fn kubotas_worked_example_splits_one_unit_of_capacity_fifteen_to_four() {
+        let n = 200_000;
+        let u = uniform_input(2021, n);
+        let states: Vec<Vec<f64>> = (0..n).map(|t| vec![if t >= 2 { u[t - 1] + u[t - 2] * u[t - 2] } else { 0.0 }]).collect();
+        let r = information_processing_capacity(&states, &u, 3, 4, None).unwrap();
+        assert_eq!(r.rank, 1);
+        assert_eq!(r.terms.len(), 2, "{:?}", r.terms);
+        assert_eq!(r.terms[0].factors, vec![(1, 1)]);
+        assert_eq!(r.terms[1].factors, vec![(2, 2)]);
+        assert!((r.terms[0].capacity - 15.0 / 19.0).abs() < 3e-3, "{}", r.terms[0].capacity);
+        assert!((r.terms[1].capacity - 4.0 / 19.0).abs() < 3e-3, "{}", r.terms[1].capacity);
+        assert!((r.total - 1.0).abs() < 3e-3 && r.total <= 1.0, "{}", r.total);
+        assert_eq!(r.per_degree[1], r.terms[0].capacity);
+        assert_eq!(r.per_degree[2], r.terms[1].capacity);
+        assert_eq!(r.per_degree[3], 0.0);
+        assert_eq!(r.samples, n - 4);
+        assert_eq!(r.below_threshold + r.terms.len(), 5 + (5 + 10) + (5 + 20 + 10), "five delays: every target of degree 1, 2 and 3");
+    }
+
+    /// The degree-1 capacity at delay `k` IS this crate's [`memory_capacity`] `r²` at delay `k`:
+    /// a least-squares readout with a bias and the projection onto the centred states are the same
+    /// statistic. Replayed on the same seeded input, the same reservoir and the same rows, the ten
+    /// delays agree to 1e-6 (the ridge there carries `α = 10⁻¹²`).
+    #[test]
+    fn the_degree_one_capacity_is_the_memory_capacity() {
+        let spec = EsnSpec { units: 20, spectral_radius: 0.9, density: 0.3, input_scaling: 0.5, bias_scaling: 0.1, leak: 1.0, seed: 3 };
+        let e = Esn::new(&spec, 1).unwrap();
+        let (max_delay, samples, washout, seed) = (10usize, 5_000usize, 200usize, 5u64);
+        let mc = memory_capacity(&e, max_delay, samples, washout, 1e-12, seed).unwrap();
+        let u = uniform_input(seed, washout + max_delay + samples);
+        let mut r = e.clone();
+        r.reset();
+        let states: Vec<Vec<f64>> = u.iter().map(|&x| r.step(&[x]).unwrap().to_vec()).collect();
+        let ipc = information_processing_capacity(&states[washout..], &u[washout..], 1, max_delay, Some(0.0)).unwrap();
+        assert_eq!(ipc.samples, samples);
+        for k in 1..=max_delay {
+            let c = ipc.terms.iter().find(|t| t.factors == vec![(k, 1)]).unwrap().capacity;
+            assert!((c - mc.per_delay[k - 1]).abs() < 1e-6, "delay {k}: {c} against {}", mc.per_delay[k - 1]);
+        }
+    }
+
+    /// Dambre's Theorems 4 and 7 on a system where the answer is known: a four-unit LINEAR
+    /// reservoir (a fixed contraction, spectral radius under one) spends its whole rank on
+    /// degree 1 — 3.978 of 4 over delays 0 to 40 on this seed's 100,000 samples, the shortfall
+    /// sampling error and the delays past 40 — and no nonlinear target clears the chance threshold.
+    #[test]
+    fn a_linear_reservoir_spends_its_whole_rank_on_degree_one() {
+        let a = [[0.5, 0.2, -0.1, 0.0], [0.1, 0.4, 0.2, -0.2], [0.0, -0.3, 0.5, 0.1], [0.2, 0.0, 0.1, 0.3]];
+        let b = [1.0, -0.5, 0.3, 0.8];
+        let u = uniform_input(44, 100_000);
+        let mut x = [0.0f64; 4];
+        let mut states = Vec::with_capacity(u.len());
+        for &ut in &u {
+            let mut next = [0.0; 4];
+            for i in 0..4 {
+                next[i] = (0..4).map(|j| a[i][j] * x[j]).sum::<f64>() + b[i] * ut;
+            }
+            x = next;
+            states.push(x.to_vec());
+        }
+        let r = information_processing_capacity(&states[200..], &u[200..], 2, 40, None).unwrap();
+        assert_eq!(r.rank, 4);
+        assert!((r.total - 4.0).abs() < 0.03 && r.total <= 4.0 + 1e-9, "{}", r.total);
+        assert_eq!(r.per_degree[2], 0.0, "{:?}", r.terms.iter().filter(|t| t.degree == 2).collect::<Vec<_>>());
+    }
+
+    /// Kubota et al.'s one-unit echo state network `x_{t+1} = tanh(ρ x_t + u_t)`, `ρ = 0.95` (their
+    /// Eqs. 41–43), under a symmetric input. `tanh` is odd, so `x` is an odd function of the input
+    /// history and every EVEN-degree capacity vanishes; none clears the threshold here. The rest of
+    /// the unit of rank sits in degrees 1 and 3 — 0.938 and 0.042 over delays 0 to 20 — and the
+    /// truncated total, 0.98, approaches their 1 from below as degrees and delays are added.
+    #[test]
+    fn an_odd_reservoir_has_no_even_capacity() {
+        let u = uniform_input(41, 50_000);
+        let mut x = 0.0f64;
+        let states: Vec<Vec<f64>> = u
+            .iter()
+            .map(|&ut| {
+                x = (0.95 * x + ut).tanh();
+                vec![x]
+            })
+            .collect();
+        let r = information_processing_capacity(&states[200..], &u[200..], 4, 20, None).unwrap();
+        assert_eq!(r.rank, 1);
+        assert_eq!((r.per_degree[2], r.per_degree[4]), (0.0, 0.0), "{:?}", r.terms.iter().filter(|t| t.degree % 2 == 0).collect::<Vec<_>>());
+        assert!((r.per_degree[1] - 0.938).abs() < 0.01, "{:?}", r.per_degree);
+        assert!((r.per_degree[3] - 0.042).abs() < 0.01, "{:?}", r.per_degree);
+        assert!(r.total > 0.96 && r.total <= 1.0, "{}", r.total);
+    }
+
+    /// Against the authors' own code: Kubota's `ipc` (github.com/kubota0130/ipc, commit `34d170b`,
+    /// its `single_input_ipc` with the Legendre basis, run under `NumPy` 1.23 with `cupy` aliased to
+    /// `NumPy`) on a three-unit `tanh` reservoir, 20,000 samples, degrees up to 3 and delays 0 to 6.
+    /// Both enumerate the same 119 targets; the six largest capacities are theirs to 1.6e-5. The
+    /// whole difference is one convention: their capacity divides by the UNCENTRED target norm
+    /// `|z|²`, this module's by the centred one (a readout with a bias, as [`memory_capacity`]
+    /// has), and a `NumPy` transcription of their formula rescaled by `|z|²/|z − z̄|²` agrees with
+    /// this module to 8e-15 on all 119.
+    #[test]
+    fn the_capacities_are_kubotas_code_up_to_its_uncentred_denominator() {
+        let mut rng = Rng::new(7);
+        for _ in 0..20_000 {
+            sym(&mut rng);
+        }
+        let u: Vec<f64> = (0..20_000).map(|_| sym(&mut rng)).collect();
+        let mut s = [0.0f64; 3];
+        let states: Vec<Vec<f64>> = u
+            .iter()
+            .map(|&ut| {
+                s = [(0.9 * s[0] + 0.3 * s[2] + ut).tanh(), (0.5 * s[1] - 0.4 * s[0] + 0.7 * ut).tanh(), (0.6 * s[2] + 0.2 * s[1] - 0.5 * ut).tanh()];
+                s.to_vec()
+            })
+            .collect();
+        let r = information_processing_capacity(&states, &u, 3, 6, Some(0.0)).unwrap();
+        assert_eq!(r.terms.len() + r.below_threshold, 119);
+        let theirs = [0.974_399_595_624_356_1, 0.443_316_525_587_508_34, 0.312_291_830_878_508_54, 0.232_907_507_052_419_22, 0.223_237_457_741_499_6, 0.195_458_760_162_156_96];
+        for (k, want) in theirs.iter().enumerate() {
+            let c = r.terms.iter().find(|t| t.factors == vec![(k, 1)]).unwrap().capacity;
+            assert!((c - want).abs() < 2e-5, "delay {k}: {c} against the authors' {want}");
+        }
+    }
+
+    /// The edges of the arithmetic. A target in the span of the states — the state IS `u(t)`, the
+    /// target `P1(u(t))` — has capacity exactly 1: on these ten samples the ratio rounds to
+    /// 1.0000000000000004 and is held to 1. A copied column adds nothing to the span, so the rank
+    /// stays 1 and every capacity is unchanged; a constant column adds nothing either. A capacity
+    /// equal to the threshold is kept. And the default threshold is the documented bound,
+    /// `(r + 2√(r x) + 2x)/T` with `x = ln(20 M)` — for the worked example's rank 1, 55 targets and
+    /// 199,996 samples, 1.0150e-4.
+    #[test]
+    fn the_capacity_holds_at_its_edges() {
+        let u = uniform_input(0, 10);
+        let states: Vec<Vec<f64>> = u.iter().map(|&x| vec![x]).collect();
+        let r = information_processing_capacity(&states, &u, 1, 0, Some(0.0)).unwrap();
+        assert_eq!(r.terms[0].capacity, 1.0);
+
+        let n = 5_000;
+        let u = uniform_input(9, n);
+        let one: Vec<Vec<f64>> = (0..n).map(|t| vec![if t >= 2 { u[t - 1] + u[t - 2] * u[t - 2] } else { 0.0 }]).collect();
+        let twice: Vec<Vec<f64>> = one.iter().map(|s| vec![s[0], 2.0 * s[0], 0.75]).collect();
+        let a = information_processing_capacity(&one, &u, 2, 3, Some(0.0)).unwrap();
+        let b = information_processing_capacity(&twice, &u, 2, 3, Some(0.0)).unwrap();
+        assert_eq!((a.rank, b.rank), (1, 1));
+        for (x, y) in a.terms.iter().zip(&b.terms) {
+            assert_eq!(x.factors, y.factors);
+            assert!((x.capacity - y.capacity).abs() < 1e-12, "{:?}: {} against {}", x.factors, x.capacity, y.capacity);
+        }
+        let edge = a.terms.iter().find(|t| t.factors == vec![(2, 2)]).unwrap().capacity;
+        let kept = information_processing_capacity(&one, &u, 2, 3, Some(edge)).unwrap();
+        assert!(kept.terms.iter().any(|t| t.factors == vec![(2, 2)]), "a capacity at the threshold was dropped");
+
+        let n = 200_000;
+        let u = uniform_input(2021, n);
+        let states: Vec<Vec<f64>> = (0..n).map(|t| vec![if t >= 2 { u[t - 1] + u[t - 2] * u[t - 2] } else { 0.0 }]).collect();
+        let r = information_processing_capacity(&states, &u, 3, 4, None).unwrap();
+        let x = (20.0f64 * 55.0).ln();
+        let want = (1.0 + 2.0 * x.sqrt() + 2.0 * x) / (n - 4) as f64;
+        assert!((r.threshold - want).abs() < 1e-18, "{} against {want}", r.threshold);
+        assert!((r.threshold - 1.0150e-4).abs() < 1e-8, "{}", r.threshold);
+    }
+
+    /// Every refusal, by name.
+    #[test]
+    fn the_capacity_refuses_what_it_cannot_measure() {
+        let states = vec![vec![0.1], vec![0.2], vec![0.3], vec![0.4]];
+        let u = [0.1, -0.2, 0.3, -0.4];
+        assert_eq!(information_processing_capacity(&[], &[], 2, 0, None), Err(ReservoirError::Empty { what: "states" }));
+        assert_eq!(information_processing_capacity(&[vec![]], &[0.0], 2, 0, None), Err(ReservoirError::Empty { what: "states" }));
+        assert_eq!(information_processing_capacity(&states, &u[..3], 2, 0, None), Err(ReservoirError::ShapeMismatch { what: "input", got: 3, want: 4 }));
+        assert!(matches!(information_processing_capacity(&states, &[0.1, 1.5, 0.3, 0.4], 2, 0, None), Err(ReservoirError::OutOfRange { what: "input", .. })));
+        assert!(matches!(information_processing_capacity(&states, &[0.1, f64::NAN, 0.3, 0.4], 2, 0, None), Err(ReservoirError::NonFinite { what: "input", index: 1 })));
+        let ragged = vec![vec![0.1], vec![0.2, 0.0], vec![0.3], vec![0.4]];
+        assert_eq!(information_processing_capacity(&ragged, &u, 2, 0, None), Err(ReservoirError::ShapeMismatch { what: "state", got: 2, want: 1 }));
+        let poisoned = vec![vec![0.1], vec![0.2], vec![f64::INFINITY], vec![0.4]];
+        assert_eq!(information_processing_capacity(&poisoned, &u, 2, 0, None), Err(ReservoirError::NonFinite { what: "state", index: 0 }));
+        assert!(matches!(information_processing_capacity(&states, &u, 0, 0, None), Err(ReservoirError::OutOfRange { what: "max_degree", .. })));
+        assert!(matches!(information_processing_capacity(&states, &u, 2, 0, Some(-0.1)), Err(ReservoirError::OutOfRange { what: "threshold", .. })));
+        assert!(matches!(information_processing_capacity(&states, &u, 2, 0, Some(f64::NAN)), Err(ReservoirError::OutOfRange { what: "threshold", .. })));
+        assert!(matches!(information_processing_capacity(&states, &u, 2, 3, None), Err(ReservoirError::OutOfRange { what: "samples after the delay", .. })));
+        assert!(information_processing_capacity(&states, &u, 2, 2, None).is_ok());
+    }
 }

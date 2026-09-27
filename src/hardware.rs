@@ -237,13 +237,16 @@ pub struct Part {
     /// parts the chip total is the published quantity and the per-core split is not. Use
     /// [`Part::neurons_per_chip`], which prefers a published total and falls back to the product.
     ///
-    /// ⛔ Two of these entries are **not** a maker's number transcribed. [`LOIHI_2`]'s 1,048,576 is
-    /// this review reading Intel's "up to 1 million" as the power of two 128 cores of 8,192 gives,
-    /// and it is graded [`Evidence::Derived`] with the rounding shown in its string;
-    /// [`AKD1000`]'s 1.2 million is a model-dependent vendor capacity claim graded
-    /// [`Evidence::Projected`]. Neither is a register count, and because the `Loihi` 2 figure is a
-    /// rounding chosen to be consistent with the per-core split, it is **excluded from**
-    /// `a_published_chip_total_agrees_with_the_product_of_the_per_core_figures`'s independent
+    /// ⛔ Four of these entries are **not** a maker's number transcribed. Three are this review
+    /// reading an exact figure out of a round one, each graded [`Evidence::Derived`] with the
+    /// arithmetic shown in its string: [`LOIHI_2`]'s 1,048,576 is Intel's "1 million" read as 128
+    /// cores of the 8,192 Intel prints per core, [`DARWIN3`]'s 2,355,200 is Ma et al.'s "2.35
+    /// million" read as the 575 cores of 4,096 in their Table 6, and [`SPECK`]'s 327,680 is the sum
+    /// of the per-core neuron memories in the Speck datasheet, which `SynSense` rounds to "up to
+    /// 320,000". The fourth, [`AKD1000`]'s 1.2 million, is a model-dependent vendor capacity claim
+    /// graded [`Evidence::Projected`]. None is a register count, and because the `Loihi` 2 and
+    /// `Darwin3` totals are products of per-core figures in the same record, both are **excluded
+    /// from** `a_published_chip_total_agrees_with_the_product_of_the_per_core_figures`'s independent
     /// cross-checks — a cross-check against a figure derived from the thing it checks is not one.
     pub neurons_per_chip_stated: Spec<u64>,
     /// What a reader has to know about this part that does not fit in a field.
@@ -435,10 +438,14 @@ pub const LOIHI_2: Part = Part {
     ),
     neurons_per_core: Spec::known(
         8192,
-        "DERIVED by this review: Intel's vendor brief states up to 1 M neurons per chip across 128 \
-         cores, giving 1,048,576/128 = 8,192 per core, which matches the brief's own '8x Loihi 1' \
-         claim against that part's 1,024. A vendor figure divided by a vendor figure.",
-        Evidence::Derived,
+        "Intel, Taking Neuromorphic Computing to the Next Level with Loihi 2 (2021), Figure 1: a \
+         neuromorphic core holds 'Up to 8192 neurons'. Vendor document, printed directly, and \
+         repeated as Loihi2 'max. 8K' neurons per core in Ma et al., National Science Review \
+         11(5):nwae102, 2024, Table 6. Through v0.22.0 this figure was graded DERIVED, as the chip \
+         total divided by 128, and the string cited 'the brief's own 8x Loihi 1 claim', which the \
+         brief does not make: its one '8x' is an '8x16-core 2D mesh'. The value is unchanged; the \
+         grade now names the figure that prints it.",
+        Evidence::Measured,
     ),
     cores_per_chip: Spec::known(
         128,
@@ -478,12 +485,13 @@ pub const LOIHI_2: Part = Part {
     ),
     neurons_per_chip_stated: Spec::known(
         1_048_576,
-        "DERIVED by this review, and READ IT BEFORE QUOTING IT: Intel's vendor brief states 'up to \
-         1 million' neurons per chip, which is a round number and not this one. 1,048,576 is this \
-         review's reading of it as the power of two the per-core split gives, 128 x 8,192 = \
-         1,048,576. Intel does not print 1,048,576 anywhere this review read. Because the figure \
-         is chosen to be consistent with neurons_per_core, checking one against the other is an \
-         identity and not a cross-check, and \
+        "DERIVED by this review, and READ IT BEFORE QUOTING IT: Intel's vendor brief, Table 2, \
+         gives 'Max # Neurons/Chip' as '1 million', which is a round number and not this one. \
+         1,048,576 is this review's reading of it as the power of two the per-core split gives: \
+         128 cores of the 8,192 per core in the brief's Figure 1, 128 x 8,192 = 1,048,576. Intel \
+         does not print 1,048,576 anywhere this review read. Because the figure is computed from \
+         neurons_per_core and cores_per_chip, checking it against their product is an identity \
+         and not a cross-check, and \
          a_published_chip_total_agrees_with_the_product_of_the_per_core_figures excludes this \
          record from its independent count for that reason.",
         Evidence::Derived,
@@ -638,29 +646,51 @@ pub const NORTHPOLE: Part = Part {
 /// peer-reviewed architecture paper for the fabricated part.
 ///
 /// The headline "1.2 million neurons and 10 billion synapses" is a **model-dependent capacity
-/// claim** for an event-driven convolutional engine, not a register count. Dividing it by the 80
+/// claim** for an event-driven convolutional engine, not a register count. Dividing it by the 78
 /// processing units to manufacture a per-core figure is exactly what this module refuses to do, so
 /// `neurons_per_core` here is empty and the headline lives in `neurons_per_chip_stated` where it
 /// can be read with its caveat.
+///
+/// ⛔ **Three fields in this record were corrected.** Through v0.22.0 it cited "the product brief"
+/// with no version, and three of its fields disagreed with the 2025 briefs this review read. It
+/// gave 80 NPUs, where the AKD1000 `PCIe` Card Product Brief v1.0 gives "20 Akida Nodes, 78 NPUs".
+/// It credited 1-, 2- and 4-bit weights to the brief, and none of the 2025 `PCIe`, M.2 and `SoC`
+/// briefs states them — they say "Peak INT4 OPs" and "low bit-width weights". And it said the
+/// foundry was unconfirmed, where both card briefs say "28nm TSMC device". The core count is now
+/// the 78 the named brief prints, the weight widths are sourced to the `MetaTF` page that does
+/// state them, and the node names TSMC.
 pub const AKD1000: Part = Part {
     name: "Akida AKD1000",
     vendor: "BrainChip",
-    citation: "BrainChip AKD1000 product brief and Akida development-kit documentation. VENDOR \
-               SOURCES. This review did not locate a peer-reviewed architecture paper for the \
-               fabricated part.",
+    citation: "BrainChip, AKD1000 PCIe Card Product Brief v1.0, 2025, \
+               brainchip.com/wp-content/uploads/2025/04/AKD1000-PCIe-Card-Product-Brochure-v1.0.pdf \
+               (NPU count, process, on-chip learning); BrainChip MetaTF 2.19.3 documentation, \
+               Akida 1.0 capabilities, doc.brainchipinc.com/user_guide/hardware/1.0.html (weight \
+               widths). VENDOR SOURCES. The 1.2-million headline rests on earlier, unversioned \
+               BrainChip material that this review did not re-locate. This review did not locate a \
+               peer-reviewed architecture paper for the fabricated part.",
     year: Spec::known(
         2021,
-        "Silicon reported back in 2021; development kits shipped from 2022. Vendor announcements.",
+        "Silicon reported back in 2021; development kits shipped from 2022. Vendor announcements. \
+         This is the year of silicon, not of the record's citation: the PCIe card brief the record \
+         now cites is dated 2025, and describes a part already shipping.",
         Evidence::Measured,
     ),
     neurons_per_core: Spec::unlocated(
-        "This review did not locate a per-NPU neuron limit. BrainChip's device total divided by 80 \
-         NPUs would give 15,000 each, and that division would manufacture a specification from a \
-         model-dependent capacity claim.",
+        "This review did not locate a per-NPU neuron limit. BrainChip's device total divided by \
+         78 NPUs would give about 15,385 each, and that division would manufacture a \
+         specification from a model-dependent capacity claim.",
     ),
     cores_per_chip: Spec::known(
-        80,
-        "BrainChip product brief: 80 Neural Processing Units. Vendor document.",
+        78,
+        "BrainChip, AKD1000 PCIe Card Product Brief v1.0 (2025), Specifications: 'Peak INT4 OPs \
+         1.5 TOPs with 20 Akida Nodes, 78 NPUs'. Vendor document. Through v0.22.0 this field \
+         recorded 80 and credited it to an unversioned 'product brief'; this review did not \
+         locate a BrainChip-authored document that prints 80. The 80 is widely reported, as 20 \
+         nodes of 4, for example in eeNews Europe's write-up of the January 2025 M.2 launch, in a \
+         sentence BrainChip's own release text does not contain; 78 may be the count available on \
+         the card rather than on the die, and the brief does not say which. This field records \
+         the figure a named document prints and this string names the other.",
         Evidence::Measured,
     ),
     synapses_per_core: Spec::unlocated(
@@ -673,9 +703,16 @@ pub const AKD1000: Part = Part {
     ),
     weight_bits: Spec::known(
         4,
-        "BrainChip product brief: 1-, 2- and 4-bit weights and activations, with the MetaTF \
-         quantisation-aware training flow targeting the same three widths. Recorded as 4, the \
-         ceiling. Vendor document.",
+        "BrainChip MetaTF 2.19.3 documentation, Akida 1.0 capabilities \
+         (doc.brainchipinc.com/user_guide/hardware/1.0.html), a page it says is 'relevant to Akida \
+         1.0 IP-based solutions, such as the AKD1000 and AKD1500 reference SoCs': weights of 1, 2 \
+         or 4 bits on Convolutional and FullyConnected layers, and 2 or 4 on \
+         SeparableConvolutional. Recorded as 4, the ceiling of those layers. Vendor document. The \
+         same page gives the InputConvolutional layer, the first layer on 1- or 3-channel input, \
+         8-bit weights on 8-bit input; this record keeps 4 and names that exception here rather \
+         than widening every layer to it. Through v0.22.0 this string credited the 1-, 2- and \
+         4-bit widths to 'BrainChip product brief'; the 2025 PCIe, M.2 and SoC briefs do not \
+         state them, and say only 'Peak INT4 OPs' and 'low bit-width weights'.",
         Evidence::Measured,
     ),
     delay_ticks: Spec::unlocated(
@@ -687,20 +724,29 @@ pub const AKD1000: Part = Part {
         true,
         "Yes, but ONLY on the final fully-connected layer, as a one-shot/few-shot rule over \
          binarised activations. It is not backpropagation and it does not update the convolutional \
-         stack. Vendor documentation. A bare `true` would overstate it, which is why this string is \
+         stack. Vendor documentation: the AKD1000 PCIe Card Product Brief v1.0 (2025) lists \
+         'On-chip learning in event domain', and the MetaTF 2.19.3 page on Akida layers \
+         (doc.brainchipinc.com/user_guide/akida.html) names the exception to its 4- and 8-bit \
+         layers as 'FullyConnected layers performing edge learning (1.0 only), where both inputs \
+         and weights are 1-bit'. A bare `true` would overstate it, which is why this string is \
          long.",
         Evidence::Measured,
     ),
     process: Spec::known(
-        "28 nm",
-        "Vendor material describes a 28 nm process. This review did not confirm the foundry and \
-         does not name one.",
+        "TSMC 28 nm",
+        "BrainChip, AKD1000 PCIe Card Product Brief v1.0 (2025) and AKD1000 M.2 card Product \
+         Brief 1.0 (2025): '28nm TSMC device'. BrainChip's release 'BrainChip Completes Testing of \
+         Akida Chips': 'The Akida production chips were manufactured by TSMC in Taiwan in a 28nm \
+         process.' Vendor documents. Through v0.22.0 this field read '28 nm' and said this review \
+         had not confirmed the foundry.",
         Evidence::Measured,
     ),
     neurons_per_chip_stated: Spec::known(
         1_200_000,
         "BrainChip's headline: up to 1.2 million neurons and 10 billion synapses per device. A \
-         MODEL-DEPENDENT capacity claim from a vendor brief, not a register count, and it is \
+         MODEL-DEPENDENT capacity claim from vendor material, not a register count. The AKD1000 \
+         PCIe Card Product Brief v1.0 (2025) does not print it, and this review did not re-locate \
+         the versioned document that does, which is one more reason the grade is Projected. It is \
          recorded here rather than divided into a per-core figure.",
         Evidence::Projected,
     ),
@@ -713,8 +759,8 @@ pub const AKD1000: Part = Part {
 /// A deliberately thin record: three stated fields and seven empty ones. `BrainChip` describes
 /// AKD1500 as carrying the same Akida 1.0 intellectual property as [`AKD1000`] in a different
 /// process and package, without the embedded host processor or the external `DRAM` interface —
-/// which **implies** the same 80 processing units without **stating** them, so this record does not
-/// state them either.
+/// which **implies** [`AKD1000`]'s processing units (78 in that part's 2025 card brief) without
+/// **stating** them, so this record does not state them either.
 pub const AKD1500: Part = Part {
     name: "Akida AKD1500",
     vendor: "BrainChip",
@@ -728,15 +774,20 @@ pub const AKD1500: Part = Part {
     neurons_per_core: Spec::unlocated("This review did not locate any per-core figure for AKD1500."),
     cores_per_chip: Spec::unlocated(
         "This review did not locate a stated NPU count for AKD1500. BrainChip describes it as the \
-         same Akida 1.0 IP as AKD1000, which implies 80 and does not state it.",
+         same Akida 1.0 IP as AKD1000, which implies AKD1000's count - 78 in that part's 2025 \
+         PCIe card brief, 80 as widely reported - and does not state it.",
     ),
     synapses_per_core: Spec::unlocated("This review did not locate any per-core figure for AKD1500."),
     max_fan_in: Spec::unlocated("This review did not locate a fan-in cap for AKD1500."),
     weight_bits: Spec::known(
         4,
         "INFERRED by this review, not located and not computed, from BrainChip's statement that \
-         AKD1500 carries the same Akida 1.0 IP as AKD1000, whose brief gives 1, 2 and 4 bits. Not \
-         separately stated for this part. Graded Projected because an analogy is not arithmetic. \
+         AKD1500 carries the same Akida 1.0 IP as AKD1000, whose MetaTF documentation gives 1, 2 \
+         and 4 bits. (Through v0.22.0 this said AKD1000's BRIEF gives them, which the 2025 briefs \
+         do not; see AKD1000's weight_bits.) That MetaTF page names AKD1500 too, as one of the \
+         'Akida 1.0 IP-based solutions' its limits are 'relevant to': an IP-level statement, the \
+         same analogy made by the maker, and not a figure for this part's silicon. Graded \
+         Projected because an analogy is not arithmetic. \
          The inference is made here and refused for on_chip_learning below on purpose: a datapath \
          width is a property of the IP itself, whereas whether a learning feature is usable also \
          depends on the parts of AKD1000 this device drops, including its embedded host processor.",
@@ -825,21 +876,29 @@ pub const SPINNAKER: Part = Part {
     ),
     weight_bits: Spec::known(
         16,
-        "Located in the documentation of sPyNNaker, the project's own reference software stack: \
-         the standard synapse format uses 16-bit fixed-point weights. A SOFTWARE convention, not a \
-         hardware limit - the cores are 32-bit ARMs and a different synapse format would be a \
-         different number. Graded Measured because it was READ OFF a document rather than computed \
-         here; the document is a software one and this string says so.",
+        "Rhodes et al., sPyNNaker: A Software Package for Running PyNN Simulations on SpiNNaker, \
+         Frontiers in Neuroscience 12:816, 2018, doi:10.3389/fnins.2018.00816 - the paper of the \
+         project's own reference software stack: 'each 32-bit data structure is split such that \
+         the top 16 bits represent the weight'. So the standard synapse format uses 16-bit \
+         fixed-point weights. A SOFTWARE convention, not a hardware limit - the cores are 32-bit \
+         ARMs and a different synapse format would be a different number. Graded Measured because \
+         it was READ OFF a document rather than computed here; the document is a software one and \
+         this string says so. Through v0.22.0 this string cited 'the documentation of sPyNNaker' \
+         and named no document.",
         Evidence::Measured,
     ),
     delay_ticks: Spec::known(
         DelayRange { min_ticks: 1, max_ticks: 16 },
         "sPyNNaker delivers 1 to 16 timesteps natively from the synapse row's delay field; longer \
          delays are built from 'delay extension' populations that relay a spike through extra \
-         neurons, at the cost of those neurons. Located in the documentation of sPyNNaker, the \
-         project's own reference software stack, rather than in the JSSC paper - a software \
-         document, READ OFF and not computed here, which is why it is Measured and not Derived. \
-         The minimum of 1 is real: there is no same-tick delivery.",
+         neurons, at the cost of those neurons. Located in Rhodes et al., Front. Neurosci. \
+         12:816, 2018, doi:10.3389/fnins.2018.00816, the paper of the project's own reference \
+         software stack, rather than in the JSSC paper: '4 bits to specify synaptic delay', \
+         'enabling representation of delays up to 16 timesteps', and 'an application called a \
+         delay extension is created'. A software document, READ OFF and not computed here, which \
+         is why it is Measured and not Derived. The minimum of 1 is real: there is no same-tick \
+         delivery. Through v0.22.0 this string cited 'the documentation of sPyNNaker' and named \
+         no document.",
         Evidence::Measured,
     ),
     on_chip_learning: Spec::known(
@@ -869,8 +928,16 @@ pub const SPINNAKER: Part = Part {
 
 /// `SpiNNaker2` — 152 `Cortex-M4F` cores per chip in `GlobalFoundries` 22 nm `FDX`.
 ///
-/// Höppner, Yan, Mayr et al., *`SpiNNaker2`: A Large-Scale Neuromorphic System for Event-Based and
-/// Asynchronous Machine Learning*, arXiv:2103.08392 (2021); commercialised by `SpiNNcloud`.
+/// Höppner, Yan, Dixius et al. (including Furber and Mayr), *The `SpiNNaker` 2 Processing Element
+/// Architecture for Hybrid Digital Neuromorphic Computing*, arXiv:2103.08392 (2021); commercialised
+/// by `SpiNNcloud`.
+///
+/// ⛔ Through v0.22.0 this record gave that arXiv number the title of a different paper,
+/// *`SpiNNaker2`: A Large-Scale Neuromorphic System for Event-Based and Asynchronous Machine
+/// Learning* — arXiv:2401.04491, Gonzalez et al., 2024, on which Höppner is not an author. The
+/// figures this record takes from arXiv:2103.08392 are in it: "38 QPEs with 152 PEs in total" and
+/// "GLOBALFOUNDRIES 22FDX technology". So is a plasticity benchmark the record used to say it could
+/// not find, cited there as reference 24; see `on_chip_learning`.
 ///
 /// The record is thin for the same reason [`SPINNAKER`]'s is: this is a software platform with
 /// hardware accelerators, so neuron counts, synapse counts, weight widths and delays are properties
@@ -880,8 +947,9 @@ pub const SPINNAKER: Part = Part {
 pub const SPINNAKER2: Part = Part {
     name: "SpiNNaker2",
     vendor: "TU Dresden / SpiNNcloud",
-    citation: "Hoeppner, Yan, Mayr et al., SpiNNaker2: A Large-Scale Neuromorphic System for \
-               Event-Based and Asynchronous Machine Learning, arXiv:2103.08392, 2021.",
+    citation: "Hoeppner, Yan, Dixius et al. (including Furber and Mayr), The SpiNNaker 2 \
+               Processing Element Architecture for Hybrid Digital Neuromorphic Computing, \
+               arXiv:2103.08392, 2021.",
     year: Spec::known(
         2021,
         "arXiv preprint year for the architecture; commercial systems from SpiNNcloud followed.",
@@ -915,19 +983,25 @@ pub const SPINNAKER2: Part = Part {
     ),
     on_chip_learning: Spec::known(
         true,
-        "INFERRED by this review, not located and not computed: software plasticity on the \
-         Cortex-M4F cores as in SpiNNaker 1, with hardware MAC and exponential units making the \
-         rule cheaper. arXiv:2103.08392 describes the accelerators; this review did not locate a \
-         statement of on-chip plasticity for this part or a plasticity benchmark. An analogy from \
-         a sibling architecture is an inference, so this is graded Projected and NOT Derived: \
-         there is no arithmetic here, and Derived would sort this guess above a maker's roadmap \
-         figure.",
+        "INFERRED by this review for this part, from a benchmark on a prototype of it: \
+         software plasticity on the Cortex-M4F cores, with hardware MAC and exponential units \
+         making the rule cheaper. Yan et al., Efficient Reward-Based Structural Plasticity on a \
+         SpiNNaker 2 Prototype, IEEE Transactions on Biomedical Circuits and Systems \
+         13(3):579-591, 2019, doi:10.1109/TBCAS.2019.2906401, implements reward-based synaptic \
+         sampling with structural plasticity on a SpiNNaker 2 PROTOTYPE chip, and \
+         arXiv:2103.08392 cites it as reference [24] for what its accelerators buy. The prototype \
+         is not the 152-PE part, so carrying its plasticity across is an inference and not a \
+         location: graded Projected and NOT Derived, because there is no arithmetic here and \
+         Derived would sort this guess above a maker's roadmap figure. Through v0.22.0 this string \
+         said this review had located no plasticity statement or benchmark for the part at all, \
+         while the paper it cites for this record references one.",
         Evidence::Projected,
     ),
     process: Spec::known(
         "GlobalFoundries 22 nm FDX",
-        "Hoeppner, Yan, Mayr et al., arXiv:2103.08392, 2021, which also describes adaptive body \
-         biasing and per-core voltage and frequency scaling on this node.",
+        "Hoeppner, Yan, Dixius et al., arXiv:2103.08392, 2021: 'GLOBALFOUNDRIES 22FDX \
+         technology'. The paper also describes adaptive body biasing and per-core voltage and \
+         frequency scaling on this node.",
         Evidence::Measured,
     ),
     neurons_per_chip_stated: Spec::unlocated(
@@ -941,21 +1015,42 @@ pub const SPINNAKER2: Part = Part {
 /// `SynSense` Xylo Audio 2 (`SYNS61201`) — 1,000 `LIF` neurons for always-on audio.
 ///
 /// The small end of the table, and one of the very few parts in this crate with a **measured**
-/// energy figure attached to a stated protocol: the `NeuroBench` system track reports 0.028 mJ per
-/// inference for Xylo Audio 2 against 0.934 mJ for an Arduino Nano 33 `BLE` on the same task, with
-/// idle, active and dynamic power reported separately. That figure is cited in
+/// energy figure attached to a stated protocol: Yik et al., *The neurobench framework for
+/// benchmarking neuromorphic computing algorithms and systems*, Nature Communications 16:1545
+/// (2025), doi:10.1038/s41467-025-56739-4, reports 0.028 mJ per inference for Xylo Audio 2 against
+/// 0.934 mJ for an Arduino Nano 33 `BLE` on the same task, with idle, active and dynamic power
+/// reported separately. Read the boundary before the ratio: both figures are **dynamic** energy,
+/// and Xylo's is measured component-wise while the baseline's is measured system-wise, so the ratio
+/// compares two measurement boundaries as well as two machines — the paper's Table 6, on its
+/// acoustic scene classification task, labels the rows "(component-wise) inference" and
+/// "(system-wise) inference" under "Dynamic Energy (mJ/inf)". Through v0.22.0 this paragraph and
+/// the record's citation named only "the `NeuroBench` system track (Yik et al.)", with no title,
+/// venue or year, and gave the two figures without their boundaries. That figure is cited in
 /// [`crate::ledger`]'s module doc and is **not** turned into a [`crate::ledger::Prices`] entry
 /// here, for the reason given in this module's doc.
 ///
-/// Note what the fan-in field does **not** say. 64,000 synapses over 1,000 neurons is 64 — and 64
-/// is a **mean**, not a maximum. Putting a mean in a maximum's field is the specific error this
-/// module exists to prevent, so the field is empty.
+/// ⛔ **The fan-in field was empty, and it should not have been.** Through v0.22.0 this record said
+/// no per-neuron cap had been located, and that 64,000 synapses over 1,000 neurons, 64, "is a MEAN,
+/// not a maximum". A cap is published: Pedersen et al., Nature Communications 15:8122 (2024), give
+/// the part "a maximum fan-in of 63". The mean reading was not wrong — `Rockpool`'s own device table
+/// lists an average fan-out of "32+32" beside a maximum fan-out of 64 — so 64 is a documented mean
+/// and a documented maximum, of fan-OUT. The field now records 63, the figure stated as a fan-in and
+/// the smaller one, and its string names the disagreement. One consequence is worth seeing: 63 inputs
+/// on each of 1,000 neurons is 63,000 synapses, so a network [`fits`] accepts cannot fill the
+/// 64,000-synapse store. A network that fills it on at most 1,000 neurons averages 64 inputs a
+/// neuron, so at least one of its neurons is over the wall, and the uniform one is over it at every
+/// neuron.
 pub const XYLO_AUDIO_2: Part = Part {
     name: "Xylo Audio 2",
     vendor: "SynSense",
-    citation: "SynSense Xylo product documentation and the Rockpool toolchain. VENDOR SOURCES. \
-               Measured per-inference energy for this part appears in the NeuroBench system track \
-               (Yik et al.).",
+    citation: "SynSense Xylo product documentation and the Rockpool toolchain, including Rockpool \
+               3.1.0, Overview of the Xylo family, rockpool.ai/devices/xylo-overview.html. VENDOR \
+               SOURCES. The fan-in cap is from Pedersen et al., Neuromorphic intermediate \
+               representation: A unified instruction set for interoperable brain-inspired \
+               computing, Nature Communications 15:8122, 2024, doi:10.1038/s41467-024-52259-9. \
+               Measured per-inference energy for this part appears in Yik et al., The neurobench \
+               framework for benchmarking neuromorphic computing algorithms and systems, Nature \
+               Communications 16:1545, 2025, doi:10.1038/s41467-025-56739-4.",
     year: Spec::known(
         2023,
         "INFERRED by this review, not located and not computed: the year is read off the vendor \
@@ -981,14 +1076,28 @@ pub const XYLO_AUDIO_2: Part = Part {
         "SynSense Xylo documentation: up to 64,000 synaptic connections. Vendor document.",
         Evidence::Measured,
     ),
-    max_fan_in: Spec::unlocated(
-        "This review did not locate a per-neuron fan-in cap. 64,000/1,000 = 64 is a MEAN, not a \
-         maximum, and a mean in a maximum's field would let fits() pass a network it should refuse.",
+    max_fan_in: Spec::known(
+        63,
+        "Pedersen et al., Nature Communications 15:8122, 2024 (PMC11405706; arXiv:2311.14641): \
+         'The Xylo Audio 2 model (SYNS61201) specifically includes ... a maximum fan-in of 63, and \
+         a total of 64,000 synaptic weights.' The same paper later limits the chip to 'up to 1000 \
+         LIF neurons, each with a maximum fan-out of 64', supported 'only if it contains ≤ 1000 \
+         LIF neurons, each with ≤ 64 incoming connections', and Rockpool 3.1.0's Xylo overview \
+         lists 'Max. fanout 64' and 'Avg. fanout 32+32 (Syn1 and Syn2)'. The sources disagree by \
+         one and on direction. 63 is recorded because it is the figure stated as a FAN-IN and the \
+         smaller, so fits() refuses a 64-input neuron that the '≤ 64 incoming' sentence would \
+         accept, rather than pass one that the 'maximum fan-in of 63' sentence refuses. \
+         64,000/1,000 = 64 is still the documented AVERAGE fan-out, and it \
+         is above this cap: 63 x 1,000 = 63,000 synapses is the most a network inside the cap can \
+         place in the 64,000-synapse store. Through v0.22.0 this field was empty and said no cap \
+         had been located.",
+        Evidence::Measured,
     ),
     weight_bits: Spec::known(
         8,
         "SynSense Xylo documentation: 8-bit signed synaptic weights in the digital core. Vendor \
-         document.",
+         document. Pedersen et al., Nature Communications 15:8122, 2024, agree: the SYNS61201 \
+         'specifically includes 8-bit synaptic weights'.",
         Evidence::Measured,
     ),
     delay_ticks: Spec::unlocated("This review did not locate a synaptic delay range for Xylo."),
@@ -1006,29 +1115,50 @@ pub const XYLO_AUDIO_2: Part = Part {
 
 /// `SynSense` Speck — a `DVS` pixel array and nine event-driven convolutional cores in one package.
 ///
-/// The record is thin on purpose. What this review could source is the shape of the pipeline: an
-/// integrated 128x128 dynamic-vision pixel array feeding nine event-driven convolutional spiking
-/// cores, so **a network deeper than nine convolutional layers does not map** without
-/// time-multiplexing. That is a real and checkable structural limit, and it is a different shape
-/// from every other limit in this table — it constrains **depth**, not width.
+/// What this review could source first is the shape of the pipeline: an integrated 128x128
+/// dynamic-vision pixel array feeding nine event-driven convolutional spiking cores, so **a network
+/// deeper than nine convolutional layers does not map** without time-multiplexing. That is a real
+/// and checkable structural limit, and it is a different shape from every other limit in this
+/// table — it constrains **depth**, not width.
+///
+/// ⛔ **Three things this record said it could not source are in the vendor's own datasheet.**
+/// Through v0.22.0 it said this review had located neither the weight width nor the kernel-size
+/// limits, and could not trace the device's neuron total to a document. The Speck Dev Kit
+/// Datasheet (June 2023) gives all three: "Weight resolution 8 bits" and
+/// "Max kernel size 16*16" in its section 2.1.3, and in section 4.5 the neuron memory of each core —
+/// 64 Ki words on cores 0 to 2, 32 Ki on cores 3 and 4, 16 Ki on cores 5 to 8 — which sums to the
+/// 327,680 behind the vendor's "up to 320,000" and the "327K" in the title of arXiv:2304.06793. The
+/// per-core neuron limit is real and differs by core, which is why `neurons_per_core`, one number,
+/// is still empty, and why [`fits`] can now check the chip total but still cannot count cores.
 pub const SPECK: Part = Part {
     name: "Speck",
     vendor: "SynSense",
-    citation: "SynSense Speck product materials. VENDOR SOURCES. This review did not locate a \
-               peer-reviewed paper for the packaged part; the DYNAP-CNN convolutional core it \
-               builds on comes out of the Institute of Neuroinformatics, Zurich.",
+    citation: "SynSense, Speck Dev Kit Datasheet, June 2023, \
+               synsense.ai/wp-content/uploads/2023/06/Speck-devkit-datasheet.pdf, and the Sinabs \
+               3.0.4 Speck Overview, sinabs.readthedocs.io/v3.0.4/speck/overview.html. VENDOR \
+               SOURCES. This review did not locate a peer-reviewed paper for the packaged part; the \
+               arXiv preprint 2304.06793, Speck: A Smart event-based Vision Sensor with a low \
+               latency 327K Neuron Convolutional Neuronal Network Processing Pipeline, describes \
+               it, and the DYNAP-CNN convolutional core it builds on comes out of the Institute of \
+               Neuroinformatics, Zurich.",
     year: Spec::known(
         2022,
         "INFERRED by this review from undated vendor material, not located and not computed; this \
          review did not locate a dated launch document, so treat the year as approximate. Graded \
          Projected, because a year guessed off undated material is an inference and not arithmetic \
-         over stated figures.",
+         over stated figures. It is not the year of this record's citation: the Speck Dev Kit \
+         Datasheet the record cites is dated June 2023 and arXiv:2304.06793 is from 2023, and \
+         neither is a launch document.",
         Evidence::Projected,
     ),
     neurons_per_core: Spec::unlocated(
-        "This review did not locate a per-core neuron limit. The vendor quotes a device total in \
-         the hundreds of thousands that this review could not trace to a document it read, so no \
-         figure is recorded in either the per-core or the per-chip field.",
+        "The wrong SHAPE for this part rather than unlocated: Speck's per-core neuron limit is \
+         real and DIFFERS BY CORE. The Speck Dev Kit Datasheet (June 2023) section 4.5 gives \
+         neuron memory of 64 Ki words on cores 0-2, 32 Ki on cores 3-4 and 16 Ki on cores 5-8, and \
+         this field holds one number: the largest would pass a layer on core 8 that does not fit, \
+         and the smallest would refuse one on core 0 that does. Through v0.22.0 this string said \
+         the vendor's device total could not be traced to a document; it is in \
+         neurons_per_chip_stated now.",
     ),
     cores_per_chip: Spec::known(
         9,
@@ -1039,11 +1169,23 @@ pub const SPECK: Part = Part {
     ),
     synapses_per_core: Spec::unlocated("This review did not locate a per-core synapse limit."),
     max_fan_in: Spec::unlocated(
-        "A convolutional core's fan-in is its kernel size, a property of the configured network \
-         rather than a fixed cap. This review did not locate the kernel-size limits.",
+        "The wrong SHAPE for this part: a convolutional core's fan-in is its kernel size times its \
+         input channels, a property of the configured layer rather than one cap. The limits that \
+         bound it ARE published - SynSense Speck Dev Kit Datasheet (June 2023) section 2.1.3: 'Max \
+         kernel size 16*16', 'Max feature number 1024', 'Fanout of 2'; the Sinabs 3.0.4 Speck \
+         Overview agrees, 'Max convolutional kernel size 16x16', 'Max channel number: 1024' - and \
+         the fan-in of one output neuron is further bounded by its core's kernel memory, 16 Ki to \
+         64 Ki words by core in section 4.5. No single number is the wall. Through v0.22.0 this \
+         string said the kernel-size limits had not been located.",
     ),
-    weight_bits: Spec::unlocated(
-        "This review did not locate a weight width it could trace to a vendor document it read.",
+    weight_bits: Spec::known(
+        8,
+        "SynSense Speck Dev Kit Datasheet (June 2023) section 2.1.3: 'Weight resolution 8 bits', \
+         'Neuron state resolution 16 bits'. The Sinabs 3.0.4 Speck Overview: 'speck support \
+         precision of 8bit int for kernel parameters and 16bit int for neuron state precisions'. \
+         Vendor documents. Through v0.22.0 this field was empty and said no vendor document gave \
+         the width.",
+        Evidence::Measured,
     ),
     delay_ticks: Spec::unlocated("This review did not locate a delay mechanism for Speck."),
     on_chip_learning: Spec::known(
@@ -1052,9 +1194,20 @@ pub const SPECK: Part = Part {
         Evidence::Measured,
     ),
     process: Spec::unlocated("This review did not locate a process node for Speck."),
-    neurons_per_chip_stated: Spec::unlocated(
-        "This review did not locate a device total it could trace to a document it read; see \
-         neurons_per_core.",
+    neurons_per_chip_stated: Spec::known(
+        327_680,
+        "DERIVED by this review from the Speck Dev Kit Datasheet (June 2023) section 4.5, which \
+         gives the neuron memory of each of the nine cores: 3 x 65,536 + 2 x 32,768 + 4 x 16,384 = \
+         327,680, that is 320 Ki words. The vendor prints roundings of it: 'configurable with up \
+         to 320,000 spiking neurons' in the same datasheet, 'up to 0.32M configurable spiking \
+         neurons' in the Sinabs 3.0.4 Speck Overview, and '327K Neuron' in the title of arXiv \
+         2304.06793. The sum is this review's arithmetic, so the grade is Derived. A CEILING on \
+         neuron-state words, one word per neuron: the same section sizes a layer at \
+         f x 2^(ceil(log2 fy) + ceil(log2 fx)) words, its feature map padded to powers of two, so a \
+         layer whose map is not a power of two on a side holds fewer neurons than the words it \
+         occupies. Through v0.22.0 this field was empty and said the device total could not be \
+         traced to a document.",
+        Evidence::Derived,
     ),
     note: "The sensor is ON the die. Speck is the clearest example in this table of the thing that \
            makes event-based hardware interesting — no frame ever exists, so no frame is ever moved.",
@@ -1071,8 +1224,20 @@ pub const SPECK: Part = Part {
 /// **silicon measurement** rather than a pre-silicon simulation. This module does not turn that
 /// 12.7 pJ/SOP into a [`crate::ledger::Prices`] entry — see the module doc for why not.
 ///
-/// ODIN is in this table as the small end of the scale: four orders of magnitude smaller than
-/// [`LOIHI`], with per-synapse plasticity on every one of its 65,536 synapses.
+/// ODIN is in this table as the small end of the scale: about three orders of magnitude smaller
+/// than [`LOIHI`] at chip level — 512 times fewer neurons, about 2,000 times fewer synapses, about
+/// 700 times less die area — with per-synapse plasticity on every one of its 65,536 synapses. Core
+/// for core it is only about four times smaller: the paper's Table I puts a Loihi core at 0.4 mm²
+/// and 1,024 neurons against ODIN's 0.086 mm² and 256. Through v0.22.0 this paragraph said "four
+/// orders of magnitude", which no measure reaches, and
+/// `odin_is_three_orders_of_magnitude_below_loihi_not_four` now computes the ratios from the two
+/// records.
+///
+/// ⛔ **The weight width was a bit too wide.** Through v0.22.0 this record gave ODIN 4-bit weights
+/// plus a fifth mapping bit. The paper gives a 3-bit weight plus one mapping bit, "a 4-bit synapse"
+/// in total, and Table I lists the storage as "(3+1)-bit (SRAM)"; the 4 most likely came from the
+/// abstract's "0.68µm² per 4-bit synapse", which counts the mapping bit. [`Quantiser::for_part`]
+/// now quantises to 3 bits for this part — codes −3 to +3 rather than −7 to +7.
 pub const ODIN: Part = Part {
     name: "ODIN",
     vendor: "Universite catholique de Louvain",
@@ -1103,10 +1268,16 @@ pub const ODIN: Part = Part {
         Evidence::Measured,
     ),
     weight_bits: Spec::known(
-        4,
-        "Frenkel et al., 2019: 4-bit synaptic weights, with an additional bit per synapse carrying \
-         the SDSP mapping state. This review records the 4 and names the fifth bit here rather \
-         than folding it in, because it is a plasticity bit and not magnitude.",
+        3,
+        "Frenkel et al., 2019 (arXiv:1804.07858): 'Each synapse of ODIN consists of a weight and 1 \
+         bit of mapping table to enable or disable online learning locally. A 3-bit resolution was \
+         chosen for the weight ... which results in a 4-bit synapse including the weight and the \
+         mapping table bit', and Table I lists synaptic weight storage as '(3+1)-bit (SRAM)'. This \
+         review records the 3 and names the mapping bit here rather than folding it in, because it \
+         switches SDSP learning on or off and is not magnitude. Through v0.22.0 this field read 4, \
+         with a fifth mapping bit beside it - five bits per synapse against the paper's four - \
+         most likely taken from the abstract's '0.68um2 per 4-bit synapse', which counts the \
+         mapping bit.",
         Evidence::Measured,
     ),
     delay_ticks: Spec::unlocated("This review did not locate a synaptic delay mechanism in ODIN."),
@@ -1126,7 +1297,7 @@ pub const ODIN: Part = Part {
            module deliberately does not transcribe that into a Prices entry; see the module doc.",
 };
 
-/// `DYNAP-SE` — analogue neurons, and the tightest fan-in wall in this table: **64**.
+/// `DYNAP-SE` — analogue neurons, and a structural fan-in wall of **64**.
 ///
 /// Moradi, Qiao, Stefanini & Indiveri, *A Scalable Multicore Architecture With Heterogeneous Memory
 /// Structures for Dynamic Neuromorphic Asynchronous Processors (`DYNAPs`)*, IEEE Transactions on
@@ -1135,6 +1306,10 @@ pub const ODIN: Part = Part {
 /// Each neuron has **64** content-addressable-memory entries, each holding the address of one
 /// presynaptic source. Sixty-four. A network whose neurons need 200 inputs does not map without
 /// splitting neurons across the fabric, and no amount of silicon changes that.
+///
+/// Through v0.22.0 this was called the tightest fan-in wall in the table. It is now the second
+/// tightest: [`XYLO_AUDIO_2`]'s published cap of 63, sourced since, is one lower — and that 63 is
+/// the smaller of two figures that part's sources give, where these 64 entries are one structure.
 ///
 /// The weight field needs its paragraph. A `DYNAP-SE` synapse **does not store a number.** A `CAM`
 /// entry selects one of four synapse types per neuron, and the amplitude of each type is set by an
@@ -1171,7 +1346,8 @@ pub const DYNAP_SE: Part = Part {
     max_fan_in: Spec::known(
         64,
         "STRUCTURAL and small: 64 content-addressable-memory entries per neuron, each holding one \
-         presynaptic address. Moradi et al., 2018. The tightest fan-in in this table.",
+         presynaptic address. Moradi et al., 2018. The second-tightest fan-in in this table, one \
+         above Xylo Audio 2's 63; through v0.22.0 this string called it the tightest.",
         Evidence::Measured,
     ),
     weight_bits: Spec::known(
@@ -1212,8 +1388,13 @@ pub const DYNAP_SE: Part = Part {
 
 /// Darwin — Zhejiang University's 2016 co-processor, 2,048 time-multiplexed neurons.
 ///
-/// Shen, Ma, Deng et al., *Darwin: a neuromorphic hardware co-processor based on spiking neural
-/// networks*, Science China Information Sciences 59, 2016.
+/// Shen, Ma, Gu, Zhang, Zhu, Xu, Xu, Shen & Pan, *Darwin: a neuromorphic hardware co-processor
+/// based on Spiking Neural Networks*, Science China Information Sciences 59(2):1–5, 2016 (online 29
+/// December 2015), doi:10.1007/s11432-015-5511-7. A companion description is Ma, Shen, Gu et al.,
+/// *Darwin: A neuromorphic hardware co-processor based on spiking neural networks*, Journal of
+/// Systems Architecture 77:43–51, 2017, doi:10.1016/j.sysarc.2017.01.003. (Through v0.22.0 this
+/// record named the authors "Shen, Ma, Deng et al." — there is no Deng on the paper — and gave no
+/// issue number.)
 ///
 /// The neuron count is a **virtual** one: the part time-multiplexes a small number of physical
 /// neuron circuits to present 2,048 addressable neurons. This review did not confirm how many
@@ -1223,8 +1404,10 @@ pub const DYNAP_SE: Part = Part {
 pub const DARWIN: Part = Part {
     name: "Darwin",
     vendor: "Zhejiang University",
-    citation: "Shen, Ma, Deng et al., Darwin: a neuromorphic hardware co-processor based on spiking \
-               neural networks, Science China Information Sciences 59, 2016.",
+    citation: "Shen, Ma, Gu, Zhang, Zhu, Xu, Xu, Shen & Pan, Darwin: a neuromorphic hardware \
+               co-processor based on Spiking Neural Networks, Science China Information Sciences \
+               59(2):1-5, 2016, doi:10.1007/s11432-015-5511-7. Companion: Ma, Shen, Gu et al., \
+               Journal of Systems Architecture 77:43-51, 2017, doi:10.1016/j.sysarc.2017.01.003.",
     year: Spec::known(2016, "Publication year for the fabricated 180 nm part.", Evidence::Measured),
     neurons_per_core: Spec::known(
         2048,
@@ -1262,34 +1445,69 @@ pub const DARWIN: Part = Part {
            English-language comparison tables.",
 };
 
-/// Darwin3 — a 2024 large-scale part with on-chip learning, and a record with almost nothing in it.
+/// Darwin3 — a 2024 large-scale part with on-chip learning: 575 neuron cores of up to 4,096 neurons.
 ///
-/// Ma, Zhang, Shen et al., *Darwin3: A large-scale neuromorphic chip with a novel instruction set
-/// and on-chip learning*, National Science Review, 2024.
+/// Ma, Jin, Sun, Li, Wu, Hu, Yang, Tang, Zhu, Lin & Pan, *Darwin3: a large-scale neuromorphic chip
+/// with a novel ISA and on-chip learning*, National Science Review 11(5):nwae102, 2024,
+/// doi:10.1093/nsr/nwae102.
 ///
-/// This review located the part, its year, its on-chip learning and a **chip-level** neuron figure
-/// of up to 2.35 million. It did not locate a core count, so it does not divide that figure into a
-/// per-core one, and every per-core field here is therefore empty. That is the whole record, and a
-/// record with one interesting number and eight empty fields is a truthful one.
+/// The chip is a 24 × 24 mesh of computing nodes. The node at (0,0) is a `RISC-V` management core
+/// and the other 575 are neuron cores, "each supporting up to 4096 spiking neurons" by time
+/// multiplexing. 575 × 4,096 = 2,355,200, and the paper's "up to 2.35 million" is that number
+/// truncated to three figures.
+///
+/// ⛔ **This record used to be nearly empty, and the paper it cited was not.** Through v0.22.0 it
+/// said no core count, weight width, process node or first-silicon date had been located, left every
+/// per-core field empty, and cited the paper as "Ma, Zhang, Shen et al., … a novel instruction set
+/// …" with no volume — neither Zhang nor Shen is an author, and the title says "ISA". Every one of
+/// those figures is in the paper: Table 6 gives 575 neuron cores, a per-core maximum of 4K neurons,
+/// synaptic weights of 1/2/4/8/16 bits, a 22 nm technology and a 358.527 mm² die; the text names the
+/// `GlobalFoundries` 22 nm `FD-SOI` process and says the chip "was successfully taped out and lit up
+/// in December 2022". The record now carries them, so [`fits`] checks this part's core count where
+/// it used to report it unchecked, and [`Quantiser::for_part`] quantises to 16 bits where it refused.
 pub const DARWIN3: Part = Part {
     name: "Darwin3",
     vendor: "Zhejiang University",
-    citation: "Ma, Zhang, Shen et al., Darwin3: A large-scale neuromorphic chip with a novel \
-               instruction set and on-chip learning, National Science Review, 2024.",
+    citation: "Ma, Jin, Sun, Li, Wu, Hu, Yang, Tang, Zhu, Lin & Pan, Darwin3: a large-scale \
+               neuromorphic chip with a novel ISA and on-chip learning, National Science Review \
+               11(5):nwae102, 2024, doi:10.1093/nsr/nwae102.",
     year: Spec::known(
         2024,
-        "Ma et al., National Science Review, 2024 - publication year. This review did not locate a \
-         separate first-silicon date for the part.",
+        "Ma et al., National Science Review 11(5):nwae102, 2024 - publication year, online 18 \
+         March 2024. First silicon is earlier and the paper states it: the chip 'was successfully \
+         taped out and lit up in December 2022', and 'After the initial chip-on-board testing in \
+         December 2022, the chip was repackaged using flip-chip Ball Grid Array'. This field \
+         records the year of the record's citation, which is what Part::year is defined to hold, \
+         and this string names the earlier date. Through v0.22.0 this string said no separate \
+         first-silicon date had been located.",
         Evidence::Measured,
     ),
-    neurons_per_core: Spec::unlocated(
-        "This review did not locate a core count for Darwin3 and therefore does not divide the \
-         published chip total into a per-core figure.",
+    neurons_per_core: Spec::known(
+        4096,
+        "Ma et al., National Science Review 11(5):nwae102, 2024: the nodes other than the RISC-V \
+         manager function 'as neuron cores, ... with each supporting up to 4096 spiking neurons', \
+         time-multiplexed, and Table 6 gives 'Neurons per core max. 4K'. A ceiling. Through \
+         v0.22.0 this field was empty because no core count had been located.",
+        Evidence::Measured,
     ),
-    cores_per_chip: Spec::unlocated("This review did not locate a core count for Darwin3."),
+    cores_per_chip: Spec::known(
+        575,
+        "Ma et al., National Science Review 11(5):nwae102, 2024: 'a two-dimensional mesh of \
+         computing nodes, forming a 24 x 24 grid', in which 'The node at position (0,0) features a \
+         RISC-V processing core for chip management'; Table 6 gives 'Neuron cores 575'. The RISC-V \
+         node holds no neurons and is not counted, as Loihi's x86 cores are not. Through v0.22.0 \
+         this field was empty and said no core count had been located.",
+        Evidence::Measured,
+    ),
     synapses_per_core: Spec::unlocated("This review did not locate a per-core synapse figure."),
     max_fan_in: Spec::unlocated("This review did not locate a fan-in cap for Darwin3."),
-    weight_bits: Spec::unlocated("This review did not locate a weight width for Darwin3."),
+    weight_bits: Spec::known(
+        16,
+        "Ma et al., National Science Review 11(5):nwae102, 2024, Table 6: synaptic weight \
+         '1/2/4/8/16 bits'. Recorded as 16, the ceiling, as AKD1000 and NorthPole record theirs. \
+         Through v0.22.0 this field was empty and said no weight width had been located.",
+        Evidence::Measured,
+    ),
     delay_ticks: Spec::unlocated("This review did not locate a delay range for Darwin3."),
     on_chip_learning: Spec::known(
         true,
@@ -1297,17 +1515,32 @@ pub const DARWIN3: Part = Part {
          instruction set implements, so the field says yes and claims nothing about scope.",
         Evidence::Measured,
     ),
-    process: Spec::unlocated(
-        "This review did not locate a process node for Darwin3 in a document it could confirm.",
-    ),
-    neurons_per_chip_stated: Spec::known(
-        2_350_000,
-        "Ma et al., National Science Review, 2024: up to 2.35 million neurons per chip. A CHIP \
-         total; this review found no core count to divide it by.",
+    process: Spec::known(
+        "GlobalFoundries 22 nm FD-SOI",
+        "Ma et al., National Science Review 11(5):nwae102, 2024: 'Using the GLOBAL FOUNDRIES 22-nm \
+         Fully Depleted Silicon On Insulator process, we generated a GDSII file that meets the \
+         sign-off requirements'; Table 6: 'Technology (nm) 22', 'Die area (mm2) 358.527'. Through \
+         v0.22.0 this field was empty and said no process node had been located in a document \
+         this review could confirm.",
         Evidence::Measured,
     ),
-    note: "One stated capacity, no structure. fits() will report nearly everything as unchecked for \
-           this part, which is the correct report.",
+    neurons_per_chip_stated: Spec::known(
+        2_355_200,
+        "DERIVED by this review, and READ IT BEFORE QUOTING IT: Ma et al., National Science Review \
+         11(5):nwae102, 2024, say the chip 'supports up to 2.35 million neurons', which is a round \
+         number and not this one. 2,355,200 is this review's reading of it as the product of the \
+         same paper's Table 6 figures, cores times neurons per core, 575 x 4,096 = 2,355,200, \
+         which the paper's figure TRUNCATES to three significant figures - rounding would give \
+         2.36 million. Through v0.22.0 this field held 2,350,000, graded Measured, and was the \
+         only capacity the record carried. Because the figure is now computed from \
+         neurons_per_core and cores_per_chip, checking it against their product is an identity, \
+         and a_published_chip_total_agrees_with_the_product_of_the_per_core_figures excludes this \
+         record from its independent count for that reason.",
+        Evidence::Derived,
+    ),
+    note: "Seven stated fields where there used to be three, all from the paper this record always \
+           cited, and fits() now checks the core count and the chip total. The per-neuron fan-in, \
+           the per-core synapse store and the delay range are still unchecked.",
 };
 
 /// Innatera Spiking Neural Processor T1 — a record that exists to say **nothing is public**.
@@ -1753,9 +1986,9 @@ impl CoreCount {
 /// The result of asking whether a network maps onto a part.
 ///
 /// Read [`Fit::unchecked`] before [`Fit::verdict`]. A `Some(true)` verdict means "no constraint
-/// this part **states** was violated", which on a part like [`INNATERA_T1`] or [`DARWIN3`] is a
-/// very weak claim — and on those parts the verdict is `None` instead, because nothing was
-/// checkable at all.
+/// this part **states** was violated", which on a part like [`AKD1000`], whose one checkable figure
+/// is a vendor capacity claim, is a very weak claim — and on a part like [`INNATERA_T1`] the verdict
+/// is `None` instead, because nothing was checkable at all.
 ///
 /// Everything here is for **one chip**. [`CoreCount::chips`] gives the multi-chip lower bound, and
 /// [`Bind::relieved_by_more_chips`] says which of the reported violations a bigger machine would
@@ -2306,8 +2539,9 @@ impl Quantiser {
     /// # Errors
     ///
     /// [`HardwareError::UnstatedSpec`] when the part states no weight width — the correct outcome
-    /// for [`LOIHI_2`], [`SPINNAKER2`], [`SPECK`], [`DARWIN`], [`DARWIN3`] and [`INNATERA_T1`] —
-    /// plus the errors of [`Quantiser::from_weights`].
+    /// for [`LOIHI_2`], [`SPINNAKER2`], [`DARWIN`] and [`INNATERA_T1`] — plus the errors of
+    /// [`Quantiser::from_weights`]. ([`SPECK`] and [`DARWIN3`] were on this list through v0.22.0;
+    /// their widths were in their own documents, and they quantise to 8 and 16 bits now.)
     pub fn for_part(part: &Part, w: &[f64]) -> Result<Self, HardwareError> {
         let bits = part
             .weight_bits
@@ -2944,7 +3178,7 @@ mod tests {
     #[test]
     fn quantising_for_a_part_with_no_stated_weight_width_is_an_error_naming_it() {
         let w = [0.1, -0.2, 0.3];
-        for p in [&LOIHI_2, &SPINNAKER2, &SPECK, &DARWIN, &DARWIN3, &INNATERA_T1] {
+        for p in [&LOIHI_2, &SPINNAKER2, &DARWIN, &INNATERA_T1] {
             assert_eq!(
                 Quantiser::for_part(p, &w),
                 Err(HardwareError::UnstatedSpec { part: p.name, field: "weight_bits" }),
@@ -2952,12 +3186,33 @@ mod tests {
                 p.name
             );
         }
+        // And the refusing set is exactly those four. Speck and Darwin3 were in it through v0.22.0,
+        // for widths their own documents print; a part moving into or out of it is a sourcing
+        // change and has to be made here on purpose.
+        let mut refusing: Vec<&str> =
+            PARTS.iter().filter(|p| p.weight_bits.value.is_none()).map(|p| p.name).collect();
+        refusing.sort_unstable();
+        assert_eq!(refusing, ["Darwin", "Loihi 2", "SpiNNaker2", "Spiking Neural Processor T1"]);
+
         // And where the width IS stated, it is used.
         let q = Quantiser::for_part(&AKD1000, &w).expect("Akida states 4 bits");
         assert_eq!(q.bits, 4);
         assert_eq!(q.max_code, 7);
-        let odin = Quantiser::for_part(&ODIN, &w).expect("ODIN states 4 bits");
-        assert_eq!(odin.bits, 4);
+        // ODIN: a 3-bit weight and a 1-bit mapping table, "(3+1)-bit (SRAM)" in the paper's
+        // Table I. The mapping bit is not magnitude, so the quantiser gets three bits and the
+        // codes run -3..=3; through v0.22.0 this record said 4 and the codes ran -7..=7.
+        let odin = Quantiser::for_part(&ODIN, &w).expect("ODIN states 3 bits");
+        assert_eq!((odin.bits, odin.max_code), (3, 3));
+        let odin_src = ODIN.weight_bits.source;
+        assert!(odin_src.contains("'(3+1)-bit (SRAM)'"), "{odin_src}");
+        // Speck: "Weight resolution 8 bits", Speck Dev Kit Datasheet section 2.1.3.
+        let speck = Quantiser::for_part(&SPECK, &w).expect("Speck states 8 bits");
+        assert_eq!((speck.bits, speck.max_code), (8, 127));
+        assert!(SPECK.weight_bits.source.contains("'Weight resolution 8 bits'"));
+        // Darwin3: "1/2/4/8/16 bits" in Ma et al.'s Table 6, recorded at the ceiling.
+        let d3 = Quantiser::for_part(&DARWIN3, &w).expect("Darwin3 states 16 bits");
+        assert_eq!((d3.bits, d3.max_code), (16, 32_767));
+        assert!(DARWIN3.weight_bits.source.contains("'1/2/4/8/16 bits'"));
     }
 
     /// `TrueNorth`'s crossbar really is one bit, and a one-bit SIGNED quantiser is refused — which
@@ -3008,8 +3263,9 @@ mod tests {
         assert!(!fit.scales_out(), "fan-in is not relieved by more chips");
         assert!(fit.to_string().contains("neuron 9"), "{fit}");
 
-        // The same network against the tightest cap in the table: both neurons now offend, and the
-        // one reported is still the worse of the two and still not the first.
+        // The same network against DYNAP-SE's 64, one of the two tightest caps in the table: both
+        // neurons now offend, and the one reported is still the worse of the two and still not the
+        // first.
         let tight = fits(&net, &DYNAP_SE);
         match tight.binding().expect("binds") {
             Bind::FanIn { neuron, fan_in, cap, offenders } => {
@@ -3064,12 +3320,19 @@ mod tests {
         let fit = fits(&net, &XYLO_AUDIO_2);
         assert_eq!(fit.verdict, Some(true));
         assert!(fit.binds.is_empty());
-        // Xylo states neurons, synapses and cores; it states no fan-in and no delay range.
-        assert_eq!(fit.headroom.len(), 3, "{fit}");
-        // Three unchecked, not two: an unstated delay range leaves BOTH ends of it unknown, and
+        // Xylo states neurons, synapses, cores and - since the correction recorded on the part - a
+        // fan-in cap of 63; it states no delay range.
+        assert_eq!(fit.headroom.len(), 4, "{fit}");
+        let fan = fit
+            .headroom
+            .iter()
+            .find(|h| h.constraint == "maximum fan-in per neuron")
+            .expect("Xylo states a fan-in cap");
+        assert_eq!((fan.used, fan.cap), (5, 63));
+        // Two unchecked, not one: an unstated delay range leaves BOTH ends of it unknown, and
         // each end is named with the string `Bind::constraint` uses for it.
-        assert_eq!(fit.unchecked.len(), 3, "{fit}");
-        assert!(fit.unchecked.contains(&"maximum fan-in per neuron"));
+        assert_eq!(fit.unchecked.len(), 2, "{fit}");
+        assert!(!fit.unchecked.contains(&"maximum fan-in per neuron"));
         assert!(fit.unchecked.contains(&"shortest synaptic delay"));
         assert!(fit.unchecked.contains(&"longest synaptic delay"));
         assert!(
@@ -3150,21 +3413,42 @@ mod tests {
         assert!(fit.to_string().contains("NO VERDICT"), "{fit}");
     }
 
-    /// ⛔ The weaker honesty case, and the reason [`Fit::unchecked`] has to be read first. Darwin3
-    /// publishes ONE figure — a chip-level neuron total — so a 50-neuron network gets a
-    /// `Some(true)` verdict off a single satisfied constraint with five unchecked beside it. That
-    /// verdict is true and nearly worthless, and the report says both things.
+    /// ⛔ The weaker honesty case, and the reason [`Fit::unchecked`] has to be read first. AKD1000
+    /// states ONE checkable figure — a chip-level neuron total, and a vendor capacity claim at that
+    /// — so a 50-neuron network gets a `Some(true)` verdict off a single satisfied constraint with
+    /// five unchecked beside it. That verdict is true and nearly worthless, and the report says both
+    /// things. Its 78 cores are stated and still unchecked: with no neurons per core there is no
+    /// core count to hold against them.
+    ///
+    /// Through v0.22.0 this test used `Darwin3`, whose record then held nothing but that chip
+    /// total. Ma et al.'s Table 6 gives its core count and per-core neurons, so `Darwin3` now
+    /// checks two constraints, and the second half of this test pins that.
     #[test]
     fn a_verdict_from_one_checkable_constraint_carries_its_five_unchecked_ones() {
         let net = uniform_net(50, 3, 1);
-        let fit = fits(&net, &DARWIN3);
+        let fit = fits(&net, &AKD1000);
         assert_eq!(fit.verdict, Some(true));
         assert_eq!(fit.headroom.len(), 1, "{fit}");
         assert_eq!(fit.headroom[0].constraint, "neurons per chip");
-        assert_eq!(fit.headroom[0].cap, 2_350_000);
+        assert_eq!(fit.headroom[0].cap, 1_200_000);
+        assert_eq!(AKD1000.neurons_per_chip_stated.evidence, Evidence::Projected);
         assert_eq!(fit.unchecked.len(), 5, "{fit}");
+        assert!(fit.unchecked.contains(&"cores per chip"), "{fit}");
+        assert_eq!(AKD1000.cores_per_chip.value, Some(78), "stated, and still not checkable");
         assert!(fit.cores.is_none(), "no core count without neurons per core");
         assert!(fit.chips_lower_bound.is_none());
+
+        // Darwin3, as corrected: the chip total and the core count are both checked now.
+        let d3 = fits(&net, &DARWIN3);
+        assert_eq!(d3.verdict, Some(true), "{d3}");
+        let cap = |name: &str| {
+            d3.headroom.iter().find(|h| h.constraint == name).map(|h| (h.used, h.cap))
+        };
+        assert_eq!(cap("neurons per chip"), Some((50, 2_355_200)), "{d3}");
+        assert_eq!(cap("cores per chip"), Some((1, 575)), "{d3}");
+        assert_eq!(d3.headroom.len(), 2, "{d3}");
+        assert_eq!(d3.unchecked.len(), 4, "fan-in, both delay ends and synapses: {d3}");
+        assert_eq!(d3.chips_lower_bound, Some(1));
     }
 
     /// `NorthPole` has no neurons, so the question does not typecheck and the report says so
@@ -3323,14 +3607,18 @@ mod tests {
     #[test]
     fn the_derived_grade_is_an_exact_census() {
         // The complete list of this review's own arithmetic. Every entry's string shows the sum.
+        // Loihi 2's neurons_per_core left this list after v0.22.0: Intel's brief prints 8,192 per
+        // core in its Figure 1, so it is located, not computed. Speck's and Darwin3's chip totals
+        // joined it, each an exact reading of a round figure the maker prints.
         let expected: &[(&str, &str)] = &[
             ("Loihi", "synapses_per_core"),
-            ("Loihi 2", "neurons_per_core"),
             ("Loihi 2", "synapses_per_core"),
             ("Loihi 2", "neurons_per_chip_stated"),
             ("DYNAP-SE", "synapses_per_core"),
             ("Darwin", "synapses_per_core"),
             ("BrainScaleS-2", "max_fan_in"),
+            ("Speck", "neurons_per_chip_stated"),
+            ("Darwin3", "neurons_per_chip_stated"),
         ];
         let mut found: Vec<(&str, &str)> = Vec::new();
         for p in PARTS {
@@ -3443,9 +3731,39 @@ mod tests {
         let rel = (loihi_chip as f64 - 130e6).abs() / 130e6;
         assert!(rel < 0.05, "Loihi's derivation is {:.1}% from the published figure", rel * 100.0);
 
-        // Loihi 2: 120 M synapses / 128 cores, and 1,048,576 neurons / 128 cores, both exact.
+        // Loihi 2: 120 M synapses / 128 cores, exact; and the chip total is the per-core figure
+        // Intel prints times the core count Intel prints, read off the record.
         assert_eq!(LOIHI_2.synapses_per_chip(), Some(120_000_000));
-        assert_eq!(LOIHI_2.neurons_per_core.value.map(u64::from), Some(1_048_576 / 128));
+        let l2_n = u64::from(LOIHI_2.neurons_per_core.value.expect("stated"));
+        let l2_c = u64::from(LOIHI_2.cores_per_chip.value.expect("stated"));
+        assert_eq!(LOIHI_2.neurons_per_chip_stated.value, Some(l2_n * l2_c));
+
+        // Darwin3: the chip total is Table 6's cores times Table 6's per-core neurons, and the
+        // paper's own "2.35 million" is that product TRUNCATED to three significant figures —
+        // which is the only way the two agree, since rounding it gives 2.36 million.
+        let d3_n = u64::from(DARWIN3.neurons_per_core.value.expect("stated"));
+        let d3_c = u64::from(DARWIN3.cores_per_chip.value.expect("stated"));
+        let d3_total = DARWIN3.neurons_per_chip_stated.value.expect("stated");
+        assert_eq!(d3_total, d3_n * d3_c);
+        assert_eq!(d3_total / 10_000 * 10_000, 2_350_000, "the paper's figure, truncated");
+        assert_eq!((d3_total + 5_000) / 10_000 * 10_000, 2_360_000, "and not rounded");
+        let d3_src = DARWIN3.neurons_per_chip_stated.source;
+        assert!(d3_src.contains("'supports up to 2.35 million neurons'"), "{d3_src}");
+
+        // Speck: the neuron memory of the nine cores in the datasheet's section 4.5 — three of
+        // 64 Ki words, two of 32 Ki, four of 16 Ki. The per-core figures are not fields (they
+        // differ by core, which is why neurons_per_core is empty), but the number of cores they
+        // cover IS a field, and it has to be the nine the record states.
+        let speck_memory: [(u64, u64); 3] = [(3, 64 * 1024), (2, 32 * 1024), (4, 16 * 1024)];
+        let speck_cores: u64 = speck_memory.iter().map(|(n, _)| n).sum();
+        assert_eq!(speck_cores, u64::from(SPECK.cores_per_chip.value.expect("stated")));
+        let speck_total: u64 = speck_memory.iter().map(|(n, words)| n * words).sum();
+        assert_eq!(SPECK.neurons_per_chip_stated.value, Some(speck_total));
+        assert_eq!(speck_total, 320 * 1024, "320 Ki words");
+        // The vendor's "up to 320,000" is a rounding of it, 2.3% below it, and not a separate
+        // figure: 320 Ki written as 320 thousand.
+        let rel = (speck_total as f64 - 320_000.0) / speck_total as f64;
+        assert!((0.0..0.025).contains(&rel), "{rel}");
 
         // DYNAP-SE: neurons per core x CAM entries per neuron, both read off the record.
         let dyn_n = u64::from(DYNAP_SE.neurons_per_core.value.expect("stated"));
@@ -3469,14 +3787,19 @@ mod tests {
     /// Where a maker publishes a chip total AND per-core figures, the two must agree. A
     /// transcription error in either one shows up here.
     ///
-    /// ⛔ **Two of the four triples cannot fail, and the count says so.** `Loihi 2`'s
-    /// `neurons_per_core` was *defined* as 1,048,576 / 128, so `1,048,576 == 8,192 * 128` is an
-    /// identity; `BrainScaleS-2`'s `cores_per_chip = 1` is this review's own schema mapping, so
-    /// `512 == 512 * 1` is an identity too. The predecessor of this test asserted `checked >= 4`
-    /// as though all four were independent evidence. The product is still asserted for all four —
-    /// a transcription error in any of them is worth catching — but the number that counts is the
-    /// **independent** one, and a triple is independent only when none of its three figures was
-    /// computed or inferred from the others. `Evidence::Measured` on all three is that test.
+    /// ⛔ **Three of the five triples cannot fail, and the count says so.** `Loihi 2`'s chip total
+    /// is Intel's "1 million" *read as* 128 cores of the 8,192 per core Intel prints, so
+    /// `1,048,576 == 8,192 * 128` is an identity; `Darwin3`'s is Ma et al.'s "2.35 million" read
+    /// the same way as 575 cores of 4,096; and `BrainScaleS-2`'s `cores_per_chip = 1` is this
+    /// review's own schema mapping, so `512 == 512 * 1` is an identity too. (Through v0.22.0 the
+    /// `Loihi 2` identity ran the other way — its per-core figure was divided out of the total —
+    /// until the per-core 8,192 was found printed in the brief's Figure 1. Which figure is the
+    /// computed one changed; that the triple checks itself did not.) The predecessor of this test
+    /// asserted `checked >= 4` as though every triple were independent evidence. The product is
+    /// still asserted for all of them — a transcription error in any is worth catching — but the
+    /// number that counts is the **independent** one, and a triple is independent only when none of
+    /// its three figures was computed or inferred from the others. `Evidence::Measured` on all
+    /// three is that test.
     #[test]
     fn a_published_chip_total_agrees_with_the_product_of_the_per_core_figures() {
         let mut checked: Vec<&str> = Vec::new();
@@ -3507,16 +3830,22 @@ mod tests {
         }
         checked.sort_unstable();
         independent.sort_unstable();
-        assert_eq!(checked, ["BrainScaleS-2", "DYNAP-SE", "Loihi 2", "TrueNorth"]);
+        assert_eq!(checked, ["BrainScaleS-2", "DYNAP-SE", "Darwin3", "Loihi 2", "TrueNorth"]);
         assert_eq!(
             independent,
             ["DYNAP-SE", "TrueNorth"],
             "an independent cross-check needs three separately sourced figures; a record whose \
-             per-core figure was divided out of its chip total is checking itself"
+             chip total was computed from its per-core figures is checking itself"
         );
         // And the identities really are identities — stated here so nobody re-counts them as
-        // evidence. Each of these is the record's own arithmetic played back.
-        assert_eq!(LOIHI_2.neurons_per_core.evidence, Evidence::Derived);
+        // evidence. Each of these is the record's own arithmetic played back. The per-core
+        // figures of Loihi 2 and Darwin3 are printed by their documents; the chip totals are not.
+        assert_eq!(LOIHI_2.neurons_per_core.evidence, Evidence::Measured);
+        assert_eq!(LOIHI_2.neurons_per_chip_stated.evidence, Evidence::Derived);
+        assert!(LOIHI_2.neurons_per_core.source.contains("'Up to 8192 neurons'"));
+        assert_eq!(DARWIN3.neurons_per_core.evidence, Evidence::Measured);
+        assert_eq!(DARWIN3.cores_per_chip.evidence, Evidence::Measured);
+        assert_eq!(DARWIN3.neurons_per_chip_stated.evidence, Evidence::Derived);
         assert_eq!(BRAINSCALES_2.cores_per_chip.value, Some(1));
         assert_ne!(BRAINSCALES_2.cores_per_chip.evidence, Evidence::Measured);
     }
@@ -3610,15 +3939,20 @@ mod tests {
             ("ODIN", 8),
             ("Loihi", 7),
             ("Loihi 2", 7),
+            // Xylo 6 -> 7 after v0.22.0: the fan-in cap of 63 in Pedersen et al., Nat. Commun.
+            // 15:8122 (2024).
+            ("Xylo Audio 2", 7),
+            // Darwin3 3 -> 7: core count, per-core neurons, weight width and process, all in Ma et
+            // al., Natl. Sci. Rev. 11(5):nwae102 (2024), Table 6 and text.
+            ("Darwin3", 7),
             ("Akida AKD1000", 6),
-            ("Xylo Audio 2", 6),
             ("SpiNNaker", 6),
             ("Darwin", 5),
             ("NorthPole", 5),
+            // Speck 3 -> 5: weight width and device total, Speck Dev Kit Datasheet (June 2023).
+            ("Speck", 5),
             ("SpiNNaker2", 4),
-            ("Speck", 3),
             ("Akida AKD1500", 3),
-            ("Darwin3", 3),
             ("Spiking Neural Processor T1", 1),
         ];
         for (name, want) in expected {
@@ -3663,7 +3997,7 @@ mod tests {
         // ⛔ This used to be `citation.contains("20") && citation.contains(':')`, which "Vendor
         // blurb 2020: hi" satisfies. A locator here is a digit-colon-digit — `38(1):82-99`,
         // `16:795876` — which prose with a colon after it does not produce.
-        for p in [&LOIHI, &TRUENORTH, &ODIN, &DYNAP_SE, &BRAINSCALES_2, &NORTHPOLE] {
+        for p in [&LOIHI, &TRUENORTH, &ODIN, &DYNAP_SE, &BRAINSCALES_2, &NORTHPOLE, &DARWIN] {
             assert!(
                 has_volume_locator(p.citation),
                 "{} cites no volume locator (digits, colon, digits): {}",
@@ -4363,13 +4697,15 @@ mod tests {
     /// The two weight widths in this table that nothing quantises, pinned against the documents
     /// their own provenance names.
     ///
-    /// ⛔ [`Quantiser::for_part`] is exercised on `AKD1000`, `ODIN`, `TrueNorth` and the six parts
-    /// that refuse for want of a width, so `LOIHI.weight_bits` and `SPINNAKER.weight_bits` were
-    /// transcribed constants that no assertion in the module reached. Each is one substitution
-    /// away from a plausible wrong number, and the wrong number is the same one a careless reader
-    /// would reach for: Loihi's 9 bits including sign reads as a byte, and `SpiNNaker`'s 16-bit
-    /// `sPyNNaker` synapse format reads as the 32-bit word of the `ARM` core that processes it —
-    /// which is the misreading that record's own string is written to head off.
+    /// ⛔ [`Quantiser::for_part`] is exercised on `AKD1000`, `ODIN`, `TrueNorth` and the parts that
+    /// refuse for want of a width (six when this was written, four now that `Speck` and `Darwin3`
+    /// have sourced widths that are tested beside them), so `LOIHI.weight_bits` and
+    /// `SPINNAKER.weight_bits` were transcribed constants that no assertion in the module reached.
+    /// Each is one substitution away from a plausible wrong number, and the wrong number is the
+    /// same one a careless reader would reach for: Loihi's 9 bits including sign reads as a byte,
+    /// and `SpiNNaker`'s 16-bit `sPyNNaker` synapse format reads as the 32-bit word of the `ARM`
+    /// core that processes it — which is the misreading that record's own string is written to
+    /// head off.
     ///
     /// The width is carried through to the quantiser it exists for, because one bit is a factor of
     /// two in the code range and that is where a caller would feel it.
@@ -4414,43 +4750,63 @@ mod tests {
         assert_eq!(Quantiser::symmetric(32, 1.0), Err(HardwareError::BadBits { bits: 32 }));
     }
 
-    /// `Xylo Audio 2`'s 64,000 synapses are the numerator of the mean its own fan-in field
-    /// refuses to record, so the two have to be checked against each other.
+    /// `Xylo Audio 2`'s fan-in cap is the 63 its primary states, and its 64,000 synapses are the
+    /// numerator of the mean fan-out that the record used to put where a cap should have been.
     ///
-    /// ⛔ Nothing read `XYLO_AUDIO_2.synapses_per_core.value`. The only network [`fits`] puts on
-    /// this part is 100 neurons carrying 500 synapses, two orders of magnitude inside the cap, so
-    /// a cap ten times too small was still a pass reported with headroom. The record's distinctive
-    /// claim — "64,000/1,000 = 64 is a MEAN, not a maximum" — is arithmetic over two fields of
-    /// this same record, and it is true for exactly one value of the numerator.
+    /// ⛔ Through v0.22.0 this test was
+    /// `xylos_synapse_count_is_the_numerator_of_its_own_mean_fan_in_caveat` and asserted that the
+    /// fan-in field was EMPTY, because "64,000/1,000 = 64 is a MEAN, not a maximum" and no cap had
+    /// been located. A cap is published — Pedersen et al., Nature Communications 15:8122 (2024):
+    /// "a maximum fan-in of 63" — so the test that guarded the empty field was guarding an absence
+    /// claim that was false. The mean is still a mean (`Rockpool` lists "Avg. fanout 32+32"), and
+    /// both facts are asserted here, because together they say something neither says alone: the
+    /// store cannot be filled by a network inside the cap.
+    ///
+    /// The fixtures sit on both sides of the cap, so a cap of 62 fails the first and a cap of 64
+    /// fails the second.
     #[test]
-    fn xylos_synapse_count_is_the_numerator_of_its_own_mean_fan_in_caveat() {
+    fn xylos_fan_in_cap_is_the_published_63_and_its_store_is_the_mean_fan_out() {
         let syn = XYLO_AUDIO_2.synapses_per_core.value.expect("Xylo states a synapse count");
         let neu = XYLO_AUDIO_2.neurons_per_core.value.expect("Xylo states a neuron count");
+        let cap = XYLO_AUDIO_2.max_fan_in.value.expect("Xylo states a fan-in cap");
         assert_eq!(syn, 64_000, "SynSense documents up to 64,000 synaptic connections");
         assert_eq!(neu, 1000);
+        assert_eq!(cap, 63, "Pedersen et al. 2024: 'a maximum fan-in of 63'");
+        assert_eq!(XYLO_AUDIO_2.max_fan_in.evidence, Evidence::Measured);
+        let src = XYLO_AUDIO_2.max_fan_in.source;
+        assert!(src.contains("a maximum fan-in of 63"), "{src}");
+        assert!(src.contains("'Max. fanout 64'"), "the disagreement has to stay named: {src}");
         // Recomputed from the fields rather than read back off the string. Both are exact
-        // integers, so this is equality and not a tolerance.
-        assert_eq!(syn / u64::from(neu), 64, "the mean fan-in this record refuses to record");
-        assert!(
-            XYLO_AUDIO_2.max_fan_in.source.contains("64,000/1,000 = 64 is a MEAN"),
-            "{}",
-            XYLO_AUDIO_2.max_fan_in.source
-        );
-        assert!(
-            XYLO_AUDIO_2.max_fan_in.value.is_none(),
-            "a mean in a maximum's field would let fits() pass a network it should refuse"
-        );
+        // integers, so this is equality and not a tolerance. 64 is the mean fan-out, and it sits
+        // ABOVE the cap, so 1,000 neurons inside the cap place at most 63,000 synapses.
+        assert_eq!(syn / u64::from(neu), 64, "the documented average fan-out");
+        assert!(src.contains("64,000/1,000 = 64 is still the documented AVERAGE"), "{src}");
+        assert_eq!(u64::from(cap) * u64::from(neu), 63_000);
+        assert!(u64::from(cap) * u64::from(neu) < syn);
+
+        // And it is now the lowest fan-in cap in the table, one under DYNAP-SE's 64 CAM entries,
+        // which this module called the tightest wall through v0.22.0.
+        let mut caps: Vec<(u32, &str)> =
+            PARTS.iter().filter_map(|p| p.max_fan_in.value.map(|c| (c, p.name))).collect();
+        caps.sort_unstable();
+        assert_eq!(caps[..2], [(63, "Xylo Audio 2"), (64, "DYNAP-SE")]);
 
         // One core, so the chip total is that same figure and fits() grades a network against it.
         assert_eq!(XYLO_AUDIO_2.cores_per_chip.value, Some(1));
         assert_eq!(XYLO_AUDIO_2.synapses_per_chip(), Some(64_000));
 
-        // And the cap is where the arithmetic puts it: 1,000 neurons at the mean fan-in fill the
-        // store exactly, and the report says 100.0% rather than passing with room to spare.
+        // The network that fills the store: 1,000 neurons at the mean. The store holds it exactly
+        // and says 100.0%; the wall refuses every neuron of it, by one input each.
         let full = uniform_net(1000, 64, 1);
         assert_eq!(full.n_syn, 64_000);
         let fit = fits(&full, &XYLO_AUDIO_2);
-        assert_eq!(fit.verdict, Some(true), "{fit}");
+        assert_eq!(fit.verdict, Some(false), "{fit}");
+        assert_eq!(
+            fit.binding(),
+            Some(&Bind::FanIn { neuron: 0, fan_in: 64, cap: 63, offenders: 1000 }),
+            "{fit}"
+        );
+        assert!(!fit.scales_out(), "a fan-in wall is not relieved by a second chip");
         let h = fit
             .headroom
             .iter()
@@ -4458,6 +4814,20 @@ mod tests {
             .expect("Xylo states a synapse capacity, so it is checked");
         assert_eq!((h.used, h.cap), (64_000, 64_000));
         assert_eq!(h.spare(), 0, "full, and full is not over");
+
+        // Exactly at the wall: 63 inputs each maps, with the store 1,000 synapses short of full.
+        let at_cap = uniform_net(1000, 63, 1);
+        let fit = fits(&at_cap, &XYLO_AUDIO_2);
+        assert_eq!(fit.verdict, Some(true), "{fit}");
+        let fan = fit
+            .headroom
+            .iter()
+            .find(|h| h.constraint == "maximum fan-in per neuron")
+            .expect("checked");
+        assert_eq!((fan.used, fan.cap), (63, 63));
+        let store =
+            fit.headroom.iter().find(|h| h.constraint == "synapses per chip").expect("checked");
+        assert_eq!((store.used, store.spare()), (63_000, 1_000));
     }
 
     /// `Speck`'s nine cores are a **depth** limit, the only one in this table, and [`fits`] cannot
@@ -4465,10 +4835,15 @@ mod tests {
     ///
     /// ⛔ `SPECK.cores_per_chip` reaches no assertion through the fitting path: the part states no
     /// neurons per core, so [`core_count`] refuses and `"cores per chip"` lands in
-    /// [`Fit::unchecked`] instead of being compared against anything. The one checkable structure
-    /// this record carries therefore has to be pinned on the record itself — against the prose
-    /// beside it, which spells the count as an English word precisely so that a slip in the
-    /// numeral is visible against something.
+    /// [`Fit::unchecked`] instead of being compared against anything. The depth structure this
+    /// record carries therefore has to be pinned on the record itself — against the prose beside
+    /// it, which spells the count as an English word precisely so that a slip in the numeral is
+    /// visible against something.
+    ///
+    /// Through v0.22.0 the same network got NO verdict on this part, because it stated nothing
+    /// [`fits`] could read. The datasheet's device total now makes the chip's neuron count
+    /// checkable, so the verdict is a `Some(true)` from that one constraint — and the core count is
+    /// still unchecked, because the per-core neuron memory differs by core and has no single field.
     #[test]
     fn specks_core_count_is_the_layer_depth_its_own_prose_spells_out() {
         let cores = SPECK.cores_per_chip.value.expect("Speck states a core count");
@@ -4499,9 +4874,16 @@ mod tests {
         // constraint is not a count of anything fits() is handed.
         let net = uniform_net(40, 3, 1);
         let fit = fits(&net, &SPECK);
-        assert_eq!(fit.verdict, None, "{fit}");
         assert!(fit.unchecked.contains(&"cores per chip"), "{fit}");
         assert!(fit.cores.is_none(), "{fit}");
+        assert_eq!(fit.verdict, Some(true), "{fit}");
+        assert_eq!(fit.headroom.len(), 1, "{fit}");
+        assert_eq!(
+            (fit.headroom[0].constraint, fit.headroom[0].used, fit.headroom[0].cap),
+            ("neurons per chip", 40, 327_680)
+        );
+        assert!(SPECK.neurons_per_core.value.is_none(), "per-core neuron memory differs by core");
+        assert!(SPECK.neurons_per_core.source.contains("DIFFERS BY CORE"));
     }
 
     /// A neuron sitting exactly ON `TrueNorth`'s 256-row crossbar column maps, and the headroom
@@ -4811,23 +5193,31 @@ mod tests {
             (&TRUENORTH, 2014, Some(256), Some(4096), Some(65536), Some(256), Some(1), Some(false),
              Some("Samsung 28 nm LPP")),
             (&NORTHPOLE, 2023, None, Some(256), None, None, Some(8), Some(false), Some("12 nm")),
-            (&AKD1000, 2021, None, Some(80), None, None, Some(4), Some(true), Some("28 nm")),
+            // 78 NPUs and TSMC 28 nm: AKD1000 PCIe Card Product Brief v1.0 (2025). Through v0.22.0
+            // this row read Some(80) and Some("28 nm").
+            (&AKD1000, 2021, None, Some(78), None, None, Some(4), Some(true), Some("TSMC 28 nm")),
             (&AKD1500, 2023, None, None, None, None, Some(4), None,
              Some("GlobalFoundries 22 nm FD-SOI")),
             (&SPINNAKER, 2014, None, Some(18), None, None, Some(16), Some(true),
              Some("UMC 130 nm")),
             (&SPINNAKER2, 2021, None, Some(152), None, None, None, Some(true),
              Some("GlobalFoundries 22 nm FDX")),
-            (&XYLO_AUDIO_2, 2023, Some(1000), Some(1), Some(64000), None, Some(8), Some(false),
+            // Fan-in 63: Pedersen et al., Nat. Commun. 15:8122 (2024). None through v0.22.0.
+            (&XYLO_AUDIO_2, 2023, Some(1000), Some(1), Some(64000), Some(63), Some(8), Some(false),
              None),
-            (&SPECK, 2022, None, Some(9), None, None, None, Some(false), None),
-            (&ODIN, 2019, Some(256), Some(1), Some(65536), Some(256), Some(4), Some(true),
+            // 8-bit weights: Speck Dev Kit Datasheet (June 2023), section 2.1.3.
+            (&SPECK, 2022, None, Some(9), None, None, Some(8), Some(false), None),
+            // 3-bit weights, "(3+1)-bit (SRAM)" in Table I. Some(4) through v0.22.0.
+            (&ODIN, 2019, Some(256), Some(1), Some(65536), Some(256), Some(3), Some(true),
              Some("28 nm FDSOI")),
             (&DYNAP_SE, 2018, Some(256), Some(4), Some(16384), Some(64), Some(2), Some(false),
              Some("180 nm CMOS")),
             (&DARWIN, 2016, Some(2048), Some(1), Some(4_194_304), None, None, None,
              Some("180 nm")),
-            (&DARWIN3, 2024, None, None, None, None, None, Some(true), None),
+            // Ma et al., NSR 11(5):nwae102 (2024), Table 6 and text. All None but learning through
+            // v0.22.0.
+            (&DARWIN3, 2024, Some(4096), Some(575), None, None, Some(16), Some(true),
+             Some("GlobalFoundries 22 nm FD-SOI")),
             (&INNATERA_T1, 2024, None, None, None, None, None, None, None),
             (&BRAINSCALES_2, 2022, Some(512), Some(1), Some(131_072), Some(256), Some(6),
              Some(true), Some("65 nm CMOS")),
@@ -4843,6 +5233,11 @@ mod tests {
             assert_eq!(p.on_chip_learning.value, learn, "{}: on_chip_learning", p.name);
             assert_eq!(p.process.value, process, "{}: process", p.name);
         }
+        // The chip totals that are not a product of the per-core fields fits() would otherwise
+        // multiply, including the two this review reads exactly out of a round published figure.
+        assert_eq!(SPECK.neurons_per_chip_stated.value, Some(327_680), "Speck: 320 Ki words");
+        assert_eq!(DARWIN3.neurons_per_chip_stated.value, Some(2_355_200), "Darwin3: 575 x 4,096");
+        assert_eq!(LOIHI_2.neurons_per_chip_stated.value, Some(1_048_576), "Loihi 2: 128 x 8,192");
         // The one delay range this review located, and the only part that has one.
         assert_eq!(
             SPINNAKER.delay_ticks.value,
@@ -4866,6 +5261,83 @@ mod tests {
         // TrueNorth is the contrast the module is built on: an inference part, no on-chip learning.
         assert_eq!(TRUENORTH.on_chip_learning.value, Some(false));
         assert_eq!(TRUENORTH.year.value, Some(2014));
+    }
+
+    /// ODIN is about three orders of magnitude smaller than Loihi, not four, and core for core the
+    /// two are within a factor of four.
+    ///
+    /// ⛔ The `ODIN` doc said "four orders of magnitude smaller than LOIHI" through v0.22.0. No
+    /// measure gets there: by the two records' own fields it is 512 times fewer neurons and 2,048
+    /// times fewer synapses, and by the die areas their strings carry — 60 mm² against 0.086 mm² —
+    /// about 700 times. The ratios are computed from the records here so that the doc's "three
+    /// orders" has something to disagree with if either record moves.
+    #[test]
+    fn odin_is_three_orders_of_magnitude_below_loihi_not_four() {
+        let neurons =
+            LOIHI.neurons_per_chip().expect("stated") / ODIN.neurons_per_chip().expect("stated");
+        let synapses =
+            LOIHI.synapses_per_chip().expect("stated") / ODIN.synapses_per_chip().expect("stated");
+        assert_eq!((neurons, synapses), (512, 2048));
+        for ratio in [neurons, synapses] {
+            assert!((100..10_000).contains(&ratio), "{ratio} is not three orders of magnitude");
+        }
+        // The die areas are in the provenance strings, not in fields.
+        assert!(LOIHI.process.source.contains("60 mm2 die"), "{}", LOIHI.process.source);
+        assert!(ODIN.cores_per_chip.source.contains("0.086 mm2"), "{}", ODIN.cores_per_chip.source);
+        let area = 60.0 / 0.086;
+        assert!((600.0..800.0).contains(&area), "{area}");
+        // Core for core: 1,024 neurons against 256.
+        let per_core = LOIHI.neurons_per_core.value.expect("stated")
+            / ODIN.neurons_per_core.value.expect("stated");
+        assert_eq!(per_core, 4);
+    }
+
+    /// The citations an audit found attached to the wrong authors, the wrong title or no document,
+    /// pinned to what their identifiers resolve to.
+    ///
+    /// ⛔ Every one of these passed every gate in the module while wrong, because the gates read a
+    /// citation's SHAPE — a venue, a locator, a year — and none of them can tell `Deng` from `Gu`.
+    /// Through v0.22.0: `Darwin` named a "Deng" who is not an author; `Darwin3` named "Zhang" and
+    /// "Shen", who are not authors, and called the paper's "ISA" an "instruction set";
+    /// `SpiNNaker2` gave arXiv:2103.08392 the title of arXiv:2401.04491; `sPyNNaker` was cited as
+    /// "the documentation" with no document; `NeuroBench` as "(Yik et al.)" with no title, venue
+    /// or year; and `AKD1000` as an unversioned "product brief" credited with 80 NPUs, 1-, 2- and
+    /// 4-bit weights and a 1.2-million-neuron total, none of which the 2025 `PCIe` card brief prints.
+    /// Each assertion below is a string the corrected citation must carry and, where the old one
+    /// was wrong, a string it must not.
+    #[test]
+    fn the_corrected_citations_carry_the_authors_and_titles_their_identifiers_resolve_to() {
+        assert!(DARWIN.citation.starts_with("Shen, Ma, Gu, Zhang, Zhu, Xu, Xu, Shen & Pan"));
+        assert!(DARWIN.citation.contains("59(2):1-5, 2016, doi:10.1007/s11432-015-5511-7"));
+        assert!(!DARWIN.citation.contains("Deng"), "{}", DARWIN.citation);
+
+        let d3 = DARWIN3.citation;
+        assert!(d3.starts_with("Ma, Jin, Sun, Li, Wu, Hu, Yang, Tang, Zhu, Lin & Pan"), "{d3}");
+        assert!(d3.contains("a novel ISA and on-chip learning"), "{d3}");
+        assert!(d3.contains("11(5):nwae102, 2024, doi:10.1093/nsr/nwae102"), "{d3}");
+        assert!(!d3.contains("Zhang") && !d3.contains("instruction set"), "{d3}");
+
+        assert!(SPINNAKER2.citation.contains("The SpiNNaker 2 Processing Element Architecture"));
+        assert!(SPINNAKER2.citation.contains("arXiv:2103.08392"));
+        assert!(!SPINNAKER2.citation.contains("Large-Scale"), "{}", SPINNAKER2.citation);
+        assert!(SPINNAKER2.on_chip_learning.source.contains("doi:10.1109/TBCAS.2019.2906401"));
+        assert_eq!(SPINNAKER2.on_chip_learning.evidence, Evidence::Projected, "a PROTOTYPE chip");
+
+        for src in [SPINNAKER.weight_bits.source, SPINNAKER.delay_ticks.source] {
+            assert!(src.contains("12:816, 2018, doi:10.3389/fnins.2018.00816"), "{src}");
+            assert!(!src.contains("Located in the documentation of sPyNNaker"), "{src}");
+        }
+
+        assert!(XYLO_AUDIO_2.citation.contains("Nature Communications 16:1545, 2025"));
+        assert!(XYLO_AUDIO_2.citation.contains("doi:10.1038/s41467-025-56739-4"));
+        assert!(!XYLO_AUDIO_2.citation.contains("(Yik et al.)"), "{}", XYLO_AUDIO_2.citation);
+
+        assert!(AKD1000.citation.contains("AKD1000 PCIe Card Product Brief v1.0, 2025"));
+        let npu = AKD1000.cores_per_chip.source;
+        assert!(npu.contains("'Peak INT4 OPs 1.5 TOPs with 20 Akida Nodes, 78 NPUs'"), "{npu}");
+        assert!(AKD1000.process.source.contains("'28nm TSMC device'"));
+        let widths = AKD1000.weight_bits.source;
+        assert!(widths.contains("doc.brainchipinc.com/user_guide/hardware/1.0.html"), "{widths}");
     }
 
     /// `PARTS` is ordered oldest first, and every name in it is unique.
@@ -5017,9 +5489,12 @@ mod tests {
     /// `lower_bound` is the larger of the neuron bound and the synapse bound; the chip check used
     /// to be indistinguishable from one that read the neuron bound alone, because on every part
     /// whose synapse-per-core ratio equals its fan-in cap the synapse bound can never exceed the
-    /// neuron bound without a fan-in wall binding first. Xylo states no fan-in cap and holds 64
-    /// synapses per neuron-slot, so 900 neurons at fan-in 100 need 90,000 synapses — two cores by
-    /// synapses, one by neurons — on a part with one core.
+    /// neuron bound without a fan-in wall binding first. Xylo holds 64 synapses per neuron-slot,
+    /// so 900 neurons at fan-in 100 need 90,000 synapses — two cores by synapses, one by neurons —
+    /// on a part with one core. (When this test was written Xylo stated no fan-in cap. It states 63
+    /// since the correction recorded on the part, which is below its 64 per slot, so here too the
+    /// wall binds first — at all 900 neurons. The assertion reads the `Cores` bind alone, which is
+    /// reported whether or not the wall is.)
     #[test]
     fn the_chip_is_checked_against_the_binding_core_bound() {
         let fit = fits(&uniform_net(900, 100, 1), &XYLO_AUDIO_2);

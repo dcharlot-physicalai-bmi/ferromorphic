@@ -3107,7 +3107,8 @@ mod tests {
         // ⛔ TrueNorth's neuron count and its fan-in wall are BOTH 256 — one crossbar, read along
         // two axes — so reading either field from the other moved no number, and SpiNNaker states
         // neither. DYNAP-SE states 256 neurons against 64 content-addressable-memory entries per
-        // neuron, the tightest fan-in in that table, and the two cannot be confused.
+        // neuron — the second tightest fan-in in that table, after Xylo Audio 2's 63 — and the two
+        // cannot be confused.
         let dy = CoreLimits::from_part(&DYNAP_SE);
         assert_eq!(dy.neurons_per_core, Some(256));
         assert_eq!(dy.max_fan_in, Some(64), "the CAM depth, not the neuron count");
