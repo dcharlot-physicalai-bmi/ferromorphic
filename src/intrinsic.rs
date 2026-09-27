@@ -1,5 +1,6 @@
 //! Intrinsic plasticity: a sigmoid neuron that tunes its own gain and bias until its firing rate is
-//! as nearly exponentially distributed as two parameters allow.
+//! as nearly exponentially distributed as two parameters allow, alone (Triesch 2005) and beside
+//! Hebbian synapses (Triesch 2007).
 //!
 //! # The rule
 //!
@@ -189,6 +190,132 @@
 //! seeds at or above it, and the gain reaches 9.65 to 9.76: the mismatch is consistent with Fig. 2
 //! using twice Fig. 1's learning rate.
 //!
+//! # The 2007 synergy with Hebbian learning
+//!
+//! J. Triesch, *Synergies Between Intrinsic and Synaptic Plasticity Mechanisms*, Neural Computation
+//! 19(4):885–909, 2007 (`doi:10.1162/neco.2007.19.4.885`), restates the rule above as eqs. 2.1–2.3
+//! and gives the neuron synapses, `x = wᵀu` for an input vector `u`:
+//!
+//! ```text
+//! Δw = η_Hebb u Ω(y),   then  w ← w/‖w‖                    (3.3, p. 891)
+//! Ω(y) = y                                                  (3.1, the simple rule)
+//! Ω(y) = y − θ_cov,     Ω(y) = (y − θ_BCM) y                (the covariance and BCM rules)
+//! ```
+//!
+//! [`Hebb`] is `Ω` and [`Hebbian`] adds `η_Hebb`. [`Unit`] holds `w`, of unit length, and a
+//! [`Sigmoid`]; [`Unit::step`] computes `x` and `y = g_ab(x)` once, and from that one pair moves
+//! `(a, b)` by [`Triesch::learn`] and `w` by [`Hebbian::update`], then renormalises. The paper does
+//! not print the order of the two updates. Here neither sees the other's result; the order is
+//! observable, since a Hebbian term computed from the rate after IP moves `w` differently (a test
+//! measures by how much). [`Plane`] is Fig. 3's two-input distributions and [`Bars`] the bars
+//! problem of section 4.
+//!
+//! # What is exact in the 2007 analysis, and what the tests check
+//!
+//! - **The balanced thresholds.** Under an exponential rate of mean `µ`, `E[y] = µ` and
+//!   `E[y²] = 2µ²`, so eq. 3.4 gives `θ_cov = µ` and `θ_BCM = 2µ` exactly ([`Hebb::covariance`]
+//!   and [`Hebb::bcm`] with [`Balance::Mean`]; [`Hebb::exponential_mean`] is `E[Ω]`), and footnote
+//!   2's median balance gives `µ ln 2` for both ([`Balance::Median`]); checked in closed form, by
+//!   Simpson's rule and against `SciPy`'s root finder. The balanced `θ_BCM` is `E[y²]/E[y]`: the
+//!   mean squared rate itself, which p. 894 says the threshold usually estimates, leaves
+//!   `E[Ω] = 2µ²(1 − µ)`, not zero.
+//! - **Appendix B in closed form.** With `q = 1 − F_y(y)`, eq. B.9 becomes `∫ Ω(−µ ln q) dq` from
+//!   `(i − 1)/N` to `i/N` ([`Hebb::cluster`]): the difference of `µq(1 − ln q)` for the simple
+//!   rule, which is eq. B.6 and `µ/N` times eq. B.8; of that less `θq` for the covariance rule; and
+//!   of `µq[µ(ln² q − 2 ln q + 2) + θ(ln q − 1)]` for the BCM rule, `µ²q ln² q` at `θ = 2µ`, which
+//!   is `µ²/N` times eq. B.11. The closed forms match `SciPy`'s quadrature of eq. B.9 in `y` within
+//!   2.9 × 10⁻¹⁷ and Simpson's rule in `y` within 2.8 × 10⁻¹⁵. At `N = 2` the simple rule gives
+//!   eq. B.2's `(µ/2)(1 ± ln 2)`, and either balanced rule `w ∝ c₁ − c₂`. Over all `N` clusters
+//!   the contributions sum to `E[Ω]`: `µ`, or zero for a balanced rule. Normalised
+//!   ([`Hebb::clusters`]), none of the three depends on `µ`.
+//! - **The planes of Fig. 3.** Eq. 3.2's Laplace band has mass `2√3 · √2/(2√6) = 1` and identity
+//!   covariance, and so does Fig. 3d's Laplacian-by-Gaussian plane; checked by Simpson's rule over
+//!   the joint density and `SciPy`'s `dblquad`, with fourth moments 6 along the Laplacian and 1.8
+//!   (the band) or 3 (the Gaussian) across it.
+//!
+//! # References run for 2007
+//!
+//! The 2007 paper ships no code either; this review did not locate its author's.
+//! `tools/intrinsic_2007_reference.py` computes the quadratures of eqs. 3.4, B.9 and 3.2 that the
+//! tests compare against with `SciPy` 1.13.1 and without the crate, and, given the PDF, reads the
+//! figures' vector paths (`pdftocairo -svg`) through each panel's tick marks. Every figure reading
+//! below is its output.
+//!
+//! # The 2007 paper against its own figures
+//!
+//! Fig. 4 (p. 894) draws the rules at `µ = 0.1` with their balanced thresholds: each curve within
+//! 2.4 × 10⁻⁴, 2.5 × 10⁻⁴ and 3.7 × 10⁻⁴ of `y`, `y − 0.1` and five times `(y − 0.2) y`.
+//!
+//! **Fig. 3c reproduces.** Its path starts at 78.34° (its first vertex, 938 inputs in) and runs to
+//! 10⁶ inputs, the axis being "time/1000" to 1000; neither the start nor the length is printed, so
+//! both are read there, and the neuron starts at `(1, 0)`, an assumption. With the caption's
+//! `µ = 0.1`, `η_IP = 0.01` and `η_Hebb = 0.001`, all sixteen seeds come within 5° of `u1` first
+//! between inputs 339,000 and 553,000; the figure does at 437,763.
+//!
+//! **Fig. 3d reproduces, more slowly than drawn.** Its path starts at 78.31° and comes within 5°
+//! at input 690,801. Of seeds 1 to 8, four do within the figure's 10⁶ inputs, at 723,000 to
+//! 886,000, and the other four only at 2,190,000 to 3,366,000: with a Gaussian across it, the
+//! Laplacian's pull is weak against the noise near 78°.
+//!
+//! ⚠ **Eq. B.10 is printed at eq. B.6's scale, and Fig. 6 draws neither it nor eq. B.9.** Eq. B.9
+//! for the balanced covariance rule is eq. B.6 less `µ/N`, which is eq. B.10 if `f_i^Hebb` is
+//! eq. B.6. But the paper defines `f_i^Hebb` by eq. B.8, eq. B.6 times `N/µ`, and at that scale the
+//! covariance rule's contributions are `f_i^Hebb − 1`, whatever `µ`: at Fig. 6's `N = 50`, 32
+//! clusters, `i = 19` to 50, become negative, the last at −0.1415 after normalisation. Eq. B.10
+//! read at eq. B.8's scale makes none negative at `µ = 0.1` (`N f_N^Hebb = 0.503`, so for any
+//! `µ < 1` at most the last). The figure's covariance curve is neither: least squares over its 47
+//! vertices puts it at `f_i^Hebb − c` with `c = 0.0998` (0.0982 through the frame), which is
+//! `f_i^Hebb − µ` at `µ = 0.1` within 2.1 × 10⁻⁴ of every vertex, five of them below zero, `i = 46`
+//! to 50 — the text's "a few of the weights will actually become slightly negative" (p. 898). It
+//! misses eq. B.10 at eq. B.8's scale by 0.0146 and eq. B.9 by 0.132. The simple and BCM curves are
+//! eqs. B.8 and B.11, within 1.9 × 10⁻⁴ and 2.2 × 10⁻⁴.
+//!
+//! The bars problem, as [`Bars`] poses it: `N` is not printed, and the default `µ` "(1/2N = 0.05)"
+//! (p. 898) gives `N = 10`, an inference. A blank image, with probability `(1 − 1/N)^{2N}`, 0.1216,
+//! has no length to normalise and the paper does not say what it did with one; [`Bars::sample`]
+//! leaves it at zero, so the unit sees `x = 0`. The initial weights and neuron are
+//! not printed: the tests draw each weight uniformly on `[0, 1)` and start at `(1, 0)`. A unit is
+//! aligned with a bar ([`Bars::aligned`]) when its cosine with that bar's template is at least 0.8
+//! and leads every other bar's by at least 0.4.
+//!
+//! ⚠ **As printed, the bars problem finds no bar.** At Fig. 7's `η_IP = η_Hebb = 0.01`, none of
+//! sixteen seeds is aligned at any check in the figure's 2 × 10⁴ images: the weights spread evenly,
+//! each bar's overlap near `1/√N = 0.316`, and `(a, b)` settles near `(7.3, −6.4)`. Redrawing blank
+//! images instead changes nothing; started on a bar, every unit loses it; and at Fig. 8's left and
+//! centre rates, eight seeds each over 10⁵ images, none aligns. Fig. 8's right panel, a fixed
+//! sigmoid without IP finding no bar, holds, but only as every other configuration does.
+//!
+//! ⚠ **Footnote 3's sigmoid, and Fig. 8's right panel, cannot come from non-negative inputs.** With
+//! every pixel and weight non-negative, `x ≥ 0` and `y ≥ σ(b)`: at least 0.214 in footnote 3's box
+//! `a ∈ [4.5, 5.5]`, `b ∈ [−1.3, −1.0]`, and 0.2405 at Fig. 8's `(5.0, −1.15)`. Eq. 2.3 at
+//! `µ = 0.05` is negative for every rate between 0.0475 and 1.0525, so in that box every input
+//! lowers `b`: IP has no fixed point there. The right panel's 9,812 dots lie between 0.0170 and
+//! 0.0716, which at `(5.0, −1.15)` needs `x ≤ −0.282`; run as printed, that sigmoid fires at a mean
+//! rate near 0.677.
+//!
+//! ⚠ **Fig. 7c's histogram is not of a unit-length vector.** Its bars hold 90 weights between
+//! 0.00587 and 0.00911 and 10 between 0.03507 and 0.03831: any such vector has a length between
+//! 0.124 and 0.149, and a sum between 0.879 and 1.203, consistent with weights summing to one.
+//!
+//! One experiment beyond the paper: centring each image, subtracting its mean pixel, before
+//! normalising it. The same unit then finds a bar in 12 of 16 seeds within 2 × 10⁴ images, keeps a
+//! bar it starts on in all sixteen, and at Fig. 8's fixed sigmoid finds one in 1 of 8 seeds over
+//! 10⁵; `a` settles between 4.37 and 5.65, about footnote 3's interval, but `b` between −3.50 and
+//! −3.27. The paper says nothing of centring, and this review does not claim it is what was run.
+//!
+//! # What the 2007 paper restates differently
+//!
+//! Its Fig. 2 is a different experiment from the one above: the input's standard deviation falls
+//! fivefold, not tenfold, at input 10⁴, and every 10th rate is plotted, not every 20th (the 2005
+//! text speaks of the variance, the 2007 text of "a fivefold reduction of the standard deviation");
+//! its rate path has 4,985 vertices, where every 10th of 5 × 10⁴ inputs makes 5,000. The fixed
+//! point moves to `(5a*, b*)`. The 2005 wording flagged above is mended: p. 890 asks for `g`
+//! "differentiable with respect to x", and p. 904 names "the term log µ", the sign eq. A.4 prints.
+//! Its Fig. 1 gains a panel b, the rate histogram, and its panels c–e are 2005's b–d; the dotted
+//! Gaussian curve of panel c carries the same offset as 2005's panel b: `−0.1 log(1 − Φ(x))` lies
+//! above it by at least 0.0025 from `x = −1`, and shifted right by 0.1 is within 4.7 × 10⁻⁴ of its
+//! 583 vertices up to `x = 2.5`.
+//!
 //! # Refusals
 //!
 //! A gain `a ≤ 0` is refused by name ([`IntrinsicError::Gain`]): eq. 12 divides by it, eq. 9 takes
@@ -201,6 +328,14 @@
 //! ([`IntrinsicError::Unrepresentable`]) rather than returned: a gain below
 //! `1/f64::MAX ≈ 5.56 × 10⁻³⁰⁹` makes `1/a` infinite, a learning rate of `10³⁰⁸` makes `Δb` so,
 //! and a gain of `10³⁰⁸` makes `D` so.
+//!
+//! The 2007 additions refuse in the same way: a weight vector with no length, empty or all zeros
+//! ([`IntrinsicError::ZeroLength`]), including a Hebbian step that cancels it exactly; a vector
+//! entry that is not finite, named with its index ([`IntrinsicError::NonFiniteEntry`]); an input of
+//! the wrong length ([`IntrinsicError::Dimension`]); a cluster outside `1..=N`
+//! ([`IntrinsicError::Cluster`]); a bar that does not exist ([`IntrinsicError::Bar`]); a retina
+//! below 2 by 2 ([`IntrinsicError::Retina`]); and a bar probability outside `(0, 1]`
+//! ([`IntrinsicError::Probability`]). A refused [`Unit::step`] leaves the unit as it was.
 //!
 //! # Units
 //!
@@ -271,6 +406,57 @@ pub enum IntrinsicError {
         /// The length of the gradient of `D` where it stopped.
         residual: f64,
     },
+    /// A vector with no length to divide by: every entry zero, or no entries at all. The
+    /// multiplicative normalisation `w ← w/‖w‖` (p. 891) is undefined there.
+    ZeroLength {
+        /// Which vector.
+        what: &'static str,
+    },
+    /// An entry of a vector that is not finite.
+    NonFiniteEntry {
+        /// Which vector.
+        what: &'static str,
+        /// The entry's index, from zero.
+        index: usize,
+        /// Its value.
+        value: f64,
+    },
+    /// A vector whose number of entries is not the one it must match.
+    Dimension {
+        /// Which vector.
+        what: &'static str,
+        /// The entries it needs.
+        expected: usize,
+        /// The entries it has.
+        got: usize,
+    },
+    /// A cluster index outside `1..=n`, or no clusters at all: Appendix B numbers them from 1.
+    Cluster {
+        /// The index asked for.
+        i: usize,
+        /// The number of clusters.
+        n: usize,
+    },
+    /// An `n`-by-`n` retina with `n < 2`, where the one horizontal bar is the one vertical bar,
+    /// or with more pixels than `usize` counts.
+    Retina {
+        /// The side.
+        n: usize,
+    },
+    /// A bar index outside `0..2n`.
+    Bar {
+        /// The index asked for.
+        k: usize,
+        /// The number of bars, `2n`.
+        bars: usize,
+    },
+    /// A probability outside `(0, 1]`.
+    Probability {
+        /// Which.
+        what: &'static str,
+        /// Its value.
+        value: f64,
+    },
 }
 
 impl fmt::Display for IntrinsicError {
@@ -297,6 +483,18 @@ impl fmt::Display for IntrinsicError {
                 f,
                 "Newton's method found no stationary point: after {iterations} steps the gradient of D is still {residual}"
             ),
+            Self::ZeroLength { what } => write!(f, "{what} has zero length and cannot be normalised to unit length"),
+            Self::NonFiniteEntry { what, index, value } => write!(f, "{what}[{index}] = {value} is not finite"),
+            Self::Dimension { what, expected, got } => write!(f, "{what} has {got} entries, not the {expected} it must match"),
+            Self::Cluster { i, n } => {
+                write!(f, "cluster {i} of {n} does not exist: Appendix B numbers the clusters from 1 to n, with n at least 1")
+            }
+            Self::Retina { n } => write!(
+                f,
+                "a {n}-by-{n} retina is refused: below 2 its one horizontal bar is its one vertical bar, and its pixels must be countable"
+            ),
+            Self::Bar { k, bars } => write!(f, "bar {k} does not exist: the retina's {bars} bars are numbered from 0"),
+            Self::Probability { what, value } => write!(f, "{what} = {value} is not a probability in (0, 1]"),
         }
     }
 }
@@ -336,6 +534,10 @@ pub struct Sigmoid {
 }
 
 impl Sigmoid {
+    /// Fig. 8's fixed nonlinearity, "`a = 5.0`, `b = −1.15`" (p. 899), which the text says is the
+    /// final sigmoid of Fig. 7.
+    pub const FIG8_FIXED: Self = Self { a: 5.0, b: -1.15 };
+
     /// A neuron with gain `a` and bias `b`.
     ///
     /// # Errors
@@ -606,6 +808,12 @@ impl Triesch {
     /// The Fig. 1 caption's "Parameters were `µ = 0.1`, `η = 0.001`" (p. 68).
     pub const FIG1: Self = Self { mu: 0.1, eta: 0.001 };
 
+    /// Fig. 3's "`µ = 0.1`, `η_IP = 0.01`" (p. 892).
+    pub const FIG3: Self = Self { mu: 0.1, eta: 0.01 };
+
+    /// Fig. 7's "`η_IP = 0.01`" (p. 898) with the default `µ` "(1/2N = 0.05)" (p. 898).
+    pub const FIG7: Self = Self { mu: 0.05, eta: 0.01 };
+
     /// Newton steps [`Triesch::fixed_point`] takes before it refuses.
     pub const NEWTON_STEPS: usize = 100;
 
@@ -852,9 +1060,536 @@ impl Triesch {
     }
 }
 
+/// `v/‖v‖` in place, the multiplicative normalisation of p. 891. Every entry is divided by the
+/// largest magnitude before anything is squared or summed, so a vector of `10²⁰⁰`s, whose squares
+/// overflow, of `10⁻²⁰⁰`s, whose squares underflow to zero, or of entries near `f64::MAX`, whose
+/// length overflows, is normalised rather than lost.
+fn unit_length(what: &'static str, v: &mut [f64]) -> Result<(), IntrinsicError> {
+    let mut largest = 0.0_f64;
+    for (index, &value) in v.iter().enumerate() {
+        if !value.is_finite() {
+            return Err(IntrinsicError::NonFiniteEntry { what, index, value });
+        }
+        largest = largest.max(value.abs());
+    }
+    if largest == 0.0 {
+        return Err(IntrinsicError::ZeroLength { what });
+    }
+    let root = v.iter().map(|x| (x / largest) * (x / largest)).sum::<f64>().sqrt();
+    for x in v.iter_mut() {
+        *x = *x / largest / root;
+    }
+    Ok(())
+}
+
+/// Where a threshold rule's threshold sits under an exponential rate of mean `µ` (Triesch 2007).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Balance {
+    /// Eq. 3.4: potentiation and depression cancel on average, `E[Ω(y)] = 0`.
+    Mean,
+    /// Footnote 2: half the inputs potentiate and half depress, `Ω(µ ln 2) = 0` at the median.
+    Median,
+}
+
+/// `Ω` of eq. 3.3, `Δw = η u Ω(y)`: how a synapse's change depends on the rate (Triesch 2007).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Hebb {
+    /// `Ω(y) = y`, the standard rule of eq. 3.1.
+    Simple,
+    /// `Ω(y) = y − θ`, the covariance rule: depression below the threshold.
+    Covariance {
+        /// The threshold `θ_cov`, a rate.
+        theta: f64,
+    },
+    /// `Ω(y) = (y − θ) y`, the quadratic BCM rule.
+    Bcm {
+        /// The threshold `θ_BCM`, a rate.
+        theta: f64,
+    },
+}
+
+impl Hebb {
+    /// The covariance rule with its threshold balanced under an exponential rate of mean `µ`:
+    /// `θ = µ` by eq. 3.4, `θ = µ ln 2` at the median.
+    ///
+    /// # Errors
+    ///
+    /// [`IntrinsicError::NotPositive`] for a `µ` that is not finite and positive.
+    pub fn covariance(mu: f64, balance: Balance) -> Result<Self, IntrinsicError> {
+        let mu = positive("mu", mu)?;
+        Ok(Self::Covariance { theta: if balance == Balance::Mean { mu } else { mu * core::f64::consts::LN_2 } })
+    }
+
+    /// The BCM rule with its threshold balanced under an exponential rate of mean `µ`: `θ = 2µ` by
+    /// eq. 3.4, `θ = µ ln 2` at the median.
+    ///
+    /// # Errors
+    ///
+    /// [`IntrinsicError::NotPositive`] for a `µ` that is not finite and positive;
+    /// [`IntrinsicError::Unrepresentable`] where `2µ` overflows.
+    pub fn bcm(mu: f64, balance: Balance) -> Result<Self, IntrinsicError> {
+        let mu = positive("mu", mu)?;
+        let theta = match balance {
+            Balance::Mean => held("theta", 2.0 * mu)?,
+            Balance::Median => core::f64::consts::LN_2 * mu,
+        };
+        Ok(Self::Bcm { theta })
+    }
+
+    /// A finite threshold.
+    ///
+    /// # Errors
+    ///
+    /// [`IntrinsicError::NonFinite`] for a threshold that is not finite.
+    pub fn check(&self) -> Result<(), IntrinsicError> {
+        match *self {
+            Self::Simple => Ok(()),
+            Self::Covariance { theta } | Self::Bcm { theta } => finite("theta", theta).map(|_| ()),
+        }
+    }
+
+    /// `Ω(y)`.
+    #[must_use]
+    pub fn omega(&self, y: f64) -> f64 {
+        match *self {
+            Self::Simple => y,
+            Self::Covariance { theta } => y - theta,
+            Self::Bcm { theta } => (y - theta) * y,
+        }
+    }
+
+    /// `E[Ω(y)]` for `y` exponential with mean `µ`, in closed form from `E[y] = µ` and
+    /// `E[y²] = 2µ²`: `µ`, `µ − θ` and `2µ² − θµ`. Eq. 3.4 sets it to zero.
+    ///
+    /// # Errors
+    ///
+    /// [`IntrinsicError::NotPositive`] for a `µ` that is not finite and positive;
+    /// [`IntrinsicError::Unrepresentable`] where the result overflows; whatever [`Hebb::check`]
+    /// refuses.
+    pub fn exponential_mean(&self, mu: f64) -> Result<f64, IntrinsicError> {
+        self.check()?;
+        positive("mu", mu)?;
+        let mean = match *self {
+            Self::Simple => mu,
+            Self::Covariance { theta } => mu - theta,
+            Self::Bcm { theta } => 2.0 * mu * mu - theta * mu,
+        };
+        held("E[Ω(y)]", mean)
+    }
+
+    /// `∫₀^q Ω(−µ ln s) ds`: eq. B.9's integral in `q = 1 − F_y(y)`, the exponential's survival
+    /// probability, where `y = −µ ln q` (eq. B.4) and `(1/µ) e^{−y/µ} dy = −dq`. Zero at `q = 0`,
+    /// with `0 ln 0 ≡ 0` as p. 897 defines it.
+    fn antiderivative(&self, mu: f64, q: f64) -> f64 {
+        if q == 0.0 {
+            return 0.0;
+        }
+        let l = q.ln();
+        let hebb = mu * q * (1.0 - l);
+        match *self {
+            Self::Simple => hebb,
+            Self::Covariance { theta } => hebb - theta * q,
+            Self::Bcm { theta } => mu * q * (mu * (l * l - 2.0 * l + 2.0) + theta * (l - 1.0)),
+        }
+    }
+
+    /// Eq. B.9: the mean weight change contributed by the `i`-th of `n` equally likely clusters
+    /// when IP is perfect, the cluster that drives the `i`-th highest `n`-th of the rate
+    /// distribution: `Ω(y)(1/µ)e^{−y/µ}` integrated over `[F⁻¹(1 − i/n), F⁻¹(1 − (i−1)/n)]`, in
+    /// closed form.
+    ///
+    /// In `q`, `∫ Ω(−µ ln q) dq` from `(i−1)/n` to `i/n`: `µ q (1 − ln q)` for the simple rule,
+    /// which is eq. B.6; that minus `θq` for the covariance rule; and
+    /// `µq[µ(ln² q − 2 ln q + 2) + θ(ln q − 1)]` for the BCM rule, `µ² q ln² q` at `θ = 2µ`.
+    ///
+    /// # Errors
+    ///
+    /// [`IntrinsicError::Cluster`] for `i` outside `1..=n`; [`IntrinsicError::NotPositive`] for a
+    /// `µ` that is not finite and positive; [`IntrinsicError::Unrepresentable`] where the result
+    /// overflows; whatever [`Hebb::check`] refuses.
+    pub fn cluster(&self, mu: f64, n: usize, i: usize) -> Result<f64, IntrinsicError> {
+        self.check()?;
+        positive("mu", mu)?;
+        if i == 0 || i > n {
+            return Err(IntrinsicError::Cluster { i, n });
+        }
+        let q = |k: usize| k as f64 / n as f64;
+        held("a cluster's contribution", self.antiderivative(mu, q(i)) - self.antiderivative(mu, q(i - 1)))
+    }
+
+    /// Every cluster's contribution, [`Hebb::cluster`] for `i = 1, …, n`, normalised so that
+    /// `Σ f_i² = 1` as Fig. 6 plots them.
+    ///
+    /// # Errors
+    ///
+    /// [`IntrinsicError::ZeroLength`] where every contribution is zero, as for one cluster under a
+    /// balanced rule; whatever [`Hebb::cluster`] refuses, among them `n = 0`.
+    pub fn clusters(&self, mu: f64, n: usize) -> Result<Vec<f64>, IntrinsicError> {
+        let mut f = (1..=n.max(1)).map(|i| self.cluster(mu, n, i)).collect::<Result<Vec<f64>, _>>()?;
+        unit_length("the vector of cluster contributions", &mut f)?;
+        Ok(f)
+    }
+}
+
+/// A Hebbian rule, eq. 3.3, `Δw = η_Hebb u Ω(y)`, with its learning rate.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Hebbian {
+    /// `Ω`.
+    pub rule: Hebb,
+    /// The learning rate `η_Hebb`.
+    pub eta: f64,
+}
+
+impl Hebbian {
+    /// Fig. 3's "`η_Hebb = 0.001`" (p. 892), with the simple rule of eq. 3.1.
+    pub const FIG3: Self = Self { rule: Hebb::Simple, eta: 0.001 };
+
+    /// Fig. 7's "`η_Hebb = 0.01`" (p. 898), with the simple rule of eq. 3.1.
+    pub const FIG7: Self = Self { rule: Hebb::Simple, eta: 0.01 };
+
+    /// A rule `Ω` with learning rate `eta`.
+    ///
+    /// # Errors
+    ///
+    /// [`IntrinsicError::NotPositive`] for an `eta` that is not finite and positive; whatever
+    /// [`Hebb::check`] refuses.
+    pub fn new(rule: Hebb, eta: f64) -> Result<Self, IntrinsicError> {
+        let h = Self { rule, eta };
+        h.check()?;
+        Ok(h)
+    }
+
+    /// The same checks as [`Hebbian::new`], for a value whose public fields were set directly.
+    ///
+    /// # Errors
+    ///
+    /// As [`Hebbian::new`].
+    pub fn check(&self) -> Result<(), IntrinsicError> {
+        self.rule.check()?;
+        positive("eta_Hebb", self.eta)?;
+        Ok(())
+    }
+
+    /// Eq. 3.3, `Δw = η u Ω(y)`, for input `u` and rate `y`.
+    ///
+    /// # Errors
+    ///
+    /// [`IntrinsicError::NonFinite`] for a `y` that is not finite;
+    /// [`IntrinsicError::NonFiniteEntry`] for an input entry that is not;
+    /// [`IntrinsicError::Unrepresentable`] where `ηΩ(y)` or an entry of `Δw` overflows; whatever
+    /// [`Hebbian::check`] refuses.
+    pub fn update(&self, u: &[f64], y: f64) -> Result<Vec<f64>, IntrinsicError> {
+        self.check()?;
+        finite("y", y)?;
+        let g = held("ηΩ(y)", self.eta * self.rule.omega(y))?;
+        u.iter()
+            .enumerate()
+            .map(|(index, &value)| {
+                if value.is_finite() {
+                    held("an entry of Δw", g * value)
+                } else {
+                    Err(IntrinsicError::NonFiniteEntry { what: "u", index, value })
+                }
+            })
+            .collect()
+    }
+}
+
+/// A sigmoid neuron with a synaptic weight vector of unit length, learning by IP and a Hebbian
+/// rule together (Triesch 2007, section 3).
+///
+/// One [`Unit::step`] computes `x = wᵀu` and `y = g_ab(x)` (eq. 2.1), and from that one `(x, y)`
+/// moves `(a, b)` by [`Triesch::learn`] and `w` by [`Hebbian::update`], then renormalises `w`. The
+/// paper does not print the order of the two updates; here neither sees the other's result, so
+/// they commute.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Unit {
+    w: Vec<f64>,
+    sigmoid: Sigmoid,
+}
+
+impl Unit {
+    /// A unit with weights `w/‖w‖` and the neuron `sigmoid`.
+    ///
+    /// # Errors
+    ///
+    /// [`IntrinsicError::ZeroLength`] for a `w` that is empty or all zeros;
+    /// [`IntrinsicError::NonFiniteEntry`] for an entry of `w` that is not finite; whatever
+    /// [`Sigmoid::check`] refuses.
+    pub fn new(mut w: Vec<f64>, sigmoid: Sigmoid) -> Result<Self, IntrinsicError> {
+        sigmoid.check()?;
+        unit_length("w", &mut w)?;
+        Ok(Self { w, sigmoid })
+    }
+
+    /// The weights, of unit length.
+    #[must_use]
+    pub fn weights(&self) -> &[f64] {
+        &self.w
+    }
+
+    /// The neuron's gain and bias.
+    #[must_use]
+    pub fn sigmoid(&self) -> Sigmoid {
+        self.sigmoid
+    }
+
+    /// The total synaptic current `x = wᵀu`.
+    ///
+    /// # Errors
+    ///
+    /// [`IntrinsicError::Dimension`] for a `u` whose length is not the weights';
+    /// [`IntrinsicError::NonFiniteEntry`] for an entry of `u` that is not finite;
+    /// [`IntrinsicError::Unrepresentable`] for an `x` that overflows.
+    pub fn drive(&self, u: &[f64]) -> Result<f64, IntrinsicError> {
+        if u.len() != self.w.len() {
+            return Err(IntrinsicError::Dimension { what: "u", expected: self.w.len(), got: u.len() });
+        }
+        let mut x = 0.0;
+        for (index, (&w, &value)) in self.w.iter().zip(u).enumerate() {
+            if !value.is_finite() {
+                return Err(IntrinsicError::NonFiniteEntry { what: "u", index, value });
+            }
+            x += w * value;
+        }
+        held("x", x)
+    }
+
+    /// One presented input: `(x, y)` computed, then IP by `ip` (none keeps the sigmoid fixed, as
+    /// Fig. 8's right panel does) and the Hebbian rule `hebb` applied from them, and `w`
+    /// renormalised. Returns `(x, y)`. A refused step leaves the unit as it was.
+    ///
+    /// # Errors
+    ///
+    /// [`IntrinsicError::ZeroLength`] where the step cancels `w` exactly; whatever [`Unit::drive`],
+    /// [`Triesch::learn`] and [`Hebbian::update`] refuse. A weight cannot overflow: each is at most
+    /// one in size before the step and `Δw` is refused where it is not finite, and `f64::MAX + 1`
+    /// rounds to `f64::MAX`.
+    pub fn step(&mut self, ip: Option<&Triesch>, hebb: &Hebbian, u: &[f64]) -> Result<(f64, f64), IntrinsicError> {
+        let x = self.drive(u)?;
+        let y = self.sigmoid.rate(x);
+        let sigmoid = match ip {
+            Some(rule) => rule.learn(self.sigmoid, x)?,
+            None => self.sigmoid,
+        };
+        let dw = hebb.update(u, y)?;
+        let mut w: Vec<f64> = self.w.iter().zip(&dw).map(|(old, change)| old + change).collect();
+        unit_length("w + Δw", &mut w)?;
+        self.w = w;
+        self.sigmoid = sigmoid;
+        Ok((x, y))
+    }
+}
+
+/// The two-input distributions of Fig. 3: white, with identity covariance, a Laplacian and so
+/// heavy-tailed direction along `u1`, and a lighter-tailed one along `u2`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Plane {
+    /// Eq. 3.2, the Laplace band: `(1/(2√6)) exp(−√2 |u1|)` for `|u2| ≤ √3`, zero outside.
+    /// Laplacian with unit variance along `u1`, uniform with unit variance along `u2` (Fig. 3a–c).
+    LaplaceBand,
+    /// Fig. 3d: the same Laplacian along `u1` and a standard normal along `u2`.
+    LaplaceGauss,
+}
+
+impl Plane {
+    /// The joint density.
+    #[must_use]
+    pub fn density(&self, u1: f64, u2: f64) -> f64 {
+        let laplace = (-core::f64::consts::SQRT_2 * u1.abs()).exp();
+        match self {
+            Self::LaplaceBand => {
+                if u2.abs() <= 3.0_f64.sqrt() {
+                    laplace / (2.0 * 6.0_f64.sqrt())
+                } else {
+                    0.0
+                }
+            }
+            Self::LaplaceGauss => laplace / core::f64::consts::SQRT_2 * (-0.5 * u2 * u2).exp() / core::f64::consts::TAU.sqrt(),
+        }
+    }
+
+    /// One draw `[u1, u2]` from the crate's seeded generator: `u1` an exponential of mean `1/√2`,
+    /// `−ln(1 − v)/√2`, signed by the low bit of the next 32-bit output (set: negative); `u2` as
+    /// `√3(2v − 1)` for the band, and for the Gaussian as `√(−2 ln(1 − v)) sin(2πv′)`.
+    pub fn sample(&self, rng: &mut Rng) -> [f64; 2] {
+        let tail = -(1.0 - rng.next_f64()).ln() / core::f64::consts::SQRT_2;
+        let u1 = if rng.next_u32() & 1 == 1 { -tail } else { tail };
+        let u2 = match self {
+            Self::LaplaceBand => 3.0_f64.sqrt() * (2.0 * rng.next_f64() - 1.0),
+            Self::LaplaceGauss => {
+                let radius = (-2.0 * (1.0 - rng.next_f64()).ln()).sqrt();
+                radius * (core::f64::consts::TAU * rng.next_f64()).sin()
+            }
+        };
+        [u1, u2]
+    }
+}
+
+/// The bars problem of P. Földiák, *Forming sparse representations by local anti-Hebbian learning*,
+/// Biological Cybernetics 64(2):165–170, 1990 (`doi:10.1007/BF02331346`), as Triesch 2007 section
+/// 4 poses it: an `n`-by-`n` retina on which each of the `2n` horizontal and vertical bars is shown
+/// independently with probability `p`, a pixel on two bars as bright as a pixel on one, and the
+/// image normalised to unit length.
+///
+/// Bars `0..n` are the rows and `n..2n` the columns; pixels are numbered row by row.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Bars {
+    /// The side `N`: `N²` pixels and `2N` bars.
+    pub n: usize,
+    /// The probability `p` that a bar is shown.
+    pub p: f64,
+}
+
+impl Bars {
+    /// The paper's retina: `p = 1/N` (p. 898), and `N = 10` from the default `µ` "(1/2N = 0.05)"
+    /// (p. 898). `N` itself is not printed.
+    pub const FIG7: Self = Self { n: 10, p: 0.1 };
+
+    /// The least overlap [`Bars::aligned`] accepts: a pure bar scores 1, a vector spread evenly
+    /// over the retina `1/√N`, `0.316` at `N = 10`.
+    pub const ALIGNED: f64 = 0.8;
+
+    /// The least lead over the runner-up [`Bars::aligned`] accepts: a pure bar leads the bars that
+    /// cross it, which share one pixel, by `1 − 1/N`; an even mixture of two bars leads by nothing.
+    pub const MARGIN: f64 = 0.4;
+
+    /// A retina of side `n` with bars shown with probability `p`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Bars::check`].
+    pub fn new(n: usize, p: f64) -> Result<Self, IntrinsicError> {
+        let bars = Self { n, p };
+        bars.check()?;
+        Ok(bars)
+    }
+
+    /// A side of at least 2 whose `n²` pixels `usize` counts, and a `p` in `(0, 1]`.
+    ///
+    /// # Errors
+    ///
+    /// [`IntrinsicError::Retina`] for the side; [`IntrinsicError::Probability`] for `p`.
+    pub fn check(&self) -> Result<(), IntrinsicError> {
+        if self.n < 2 || self.n.checked_mul(self.n).is_none() {
+            return Err(IntrinsicError::Retina { n: self.n });
+        }
+        if !(self.p > 0.0 && self.p <= 1.0) {
+            return Err(IntrinsicError::Probability { what: "p", value: self.p });
+        }
+        Ok(())
+    }
+
+    /// The pixel count, after checking that a vector of `len` entries has it.
+    fn pixels(&self, what: &'static str, len: usize) -> Result<usize, IntrinsicError> {
+        self.check()?;
+        let pixels = self.n * self.n;
+        if len == pixels { Ok(pixels) } else { Err(IntrinsicError::Dimension { what, expected: pixels, got: len }) }
+    }
+
+    /// The `j`-th pixel of bar `k`.
+    fn pixel(&self, k: usize, j: usize) -> usize {
+        if k < self.n { k * self.n + j } else { j * self.n + k - self.n }
+    }
+
+    /// The probability of a blank image, no bar shown: `(1 − p)^{2n}`, 0.1216 for [`Bars::FIG7`].
+    ///
+    /// # Errors
+    ///
+    /// Whatever [`Bars::check`] refuses.
+    pub fn blank(&self) -> Result<f64, IntrinsicError> {
+        self.check()?;
+        Ok((1.0 - self.p).powf(2.0 * self.n as f64))
+    }
+
+    /// Bar `k` alone, normalised: `1/√n` on its `n` pixels.
+    ///
+    /// # Errors
+    ///
+    /// [`IntrinsicError::Bar`] for a `k` of `2n` or more; whatever [`Bars::check`] refuses.
+    pub fn template(&self, k: usize) -> Result<Vec<f64>, IntrinsicError> {
+        self.check()?;
+        if k >= 2 * self.n {
+            return Err(IntrinsicError::Bar { k, bars: 2 * self.n });
+        }
+        let mut t = vec![0.0; self.n * self.n];
+        for j in 0..self.n {
+            t[self.pixel(k, j)] = 1.0 / (self.n as f64).sqrt();
+        }
+        Ok(t)
+    }
+
+    /// One image into `image`, which must hold `n²` pixels: each bar drawn in turn, shown where the
+    /// generator's next `f64` is below `p`, its pixels set to one; then the image divided by its
+    /// length. Returns the number of bars shown.
+    ///
+    /// A blank image has no length to divide by, and the paper does not say what it did with one.
+    /// Here it is left as the zero vector: the unit sees `x = 0`, its IP still moves, and the
+    /// Hebbian term is zero.
+    ///
+    /// # Errors
+    ///
+    /// [`IntrinsicError::Dimension`] for an `image` of the wrong size; whatever [`Bars::check`]
+    /// refuses.
+    pub fn sample(&self, rng: &mut Rng, image: &mut [f64]) -> Result<usize, IntrinsicError> {
+        self.pixels("the image", image.len())?;
+        image.fill(0.0);
+        let mut shown = 0;
+        for k in 0..2 * self.n {
+            if rng.next_f64() < self.p {
+                shown += 1;
+                for j in 0..self.n {
+                    image[self.pixel(k, j)] = 1.0;
+                }
+            }
+        }
+        let lit = image.iter().filter(|&&v| v > 0.0).count();
+        if lit > 0 {
+            let scale = 1.0 / (lit as f64).sqrt();
+            for v in image.iter_mut() {
+                *v *= scale;
+            }
+        }
+        Ok(shown)
+    }
+
+    /// The cosine between `w` and each bar's [`Bars::template`], in bar order.
+    ///
+    /// # Errors
+    ///
+    /// [`IntrinsicError::Dimension`] for a `w` of the wrong size; [`IntrinsicError::ZeroLength`]
+    /// and [`IntrinsicError::NonFiniteEntry`] for a `w` with no direction; whatever [`Bars::check`]
+    /// refuses.
+    pub fn overlaps(&self, w: &[f64]) -> Result<Vec<f64>, IntrinsicError> {
+        self.pixels("w", w.len())?;
+        let mut unit = w.to_vec();
+        unit_length("w", &mut unit)?;
+        let side = (self.n as f64).sqrt();
+        Ok((0..2 * self.n).map(|k| (0..self.n).map(|j| unit[self.pixel(k, j)]).sum::<f64>() / side).collect())
+    }
+
+    /// The bar `w` has discovered, if one: the bar of largest overlap, where that overlap is at
+    /// least [`Bars::ALIGNED`] and leads every other bar's by at least [`Bars::MARGIN`].
+    ///
+    /// # Errors
+    ///
+    /// Whatever [`Bars::overlaps`] refuses.
+    pub fn aligned(&self, w: &[f64]) -> Result<Option<usize>, IntrinsicError> {
+        let o = self.overlaps(w)?;
+        let mut best = 0;
+        for k in 1..o.len() {
+            if o[k] > o[best] {
+                best = k;
+            }
+        }
+        let second = o.iter().enumerate().filter(|&(k, _)| k != best).map(|(_, &v)| v).fold(f64::NEG_INFINITY, f64::max);
+        Ok((o[best] >= Self::ALIGNED && o[best] - second >= Self::MARGIN).then_some(best))
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{FixedPoint, Input, IntrinsicError, Sigmoid, Triesch};
+    use super::{Balance, Bars, FixedPoint, Hebb, Hebbian, Input, IntrinsicError, Plane, Sigmoid, Triesch, Unit};
     use crate::rng::Rng;
 
     /// The reference: `SciPy` 1.13.1, `scipy.integrate.quad` over each input's whole support and
@@ -2170,5 +2905,861 @@ mod tests {
         assert_eq!(Input::FIG1_EXPONENTIAL, Input::Exponential { mean: 0.1 });
         assert_eq!(Triesch::new(0.1, 0.001), Ok(Triesch::FIG1));
         assert_eq!(Sigmoid::new(1.5, -2.0), Ok(Sigmoid { a: 1.5, b: -2.0 }));
+    }
+
+    // ---- Triesch 2007 -------------------------------------------------------------------------
+
+    /// `SciPy` 1.13.1's `quad` of eq. B.9 in `y` itself, `µ = 0.1`, from
+    /// `tools/intrinsic_2007_reference.py`: `(Ω, n, i, contribution)`.
+    const B9: [(Hebb, usize, usize, f64); 33] = [
+        (Hebb::Simple, 50, 1, 0.009824046010856295),
+        (Hebb::Covariance { theta: 0.1 }, 50, 1, 0.007824046010856294),
+        (Hebb::Bcm { theta: 0.2 }, 50, 1, 0.003060784798999813),
+        (Hebb::Simple, 50, 2, 0.007051457288616512),
+        (Hebb::Covariance { theta: 0.1 }, 50, 2, 0.005051457288616511),
+        (Hebb::Bcm { theta: 0.2 }, 50, 2, 0.0010836798313685631),
+        (Hebb::Simple, 50, 7, 0.004082417554818564),
+        (Hebb::Covariance { theta: 0.1 }, 50, 7, 0.002082417554818565),
+        (Hebb::Bcm { theta: 0.2 }, 50, 7, 1.7218714064697064e-05),
+        (Hebb::Simple, 50, 19, 0.0019887480867934867),
+        (Hebb::Covariance { theta: 0.1 }, 50, 19, -1.125191320651634e-05),
+        (Hebb::Bcm { theta: 0.2 }, 50, 19, -0.0001999449557692649),
+        (Hebb::Simple, 50, 50, 2.013468288309409e-05),
+        (Hebb::Covariance { theta: 0.1 }, 50, 50, -0.0019798653171169073),
+        (Hebb::Bcm { theta: 0.2 }, 50, 50, -3.999863952982075e-06),
+        (Hebb::Simple, 2, 1, 0.08465735902799727),
+        (Hebb::Covariance { theta: 0.1 }, 2, 1, 0.03465735902799726),
+        (Hebb::Bcm { theta: 0.2 }, 2, 1, 0.0024022650695910077),
+        (Hebb::Simple, 2, 2, 0.015342640972002731),
+        (Hebb::Covariance { theta: 0.1 }, 2, 2, -0.03465735902799726),
+        (Hebb::Bcm { theta: 0.2 }, 2, 2, -0.002402265069591007),
+        (Hebb::Covariance { theta: 0.03 }, 50, 1, 0.009224046010856293),
+        (Hebb::Bcm { theta: 0.07 }, 50, 1, 0.004337910780411131),
+        (Hebb::Covariance { theta: 0.06931471805599453 }, 50, 1, 0.008437751649736404),
+        (Hebb::Bcm { theta: 0.06931471805599453 }, 50, 1, 0.004344643021759451),
+        (Hebb::Covariance { theta: 0.03 }, 50, 7, 0.003482417554818564),
+        (Hebb::Bcm { theta: 0.07 }, 50, 7, 0.0005479329961911104),
+        (Hebb::Covariance { theta: 0.06931471805599453 }, 50, 7, 0.0026961231936986738),
+        (Hebb::Bcm { theta: 0.06931471805599453 }, 50, 7, 0.0005507306032293186),
+        (Hebb::Covariance { theta: 0.03 }, 50, 50, -0.0005798653171169063),
+        (Hebb::Bcm { theta: 0.07 }, 50, 50, -1.3823551781798432e-06),
+        (Hebb::Covariance { theta: 0.06931471805599453 }, 50, 50, -0.0013661596782367975),
+        (Hebb::Bcm { theta: 0.06931471805599453 }, 50, 50, -1.3685572435517824e-06),
+    ];
+
+    /// Fig. 6 (p. 897), each curve's vertices through the panel's tick marks, by
+    /// `tools/intrinsic_2007_reference.py`: `(cluster, drawn f_i)`. The simple rule's path has no
+    /// vertex at `i = 22`, the covariance rule's none at 22, 31 and 37.
+    fn fig_6() -> [Vec<(usize, f64)>; 3] {
+        let hebb = [
+            0.4941, 0.3544, 0.3020, 0.2676, 0.2424, 0.2220, 0.2051, 0.1908, 0.1782, 0.1671, 0.1570, 0.1477, 0.1394, 0.1315, 0.1244,
+            0.1179, 0.1114, 0.1057, 0.0999, 0.0945, 0.0896, 0.0802, 0.0759, 0.0716, 0.0676, 0.0640, 0.0601, 0.0565, 0.0529, 0.0497,
+            0.0465, 0.0432, 0.0404, 0.0375, 0.0346, 0.0318, 0.0289, 0.0264, 0.0238, 0.0213, 0.0188, 0.0163, 0.0142, 0.0116, 0.0095,
+            0.0073, 0.0052, 0.0030, 0.0009,
+        ];
+        let cov = [
+            0.5088, 0.3623, 0.3071, 0.2712, 0.2442, 0.2231, 0.2055, 0.1900, 0.1768, 0.1653, 0.1545, 0.1448, 0.1362, 0.1280, 0.1204,
+            0.1132, 0.1068, 0.1007, 0.0945, 0.0892, 0.0838, 0.0737, 0.0694, 0.0648, 0.0608, 0.0565, 0.0525, 0.0490, 0.0454, 0.0382,
+            0.0349, 0.0318, 0.0289, 0.0256, 0.0199, 0.0170, 0.0145, 0.0116, 0.0091, 0.0066, 0.0041, 0.0019, -0.0006, -0.0027, -0.0052,
+            -0.0074, -0.0095,
+        ];
+        let bcm = [
+            0.8864, 0.3139, 0.1753, 0.1025, 0.0576, 0.0267, 0.0052, -0.0110, -0.0232, -0.0325, -0.0397, -0.0451, -0.0490, -0.0523,
+            -0.0544, -0.0562, -0.0573, -0.0577, -0.0580, -0.0577, -0.0573, -0.0566, -0.0555, -0.0544, -0.0530, -0.0515, -0.0501, -0.0487,
+            -0.0469, -0.0451, -0.0430, -0.0411, -0.0390, -0.0372, -0.0350, -0.0329, -0.0307, -0.0286, -0.0264, -0.0239, -0.0218,
+            -0.0196, -0.0174, -0.0149, -0.0128, -0.0103, -0.0081, -0.0056, -0.0035, -0.0013,
+        ];
+        let at = |drawn: &[f64], missing: &[usize]| (1..=50).filter(|i| !missing.contains(i)).zip(drawn.iter().copied()).collect();
+        [at(&hebb, &[22]), at(&cov, &[22, 31, 37]), at(&bcm, &[])]
+    }
+
+    /// Eq. B.8 as printed, `1 + log N − i log i + (i − 1) log(i − 1)` with `0 log 0 ≡ 0`.
+    fn printed_b8(n: usize, i: usize) -> f64 {
+        let xlogx = |k: usize| if k == 0 { 0.0 } else { k as f64 * (k as f64).ln() };
+        1.0 + (n as f64).ln() - xlogx(i) + xlogx(i - 1)
+    }
+
+    /// `v/‖v‖`, written out here so that it shares no code with the module's.
+    fn normalised(v: &[f64]) -> Vec<f64> {
+        let length = v.iter().map(|x| x * x).sum::<f64>().sqrt();
+        v.iter().map(|x| x / length).collect()
+    }
+
+    /// Composite Simpson's rule for `f` on `[lo, hi]` with `panels` panels.
+    fn simpson(f: impl Fn(f64) -> f64, lo: f64, hi: f64, panels: usize) -> f64 {
+        let h = (hi - lo) / (2 * panels) as f64;
+        let mut sum = f(lo) + f(hi);
+        for k in 1..2 * panels {
+            sum += f(lo + h * k as f64) * if k % 2 == 1 { 4.0 } else { 2.0 };
+        }
+        sum * h / 3.0
+    }
+
+    /// Eqs. 3.1 and 3.3 and section 3.2's three `Ω`, at points where every value is a binary
+    /// fraction, and `Δw = η u Ω(y)` entry by entry. P. 891: under the simple rule a positive input
+    /// can only strengthen its weight, since `y > 0`.
+    #[test]
+    fn the_hebbian_rules_are_eqs_3_1_and_3_3() {
+        let y = 0.375;
+        assert_eq!(Hebb::Simple.omega(y), 0.375);
+        assert_eq!(Hebb::Covariance { theta: 0.125 }.omega(y), 0.25);
+        assert_eq!(Hebb::Bcm { theta: 0.125 }.omega(y), 0.09375);
+        assert_eq!(Hebb::Bcm { theta: 0.5 }.omega(y), -0.046875);
+        assert_eq!(Hebb::Covariance { theta: 0.5 }.omega(y), -0.125);
+        let h = Hebbian::new(Hebb::Covariance { theta: 0.125 }, 0.5).unwrap();
+        assert_eq!(h.update(&[1.0, -2.0, 0.0, 0.75], y).unwrap(), vec![0.125, -0.25, 0.0, 0.09375]);
+        let bcm = Hebbian::new(Hebb::Bcm { theta: 0.5 }, 2.0).unwrap();
+        assert_eq!(bcm.update(&[1.0, 4.0], y).unwrap(), vec![-0.09375, -0.375]);
+        let simple = Hebbian::new(Hebb::Simple, 0.25).unwrap();
+        assert_eq!(simple.update(&[0.5, 2.0], y).unwrap(), vec![0.046875, 0.1875]);
+        for y in [1e-9, 0.2, 1.0] {
+            assert!(simple.update(&[0.1, 3.0], y).unwrap().iter().all(|&d| d > 0.0), "{y}");
+        }
+        assert_eq!(simple.update(&[], y).unwrap(), Vec::<f64>::new());
+        assert_eq!((Hebbian::FIG3.rule, Hebbian::FIG3.eta, Hebbian::FIG7.rule, Hebbian::FIG7.eta), (Hebb::Simple, 0.001, Hebb::Simple, 0.01));
+        assert_eq!((Triesch::FIG3.mu, Triesch::FIG3.eta, Triesch::FIG7.mu, Triesch::FIG7.eta), (0.1, 0.01, 0.05, 0.01));
+        assert_eq!(Sigmoid::FIG8_FIXED, Sigmoid::new(5.0, -1.15).unwrap());
+        assert_eq!((Bars::FIG7.n, Bars::FIG7.p), (10, 0.1));
+        assert_eq!(Hebbian::new(Hebb::Simple, 0.01), Ok(Hebbian::FIG7));
+    }
+
+    /// Eq. 3.4 under an exponential rate of mean `µ`: `E[y] = µ` and `E[y²] = 2µ²`, so
+    /// `E[y − θ] = 0` at `θ = µ` and `E[(y − θ) y] = 0` at `θ = 2µ`, exactly; footnote 2's median
+    /// balance puts both thresholds at `µ ln 2`, where the exponential's distribution function is
+    /// one half. Checked in closed form, by Simpson's rule over [`Input::Exponential`] (within
+    /// 2.9 × 10⁻¹¹ `µ`, measured, the size of Simpson's error at the density's edge), and against
+    /// `SciPy`'s `brentq` on `quad` (`tools/intrinsic_2007_reference.py`), which finds `θ_cov` and
+    /// `θ_BCM` within 3 × 10⁻¹⁷ of `µ` and `2µ` at `µ = 0.1` and 0.05. The mean squared rate as the
+    /// BCM threshold, `θ = 2µ²`, leaves `E[Ω] = 2µ²(1 − µ)`.
+    #[test]
+    fn the_balanced_thresholds_are_mu_and_two_mu() {
+        for mu in [0.1, 0.05, 0.3] {
+            let cov = Hebb::covariance(mu, Balance::Mean).unwrap();
+            let bcm = Hebb::bcm(mu, Balance::Mean).unwrap();
+            assert_eq!((cov, bcm), (Hebb::Covariance { theta: mu }, Hebb::Bcm { theta: 2.0 * mu }));
+            assert_eq!((cov.exponential_mean(mu).unwrap(), bcm.exponential_mean(mu).unwrap()), (0.0, 0.0));
+            assert_eq!(Hebb::Simple.exponential_mean(mu).unwrap(), mu);
+            assert_eq!(Hebb::Covariance { theta: 0.25 * mu }.exponential_mean(mu).unwrap(), mu - 0.25 * mu);
+            assert_eq!(Hebb::Bcm { theta: 0.5 * mu }.exponential_mean(mu).unwrap(), 2.0 * mu * mu - 0.5 * mu * mu);
+            let mean_square = Hebb::Bcm { theta: 2.0 * mu * mu }.exponential_mean(mu).unwrap();
+            assert!((mean_square - 2.0 * mu * mu * (1.0 - mu)).abs() < 1e-17 && mean_square > 0.0, "θ = E[y²] does not balance");
+            let input = Input::Exponential { mean: mu };
+            let by_simpson = |h: Hebb| input.expect(|y| h.omega(y)).unwrap();
+            for h in [Hebb::Simple, cov, bcm, Hebb::Covariance { theta: 0.3 }, Hebb::Bcm { theta: 0.05 }] {
+                let e = h.exponential_mean(mu).unwrap();
+                assert!((by_simpson(h) - e).abs() < 3e-11 * mu, "µ = {mu}, {h:?}: {} against {e}", by_simpson(h));
+            }
+            let median = mu * core::f64::consts::LN_2;
+            assert!((input.ln_survival(median) + core::f64::consts::LN_2).abs() < 2.3e-16, "the median");
+            let (mc, mb) = (Hebb::covariance(mu, Balance::Median).unwrap(), Hebb::bcm(mu, Balance::Median).unwrap());
+            assert_eq!((mc.omega(median), mb.omega(median)), (0.0, 0.0));
+            assert!(mc.omega(0.99 * median) < 0.0 && mc.omega(1.01 * median) > 0.0);
+            assert!(mb.omega(0.99 * median) < 0.0 && mb.omega(1.01 * median) > 0.0);
+            assert!(cov.omega(0.99 * mu) < 0.0 && bcm.omega(1.99 * mu) < 0.0 && bcm.omega(2.01 * mu) > 0.0);
+        }
+        for (mu, theta_cov, theta_bcm) in [(0.1_f64, 0.10000000000000003_f64, 0.19999999999999998_f64), (0.05, 0.05, 0.10000000000000002)] {
+            assert!((theta_cov - mu).abs() < 3e-17 && (theta_bcm - 2.0 * mu).abs() < 3e-17, "SciPy's roots at µ = {mu}");
+        }
+    }
+
+    /// Eq. B.9 in closed form is `SciPy`'s `quad` of it in `y` (measured within 2.9 × 10⁻¹⁷ at
+    /// every row), and it is the paper's own closed forms: eq. B.6 for the simple rule; `µ/N` times
+    /// eq. B.8; `µ²/N` times eq. B.11 for the balanced BCM rule, `θ = 2µ`; eq. B.6 less `µ/N` for
+    /// the balanced covariance rule. At `N = 2` the simple rule gives eq. B.2's `(µ/2)(1 ± ln 2)`,
+    /// and normalised, eq. B.3. The contributions of all `N` clusters sum to `E[Ω(y)]`: `µ` for the
+    /// simple rule, and zero for a balanced one — eq. 3.4 is exactly that.
+    #[test]
+    fn eq_b9_in_closed_form_is_scipys_quadrature_and_the_papers_eqs() {
+        let mu = 0.1;
+        for (h, n, i, scipy) in B9 {
+            let got = h.cluster(mu, n, i).unwrap();
+            assert!((got - scipy).abs() <= 3e-17, "{h:?} {n} {i}: {got} against {scipy}");
+        }
+        let (cov, bcm) = (Hebb::Covariance { theta: mu }, Hebb::Bcm { theta: 2.0 * mu });
+        for n in [2, 3, 50, 1000] {
+            let nf = n as f64;
+            let xlogx = |k: usize| if k == 0 { 0.0 } else { (k as f64 / nf) * (1.0 - (k as f64 / nf).ln()) };
+            let sq = |k: usize| if k == 0 { 0.0 } else { k as f64 * (k as f64 / nf).ln().powi(2) };
+            for i in 1..=n {
+                let b6 = mu * (xlogx(i) - xlogx(i - 1));
+                let hebb = Hebb::Simple.cluster(mu, n, i).unwrap();
+                assert!((hebb - b6).abs() < 1e-15 * mu, "B.6, N = {n}, i = {i}");
+                assert!((hebb - mu / nf * printed_b8(n, i)).abs() < 5e-15 * mu, "B.8, N = {n}, i = {i}");
+                let b11 = sq(i) - sq(i - 1);
+                assert!((bcm.cluster(mu, n, i).unwrap() - mu * mu / nf * b11).abs() < 1e-15 * mu * mu, "B.11, N = {n}, i = {i}");
+                assert!((cov.cluster(mu, n, i).unwrap() - (b6 - mu / nf)).abs() < 1e-15 * mu, "B.10, N = {n}, i = {i}");
+            }
+            let total = |h: Hebb| (1..=n).map(|i| h.cluster(mu, n, i).unwrap()).sum::<f64>();
+            assert!((total(Hebb::Simple) - mu).abs() < 1e-15 && total(cov).abs() < 1e-15 && total(bcm).abs() < 1e-16, "N = {n}");
+        }
+        let ln2 = core::f64::consts::LN_2;
+        assert!((Hebb::Simple.cluster(mu, 2, 1).unwrap() - mu / 2.0 * (1.0 + ln2)).abs() < 1e-17);
+        assert!((Hebb::Simple.cluster(mu, 2, 2).unwrap() - mu / 2.0 * (1.0 - ln2)).abs() < 1e-17);
+        let b3 = normalised(&[1.0 + ln2, 1.0 - ln2]);
+        let two = Hebb::Simple.clusters(mu, 2).unwrap();
+        assert!((two[0] - b3[0]).abs() < 3e-16 && (two[1] - b3[1]).abs() < 3e-16, "B.3: {two:?} against {b3:?}");
+        // Balanced, two clusters pull in opposite directions: w ∝ c₁ − c₂ under either rule.
+        for h in [cov, bcm] {
+            let f = h.clusters(mu, 2).unwrap();
+            assert!((f[0] - core::f64::consts::FRAC_1_SQRT_2).abs() < 1e-15 && (f[1] + core::f64::consts::FRAC_1_SQRT_2).abs() < 1e-15, "{h:?}: {f:?}");
+        }
+        assert!((cov.cluster(mu, 2, 1).unwrap() - mu / 2.0 * ln2).abs() < 1e-17);
+        assert!((bcm.cluster(mu, 2, 1).unwrap() - mu * mu / 2.0 * ln2 * ln2).abs() < 3e-18);
+    }
+
+    /// Eq. B.9 by Simpson's rule in `y` itself, over `[F⁻¹(1 − i/N), F⁻¹(1 − (i − 1)/N)]` with
+    /// `F⁻¹(p) = −µ log(1 − p)` (eq. B.4), the first cluster's interval cut at `40µ`, beyond which
+    /// the density's mass is `e⁻⁴⁰`: within 2.8 × 10⁻¹⁵ of the closed form (measured), for the
+    /// three rules at their balanced thresholds and two others, at `N = 50` and 7.
+    #[test]
+    fn eq_b9_by_simpson_in_y() {
+        for mu in [0.1, 0.05] {
+            let rules = [Hebb::Simple, Hebb::Covariance { theta: mu }, Hebb::Bcm { theta: 2.0 * mu }, Hebb::Covariance { theta: 0.03 }, Hebb::Bcm { theta: 0.07 }];
+            for n in [50, 7] {
+                for h in rules {
+                    for i in [1, 2, n / 3, n] {
+                        let lo = -mu * (i as f64 / n as f64).ln();
+                        let (hi, panels) = if i == 1 { (40.0 * mu, 20_000) } else { (-mu * ((i - 1) as f64 / n as f64).ln(), 4000) };
+                        let quad = simpson(|y| h.omega(y) * (-y / mu).exp() / mu, lo, hi, panels);
+                        let got = h.cluster(mu, n, i).unwrap();
+                        assert!((quad - got).abs() < 3e-15, "µ = {mu}, N = {n}, {h:?}, i = {i}: {quad} against {got}");
+                    }
+                }
+            }
+        }
+    }
+
+    /// ⚠ Eq. B.10 is printed at the wrong scale, and Fig. 6 draws neither it nor eq. B.9.
+    ///
+    /// Eq. B.9 for the balanced covariance rule is eq. B.6 less `µ/N` — eq. B.10 is right at eq.
+    /// B.6's scale — but eq. B.8, which defines `f_i^Hebb`, is eq. B.6 times `N/µ`, and at that
+    /// scale the covariance rule's contributions are `f_i^Hebb − 1`, whatever `µ`: 32 of Fig. 6's
+    /// 50 clusters, `i = 19` to 50, become negative, the last at −0.1415 after normalisation, and
+    /// the 50 sum to zero, as eq. 3.4's balance requires. Eq. B.10 read at eq. B.8's scale,
+    /// `f_i^Hebb − µ/N`, makes none negative at `µ = 0.1`, since `N f_N^Hebb = 0.503`; for any
+    /// `µ < 1`, at most the last. Fig. 6's drawn covariance curve is `f_i^Hebb − µ` at `µ = 0.1`:
+    /// within 2.1 × 10⁻⁴ of its 47 vertices by the reference script, 2.5 × 10⁻⁴ from the
+    /// four-place readings below, five of them below zero, `i = 46` to 50, which is the text's "a
+    /// few of the weights will actually become slightly negative" (p. 898); it misses eq. B.10 at
+    /// eq. B.8's scale by 0.0146 and eq. B.9 by 0.132. The simple and BCM curves are eqs. B.8 and
+    /// B.11, within 1.9 × 10⁻⁴ and 2.2 × 10⁻⁴ by the script and 2.3 × 10⁻⁴ and 2.4 × 10⁻⁴ from
+    /// the readings below. All three normalised vectors are independent of `µ`, as p. 897 says of
+    /// the simple rule's.
+    #[test]
+    fn eq_b10_is_off_scale_and_fig_6_draws_neither() {
+        let (mu, n) = (0.1, 50);
+        let b8: Vec<f64> = (1..=n).map(|i| printed_b8(n, i)).collect();
+        let shifted = |c: f64| normalised(&b8.iter().map(|f| f - c).collect::<Vec<f64>>());
+        let cov = Hebb::covariance(mu, Balance::Mean).unwrap().clusters(mu, n).unwrap();
+        let by_b8 = shifted(1.0);
+        assert!(cov.iter().zip(&by_b8).all(|(a, b)| (a - b).abs() < 1e-14), "f_cov = f_Hebb − 1 at B.8's scale");
+        let negative: Vec<usize> = (1..=n).filter(|&i| cov[i - 1] < 0.0).collect();
+        assert_eq!((negative.len(), negative[0], negative[negative.len() - 1]), (32, 19, 50));
+        assert!((cov[n - 1] + 0.1415).abs() < 5e-5, "{}", cov[n - 1]);
+        let raw: Vec<f64> = (1..=n).map(|i| printed_b8(n, i) - 1.0).collect();
+        assert!(raw.iter().sum::<f64>().abs() < 1e-12, "balanced: they sum to zero");
+        let literal = shifted(mu / n as f64);
+        assert!(literal.iter().all(|&f| f > 0.0) && (n as f64 * b8[n - 1] - 0.503).abs() < 5e-4 && n as f64 * b8[n - 2] > 1.0);
+        let drawn = shifted(mu);
+        assert_eq!((1..=n).filter(|&i| drawn[i - 1] < 0.0).collect::<Vec<usize>>(), vec![46, 47, 48, 49, 50]);
+        let [hebb_fig, cov_fig, bcm_fig] = fig_6();
+        let miss = |fig: &[(usize, f64)], model: &[f64]| fig.iter().map(|&(i, v)| (v - model[i - 1]).abs()).fold(0.0, f64::max);
+        assert!(miss(&cov_fig, &drawn) < 2.5e-4, "{}", miss(&cov_fig, &drawn));
+        assert!(miss(&cov_fig, &literal) > 0.0145 && miss(&cov_fig, &cov) > 0.13, "{} {}", miss(&cov_fig, &literal), miss(&cov_fig, &cov));
+        assert_eq!(cov_fig.iter().filter(|p| p.1 < 0.0).map(|p| p.0).collect::<Vec<usize>>(), vec![46, 47, 48, 49, 50]);
+        let simple = Hebb::Simple.clusters(mu, n).unwrap();
+        let bcm = Hebb::bcm(mu, Balance::Mean).unwrap().clusters(mu, n).unwrap();
+        assert!(miss(&hebb_fig, &simple) < 2.3e-4 && miss(&bcm_fig, &bcm) < 2.4e-4, "{} {}", miss(&hebb_fig, &simple), miss(&bcm_fig, &bcm));
+        assert_eq!((hebb_fig.len(), cov_fig.len(), bcm_fig.len()), (49, 47, 50));
+        assert!(simple.iter().zip(&shifted(0.0)).all(|(a, b)| (a - b).abs() < 1e-14), "B.8");
+        for other in [0.01, 0.4] {
+            let again = [Hebb::Simple.clusters(other, n).unwrap(), Hebb::covariance(other, Balance::Mean).unwrap().clusters(other, n).unwrap(), Hebb::bcm(other, Balance::Mean).unwrap().clusters(other, n).unwrap()];
+            for (a, b) in again.iter().zip([&simple, &cov, &bcm]) {
+                assert!(a.iter().zip(b.iter()).all(|(x, y)| (x - y).abs() < 1e-14), "µ = {other}");
+            }
+        }
+        // p. 898 on the BCM rule: most clusters contribute a small negative weight — 43 of the 50,
+        // from i = 8, and none below −0.058 — and a few a large positive one.
+        let bcm_negative = bcm.iter().filter(|&&f| f < 0.0).count();
+        assert!(bcm_negative == 43 && bcm[7] < 0.0 && bcm[6] > 0.0 && bcm.iter().fold(0.0_f64, |m, &f| m.min(f)) > -0.058 && bcm[0] > 0.88);
+    }
+
+    /// Eq. 3.2's Laplace band and Fig. 3d's Laplace–Gauss plane are densities with identity
+    /// covariance: `∫ e^{−√2|u1|} du1 = √2` and the band is `2√3` wide, so the band's mass is
+    /// `2√6/(2√6) = 1`; `E[u1²] = 2(1/√2)² = 1` for the Laplacian, `(2√3)²/12 = 1` for the band. By
+    /// Simpson's rule over the joint density on a grid (measured within 1.4 × 10⁻¹⁰ of each), and
+    /// `SciPy`'s `dblquad`: mass 1, second moments 1, `E[u1 u2] = 0`, and fourth moments 6 for the
+    /// Laplacian, 1.8 for the band and 3 for the Gaussian, the heavy tail being the larger.
+    #[test]
+    fn the_planes_of_fig_3_are_white() {
+        let s3 = 3.0_f64.sqrt();
+        assert!((2.0_f64.sqrt() * 2.0 * s3 / (2.0 * 6.0_f64.sqrt()) - 1.0).abs() < 1e-15);
+        for (plane, v, (m4a, m4b)) in [(Plane::LaplaceBand, s3, (6.0, 1.8)), (Plane::LaplaceGauss, 12.0, (6.0, 3.0))] {
+            let moment = |g: &dyn Fn(f64, f64) -> f64| {
+                // u1 on [0, 40] doubled by symmetry of the moments used; the cusp at 0 is a node.
+                let inner = |u1: f64| simpson(|u2| g(u1, u2) * plane.density(u1, u2), -v, v, 600);
+                simpson(|u1| inner(u1) + inner(-u1), 0.0, 40.0, 3000)
+            };
+            let mass = moment(&|_, _| 1.0);
+            let (s11, s22, s12) = (moment(&|a, _| a * a), moment(&|_, b| b * b), moment(&|a, b| a * b));
+            let (k1, k2) = (moment(&|a, _| a.powi(4)), moment(&|_, b| b.powi(4)));
+            for (got, want) in [(mass, 1.0), (s11, 1.0), (s22, 1.0), (s12, 0.0), (k1, m4a), (k2, m4b)] {
+                assert!((got - want).abs() < 1.4e-10 * want.max(1.0), "{plane:?}: {got} against {want}");
+            }
+        }
+        assert_eq!(Plane::LaplaceBand.density(0.0, 1.8), 0.0);
+        assert!(Plane::LaplaceBand.density(0.0, s3) > 0.0 && Plane::LaplaceBand.density(0.0, -s3) > 0.0, "the band's edges are in it");
+        assert_eq!(Plane::LaplaceBand.density(-0.7, 0.3), Plane::LaplaceBand.density(0.7, -1.2));
+        assert!((Plane::LaplaceBand.density(0.0, 0.0) - 1.0 / (2.0 * 6.0_f64.sqrt())).abs() < 1e-17);
+        let g = Plane::LaplaceGauss.density(0.5, 1.0);
+        let want = (-core::f64::consts::SQRT_2 * 0.5).exp() / core::f64::consts::SQRT_2 * (-0.5_f64).exp() / core::f64::consts::TAU.sqrt();
+        assert!((g - want).abs() < 1e-17 && (Plane::LaplaceGauss.density(-0.5, -1.0) - g).abs() < 1e-17);
+    }
+
+    /// Draws have the planes' moments, within five standard errors of 400,000 draws: mean zero,
+    /// identity covariance, and fourth moments 6 along `u1` and 1.8 or 3 along `u2`; and each draw
+    /// is the documented transform of the generator's output.
+    #[test]
+    fn the_planes_draws_have_their_moments_and_transforms() {
+        for (plane, m4) in [(Plane::LaplaceBand, 1.8), (Plane::LaplaceGauss, 3.0)] {
+            let mut rng = Rng::new(32);
+            let count = 400_000;
+            let draws: Vec<[f64; 2]> = (0..count).map(|_| plane.sample(&mut rng)).collect();
+            let e = |f: &dyn Fn(&[f64; 2]) -> f64| draws.iter().map(f).sum::<f64>() / f64::from(count);
+            let se = |var: f64| 5.0 * (var / f64::from(count)).sqrt();
+            assert!(e(&|u| u[0]).abs() < se(1.0) && e(&|u| u[1]).abs() < se(1.0), "{plane:?}: means");
+            assert!((e(&|u| u[0] * u[0]) - 1.0).abs() < se(5.0) && (e(&|u| u[1] * u[1]) - 1.0).abs() < se(m4 - 1.0), "{plane:?}: variances");
+            assert!(e(&|u| u[0] * u[1]).abs() < se(1.0), "{plane:?}: covariance");
+            assert!((e(&|u| u[0].powi(4)) - 6.0).abs() < se(2484.0), "{plane:?}: the Laplacian's fourth moment");
+            assert!((e(&|u| u[1].powi(4)) - m4).abs() < 0.03 * m4, "{plane:?}: u2's fourth moment");
+            assert!(draws.iter().filter(|u| u[0] < 0.0).count().abs_diff(200_000) < 1_600, "{plane:?}: the sign");
+        }
+        for plane in [Plane::LaplaceBand, Plane::LaplaceGauss] {
+            let (mut a, mut b) = (Rng::new(9), Rng::new(9));
+            for _ in 0..1000 {
+                let got = plane.sample(&mut a);
+                let tail = -(1.0 - b.next_f64()).ln() / core::f64::consts::SQRT_2;
+                let u1 = if b.next_u32() % 2 == 1 { -tail } else { tail };
+                let u2 = if plane == Plane::LaplaceBand {
+                    (2.0 * b.next_f64() - 1.0) * 3.0_f64.sqrt()
+                } else {
+                    let r = (-2.0 * (1.0 - b.next_f64()).ln()).sqrt();
+                    r * (core::f64::consts::TAU * b.next_f64()).sin()
+                };
+                assert!(got[0] == u1 && (got[1] - u2).abs() <= 4e-16 * u2.abs(), "{plane:?}: {got:?} against [{u1}, {u2}]");
+            }
+        }
+        let mut rng = Rng::new(4);
+        assert!((0..20_000).all(|_| Plane::LaplaceBand.sample(&mut rng)[1].abs() <= 3.0_f64.sqrt()));
+    }
+
+    /// Fig. 3c: from the orientation the figure starts at, the rule turns the weight vector to the
+    /// Laplace band's heavy-tailed `u1`, 0°, at the pace the figure draws.
+    ///
+    /// The figure's path (`tools/intrinsic_2007_reference.py`, p. 893) starts at 78.34° at its
+    /// first vertex, 938 inputs in, and runs to 10⁶ inputs, the axis being "time/1000" to 1000; it
+    /// first comes within 5° of zero at input 437,763, and averages 0.71° over its last fifth.
+    /// Neither the start nor the run length is printed, so both are read there; the neuron starts
+    /// at `(1, 0)`, which the paper does not print either. Sixteen seeds, with the orientation read
+    /// every 1,000 inputs: every one comes within 5° of zero, first between inputs 339,000 and
+    /// 553,000, and the last fifth averages −3.39° to 2.77°. `a` ends between 1.23 and 1.60, `b`
+    /// between −2.75 and −2.59.
+    #[test]
+    fn fig_3c_the_weight_vector_turns_to_the_heavy_tail() {
+        let (first, late) = orientations(Plane::LaplaceBand, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16], 1_000_000);
+        assert!(first.iter().all(Option::is_some), "{first:?}");
+        let times: Vec<usize> = first.iter().map(|t| t.unwrap()).collect();
+        assert_eq!((times.iter().min(), times.iter().max()), (Some(&339_000), Some(&553_000)));
+        assert!((339_000..=553_000).contains(&437_763), "the figure's own crossing");
+        let (lo, hi) = late.iter().fold((f64::MAX, f64::MIN), |(l, h), &(m, _)| (l.min(m), h.max(m)));
+        assert!((lo + 3.39).abs() < 0.005 && (hi - 2.77).abs() < 0.005, "{lo} {hi}");
+        let (amin, amax) = late.iter().fold((f64::MAX, f64::MIN), |(l, h), &(_, s)| (l.min(s.a), h.max(s.a)));
+        let (bmin, bmax) = late.iter().fold((f64::MAX, f64::MIN), |(l, h), &(_, s)| (l.min(s.b), h.max(s.b)));
+        assert!((amin - 1.233).abs() < 5e-3 && (amax - 1.601).abs() < 5e-3, "{amin} {amax}");
+        assert!((bmin + 2.749).abs() < 5e-3 && (bmax + 2.591).abs() < 5e-3, "{bmin} {bmax}");
+    }
+
+    /// Fig. 3d: with a Gaussian along `u2`, a heavier tail than the band's, the weight vector turns
+    /// to `u1` too, but more slowly and less surely than the figure draws.
+    ///
+    /// The figure's path starts at 78.31° and first comes within 5° of zero at input 690,801. Of
+    /// seeds 1 to 8 of Fig. 3c's test, over the figure's 10⁶ inputs, 4 come within 5°, first
+    /// between inputs 723,000 and 886,000, all later than the figure; the other four, run on to
+    /// 3.5 × 10⁶, do too, first at 2,190,000 to 3,366,000. The pull towards the heavier tail is
+    /// weak against the noise near 78° at the stated parameters, where the band's is not, and the
+    /// figure's run is at the fast end of what the rule does.
+    #[test]
+    fn fig_3d_turns_more_slowly_than_drawn() {
+        let (first, _) = orientations(Plane::LaplaceGauss, &[1, 2, 3, 4, 5, 6, 7, 8], 1_000_000);
+        let times: Vec<usize> = first.iter().flatten().copied().collect();
+        assert_eq!(first.iter().map(Option::is_some).collect::<Vec<bool>>(), [true, false, true, false, true, false, false, true]);
+        assert_eq!((times.iter().min(), times.iter().max()), (Some(&723_000), Some(&886_000)));
+        assert!(times.iter().all(|&t| t > 690_801), "the figure is faster than every seed that aligns");
+        let (longer, _) = orientations(Plane::LaplaceGauss, &[2, 4, 6, 7], 3_500_000);
+        let times: Vec<usize> = longer.iter().map(|t| t.unwrap()).collect();
+        assert_eq!((times.iter().min(), times.iter().max()), (Some(&2_190_000), Some(&3_366_000)));
+    }
+
+    /// Runs Fig. 3's experiment for each seed: the unit at 78.3° and `(1, 0)`, the rule at
+    /// [`Triesch::FIG3`] and [`Hebbian::FIG3`], the orientation read every 1,000 inputs. Returns
+    /// each seed's first reading within 5° of zero, and the mean orientation over the last fifth
+    /// of the run with the neuron at its end.
+    fn orientations(plane: Plane, seeds: &[u64], steps: usize) -> (Vec<Option<usize>>, Vec<(f64, Sigmoid)>) {
+        let (mut first, mut late) = (Vec::new(), Vec::new());
+        for &seed in seeds {
+            let start = 78.3_f64.to_radians();
+            let mut unit = Unit::new(vec![start.cos(), start.sin()], neuron(1.0, 0.0)).unwrap();
+            let mut rng = Rng::new(seed);
+            let (mut crossed, mut sum, mut count) = (None, 0.0, 0.0);
+            for k in 1..=steps {
+                unit.step(Some(&Triesch::FIG3), &Hebbian::FIG3, &plane.sample(&mut rng)).unwrap();
+                if k % 1000 == 0 {
+                    let w = unit.weights();
+                    let angle = w[1].atan2(w[0]).to_degrees();
+                    if crossed.is_none() && angle.abs() < 5.0 {
+                        crossed = Some(k);
+                    }
+                    if k > steps * 4 / 5 {
+                        sum += angle;
+                        count += 1.0;
+                    }
+                }
+            }
+            first.push(crossed);
+            late.push((sum / count, unit.sigmoid()));
+        }
+        (first, late)
+    }
+
+    /// One [`Unit::step`] is `x = wᵀu`, `y = g_ab(x)`, then [`Triesch::learn`] and eq. 3.3 from
+    /// that one `(x, y)`, then `w/‖w‖`: checked against the pieces computed here. Without IP the
+    /// sigmoid stays. Were the Hebbian term to see the rate after IP had moved the neuron, `w`
+    /// would differ, by 2.5 × 10⁻³ in its first entry at the point below, so the order the step
+    /// uses is observable, and it is "both from the same `(x, y)`".
+    #[test]
+    fn a_step_is_ip_and_hebb_from_one_rate() {
+        let s = neuron(2.0, -1.0);
+        let mut unit = Unit::new(vec![3.0, 4.0], s).unwrap();
+        assert_eq!(unit.weights(), &[0.6, 0.8]);
+        let u = [0.5, 0.25];
+        let x = 0.6 * 0.5 + 0.8 * 0.25;
+        assert_eq!(unit.drive(&u).unwrap(), x);
+        let ip = Triesch::new(0.1, 0.05).unwrap();
+        let hebb = Hebbian::new(Hebb::Bcm { theta: 0.2 }, 0.5).unwrap();
+        let y = s.rate(x);
+        let after = ip.learn(s, x).unwrap();
+        let g = 0.5 * (y - 0.2) * y;
+        let raw = [0.6 + g * 0.5, 0.8 + g * 0.25];
+        let want = normalised(&raw);
+        assert_eq!(unit.step(Some(&ip), &hebb, &u).unwrap(), (x, y));
+        assert_eq!(unit.sigmoid(), after);
+        assert!((unit.weights()[0] - want[0]).abs() < 2.3e-16 && (unit.weights()[1] - want[1]).abs() < 2.3e-16, "{:?} against {want:?}", unit.weights());
+        let late_y = after.rate(x);
+        let other = normalised(&[0.6 + 0.5 * (late_y - 0.2) * late_y * 0.5, 0.8 + 0.5 * (late_y - 0.2) * late_y * 0.25]);
+        assert!((other[0] - want[0]).abs() > 2.5e-3 && (other[0] - want[0]).abs() < 2.6e-3, "{other:?} {want:?}");
+        let mut fixed = Unit::new(vec![3.0, 4.0], s).unwrap();
+        fixed.step(None, &hebb, &u).unwrap();
+        assert_eq!((fixed.sigmoid(), fixed.weights()), (s, unit.weights()));
+        // A blank image: `x = 0`, IP still moves, `w` stays (to a rounding of its length).
+        let mut blank = Unit::new(vec![3.0, 4.0], s).unwrap();
+        assert_eq!(blank.step(Some(&ip), &Hebbian::FIG7, &[0.0, 0.0]).unwrap(), (0.0, s.rate(0.0)));
+        assert_eq!(blank.sigmoid(), ip.learn(s, 0.0).unwrap());
+        assert!((blank.weights()[0] - 0.6).abs() < 2.3e-16 && (blank.weights()[1] - 0.8).abs() < 2.3e-16, "{:?}", blank.weights());
+        // Normalisation that neither overflows nor underflows.
+        for (w, want) in [([3e-200, 4e-200], [0.6, 0.8]), ([3e200, -4e200], [0.6, -0.8])] {
+            let got = Unit::new(w.to_vec(), s).unwrap();
+            assert!((got.weights()[0] - want[0]).abs() < 2e-16 && (got.weights()[1] - want[1]).abs() < 2e-16, "{:?}", got.weights());
+        }
+        assert_eq!(Unit::new(vec![0.0, 2.0, 0.0], s).unwrap().weights(), &[0.0, 1.0, 0.0]);
+        assert_eq!(Unit::new(vec![-3.0, -4.0], s).unwrap().weights(), &[-0.6, -0.8], "no weight positive");
+        // A step whose Δw is near f64::MAX: the length `√2 · 1.56 × 10³⁰⁸` overflows, the
+        // direction does not.
+        let mut big = Unit::new(vec![1.0, 1.0], neuron(1.0, 0.0)).unwrap();
+        big.step(None, &Hebbian::new(Hebb::Simple, 1e308).unwrap(), &[1.7, 1.7]).unwrap();
+        let half = core::f64::consts::FRAC_1_SQRT_2;
+        assert!(big.weights().iter().all(|w| (w - half).abs() < 2e-16), "{:?}", big.weights());
+    }
+
+    /// A refused step leaves the unit as it was: the IP overshoot of [`Triesch::learn`], a Hebbian
+    /// step that cancels `w` exactly, an input of the wrong length or with a NaN, and a drive that
+    /// overflows.
+    ///
+    /// With `w = (1, 0)`, `u = (1, 0)` and the neuron `(1, −1)`, `x = 1` and `y = ½` exactly; the
+    /// covariance rule with `θ = 3/2` and `η = 1` makes `Δw = (−1, 0) = −w`.
+    #[test]
+    fn a_refused_step_changes_nothing() {
+        let s = neuron(1.0, -1.0);
+        let start = Unit::new(vec![1.0, 0.0], s).unwrap();
+        let cancel = Hebbian::new(Hebb::Covariance { theta: 1.5 }, 1.0).unwrap();
+        let mut unit = start.clone();
+        assert_eq!(unit.step(None, &cancel, &[1.0, 0.0]).unwrap_err(), IntrinsicError::ZeroLength { what: "w + Δw" });
+        assert_eq!(unit, start);
+        let wild = Triesch::new(0.125, 0.125).unwrap();
+        let err = unit.step(Some(&wild), &Hebbian::FIG7, &[64.0, 0.0]).unwrap_err();
+        assert!(matches!(err, IntrinsicError::Overshoot { .. }), "{err:?}");
+        assert_eq!(unit, start);
+        let err = unit.step(Some(&Triesch::FIG7), &Hebbian::FIG7, &[1.0, 0.0, 0.0]).unwrap_err();
+        assert_eq!(err, IntrinsicError::Dimension { what: "u", expected: 2, got: 3 });
+        assert_eq!(unit.drive(&[1.0]).unwrap_err(), IntrinsicError::Dimension { what: "u", expected: 2, got: 1 });
+        let err = unit.step(None, &Hebbian::FIG7, &[0.5, f64::NAN]).unwrap_err();
+        assert!(matches!(err, IntrinsicError::NonFiniteEntry { what: "u", index: 1, value } if value.is_nan()), "{err:?}");
+        let diagonal = Unit::new(vec![1.0, 1.0], s).unwrap();
+        let err = diagonal.drive(&[f64::MAX, f64::MAX]).unwrap_err();
+        assert_eq!(err, IntrinsicError::Unrepresentable { what: "x", value: f64::INFINITY });
+        assert_eq!(unit, start);
+        let huge = Hebbian::new(Hebb::Simple, 1e308).unwrap();
+        let err = unit.step(None, &huge, &[1e300, 0.0]).unwrap_err();
+        assert_eq!(err, IntrinsicError::Unrepresentable { what: "an entry of Δw", value: f64::INFINITY });
+        assert_eq!(unit, start);
+    }
+
+    /// The bars: `2N` of them, rows then columns, a crossing pixel as bright as any other, the
+    /// image of unit length; a blank image, with probability `(1 − 1/N)^{2N} = 0.1216` at `N = 10`,
+    /// left at zero. Over 200,000 draws the blank fraction and the mean bar count `2Np = 2` are
+    /// within four standard errors.
+    #[test]
+    fn the_bars_are_saturated_and_normalised() {
+        let bars = Bars::FIG7;
+        assert!((bars.blank().unwrap() - 0.9_f64.powi(20)).abs() < 1e-16 && (bars.blank().unwrap() - 0.1216).abs() < 5e-5);
+        let mut rng = Rng::new(10);
+        let mut image = vec![0.0; 100];
+        let (mut blanks, mut total, count) = (0, 0, 200_000);
+        for _ in 0..count {
+            let shown = bars.sample(&mut rng, &mut image).unwrap();
+            total += shown;
+            let lit: Vec<f64> = image.iter().copied().filter(|&v| v != 0.0).collect();
+            if shown == 0 {
+                blanks += 1;
+                assert!(lit.is_empty());
+            } else {
+                let length: f64 = lit.iter().map(|v| v * v).sum::<f64>();
+                assert!((length - 1.0).abs() < 1e-14 && lit.iter().all(|&v| v == lit[0]), "{lit:?}");
+            }
+        }
+        let p = bars.blank().unwrap();
+        assert!((f64::from(blanks) / f64::from(count) - p).abs() < 4.0 * (p * (1.0 - p) / f64::from(count)).sqrt(), "{blanks}");
+        let mean = total as f64 / f64::from(count);
+        assert!((mean - 2.0).abs() < 4.0 * (20.0 * 0.1 * 0.9 / f64::from(count)).sqrt(), "{mean}");
+        // Replayed by hand: bar k is shown where the k-th draw is below p; rows first.
+        let (mut a, mut b) = (Rng::new(77), Rng::new(77));
+        let small = Bars::new(3, 0.5).unwrap();
+        let mut img = vec![9.0; 9];
+        for _ in 0..200 {
+            let shown = small.sample(&mut a, &mut img).unwrap();
+            let on: Vec<bool> = (0..6).map(|_| b.next_f64() < 0.5).collect();
+            let mut want = [0.0_f64; 9];
+            for r in 0..3 {
+                for c in 0..3 {
+                    if on[r] || on[3 + c] {
+                        want[3 * r + c] = 1.0;
+                    }
+                }
+            }
+            let lit = want.iter().filter(|&&v| v > 0.0).count();
+            let scale = if lit > 0 { 1.0 / (lit as f64).sqrt() } else { 0.0 };
+            assert_eq!(shown, on.iter().filter(|&&o| o).count());
+            assert!(img.iter().zip(&want).all(|(g, w)| *g == w * scale), "{img:?} {on:?}");
+        }
+        let everything = Bars::new(3, 1.0).unwrap();
+        assert_eq!(everything.sample(&mut a, &mut img).unwrap(), 6);
+        assert!(img.iter().all(|&v| v == 1.0 / 3.0));
+        assert_eq!(everything.blank().unwrap(), 0.0);
+    }
+
+    /// A bar's template is itself (overlap 1), shares one pixel with each crossing bar (overlap
+    /// `1/N`) and none with a parallel one; a vector spread evenly over the retina has overlap
+    /// `1/√N` with every bar. [`Bars::aligned`] accepts a bar at an overlap of 0.81 and refuses one
+    /// at 0.79, and accepts a lead of 0.464 over the runner-up and refuses one of 0.35.
+    #[test]
+    fn alignment_with_a_bar_is_an_overlap_and_a_lead() {
+        let bars = Bars::FIG7;
+        let t3 = bars.template(3).unwrap();
+        let t14 = bars.template(14).unwrap();
+        assert_eq!(t3.iter().filter(|&&v| v > 0.0).count(), 10);
+        assert!((30..40).all(|p| t3[p] > 0.0), "bar 3 is row 3");
+        assert!((0..10).all(|r| t14[10 * r + 4] > 0.0), "bar 14 is column 4");
+        let o = bars.overlaps(&t3).unwrap();
+        assert!((o[3] - 1.0).abs() < 1e-15 && (10..20).all(|k| (o[k] - 0.1).abs() < 1e-15) && (0..10).filter(|&k| k != 3).all(|k| o[k] == 0.0), "{o:?}");
+        assert_eq!(bars.aligned(&t3).unwrap(), Some(3));
+        assert_eq!(bars.aligned(&t14).unwrap(), Some(14));
+        let even = vec![0.25; 100];
+        let o = bars.overlaps(&even).unwrap();
+        assert!(o.iter().all(|&v| (v - 0.1_f64.sqrt()).abs() < 1e-15), "{o:?}");
+        assert_eq!(bars.aligned(&even).unwrap(), None);
+        // A direction orthogonal to every bar: +1 −1 / −1 +1 on the top-left 2 × 2 pixels.
+        let mut v = vec![0.0; 100];
+        (v[0], v[1], v[10], v[11]) = (0.5, -0.5, -0.5, 0.5);
+        assert!(bars.overlaps(&v).unwrap().iter().all(|&o| o.abs() < 1e-16));
+        let tilted = |c: f64| t3.iter().zip(&v).map(|(t, v)| c * t + (1.0 - c * c).sqrt() * v).collect::<Vec<f64>>();
+        assert_eq!(bars.aligned(&tilted(0.81)).unwrap(), Some(3));
+        assert_eq!(bars.aligned(&tilted(0.79)).unwrap(), None);
+        let t5 = bars.template(5).unwrap();
+        let mixed = |c: f64| t3.iter().zip(&t5).map(|(a, b)| c * a + (1.0 - c * c).sqrt() * b).collect::<Vec<f64>>();
+        assert_eq!(bars.aligned(&mixed(0.9)).unwrap(), Some(3));
+        assert_eq!(bars.aligned(&mixed(0.86)).unwrap(), None);
+        assert_eq!(bars.aligned(&mixed(0.3)).unwrap(), Some(5), "the larger of two");
+        assert_eq!(bars.aligned(&mixed(core::f64::consts::FRAC_1_SQRT_2)).unwrap(), None, "an even mixture");
+        let mut scaled = t14.clone();
+        scaled.iter_mut().for_each(|x| *x *= 1e-250);
+        assert_eq!(bars.aligned(&scaled).unwrap(), Some(14), "the overlap is a cosine");
+    }
+
+    /// The bars problem as the text describes it, one run: the unit's weights drawn uniformly on
+    /// `[0, 1)` from the run's generator (or bar 3's template), then `steps` images from the same
+    /// generator. `ip = None` keeps Fig. 8's fixed sigmoid; otherwise the neuron starts at
+    /// `(1, 0)`. `centre` subtracts each image's mean pixel and renormalises, which the paper does
+    /// not do; `redraw` replaces a blank image by the next one. Returns the unit, the first input
+    /// (checked every 100) at which it is aligned with a bar, and the mean `a`, `b` and `y` over
+    /// the second half of the run.
+    struct BarsRun {
+        ip: Option<Triesch>,
+        hebb: Hebbian,
+        steps: usize,
+        centre: bool,
+        redraw: bool,
+        from_bar: bool,
+    }
+
+    impl BarsRun {
+        const FIG7: Self = Self { ip: Some(Triesch::FIG7), hebb: Hebbian::FIG7, steps: 20_000, centre: false, redraw: false, from_bar: false };
+
+        fn run(&self, seed: u64) -> (Unit, Option<usize>, [f64; 3]) {
+            let bars = Bars::FIG7;
+            let mut rng = Rng::new(seed);
+            let w = if self.from_bar { bars.template(3).unwrap() } else { (0..100).map(|_| rng.next_f64()).collect() };
+            let mut unit = Unit::new(w, if self.ip.is_some() { neuron(1.0, 0.0) } else { Sigmoid::FIG8_FIXED }).unwrap();
+            let mut image = vec![0.0; 100];
+            let (mut first, mut late) = (None, [0.0; 3]);
+            for t in 1..=self.steps {
+                while bars.sample(&mut rng, &mut image).unwrap() == 0 && self.redraw {}
+                if self.centre {
+                    let mean = image.iter().sum::<f64>() / 100.0;
+                    image.iter_mut().for_each(|v| *v -= mean);
+                    let length = image.iter().map(|v| v * v).sum::<f64>().sqrt();
+                    if length > 0.0 {
+                        image.iter_mut().for_each(|v| *v /= length);
+                    }
+                }
+                let (_, y) = unit.step(self.ip.as_ref(), &self.hebb, &image).unwrap();
+                if t > self.steps / 2 {
+                    let s = unit.sigmoid();
+                    late = [late[0] + s.a, late[1] + s.b, late[2] + y];
+                }
+                if first.is_none() && t % 100 == 0 && bars.aligned(unit.weights()).unwrap().is_some() {
+                    first = Some(t);
+                }
+            }
+            let half = (self.steps - self.steps / 2) as f64;
+            (unit, first, late.map(|v| v / half))
+        }
+    }
+
+    /// ⚠ The bars problem as printed finds no bar: not in Fig. 7's 2 × 10⁴ images, not in Fig. 8's
+    /// 10⁵ at either relative timescale, and not when blank images are redrawn instead of shown;
+    /// started on a bar, the unit loses it.
+    ///
+    /// Sixteen seeds per configuration at Fig. 7's `η_IP = η_Hebb = 0.01`: none aligned at any
+    /// check, the largest overlap at the end 0.325 to 0.337, the weights spread evenly as `1/√N`
+    /// would have it; `(a, b)` averages 7.27 to 7.44 and −6.47 to −6.38 over the second half, the
+    /// mean rate 0.0497 to 0.0500. Redrawing blanks: none, with `(a, b)` near `(9.2, −7.5)`.
+    /// Started on bar 3: none aligned at the end, the largest overlap down to 0.411 to 0.454.
+    /// Eight seeds each of Fig. 8's left (`η_IP = 0.01`, `η_Hebb = 0.001`) and centre (0.001,
+    /// 0.01) configurations over 10⁵ images: none. What the paper leaves unprinted, and what these
+    /// runs assume in its place, is in the module doc.
+    #[test]
+    fn the_printed_bars_problem_finds_no_bar() {
+        let summary = |cfg: &BarsRun, seeds: u64| {
+            let (mut found, mut top, mut a, mut b, mut y) = (0, (f64::MAX, f64::MIN), (f64::MAX, f64::MIN), (f64::MAX, f64::MIN), (f64::MAX, f64::MIN));
+            for seed in 1..=seeds {
+                let (unit, first, [la, lb, ly]) = cfg.run(seed);
+                if first.is_some() || Bars::FIG7.aligned(unit.weights()).unwrap().is_some() {
+                    found += 1;
+                }
+                let best = Bars::FIG7.overlaps(unit.weights()).unwrap().into_iter().fold(f64::MIN, f64::max);
+                let widen = |r: (f64, f64), v: f64| (r.0.min(v), r.1.max(v));
+                (top, a, b, y) = (widen(top, best), widen(a, la), widen(b, lb), widen(y, ly));
+            }
+            (found, top, a, b, y)
+        };
+        let (found, top, a, b, y) = summary(&BarsRun::FIG7, 16);
+        assert_eq!(found, 0);
+        assert!(top.0 > 0.32 && top.1 < 0.34, "{top:?}");
+        assert!(a.0 > 7.2 && a.1 < 7.5 && b.0 > -6.5 && b.1 < -6.35 && y.0 > 0.0495 && y.1 < 0.0502, "{a:?} {b:?} {y:?}");
+        let (found, _, a, b, _) = summary(&BarsRun { redraw: true, ..BarsRun::FIG7 }, 16);
+        assert!(found == 0 && a.0 > 8.9 && a.1 < 9.5 && b.0 > -7.8 && b.1 < -7.3, "{found} {a:?} {b:?}");
+        let (found, top, ..) = summary(&BarsRun { from_bar: true, ..BarsRun::FIG7 }, 16);
+        assert!(found == 16, "the check at input 100 still sees the bar");
+        for seed in 1..=16 {
+            let (unit, ..) = BarsRun { from_bar: true, ..BarsRun::FIG7 }.run(seed);
+            assert_eq!(Bars::FIG7.aligned(unit.weights()).unwrap(), None, "seed {seed}");
+        }
+        assert!(top.0 > 0.41 && top.1 < 0.455, "{top:?}");
+        for (ip, hebb) in [(0.01, 0.001), (0.001, 0.01)] {
+            let cfg = BarsRun { ip: Some(Triesch::new(0.05, ip).unwrap()), hebb: Hebbian::new(Hebb::Simple, hebb).unwrap(), steps: 100_000, ..BarsRun::FIG7 };
+            assert_eq!(summary(&cfg, 8).0, 0, "η_IP = {ip}, η_Hebb = {hebb}");
+        }
+    }
+
+    /// ⚠ Footnote 3's converged `a ∈ [4.5, 5.5]`, `b ∈ [−1.3, −1.0]`, and Fig. 8's fixed
+    /// `(5.0, −1.15)` cannot be where IP settles on the printed bars problem, and Fig. 8's right
+    /// panel cannot be drawn with them.
+    ///
+    /// With every pixel and every weight non-negative, `x = wᵀu ≥ 0`, so `y ≥ σ(b)`: at least
+    /// `σ(−1.3) = 0.214` in the footnote's box and `σ(−1.15) = 0.2405` at Fig. 8's point. Eq. 2.3's
+    /// `1 − (2 + 1/µ) y + y²/µ` at `µ = 0.05` is negative for every `y` between its roots 0.0475
+    /// and 1.0525, so every input lowers `b`: the footnote's box holds no fixed point, whatever
+    /// `a`. The printed model's runs settle at `(7.3, −6.4)` instead (the previous test). The right
+    /// panel's 9,812 dots (`tools/intrinsic_2007_reference.py`, p. 900) lie between 0.0170 and
+    /// 0.0716; at `(5.0, −1.15)` a rate of 0.0716 needs `x ≤ −0.282`, which no non-negative input
+    /// reaches. Run as printed, eight seeds of 10⁵ images at the fixed sigmoid average rates of
+    /// 0.676 to 0.678, and none finds a bar — the panel's claim, though not its activity.
+    #[test]
+    fn footnote_3_and_fig_8_right_are_unreachable_with_non_negative_inputs() {
+        let sigma = |u: f64| 1.0 / (1.0 + (-u).exp());
+        let mu = Triesch::FIG7.mu;
+        let h = |y: f64| 1.0 - (2.0 + 1.0 / mu) * y + y * y / mu;
+        let disc = ((2.0 + 1.0 / mu).powi(2) - 4.0 / mu).sqrt();
+        let (r1, r2) = (mu * ((2.0 + 1.0 / mu) - disc) / 2.0, mu * ((2.0 + 1.0 / mu) + disc) / 2.0);
+        assert!((r1 - 0.0475).abs() < 5e-5 && (r2 - 1.0525).abs() < 5e-5 && h(r1).abs() < 1e-12 && h(r2).abs() < 1e-12, "{r1} {r2}");
+        assert!((sigma(-1.3) - 0.214).abs() < 5e-4 && (sigma(-1.15) - 0.2405).abs() < 5e-5);
+        for a in [4.5, 5.0, 5.5] {
+            for b in [-1.3, -1.15, -1.0] {
+                let s = neuron(a, b);
+                for x in [0.0, 0.1, 0.5, 1.0] {
+                    assert!(s.rate(x) > r1 && s.rate(x) < 1.0, "({a}, {b}) at x = {x}");
+                    assert!(Triesch::FIG7.update(s, x).unwrap().1 < 0.0, "({a}, {b}) at x = {x}: b rises");
+                }
+            }
+        }
+        let fixed = Sigmoid::FIG8_FIXED;
+        let x_max = ((0.0716_f64 / (1.0 - 0.0716)).ln() - fixed.b) / fixed.a;
+        assert!((x_max + 0.2825).abs() < 5e-4 && fixed.rate(0.0) > 0.2404, "{x_max}");
+        let cfg = BarsRun { ip: None, hebb: Hebbian::FIG3, steps: 100_000, ..BarsRun::FIG7 };
+        for seed in 1..=8 {
+            let (unit, first, [.., y]) = cfg.run(seed);
+            assert!(first.is_none() && Bars::FIG7.aligned(unit.weights()).unwrap().is_none(), "seed {seed}");
+            assert!(unit.sigmoid() == fixed && y > 0.676 && y < 0.678, "seed {seed}: {y}");
+        }
+    }
+
+    /// ⚠ Fig. 7c's histogram is not of a unit-length weight vector.
+    ///
+    /// Its bars (`tools/intrinsic_2007_reference.py`, p. 899) hold 89.77 weights between 0.00587
+    /// and 0.00911 and 9.99 between 0.03507 and 0.03831: 100 weights, `N = 10`, one bar's ten high.
+    /// The length of any such vector is between 0.124 and 0.149, not 1; its sum is between 0.879
+    /// and 1.203, so the histogram is consistent with weights summing to one. A unit vector of 100
+    /// non-negative weights has a root-mean-square weight of 0.1, and all of them at most 0.0383
+    /// would give it a length of at most 0.383.
+    #[test]
+    fn fig_7c_is_not_a_unit_length_vector() {
+        let (low, high) = ((0.00587, 0.00911), (0.03507, 0.03831));
+        let length = |l: f64, h: f64| (90.0 * l * l + 10.0 * h * h).sqrt();
+        let sum = |l: f64, h: f64| 90.0 * l + 10.0 * h;
+        assert!((length(low.0, high.0) - 0.124).abs() < 5e-4 && (length(low.1, high.1) - 0.149).abs() < 5e-4);
+        assert!((sum(low.0, high.0) - 0.879).abs() < 5e-4 && (sum(low.1, high.1) - 1.203).abs() < 5e-4);
+        assert!((100.0 * high.1 * high.1).sqrt() < 0.384 && (1.0_f64 / 100.0).sqrt() == 0.1);
+    }
+
+    /// An experiment the paper does not describe: centring each image (subtracting its mean pixel)
+    /// before normalising it. With it the same unit finds a bar, and the fixed sigmoid rarely does.
+    ///
+    /// Sixteen seeds at Fig. 7's rates: 12 aligned after 2 × 10⁴ images, first at inputs 7,600 to
+    /// 19,500 (checked every 100); over the second half `a` averages 4.37 to 5.65, about footnote
+    /// 3's `[4.5, 5.5]`, but `b` −3.50 to −3.27, far below `[−1.3, −1.0]`. Started on bar 3, all
+    /// sixteen keep it. At Fig. 8's fixed sigmoid, eight seeds of 10⁵ images: one aligned, seed 6.
+    #[test]
+    fn centred_images_let_the_unit_find_a_bar() {
+        let centred = BarsRun { centre: true, ..BarsRun::FIG7 };
+        let (mut found, mut times, mut a, mut b) = (0, Vec::new(), Vec::new(), Vec::new());
+        for seed in 1..=16 {
+            let (unit, first, [la, lb, _]) = centred.run(seed);
+            if Bars::FIG7.aligned(unit.weights()).unwrap().is_some() {
+                found += 1;
+                times.push(first.unwrap());
+            }
+            a.push(la);
+            b.push(lb);
+        }
+        assert_eq!(found, 12);
+        assert_eq!((times.iter().min(), times.iter().max()), (Some(&7_600), Some(&19_500)));
+        let range = |v: &[f64]| v.iter().fold((f64::MAX, f64::MIN), |(l, h), &x| (l.min(x), h.max(x)));
+        let (ra, rb) = (range(&a), range(&b));
+        assert!(ra.0 > 4.37 && ra.1 < 5.66 && rb.0 > -3.51 && rb.1 < -3.26, "{ra:?} {rb:?}");
+        for seed in 1..=16 {
+            let (unit, ..) = BarsRun { from_bar: true, ..centred }.run(seed);
+            assert_eq!(Bars::FIG7.aligned(unit.weights()).unwrap(), Some(3), "seed {seed}");
+        }
+        let fixed = BarsRun { ip: None, hebb: Hebbian::FIG3, steps: 100_000, centre: true, ..BarsRun::FIG7 };
+        let aligned: Vec<u64> = (1..=8).filter(|&seed| Bars::FIG7.aligned(fixed.run(seed).0.weights()).unwrap().is_some()).collect();
+        assert_eq!(aligned, vec![6]);
+    }
+
+    /// The 2007 paper's Fig. 2 narrows the input fivefold, not tenfold: by the affine rule of
+    /// [`the_fixed_point_moves_with_the_input`], the fixed point for `N(0, 0.2²)` is `(5a*, b*)`.
+    #[test]
+    fn the_2007_deprivation_is_fivefold() {
+        let r = Triesch::FIG1;
+        let g = fixed(&r, &Input::FIG1_GAUSSIAN).sigmoid;
+        let want = neuron(5.0 * g.a, g.b);
+        assert_eq!(r.fixed_point(want, &Input::Gaussian { mean: 0.0, sd: 0.2 }).unwrap(), FixedPoint { sigmoid: want, iterations: 0 });
+    }
+
+    /// Every refusal of the 2007 additions, rendered.
+    #[test]
+    fn every_2007_refusal_names_what_it_refused() {
+        let s = neuron(1.0, 0.0);
+        let cases: Vec<(Result<(), IntrinsicError>, &str)> = vec![
+            (Unit::new(vec![], s).map(|_| ()), "w has zero length and cannot be normalised to unit length"),
+            (Unit::new(vec![0.0, 0.0], s).map(|_| ()), "w has zero length and cannot be normalised to unit length"),
+            (Unit::new(vec![1.0, f64::INFINITY], s).map(|_| ()), "w[1] = inf is not finite"),
+            (Unit::new(vec![1.0], Sigmoid { a: 0.0, b: 0.0 }).map(|_| ()), "gain a = 0 must be finite and positive: eq. 12 divides by it and eq. 9 takes its logarithm"),
+            (Unit::new(vec![1.0], s).unwrap().drive(&[1.0, 2.0]).map(|_| ()), "u has 2 entries, not the 1 it must match"),
+            (Hebbian::new(Hebb::Simple, 0.0).map(|_| ()), "eta_Hebb = 0 must be finite and positive"),
+            (Hebbian::new(Hebb::Covariance { theta: f64::NAN }, 0.1).map(|_| ()), "theta = NaN is not finite"),
+            (Hebbian { rule: Hebb::Bcm { theta: f64::INFINITY }, eta: 0.1 }.check(), "theta = inf is not finite"),
+            (Hebbian { rule: Hebb::Simple, eta: f64::NAN }.update(&[1.0], 0.5).map(|_| ()), "eta_Hebb = NaN must be finite and positive"),
+            (Hebbian::FIG7.update(&[1.0], f64::NAN).map(|_| ()), "y = NaN is not finite"),
+            (Hebbian::FIG7.update(&[1.0, f64::NEG_INFINITY], 0.5).map(|_| ()), "u[1] = -inf is not finite"),
+            (Hebbian::new(Hebb::Covariance { theta: -f64::MAX }, 2.0).unwrap().update(&[1.0], 0.5).map(|_| ()), "ηΩ(y) comes out as inf, which f64 cannot hold: the rule's parameters, the neuron or the input are too extreme for the arithmetic"),
+            (Hebb::covariance(0.0, Balance::Mean).map(|_| ()), "mu = 0 must be finite and positive"),
+            (Hebb::bcm(f64::NAN, Balance::Median).map(|_| ()), "mu = NaN must be finite and positive"),
+            (Hebb::bcm(1e308, Balance::Mean).map(|_| ()), "theta comes out as inf, which f64 cannot hold: the rule's parameters, the neuron or the input are too extreme for the arithmetic"),
+            (Hebb::Covariance { theta: f64::NAN }.exponential_mean(0.1).map(|_| ()), "theta = NaN is not finite"),
+            (Hebb::Simple.exponential_mean(-0.1).map(|_| ()), "mu = -0.1 must be finite and positive"),
+            (Hebb::Bcm { theta: 0.0 }.exponential_mean(1e200).map(|_| ()), "E[Ω(y)] comes out as inf, which f64 cannot hold: the rule's parameters, the neuron or the input are too extreme for the arithmetic"),
+            (Hebb::Simple.cluster(0.1, 50, 0).map(|_| ()), "cluster 0 of 50 does not exist: Appendix B numbers the clusters from 1 to n, with n at least 1"),
+            (Hebb::Simple.cluster(0.1, 50, 51).map(|_| ()), "cluster 51 of 50 does not exist: Appendix B numbers the clusters from 1 to n, with n at least 1"),
+            (Hebb::Simple.cluster(0.1, 0, 0).map(|_| ()), "cluster 0 of 0 does not exist: Appendix B numbers the clusters from 1 to n, with n at least 1"),
+            (Hebb::Simple.clusters(0.1, 0).map(|_| ()), "cluster 1 of 0 does not exist: Appendix B numbers the clusters from 1 to n, with n at least 1"),
+            (Hebb::Simple.cluster(f64::INFINITY, 5, 1).map(|_| ()), "mu = inf must be finite and positive"),
+            (Hebb::Covariance { theta: f64::NAN }.cluster(0.1, 5, 1).map(|_| ()), "theta = NaN is not finite"),
+            (Hebb::Bcm { theta: 0.0 }.cluster(1e160, 2, 1).map(|_| ()), "a cluster's contribution comes out as inf, which f64 cannot hold: the rule's parameters, the neuron or the input are too extreme for the arithmetic"),
+            (Hebb::covariance(0.1, Balance::Mean).unwrap().clusters(0.1, 1).map(|_| ()), "the vector of cluster contributions has zero length and cannot be normalised to unit length"),
+            (Bars::new(1, 0.5).map(|_| ()), "a 1-by-1 retina is refused: below 2 its one horizontal bar is its one vertical bar, and its pixels must be countable"),
+            (Bars::new(0, 0.5).map(|_| ()), "a 0-by-0 retina is refused: below 2 its one horizontal bar is its one vertical bar, and its pixels must be countable"),
+            (Bars { n: 1 << 32, p: 0.5 }.check(), "a 4294967296-by-4294967296 retina is refused: below 2 its one horizontal bar is its one vertical bar, and its pixels must be countable"),
+            (Bars::new(10, 0.0).map(|_| ()), "p = 0 is not a probability in (0, 1]"),
+            (Bars::new(10, 1.5).map(|_| ()), "p = 1.5 is not a probability in (0, 1]"),
+            (Bars::new(10, f64::NAN).map(|_| ()), "p = NaN is not a probability in (0, 1]"),
+            (Bars::FIG7.template(20).map(|_| ()), "bar 20 does not exist: the retina's 20 bars are numbered from 0"),
+            (Bars::FIG7.template(25).map(|_| ()), "bar 25 does not exist: the retina's 20 bars are numbered from 0"),
+            (Bars { n: 1, p: 0.1 }.template(0).map(|_| ()), "a 1-by-1 retina is refused: below 2 its one horizontal bar is its one vertical bar, and its pixels must be countable"),
+            (Bars::FIG7.sample(&mut Rng::new(1), &mut [0.0; 99]).map(|_| ()), "the image has 99 entries, not the 100 it must match"),
+            (Bars { n: 10, p: 2.0 }.sample(&mut Rng::new(1), &mut [0.0; 100]).map(|_| ()), "p = 2 is not a probability in (0, 1]"),
+            (Bars { n: 10, p: -1.0 }.blank().map(|_| ()), "p = -1 is not a probability in (0, 1]"),
+            (Bars::FIG7.overlaps(&[1.0; 101]).map(|_| ()), "w has 101 entries, not the 100 it must match"),
+            (Bars::FIG7.overlaps(&[0.0; 100]).map(|_| ()), "w has zero length and cannot be normalised to unit length"),
+            (Bars::FIG7.overlaps(&[]).map(|_| ()), "w has 0 entries, not the 100 it must match"),
+            (Bars::FIG7.aligned(&[f64::NAN; 100]).map(|_| ()), "w[0] = NaN is not finite"),
+            (Bars { n: 0, p: 0.1 }.aligned(&[]).map(|_| ()), "a 0-by-0 retina is refused: below 2 its one horizontal bar is its one vertical bar, and its pixels must be countable"),
+        ];
+        for (got, want) in cases {
+            assert_eq!(got.unwrap_err().to_string(), want);
+        }
+        assert_eq!(Bars::new(2, 1.0), Ok(Bars { n: 2, p: 1.0 }));
+        assert_eq!(Bars { n: 2, p: f64::MIN_POSITIVE }.check(), Ok(()));
+        assert_eq!(Hebb::bcm(1e307, Balance::Mean), Ok(Hebb::Bcm { theta: 2e307 }));
+        assert_eq!(Hebb::bcm(1e308, Balance::Median), Ok(Hebb::Bcm { theta: 1e308 * core::f64::consts::LN_2 }));
+        assert_eq!(Hebb::Simple.check(), Ok(()));
     }
 }

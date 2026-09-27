@@ -1203,5 +1203,630 @@
   "label": "objective-softplus-plus",
   "old": "+ softplus(u) + s.rate",
   "new": "+ softplus(-u) + s.rate"
+ },
+ {
+  "label": "t07-msg-zerolength",
+  "old": "\"{what} has zero length and cannot be normalised",
+  "new": "\"{what} has no length and cannot be normalised"
+ },
+ {
+  "label": "t07-msg-nonfinite-entry",
+  "old": "\"{what}[{index}] = {value} is not finite\"",
+  "new": "\"{what}[{value}] = {index} is not finite\""
+ },
+ {
+  "label": "t07-msg-dimension",
+  "old": "\"{what} has {got} entries, not the {expected} it must match\"",
+  "new": "\"{what} has {expected} entries, not the {got} it must match\""
+ },
+ {
+  "label": "t07-msg-cluster",
+  "old": "\"cluster {i} of {n} does not exist",
+  "new": "\"cluster {n} of {i} does not exist"
+ },
+ {
+  "label": "t07-msg-retina",
+  "old": "a {n}-by-{n} retina is refused: below 2",
+  "new": "a {n}-by-{n} retina is refused: below 3"
+ },
+ {
+  "label": "t07-msg-bar",
+  "old": "the retina's {bars} bars are numbered from 0",
+  "new": "the retina's {k} bars are numbered from 0"
+ },
+ {
+  "label": "t07-msg-probability",
+  "old": "\"{what} = {value} is not a probability in (0, 1]\"",
+  "new": "\"{what} = {value} is not a probability in [0, 1]\""
+ },
+ {
+  "label": "t07-ul-nonfinite",
+  "old": "        if !value.is_finite() {\n            return Err(IntrinsicError::NonFiniteEntry { what, index, value });",
+  "new": "        if value.is_nan() {\n            return Err(IntrinsicError::NonFiniteEntry { what, index, value });"
+ },
+ {
+  "label": "t07-ul-largest-abs",
+  "old": "largest = largest.max(value.abs());",
+  "new": "largest = largest.max(value);"
+ },
+ {
+  "label": "t07-ul-zero",
+  "old": "    if largest == 0.0 {\n        return Err(IntrinsicError::ZeroLength { what });",
+  "new": "    if largest < 0.0 {\n        return Err(IntrinsicError::ZeroLength { what });"
+ },
+ {
+  "label": "t07-ul-scale",
+  "old": "    let root = v.iter().map(|x| (x / largest) * (x / largest)).sum::<f64>().sqrt();\n    for x in v.iter_mut() {\n        *x = *x / largest / root;",
+  "new": "    let root = v.iter().map(|x| x * x).sum::<f64>().sqrt();\n    for x in v.iter_mut() {\n        *x /= root;"
+ },
+ {
+  "label": "t07-ul-sqrt",
+  "old": "(x / largest)).sum::<f64>().sqrt();",
+  "new": "(x / largest)).sum::<f64>();"
+ },
+ {
+  "label": "t07-ul-divide",
+  "old": "*x = *x / largest / root;",
+  "new": "*x = *x / largest * root;"
+ },
+ {
+  "label": "t07-ul-order",
+  "old": "*x = *x / largest / root;",
+  "new": "*x /= largest * root;"
+ },
+ {
+  "label": "t07-cov-mean",
+  "old": "if balance == Balance::Mean { mu } else {",
+  "new": "if balance == Balance::Median { mu } else {"
+ },
+ {
+  "label": "t07-cov-median",
+  "old": "{ mu * core::f64::consts::LN_2 } })",
+  "new": "{ mu * core::f64::consts::FRAC_1_SQRT_2 } })"
+ },
+ {
+  "label": "t07-bcm-mean",
+  "old": "Balance::Mean => held(\"theta\", 2.0 * mu)?,",
+  "new": "Balance::Mean => held(\"theta\", mu)?,"
+ },
+ {
+  "label": "t07-bcm-median",
+  "old": "Balance::Median => core::f64::consts::LN_2 * mu,",
+  "new": "Balance::Median => core::f64::consts::LN_2 * 2.0 * mu,"
+ },
+ {
+  "label": "t07-bcm-held",
+  "old": "held(\"theta\", 2.0 * mu)?",
+  "new": "Ok::<f64, IntrinsicError>(2.0 * mu)?"
+ },
+ {
+  "label": "t07-check-theta",
+  "old": "Self::Covariance { theta } | Self::Bcm { theta } => finite(\"theta\", theta).map(|_| ()),",
+  "new": "Self::Covariance { theta: _ } | Self::Bcm { theta: _ } => Ok(()),"
+ },
+ {
+  "label": "t07-check-simple",
+  "old": "            Self::Simple => Ok(()),",
+  "new": "            Self::Simple => finite(\"theta\", f64::NAN).map(|_| ()),"
+ },
+ {
+  "label": "t07-omega-simple",
+  "old": "            Self::Simple => y,",
+  "new": "            Self::Simple => 1.0,"
+ },
+ {
+  "label": "t07-omega-cov",
+  "old": "Self::Covariance { theta } => y - theta,",
+  "new": "Self::Covariance { theta } => y + theta,"
+ },
+ {
+  "label": "t07-omega-bcm",
+  "old": "Self::Bcm { theta } => (y - theta) * y,",
+  "new": "Self::Bcm { theta } => (y - theta) * theta,"
+ },
+ {
+  "label": "t07-expmean-simple",
+  "old": "            Self::Simple => mu,",
+  "new": "            Self::Simple => 2.0 * mu,"
+ },
+ {
+  "label": "t07-expmean-cov",
+  "old": "Self::Covariance { theta } => mu - theta,",
+  "new": "Self::Covariance { theta } => theta - mu,"
+ },
+ {
+  "label": "t07-expmean-bcm",
+  "old": "Self::Bcm { theta } => 2.0 * mu * mu - theta * mu,",
+  "new": "Self::Bcm { theta } => mu * mu - theta * mu,"
+ },
+ {
+  "label": "t07-expmean-held",
+  "old": "held(\"E[Ω(y)]\", mean)",
+  "new": "Ok(mean)"
+ },
+ {
+  "label": "t07-expmean-check",
+  "old": "pub fn exponential_mean(&self, mu: f64) -> Result<f64, IntrinsicError> {\n        self.check()?;",
+  "new": "pub fn exponential_mean(&self, mu: f64) -> Result<f64, IntrinsicError> {"
+ },
+ {
+  "label": "t07-expmean-positive",
+  "old": "        positive(\"mu\", mu)?;\n        let mean = match",
+  "new": "        let mean = match"
+ },
+ {
+  "label": "t07-anti-zero",
+  "old": "        if q == 0.0 {\n            return 0.0;",
+  "new": "        if q < 0.0 {\n            return 0.0;"
+ },
+ {
+  "label": "t07-anti-ln",
+  "old": "let l = q.ln();",
+  "new": "let l = q.log10();"
+ },
+ {
+  "label": "t07-anti-hebb",
+  "old": "let hebb = mu * q * (1.0 - l);",
+  "new": "let hebb = mu * q * (2.0 - l);"
+ },
+ {
+  "label": "t07-anti-cov",
+  "old": "Self::Covariance { theta } => hebb - theta * q,",
+  "new": "Self::Covariance { theta } => hebb - theta,"
+ },
+ {
+  "label": "t07-anti-bcm-const",
+  "old": "mu * (l * l - 2.0 * l + 2.0)",
+  "new": "mu * (l * l - 2.0 * l + 1.0)"
+ },
+ {
+  "label": "t07-anti-bcm-linear",
+  "old": "(l * l - 2.0 * l + 2.0)",
+  "new": "(l * l - l + 2.0)"
+ },
+ {
+  "label": "t07-anti-bcm-theta",
+  "old": "theta * (l - 1.0))",
+  "new": "theta * (l + 1.0))"
+ },
+ {
+  "label": "t07-anti-bcm-mu",
+  "old": "Self::Bcm { theta } => mu * q * (mu *",
+  "new": "Self::Bcm { theta } => q * (mu *"
+ },
+ {
+  "label": "t07-cluster-zero",
+  "old": "        if i == 0 || i > n {",
+  "new": "        if i > n {"
+ },
+ {
+  "label": "t07-cluster-n",
+  "old": "        if i == 0 || i > n {",
+  "new": "        if i == 0 || i > n + 1 {"
+ },
+ {
+  "label": "t07-cluster-q",
+  "old": "let q = |k: usize| k as f64 / n as f64;",
+  "new": "let q = |k: usize| k as f64 / (n + 1) as f64;"
+ },
+ {
+  "label": "t07-cluster-order",
+  "old": "self.antiderivative(mu, q(i)) - self.antiderivative(mu, q(i - 1))",
+  "new": "self.antiderivative(mu, q(i - 1)) - self.antiderivative(mu, q(i))"
+ },
+ {
+  "label": "t07-cluster-held",
+  "old": "held(\"a cluster's contribution\", ",
+  "new": "Ok::<f64, IntrinsicError>("
+ },
+ {
+  "label": "t07-cluster-check",
+  "old": "pub fn cluster(&self, mu: f64, n: usize, i: usize) -> Result<f64, IntrinsicError> {\n        self.check()?;",
+  "new": "pub fn cluster(&self, mu: f64, n: usize, i: usize) -> Result<f64, IntrinsicError> {"
+ },
+ {
+  "label": "t07-cluster-positive",
+  "old": "        positive(\"mu\", mu)?;\n        if i == 0",
+  "new": "        if i == 0"
+ },
+ {
+  "label": "t07-clusters-max",
+  "old": "(1..=n.max(1))",
+  "new": "(1..=n)"
+ },
+ {
+  "label": "t07-clusters-normalise",
+  "old": "unit_length(\"the vector of cluster contributions\", &mut f)?;",
+  "new": "let _ = &mut f;"
+ },
+ {
+  "label": "t07-hebbian-fig3",
+  "old": "pub const FIG3: Self = Self { rule: Hebb::Simple, eta: 0.001 };",
+  "new": "pub const FIG3: Self = Self { rule: Hebb::Simple, eta: 0.01 };"
+ },
+ {
+  "label": "t07-hebbian-fig7",
+  "old": "pub const FIG7: Self = Self { rule: Hebb::Simple, eta: 0.01 };",
+  "new": "pub const FIG7: Self = Self { rule: Hebb::Simple, eta: 0.001 };"
+ },
+ {
+  "label": "t07-hebbian-new-check",
+  "old": "        let h = Self { rule, eta };\n        h.check()?;",
+  "new": "        let h = Self { rule, eta };"
+ },
+ {
+  "label": "t07-hebbian-check-rule",
+  "old": "        self.rule.check()?;\n        positive(\"eta_Hebb\", self.eta)?;",
+  "new": "        positive(\"eta_Hebb\", self.eta)?;"
+ },
+ {
+  "label": "t07-hebbian-check-eta",
+  "old": "positive(\"eta_Hebb\", self.eta)?;",
+  "new": "finite(\"eta_Hebb\", self.eta)?;"
+ },
+ {
+  "label": "t07-update-check",
+  "old": "pub fn update(&self, u: &[f64], y: f64) -> Result<Vec<f64>, IntrinsicError> {\n        self.check()?;",
+  "new": "pub fn update(&self, u: &[f64], y: f64) -> Result<Vec<f64>, IntrinsicError> {"
+ },
+ {
+  "label": "t07-update-y",
+  "old": "        finite(\"y\", y)?;\n        let g",
+  "new": "        let g"
+ },
+ {
+  "label": "t07-update-g-held",
+  "old": "let g = held(\"ηΩ(y)\", self.eta * self.rule.omega(y))?;",
+  "new": "let g = self.eta * self.rule.omega(y);"
+ },
+ {
+  "label": "t07-update-g-omega",
+  "old": "held(\"ηΩ(y)\", self.eta * self.rule.omega(y))",
+  "new": "held(\"ηΩ(y)\", self.eta * y)"
+ },
+ {
+  "label": "t07-update-entry-finite",
+  "old": "                if value.is_finite() {\n                    held(\"an entry of Δw\", g * value)",
+  "new": "                if !value.is_nan() {\n                    held(\"an entry of Δw\", g * value)"
+ },
+ {
+  "label": "t07-update-entry-held",
+  "old": "held(\"an entry of Δw\", g * value)",
+  "new": "Ok(g * value)"
+ },
+ {
+  "label": "t07-update-entry-product",
+  "old": "held(\"an entry of Δw\", g * value)",
+  "new": "held(\"an entry of Δw\", g + value)"
+ },
+ {
+  "label": "t07-update-entry-what",
+  "old": "                    Err(IntrinsicError::NonFiniteEntry { what: \"u\", index, value })",
+  "new": "                    Err(IntrinsicError::NonFiniteEntry { what: \"w\", index, value })"
+ },
+ {
+  "label": "t07-unit-new-check",
+  "old": "        sigmoid.check()?;\n        unit_length(\"w\", &mut w)?;",
+  "new": "        unit_length(\"w\", &mut w)?;"
+ },
+ {
+  "label": "t07-unit-new-normalise",
+  "old": "        unit_length(\"w\", &mut w)?;\n        Ok(Self { w, sigmoid })",
+  "new": "        Ok(Self { w, sigmoid })"
+ },
+ {
+  "label": "t07-drive-dimension",
+  "old": "        if u.len() != self.w.len() {",
+  "new": "        if u.len() > self.w.len() {"
+ },
+ {
+  "label": "t07-drive-finite",
+  "old": "            if !value.is_finite() {\n                return Err(IntrinsicError::NonFiniteEntry { what: \"u\", index, value });",
+  "new": "            if value.is_infinite() {\n                return Err(IntrinsicError::NonFiniteEntry { what: \"u\", index, value });"
+ },
+ {
+  "label": "t07-drive-sum",
+  "old": "            x += w * value;",
+  "new": "            x += value;"
+ },
+ {
+  "label": "t07-drive-held",
+  "old": "        held(\"x\", x)\n",
+  "new": "        Ok(x)\n"
+ },
+ {
+  "label": "t07-step-rate",
+  "old": "        let y = self.sigmoid.rate(x);",
+  "new": "        let y = self.sigmoid.rate(-x);"
+ },
+ {
+  "label": "t07-step-ip",
+  "old": "            Some(rule) => rule.learn(self.sigmoid, x)?,",
+  "new": "            Some(_) => self.sigmoid,"
+ },
+ {
+  "label": "t07-step-none",
+  "old": "            None => self.sigmoid,\n        };",
+  "new": "            None => Sigmoid::FIG8_FIXED,\n        };"
+ },
+ {
+  "label": "t07-step-order",
+  "old": "        let dw = hebb.update(u, y)?;",
+  "new": "        let dw = hebb.update(u, sigmoid.rate(x))?;"
+ },
+ {
+  "label": "t07-step-add",
+  "old": ".map(|(old, change)| old + change)",
+  "new": ".map(|(old, change)| old - change)"
+ },
+ {
+  "label": "t07-step-normalise",
+  "old": "        unit_length(\"w + Δw\", &mut w)?;",
+  "new": "        let _ = &mut w;"
+ },
+ {
+  "label": "t07-step-commit-w",
+  "old": "        self.w = w;\n        self.sigmoid = sigmoid;",
+  "new": "        let _ = w;\n        self.sigmoid = sigmoid;"
+ },
+ {
+  "label": "t07-step-commit-sigmoid",
+  "old": "        self.sigmoid = sigmoid;\n        Ok((x, y))",
+  "new": "        let _ = sigmoid;\n        Ok((x, y))"
+ },
+ {
+  "label": "t07-step-return",
+  "old": "        Ok((x, y))\n",
+  "new": "        Ok((y, x))\n"
+ },
+ {
+  "label": "t07-density-rate",
+  "old": "let laplace = (-core::f64::consts::SQRT_2 * u1.abs()).exp();",
+  "new": "let laplace = (-u1.abs()).exp();"
+ },
+ {
+  "label": "t07-density-abs",
+  "old": "let laplace = (-core::f64::consts::SQRT_2 * u1.abs()).exp();",
+  "new": "let laplace = (-core::f64::consts::SQRT_2 * u1).exp();"
+ },
+ {
+  "label": "t07-density-edge",
+  "old": "if u2.abs() <= 3.0_f64.sqrt() {",
+  "new": "if u2.abs() < 3.0_f64.sqrt() {"
+ },
+ {
+  "label": "t07-density-width",
+  "old": "if u2.abs() <= 3.0_f64.sqrt() {",
+  "new": "if u2.abs() <= 2.0_f64.sqrt() {"
+ },
+ {
+  "label": "t07-density-band-norm",
+  "old": "laplace / (2.0 * 6.0_f64.sqrt())",
+  "new": "laplace / (2.0 * 5.0_f64.sqrt())"
+ },
+ {
+  "label": "t07-density-gauss-laplace",
+  "old": "laplace / core::f64::consts::SQRT_2 * (-0.5 * u2 * u2).exp()",
+  "new": "laplace * (-0.5 * u2 * u2).exp()"
+ },
+ {
+  "label": "t07-density-gauss-half",
+  "old": "(-0.5 * u2 * u2).exp()",
+  "new": "(-u2 * u2).exp()"
+ },
+ {
+  "label": "t07-density-gauss-norm",
+  "old": "(-0.5 * u2 * u2).exp() / core::f64::consts::TAU.sqrt()",
+  "new": "(-0.5 * u2 * u2).exp() / core::f64::consts::PI.sqrt()"
+ },
+ {
+  "label": "t07-sample-tail",
+  "old": "let tail = -(1.0 - rng.next_f64()).ln() / core::f64::consts::SQRT_2;",
+  "new": "let tail = -(1.0 - rng.next_f64()).ln() / 2.0;"
+ },
+ {
+  "label": "t07-sample-sign",
+  "old": "if rng.next_u32() & 1 == 1 { -tail } else { tail }",
+  "new": "if rng.next_u32() & 1 == 0 { -tail } else { tail }"
+ },
+ {
+  "label": "t07-sample-band",
+  "old": "Self::LaplaceBand => 3.0_f64.sqrt() * (2.0 * rng.next_f64() - 1.0),",
+  "new": "Self::LaplaceBand => 2.0_f64.sqrt() * (2.0 * rng.next_f64() - 1.0),"
+ },
+ {
+  "label": "t07-sample-radius",
+  "old": "let radius = (-2.0 * (1.0 - rng.next_f64()).ln()).sqrt();",
+  "new": "let radius = (-(1.0 - rng.next_f64()).ln()).sqrt();"
+ },
+ {
+  "label": "t07-sample-sin",
+  "old": "radius * (core::f64::consts::TAU * rng.next_f64()).sin()",
+  "new": "radius * (core::f64::consts::TAU * rng.next_f64()).cos()"
+ },
+ {
+  "label": "t07-bars-fig7-n",
+  "old": "pub const FIG7: Self = Self { n: 10, p: 0.1 };",
+  "new": "pub const FIG7: Self = Self { n: 12, p: 0.1 };"
+ },
+ {
+  "label": "t07-bars-fig7-p",
+  "old": "pub const FIG7: Self = Self { n: 10, p: 0.1 };",
+  "new": "pub const FIG7: Self = Self { n: 10, p: 0.2 };"
+ },
+ {
+  "label": "t07-aligned-low",
+  "old": "pub const ALIGNED: f64 = 0.8;",
+  "new": "pub const ALIGNED: f64 = 0.78;"
+ },
+ {
+  "label": "t07-aligned-high",
+  "old": "pub const ALIGNED: f64 = 0.8;",
+  "new": "pub const ALIGNED: f64 = 0.82;"
+ },
+ {
+  "label": "t07-margin-low",
+  "old": "pub const MARGIN: f64 = 0.4;",
+  "new": "pub const MARGIN: f64 = 0.34;"
+ },
+ {
+  "label": "t07-margin-high",
+  "old": "pub const MARGIN: f64 = 0.4;",
+  "new": "pub const MARGIN: f64 = 0.47;"
+ },
+ {
+  "label": "t07-bars-new-check",
+  "old": "        let bars = Self { n, p };\n        bars.check()?;",
+  "new": "        let bars = Self { n, p };"
+ },
+ {
+  "label": "t07-bars-check-n",
+  "old": "if self.n < 2 || self.n.checked_mul(self.n).is_none() {",
+  "new": "if self.n < 1 || self.n.checked_mul(self.n).is_none() {"
+ },
+ {
+  "label": "t07-bars-check-overflow",
+  "old": "if self.n < 2 || self.n.checked_mul(self.n).is_none() {",
+  "new": "if self.n < 2 {"
+ },
+ {
+  "label": "t07-bars-check-p-low",
+  "old": "if !(self.p > 0.0 && self.p <= 1.0) {",
+  "new": "if !(self.p >= 0.0 && self.p <= 1.0) {"
+ },
+ {
+  "label": "t07-bars-check-p-high",
+  "old": "if !(self.p > 0.0 && self.p <= 1.0) {",
+  "new": "if !(self.p > 0.0 && self.p <= 2.0) {"
+ },
+ {
+  "label": "t07-pixels-check",
+  "old": "fn pixels(&self, what: &'static str, len: usize) -> Result<usize, IntrinsicError> {\n        self.check()?;",
+  "new": "fn pixels(&self, what: &'static str, len: usize) -> Result<usize, IntrinsicError> {"
+ },
+ {
+  "label": "t07-pixels-len",
+  "old": "if len == pixels { Ok(pixels) }",
+  "new": "if len >= pixels { Ok(pixels) }"
+ },
+ {
+  "label": "t07-pixel-row",
+  "old": "if k < self.n { k * self.n + j } else {",
+  "new": "if k < self.n { j * self.n + k } else {"
+ },
+ {
+  "label": "t07-pixel-column",
+  "old": "j * self.n + k - self.n }",
+  "new": "k * self.n + j - self.n }"
+ },
+ {
+  "label": "t07-blank-power",
+  "old": "(1.0 - self.p).powf(2.0 * self.n as f64)",
+  "new": "(1.0 - self.p).powf(self.n as f64)"
+ },
+ {
+  "label": "t07-blank-check",
+  "old": "pub fn blank(&self) -> Result<f64, IntrinsicError> {\n        self.check()?;",
+  "new": "pub fn blank(&self) -> Result<f64, IntrinsicError> {"
+ },
+ {
+  "label": "t07-template-check",
+  "old": "pub fn template(&self, k: usize) -> Result<Vec<f64>, IntrinsicError> {\n        self.check()?;",
+  "new": "pub fn template(&self, k: usize) -> Result<Vec<f64>, IntrinsicError> {"
+ },
+ {
+  "label": "t07-template-range",
+  "old": "        if k >= 2 * self.n {",
+  "new": "        if k > 2 * self.n {"
+ },
+ {
+  "label": "t07-template-value",
+  "old": "t[self.pixel(k, j)] = 1.0 / (self.n as f64).sqrt();",
+  "new": "t[self.pixel(k, j)] = 1.0;"
+ },
+ {
+  "label": "t07-sample-fill",
+  "old": "        image.fill(0.0);\n",
+  "new": ""
+ },
+ {
+  "label": "t07-sample-p",
+  "old": "if rng.next_f64() < self.p {",
+  "new": "if rng.next_f64() < 0.5 * self.p {"
+ },
+ {
+  "label": "t07-sample-shown",
+  "old": "                shown += 1;",
+  "new": "                shown += 2;"
+ },
+ {
+  "label": "t07-sample-saturate",
+  "old": "image[self.pixel(k, j)] = 1.0;",
+  "new": "image[self.pixel(k, j)] += 1.0;"
+ },
+ {
+  "label": "t07-sample-lit",
+  "old": "let lit = image.iter().filter(|&&v| v > 0.0).count();",
+  "new": "let lit = image.iter().filter(|&&v| v >= 0.0).count();"
+ },
+ {
+  "label": "t07-sample-lit-guard",
+  "old": "        if lit > 0 {\n            let scale",
+  "new": "        if lit < usize::MAX {\n            let scale"
+ },
+ {
+  "label": "t07-sample-scale",
+  "old": "let scale = 1.0 / (lit as f64).sqrt();",
+  "new": "let scale = 1.0 / lit as f64;"
+ },
+ {
+  "label": "t07-overlaps-pixels",
+  "old": "        self.pixels(\"w\", w.len())?;",
+  "new": "        self.check()?;"
+ },
+ {
+  "label": "t07-overlaps-normalise",
+  "old": "        unit_length(\"w\", &mut unit)?;\n        let side",
+  "new": "        let side"
+ },
+ {
+  "label": "t07-overlaps-side",
+  "old": "let side = (self.n as f64).sqrt();",
+  "new": "let side = self.n as f64;"
+ },
+ {
+  "label": "t07-aligned-best",
+  "old": "            if o[k] > o[best] {",
+  "new": "            if o[k] < o[best] {"
+ },
+ {
+  "label": "t07-aligned-second",
+  "old": ".filter(|&(k, _)| k != best)",
+  "new": ".filter(|&(k, _)| k != 0)"
+ },
+ {
+  "label": "t07-aligned-and",
+  "old": "o[best] >= Self::ALIGNED && o[best] - second >= Self::MARGIN",
+  "new": "o[best] >= Self::ALIGNED || o[best] - second >= Self::MARGIN"
+ },
+ {
+  "label": "t07-aligned-lead",
+  "old": "o[best] - second >= Self::MARGIN",
+  "new": "o[best] + second >= Self::MARGIN"
+ },
+ {
+  "label": "t07-triesch-fig3",
+  "old": "pub const FIG3: Self = Self { mu: 0.1, eta: 0.01 };",
+  "new": "pub const FIG3: Self = Self { mu: 0.1, eta: 0.001 };"
+ },
+ {
+  "label": "t07-triesch-fig7",
+  "old": "pub const FIG7: Self = Self { mu: 0.05, eta: 0.01 };",
+  "new": "pub const FIG7: Self = Self { mu: 0.1, eta: 0.01 };"
+ },
+ {
+  "label": "t07-sigmoid-fig8",
+  "old": "pub const FIG8_FIXED: Self = Self { a: 5.0, b: -1.15 };",
+  "new": "pub const FIG8_FIXED: Self = Self { a: 5.0, b: -1.5 };"
  }
 ]
