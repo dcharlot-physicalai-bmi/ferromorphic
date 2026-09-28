@@ -9,7 +9,7 @@ hardware constraint models, analog device non-idealities, NIR, event-camera deco
 metrics, teaching tasks — and a joules ledger that charges for the memory traffic a synaptic
 operation needs.
 
-**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 88 modules, 3,032 tests.**
+**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 89 modules, 3,062 tests.**
 
 Run it in a browser without installing anything:
 **[energy.physicalai-bmi.org/neuromorphic](https://energy.physicalai-bmi.org/neuromorphic)** — the
@@ -65,6 +65,7 @@ accelerates is exactly these loops; what it charges for is moving the weights.
 | `eprop` | local learning rules: training forward in time without storing the past |
 | `continual` | learning without forgetting, on-chip, with the forgetting measured first |
 | `meanfield` | mean-field theory: what a spiking network does in aggregate, in closed form |
+| `density` | the population density of integrate-and-fire neurons under white noise (Richardson 2007, Brunel 2000): threshold integration for the steady state and for the linear response to five modulated parameters at any complex λ. The flux and the normalisation are exact; everything else is first order in the step. The LIF is checked against Brunel's eqs. (19), (21) and (46) at every frequency. The EIF is checked against an independent stiff-ODE integration of Richardson's own equations. From the eigenvalues it recovers Brunel's Table 1 frequencies and the fast Hopf line at g = 8. Three printed defects are recorded: eq. (19)'s Heaviside argument, the boundary conditions after eq. (40), and three high-frequency drives, eqs. (50) and (53), printed without their dimensions |
 | `bayes` | spikes as samples: Bayesian inference by firing |
 | `vision` | event-based vision: the algorithms that consume what an event camera emits |
 | `voxel` | event tensors: Zhu et al.'s voxel grid, every event landing whole, and time-binned frames that keep the recording's last event — both reproduced value for value against tonic 1.6.0, which scales the voxel grid to `[0, B]` and so drops the last event, counts every OFF event as +1 under its own DVS Gesture dtype, and drops the tail of its time-binned frames while counting in `int16` (40,000 events on one pixel read −25,537) |
@@ -290,7 +291,7 @@ rather than assumed.
 - **A sub-threshold current returns `None`, not a large number.** "Fires rarely" and "does not fire"
   are different statements and a rate-coded readout cannot recover the difference later.
 
-3,032 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
+3,062 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
 `#![forbid(unsafe_code)]`, and `cargo build --target wasm32-unknown-unknown` compiles the library
 unchanged. Three of the four `examples/` are verification gates that exit non-zero when a check fails. Two of them run
 a closed form against the simulator — the LIF's analytic inter-spike interval, and the STDP pair
@@ -341,15 +342,19 @@ be reproduced cannot be checked against anything, including itself.
 
 ## Status
 
-**Today:** eighty-eight modules, 3,032 tests, and **10,285 recorded mutations — one list per
+**Today:** eighty-nine modules, 3,062 tests, and **10,514 recorded mutations — one list per
 module**, every one applicable to today's source by `python3 tools/mutate.py`.
 `python3 tools/readme_numbers.py` recomputes those figures from the repository and refuses if this
 paragraph disagrees with it, because the last time they were typed by hand the test count was 423
 low and nothing noticed. **0.20.0** was the release in which every recorded mutation was run
-against the released tree — 71 modules of 71, all 7,638 of its recorded entries. The ten modules
-added since — `intspike`, `planar`, `json`, `glif` and `synchrony` in 0.21.0; `voxel`, `npy`,
-`chaos`, `plif` and `istdp` in 0.22.0 — each had its full list run clean against the tree it was
-added in.
+against the released tree — 71 modules of 71, all 7,638 of its recorded entries. The eighteen
+modules added since — `intspike`, `planar`, `json`, `glif` and `synchrony` in 0.21.0; `voxel`,
+`npy`, `chaos`, `plif` and `istdp` in 0.22.0; `clopath`, `morrislecar`, `hindmarshrose`,
+`calcium`, `intrinsic`, `gapjunction`, `som` and `density` in 0.23.0 — each had its full list run
+clean against the tree it was added in. **0.23.0** is also the release in which every module's
+citations were read against their primary sources: 466 citations across the 81 modules of 0.22.0,
+in which 160 claims contradicted an open primary and 73 citations were wrong, each finding
+re-checked independently before anything changed.
 
 **The list being complete is not the same as the list being adequate, and 0.20.0 is what measuring
 that cost.** Every module had a recorded list at 0.19.0 and every list ran clean. Thirty of them

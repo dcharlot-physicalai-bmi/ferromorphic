@@ -116,6 +116,7 @@ pub mod crossover;
 pub mod decolle;
 pub mod delays;
 pub mod dendrite;
+pub mod density;
 pub mod device;
 pub mod distance;
 pub mod encode;

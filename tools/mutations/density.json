@@ -1,0 +1,1148 @@
+[
+ {
+  "label": "msg NonFinite",
+  "old": "{value} is not finite\"",
+  "new": "{value} is infinite\""
+ },
+ {
+  "label": "msg NotPositive",
+  "old": "write!(f, \"{what} = {value} must be finite and positive\")",
+  "new": "write!(f, \"{what} = {value} must be positive\")"
+ },
+ {
+  "label": "msg Negative",
+  "old": "write!(f, \"{what} = {value} must not be negative\")",
+  "new": "write!(f, \"{what} = {value} must be positive\")"
+ },
+ {
+  "label": "msg Ordering fields",
+  "old": "and was given {v_lb}, {v_re}, {v_th}",
+  "new": "and was given {v_lb}, {v_th}, {v_re}"
+ },
+ {
+  "label": "msg OffLattice",
+  "old": "write!(f, \"{what} is {cells} steps above v_lb, which is not a lattice point\")",
+  "new": "write!(f, \"{what} is {cells} steps above v_lb\")"
+ },
+ {
+  "label": "msg TooManyCells",
+  "old": "{MAX_CELLS} this module will allocate\")",
+  "new": "{MAX_CELLS} this module allows\")"
+ },
+ {
+  "label": "msg Overflow",
+  "old": "\"{what} overflowed to {value}\"",
+  "new": "\"{what} overflowed\""
+ },
+ {
+  "label": "msg NotRepresentable",
+  "old": "write!(f, \"{what} is not representable in f64 at these parameters\")",
+  "new": "write!(f, \"{what} is not representable\")"
+ },
+ {
+  "label": "msg Unevaluable",
+  "old": "write!(f, \"{what} cannot be evaluated in f64 at these parameters: nu0, e^(-y^2)",
+  "new": "write!(f, \"{what} can be evaluated in f64 at these parameters: nu0, e^(-y^2)"
+ },
+ {
+  "label": "brunel refusal variant",
+  "old": "_ => Err(DensityError::Unevaluable { what: \"brunel_density\" })",
+  "new": "_ => Err(DensityError::NotRepresentable { what: \"brunel_density\" })"
+ },
+ {
+  "label": "msg WrongModel",
+  "old": "write!(f, \"{what} is not defined for this model\")",
+  "new": "write!(f, \"{what} is undefined\")"
+ },
+ {
+  "label": "msg ZeroFrequency",
+  "old": "f.write_str(\"the response at lambda = 0 is 0/0; ask for a small nonzero frequency\")",
+  "new": "f.write_str(\"lambda = 0\")"
+ },
+ {
+  "label": "msg NoConvergence order",
+  "old": "it stopped at lambda = ({re}, {im}) per second",
+  "new": "it stopped at lambda = ({im}, {re}) per second"
+ },
+ {
+  "label": "msg MeanField prefix",
+  "old": "write!(f, \"meanfield: {e}\")",
+  "new": "write!(f, \"{e}\")"
+ },
+ {
+  "label": "finite accepts inf",
+  "old": "if value.is_finite() { Ok(value) } else { Err(DensityError::NonFinite",
+  "new": "if !value.is_nan() { Ok(value) } else { Err(DensityError::NonFinite"
+ },
+ {
+  "label": "positive drops finiteness",
+  "old": "if value.is_finite() && value > 0.0 { Ok(value) }",
+  "new": "if value > 0.0 { Ok(value) }"
+ },
+ {
+  "label": "positive admits zero",
+  "old": "value.is_finite() && value > 0.0 {",
+  "new": "value.is_finite() && value >= 0.0 {"
+ },
+ {
+  "label": "MAX_CELLS 1e7 -> 1e8",
+  "old": "pub const MAX_CELLS: f64 = 1e7;",
+  "new": "pub const MAX_CELLS: f64 = 1e8;"
+ },
+ {
+  "label": "LATTICE_TOLERANCE 1e-6 -> 1e-5",
+  "old": "pub const LATTICE_TOLERANCE: f64 = 1e-6;",
+  "new": "pub const LATTICE_TOLERANCE: f64 = 1e-5;"
+ },
+ {
+  "label": "LATTICE_TOLERANCE 1e-6 -> 1e-7",
+  "old": "pub const LATTICE_TOLERANCE: f64 = 1e-6;",
+  "new": "pub const LATTICE_TOLERANCE: f64 = 1e-7;"
+ },
+ {
+  "label": "norm uses re twice",
+  "old": "self.re.hypot(self.im)",
+  "new": "self.re.hypot(self.re)"
+ },
+ {
+  "label": "arg swaps atan2",
+  "old": "self.im.atan2(self.re)",
+  "new": "self.re.atan2(self.im)"
+ },
+ {
+  "label": "exp swaps cos and sin",
+  "old": "Self::new(m * self.im.cos(), m * self.im.sin())",
+  "new": "Self::new(m * self.im.sin(), m * self.im.cos())"
+ },
+ {
+  "label": "exp drops modulus",
+  "old": "let m = self.re.exp();",
+  "new": "let m = self.re;"
+ },
+ {
+  "label": "scale skips im",
+  "old": "Self::new(k * self.re, k * self.im)",
+  "new": "Self::new(k * self.re, self.im)"
+ },
+ {
+  "label": "add im sign",
+  "old": "Self::new(self.re + o.re, self.im + o.im)",
+  "new": "Self::new(self.re + o.re, self.im - o.im)"
+ },
+ {
+  "label": "sub im sign",
+  "old": "Self::new(self.re - o.re, self.im - o.im)",
+  "new": "Self::new(self.re - o.re, self.im + o.im)"
+ },
+ {
+  "label": "mul real sign",
+  "old": "self.re * o.re - self.im * o.im",
+  "new": "self.re * o.re + self.im * o.im"
+ },
+ {
+  "label": "mul imag sign",
+  "old": "self.re * o.im + self.im * o.re",
+  "new": "self.re * o.im - self.im * o.re"
+ },
+ {
+  "label": "div branch inverted",
+  "old": "if o.re.abs() >= o.im.abs() {",
+  "new": "if o.re.abs() < o.im.abs() {"
+ },
+ {
+  "label": "div first d sign",
+  "old": "(o.im / o.re, o.re + o.im * (o.im / o.re))",
+  "new": "(o.im / o.re, o.re - o.im * (o.im / o.re))"
+ },
+ {
+  "label": "div first re sign",
+  "old": "Self::new((self.re + self.im * t) / d, (self.im - self.re * t) / d)",
+  "new": "Self::new((self.re - self.im * t) / d, (self.im - self.re * t) / d)"
+ },
+ {
+  "label": "div first im sign",
+  "old": "Self::new((self.re + self.im * t) / d, (self.im - self.re * t) / d)",
+  "new": "Self::new((self.re + self.im * t) / d, (self.im + self.re * t) / d)"
+ },
+ {
+  "label": "div second d sign",
+  "old": "(o.re / o.im, o.im + o.re * (o.re / o.im))",
+  "new": "(o.re / o.im, o.im - o.re * (o.re / o.im))"
+ },
+ {
+  "label": "div second re sign",
+  "old": "Self::new((self.re * t + self.im) / d, (self.im * t - self.re) / d)",
+  "new": "Self::new((self.re * t - self.im) / d, (self.im * t - self.re) / d)"
+ },
+ {
+  "label": "div second im sign",
+  "old": "Self::new((self.re * t + self.im) / d, (self.im * t - self.re) / d)",
+  "new": "Self::new((self.re * t + self.im) / d, (self.im * t + self.re) / d)"
+ },
+ {
+  "label": "neg keeps im",
+  "old": "Self::new(-self.re, -self.im)",
+  "new": "Self::new(-self.re, self.im)"
+ },
+ {
+  "label": "FIG1 tau",
+  "old": "model: Model::Lif,\n        tau: 20e-3,",
+  "new": "model: Model::Lif,\n        tau: 25e-3,"
+ },
+ {
+  "label": "FIG1 e0",
+  "old": "e0: -45e-3,\n        sigma: 1e-3,",
+  "new": "e0: -44e-3,\n        sigma: 1e-3,"
+ },
+ {
+  "label": "FIG1 sigma",
+  "old": "e0: -45e-3,\n        sigma: 1e-3,",
+  "new": "e0: -45e-3,\n        sigma: 1.1e-3,"
+ },
+ {
+  "label": "FIG1 v_th",
+  "old": "v_th: -50e-3,\n        v_re: -60e-3,",
+  "new": "v_th: -49e-3,\n        v_re: -60e-3,"
+ },
+ {
+  "label": "FIG1 v_re",
+  "old": "v_th: -50e-3,\n        v_re: -60e-3,",
+  "new": "v_th: -50e-3,\n        v_re: -61e-3,"
+ },
+ {
+  "label": "FIG1 v_lb",
+  "old": "v_th: -50e-3,\n        v_re: -60e-3,\n        v_lb: -100e-3,",
+  "new": "v_th: -50e-3,\n        v_re: -60e-3,\n        v_lb: -70e-3,"
+ },
+ {
+  "label": "FIG1 t_ref",
+  "old": "v_th: -50e-3,\n        v_re: -60e-3,\n        v_lb: -100e-3,\n        t_ref: 0.0,",
+  "new": "v_th: -50e-3,\n        v_re: -60e-3,\n        v_lb: -100e-3,\n        t_ref: 1e-3,"
+ },
+ {
+  "label": "FIG1 case ii sigma",
+  "old": "Self { e0: -60e-3, sigma: 5e-3, ..Self::FIG1_CASE_I }",
+  "new": "Self { e0: -60e-3, sigma: 4e-3, ..Self::FIG1_CASE_I }"
+ },
+ {
+  "label": "FIG1 case ii e0",
+  "old": "Self { e0: -60e-3, sigma: 5e-3, ..Self::FIG1_CASE_I }",
+  "new": "Self { e0: -59e-3, sigma: 5e-3, ..Self::FIG1_CASE_I }"
+ },
+ {
+  "label": "FIG2 v_t",
+  "old": "Model::Eif { v_t: -53e-3, delta_t: 3e-3 },",
+  "new": "Model::Eif { v_t: -52e-3, delta_t: 3e-3 },"
+ },
+ {
+  "label": "FIG2 delta_t",
+  "old": "Model::Eif { v_t: -53e-3, delta_t: 3e-3 },",
+  "new": "Model::Eif { v_t: -53e-3, delta_t: 2.5e-3 },"
+ },
+ {
+  "label": "FIG2 tau",
+  "old": "delta_t: 3e-3 },\n        tau: 20e-3,",
+  "new": "delta_t: 3e-3 },\n        tau: 25e-3,"
+ },
+ {
+  "label": "FIG2 sigma",
+  "old": "e0: -45e-3,\n        sigma: 2e-3,",
+  "new": "e0: -45e-3,\n        sigma: 2.5e-3,"
+ },
+ {
+  "label": "FIG2 e0",
+  "old": "e0: -45e-3,\n        sigma: 2e-3,",
+  "new": "e0: -44e-3,\n        sigma: 2e-3,"
+ },
+ {
+  "label": "FIG2 v_th",
+  "old": "sigma: 2e-3,\n        v_th: 0.0,",
+  "new": "sigma: 2e-3,\n        v_th: -10e-3,"
+ },
+ {
+  "label": "FIG2 v_re",
+  "old": "v_th: 0.0,\n        v_re: -60e-3,",
+  "new": "v_th: 0.0,\n        v_re: -61e-3,"
+ },
+ {
+  "label": "FIG2 case ii sigma",
+  "old": "Self { e0: -60e-3, sigma: 6e-3, ..Self::FIG2_CASE_I }",
+  "new": "Self { e0: -60e-3, sigma: 5e-3, ..Self::FIG2_CASE_I }"
+ },
+ {
+  "label": "FIG_STEP",
+  "old": "pub const FIG_STEP: f64 = 10e-6;",
+  "new": "pub const FIG_STEP: f64 = 20e-6;"
+ },
+ {
+  "label": "check drops tau",
+  "old": "        positive(\"tau\", self.tau)?;\n",
+  "new": ""
+ },
+ {
+  "label": "check drops sigma",
+  "old": "        positive(\"sigma\", self.sigma)?;\n",
+  "new": ""
+ },
+ {
+  "label": "check drops e0",
+  "old": "        finite(\"e0\", self.e0)?;\n",
+  "new": ""
+ },
+ {
+  "label": "check drops v_th",
+  "old": "        finite(\"v_th\", self.v_th)?;\n",
+  "new": ""
+ },
+ {
+  "label": "check drops v_re",
+  "old": "        finite(\"v_re\", self.v_re)?;\n",
+  "new": ""
+ },
+ {
+  "label": "check drops v_lb",
+  "old": "        finite(\"v_lb\", self.v_lb)?;\n",
+  "new": ""
+ },
+ {
+  "label": "check t_ref finiteness",
+  "old": "if finite(\"t_ref\", self.t_ref)? < 0.0 {",
+  "new": "if self.t_ref < 0.0 {"
+ },
+ {
+  "label": "check t_ref admits no zero",
+  "old": "self.t_ref)? < 0.0 {",
+  "new": "self.t_ref)? <= 0.0 {"
+ },
+ {
+  "label": "check Negative names",
+  "old": "Negative { what: \"t_ref\", value: self.t_ref }",
+  "new": "Negative { what: \"tref\", value: self.t_ref }"
+ },
+ {
+  "label": "ordering and->or",
+  "old": "self.v_lb < self.v_re && self.v_re < self.v_th",
+  "new": "self.v_lb < self.v_re || self.v_re < self.v_th"
+ },
+ {
+  "label": "ordering lb<=re",
+  "old": "if !(self.v_lb < self.v_re &&",
+  "new": "if !(self.v_lb <= self.v_re &&"
+ },
+ {
+  "label": "ordering re<=th",
+  "old": "self.v_re < self.v_th) {",
+  "new": "self.v_re <= self.v_th) {"
+ },
+ {
+  "label": "ordering fields swapped",
+  "old": "Ordering { v_lb: self.v_lb, v_re: self.v_re, v_th: self.v_th }",
+  "new": "Ordering { v_lb: self.v_lb, v_re: self.v_th, v_th: self.v_re }"
+ },
+ {
+  "label": "check drops v_t",
+  "old": "            finite(\"v_t\", v_t)?;\n",
+  "new": ""
+ },
+ {
+  "label": "check drops delta_t",
+  "old": "            positive(\"delta_t\", delta_t)?;\n",
+  "new": ""
+ },
+ {
+  "label": "psi(v_th) guard nan-only",
+  "old": "if !top.is_finite() {",
+  "new": "if top.is_nan() {"
+ },
+ {
+  "label": "psi(v_th) name",
+  "old": "what: \"psi(v_th)\", value: top",
+  "new": "what: \"psi\", value: top"
+ },
+ {
+  "label": "LIF psi nonzero",
+  "old": "Model::Lif => 0.0,",
+  "new": "Model::Lif => 1e-3,"
+ },
+ {
+  "label": "psi drops prefactor",
+  "old": "Model::Eif { v_t, delta_t } => delta_t * ((v - v_t) / delta_t).exp(),",
+  "new": "Model::Eif { v_t, delta_t } => ((v - v_t) / delta_t).exp(),"
+ },
+ {
+  "label": "psi sign of V_T",
+  "old": "delta_t * ((v - v_t) / delta_t).exp()",
+  "new": "delta_t * ((v + v_t) / delta_t).exp()"
+ },
+ {
+  "label": "lattice skips check",
+  "old": "        self.check()?;\n        positive(\"dv\", dv)?;",
+  "new": "        positive(\"dv\", dv)?;"
+ },
+ {
+  "label": "lattice skips dv",
+  "old": "        positive(\"dv\", dv)?;\n",
+  "new": ""
+ },
+ {
+  "label": "cells from reset",
+  "old": "let cells = (self.v_th - self.v_lb) / dv;",
+  "new": "let cells = (self.v_th - self.v_re) / dv;"
+ },
+ {
+  "label": "MAX_CELLS strict",
+  "old": "if !(cells <= MAX_CELLS) {",
+  "new": "if !(cells < MAX_CELLS) {"
+ },
+ {
+  "label": "TooManyCells reports the cap",
+  "old": "Err(DensityError::TooManyCells { cells })",
+  "new": "Err(DensityError::TooManyCells { cells: MAX_CELLS })"
+ },
+ {
+  "label": "n floors",
+  "old": "let n = cells.round();",
+  "new": "let n = cells.floor();"
+ },
+ {
+  "label": "v_th tolerance inverted",
+  "old": "if (cells - n).abs() > LATTICE_TOLERANCE {",
+  "new": "if (cells - n).abs() < LATTICE_TOLERANCE {"
+ },
+ {
+  "label": "OffLattice v_th reports n",
+  "old": "OffLattice { what: \"v_th\", cells }",
+  "new": "OffLattice { what: \"v_th\", cells: n }"
+ },
+ {
+  "label": "step not recomputed",
+  "old": "let step = (self.v_th - self.v_lb) / n;",
+  "new": "let step = dv;"
+ },
+ {
+  "label": "reset on the asked-for step",
+  "old": "let at_re = (self.v_re - self.v_lb) / step;",
+  "new": "let at_re = (self.v_re - self.v_lb) / dv;"
+ },
+ {
+  "label": "k_re floors",
+  "old": "let k_re = at_re.round();",
+  "new": "let k_re = at_re.floor();"
+ },
+ {
+  "label": "v_re tolerance inverted",
+  "old": "if (at_re - k_re).abs() > LATTICE_TOLERANCE ||",
+  "new": "if (at_re - k_re).abs() < LATTICE_TOLERANCE ||"
+ },
+ {
+  "label": "reset may sit on v_lb",
+  "old": "!(k_re >= 1.0 && k_re < n)",
+  "new": "!(k_re >= 0.0 && k_re < n)"
+ },
+ {
+  "label": "reset may sit on v_th",
+  "old": "k_re >= 1.0 && k_re < n)",
+  "new": "k_re >= 1.0 && k_re <= n)"
+ },
+ {
+  "label": "v_re guard or->and",
+  "old": "> LATTICE_TOLERANCE || !(k_re",
+  "new": "> LATTICE_TOLERANCE && !(k_re"
+ },
+ {
+  "label": "OffLattice v_re reports k_re",
+  "old": "OffLattice { what: \"v_re\", cells: at_re }",
+  "new": "OffLattice { what: \"v_re\", cells: k_re }"
+ },
+ {
+  "label": "lattice keeps asked-for dv",
+  "old": "Ok(Lattice { n: n as usize, k_re: k_re as usize, dv: step })",
+  "new": "Ok(Lattice { n: n as usize, k_re: k_re as usize, dv })"
+ },
+ {
+  "label": "s2 is sigma",
+  "old": "let s2 = self.sigma * self.sigma;",
+  "new": "let s2 = self.sigma;"
+ },
+ {
+  "label": "voltage offset by a cell",
+  "old": "(0..=n).map(|k| self.v_lb + k as f64 * dv)",
+  "new": "(0..=n).map(|k| self.v_lb + (k + 1) as f64 * dv)"
+ },
+ {
+  "label": "j at threshold 2",
+  "old": "j[n] = 1.0;",
+  "new": "j[n] = 2.0;"
+ },
+ {
+  "label": "G sign of psi",
+  "old": "let x = dv * (v - self.e0 - self.psi(v)) / s2;",
+  "new": "let x = dv * (v - self.e0 + self.psi(v)) / s2;"
+ },
+ {
+  "label": "G sign of E",
+  "old": "let x = dv * (v - self.e0 - self.psi(v)) / s2;",
+  "new": "let x = dv * (v + self.e0 - self.psi(v)) / s2;"
+ },
+ {
+  "label": "A inverted",
+  "old": "a[k] = x.exp();",
+  "new": "a[k] = (-x).exp();"
+ },
+ {
+  "label": "B at G = 0",
+  "old": "if x == 0.0 { 1.0 } else",
+  "new": "if x == 0.0 { 0.5 } else"
+ },
+ {
+  "label": "B times sigma^2",
+  "old": "x.exp_m1() / x }) / s2;",
+  "new": "x.exp_m1() / x }) * s2;"
+ },
+ {
+  "label": "B uses exp",
+  "old": "x.exp_m1() / x }",
+  "new": "x.exp() / x }"
+ },
+ {
+  "label": "reset jump one cell low",
+  "old": "j[k - 1] = if k == k_re + 1 { j[k] - 1.0 } else { j[k] };",
+  "new": "j[k - 1] = if k == k_re { j[k] - 1.0 } else { j[k] };"
+ },
+ {
+  "label": "p drops tau",
+  "old": "p[k - 1] = p[k] * a[k] + dv * self.tau * j[k] * b[k];",
+  "new": "p[k - 1] = p[k] * a[k] + dv * j[k] * b[k];"
+ },
+ {
+  "label": "p drops A",
+  "old": "p[k - 1] = p[k] * a[k] + dv",
+  "new": "p[k - 1] = p[k] + dv"
+ },
+ {
+  "label": "mass drops dv",
+  "old": "let mass = p.iter().sum::<f64>() * dv;",
+  "new": "let mass = p.iter().sum::<f64>();"
+ },
+ {
+  "label": "mass guard drops finiteness",
+  "old": "if !(mass.is_finite() && mass > 0.0) {",
+  "new": "if !(mass > 0.0) {"
+ },
+ {
+  "label": "mass guard admits zero",
+  "old": "mass.is_finite() && mass > 0.0",
+  "new": "mass.is_finite() && mass >= 0.0"
+ },
+ {
+  "label": "unnormalised name",
+  "old": "NotRepresentable { what: \"the unnormalised density\" }",
+  "new": "NotRepresentable { what: \"the density\" }"
+ },
+ {
+  "label": "rate ignores dead time",
+  "old": "let rate = r0 / (1.0 + self.t_ref * r0);",
+  "new": "let rate = r0;"
+ },
+ {
+  "label": "rate dead time sign",
+  "old": "let rate = r0 / (1.0 + self.t_ref * r0);",
+  "new": "let rate = r0 / (1.0 - self.t_ref * r0);"
+ },
+ {
+  "label": "density with r0",
+  "old": "let density = p.iter().map(|x| rate * x).collect();",
+  "new": "let density = p.iter().map(|x| r0 * x).collect();"
+ },
+ {
+  "label": "flux with r0",
+  "old": "let flux = j.iter().map(|x| rate * x).collect();",
+  "new": "let flux = j.iter().map(|x| r0 * x).collect();"
+ },
+ {
+  "label": "siegert skips check",
+  "old": "        self.check()?;\n        if self.model != Model::Lif {",
+  "new": "        if self.model != Model::Lif {"
+ },
+ {
+  "label": "siegert model test inverted",
+  "old": "if self.model != Model::Lif {",
+  "new": "if self.model == Model::Lif {"
+ },
+ {
+  "label": "siegert WrongModel name",
+  "old": "\"the Siegert rate of a non-leaky model\"",
+  "new": "\"the Siegert rate\""
+ },
+ {
+  "label": "siegert drops sqrt 2",
+  "old": "self.e0, core::f64::consts::SQRT_2 * self.sigma)",
+  "new": "self.e0, self.sigma)"
+ },
+ {
+  "label": "siegert drops t_ref",
+  "old": "SiegertInput::new(self.tau, self.t_ref, self.v_th",
+  "new": "SiegertInput::new(self.tau, 0.0, self.v_th"
+ },
+ {
+  "label": "siegert mu",
+  "old": "self.v_th, self.v_re, self.e0, core::f64",
+  "new": "self.v_th, self.v_re, self.e0 + 1e-3, core::f64"
+ },
+ {
+  "label": "from_siegert drops sqrt 2",
+  "old": "sigma: input.sigma / core::f64::consts::SQRT_2,",
+  "new": "sigma: input.sigma,"
+ },
+ {
+  "label": "from_siegert e0",
+  "old": "e0: input.mu,",
+  "new": "e0: input.mu + 1e-3,"
+ },
+ {
+  "label": "from_siegert t_ref",
+  "old": "t_ref: input.t_ref,\n        }",
+  "new": "t_ref: 0.0,\n        }"
+ },
+ {
+  "label": "from_siegert tau",
+  "old": "tau: input.tau_m,",
+  "new": "tau: 2.0 * input.tau_m,"
+ },
+ {
+  "label": "from_siegert v_re",
+  "old": "v_re: input.v_reset,",
+  "new": "v_re: input.v_reset - 1e-3,"
+ },
+ {
+  "label": "from_siegert v_th",
+  "old": "v_th: input.v_th,\n            v_re",
+  "new": "v_th: input.v_th + 1e-3,\n            v_re"
+ },
+ {
+  "label": "RESCALE_POWER past f64",
+  "old": "const RESCALE_POWER: i32 = 500;",
+  "new": "const RESCALE_POWER: i32 = 1100;"
+ },
+ {
+  "label": "rescale divides by a non-power of 2",
+  "old": "(*j, *p) = (j.scale(1.0 / rescale_at), p.scale(1.0 / rescale_at));",
+  "new": "(*j, *p) = (j.scale(3.0 / rescale_at), p.scale(3.0 / rescale_at));"
+ },
+ {
+  "label": "rescale test inverted",
+  "old": "if big > rescale_at {",
+  "new": "if big < rescale_at {"
+ },
+ {
+  "label": "rescale down skips p",
+  "old": "(*j, *p) = (j.scale(1.0 / rescale_at), p.scale(1.0 / rescale_at));",
+  "new": "(*j, *p) = (j.scale(1.0 / rescale_at), *p);"
+ },
+ {
+  "label": "rescale down miscounts",
+  "old": "        *shift += 1;\n",
+  "new": "        *shift += 2;\n"
+ },
+ {
+  "label": "never multiply up",
+  "old": "} else if big < 1.0 / rescale_at {",
+  "new": "} else if big < 0.0 {"
+ },
+ {
+  "label": "rescale up skips p",
+  "old": "(*j, *p) = (j.scale(rescale_at), p.scale(rescale_at));",
+  "new": "(*j, *p) = (j.scale(rescale_at), *p);"
+ },
+ {
+  "label": "rescale up miscounts",
+  "old": "        *shift -= 1;\n",
+  "new": "        *shift -= 2;\n"
+ },
+ {
+  "label": "big ignores negative parts",
+  "old": "m.max(x.abs())",
+  "new": "m.max(*x)"
+ },
+ {
+  "label": "big ignores p",
+  "old": "[j.re, j.im, p.re, p.im]",
+  "new": "[j.re, j.im, j.re, j.im]"
+ },
+ {
+  "label": "rate pair never rebalanced",
+  "old": "            rebalance(&mut jr, &mut pr, &mut shift_r, rescale_at);\n",
+  "new": ""
+ },
+ {
+  "label": "drive pair never rebalanced",
+  "old": "            rebalance(&mut ja, &mut pa, &mut shift_a, rescale_at);\n",
+  "new": ""
+ },
+ {
+  "label": "shift starts at one",
+  "old": "let (mut shift_r, mut shift_a) = (0i64, 0i64);",
+  "new": "let (mut shift_r, mut shift_a) = (1i64, 0i64);"
+ },
+ {
+  "label": "shifted inverts",
+  "old": "let by = if shift > 0 { 1.0 / base } else { base };",
+  "new": "let by = if shift > 0 { base } else { 1.0 / base };"
+ },
+ {
+  "label": "shifted early exit removed",
+  "old": "        if x == 0.0 || x.is_infinite() {\n            break;\n        }\n",
+  "new": "",
+  "equivalent": "provably equivalent in value: integrate calls shifted only with a finite power-of-two base (any shift) or with f64::INFINITY, and with INFINITY rebalance never fires (big > inf and big < 1/inf = 0 are both false), so every shift stays 0 and the loop does not run. For a finite nonzero power of two `by`, 0 * by is 0 of the same sign, +-inf * by is +-inf and NaN * by is NaN, so once x is 0 or infinite the remaining multiplications change nothing: the exit shortens the loop and nothing else (it exists so that a mutant inflating the shift cannot make the run quadratic). Fixture BUILT AND RUN, tools/equivalence/density_shifted.rs (rustc -O): both versions, bit for bit, over 2,000,012 inputs -- every f64 bit pattern class including NaNs, subnormals, +-0 and +-inf, bases 2^1, 2^8, 2^100, 2^500, 2^1000 and 2^1023, shifts from -2000 to 2000, and INFINITY with shift 0 -- 0 disagreements."
+ },
+ {
+  "label": "shifted one too many",
+  "old": "for _ in 0..shift.unsigned_abs() {",
+  "new": "for _ in 0..=shift.unsigned_abs() {"
+ },
+ {
+  "label": "ends swap shifts",
+  "old": "Ok(Ends { ja, jr, shift_a, shift_r })",
+  "new": "Ok(Ends { ja, jr, shift_a: shift_r, shift_r: shift_a })"
+ },
+ {
+  "label": "back sign",
+  "old": "let back = shift_r - shift_a;",
+  "new": "let back = shift_a - shift_r;"
+ },
+ {
+  "label": "back skips im",
+  "old": "Complex::new(shifted(ratio.re, rescale_at, back), shifted(ratio.im, rescale_at, back))",
+  "new": "Complex::new(shifted(ratio.re, rescale_at, back), ratio.im)"
+ },
+ {
+  "label": "response unscaled",
+  "old": "self.integrate(lambda, 2f64.powi(RESCALE_POWER), |k| {",
+  "new": "self.integrate(lambda, f64::INFINITY, |k| {"
+ },
+ {
+  "label": "response WrongModel name",
+  "old": "\"a spike-current modulation of the LIF\"",
+  "new": "\"a spike-current modulation\""
+ },
+ {
+  "label": "response guard removed",
+  "old": "if r.re.is_finite() && r.im.is_finite() { Ok(r) } else { Err(DensityError::NotRepresentable { what: \"the response\" }) }",
+  "new": "Ok(r)"
+ },
+ {
+  "label": "response guard ignores re",
+  "old": "if r.re.is_finite() && r.im.is_finite() { Ok(r) }",
+  "new": "if r.im.is_finite() { Ok(r) }"
+ },
+ {
+  "label": "response refusal name",
+  "old": "NotRepresentable { what: \"the response\" }",
+  "new": "NotRepresentable { what: \"the result\" }"
+ },
+ {
+  "label": "mass accessor drops dv",
+  "old": "self.density.iter().sum::<f64>() * self.lattice.dv",
+  "new": "self.density.iter().sum::<f64>()"
+ },
+ {
+  "label": "eif swaps",
+  "old": "Model::Eif { v_t, delta_t } => Some((v_t, delta_t)),",
+  "new": "Model::Eif { v_t, delta_t } => Some((delta_t, v_t)),"
+ },
+ {
+  "label": "LIF gets a spike current",
+  "old": "Model::Lif => None,",
+  "new": "Model::Lif => Some((0.0, 1.0)),"
+ },
+ {
+  "label": "F_E sign",
+  "old": "Modulation::Mean => -rho / tau,",
+  "new": "Modulation::Mean => rho / tau,"
+ },
+ {
+  "label": "F_var forward difference",
+  "old": "(rho - self.density[k - 1])",
+  "new": "(self.density[k - 1] - rho)"
+ },
+ {
+  "label": "F_var drops dv",
+  "old": "/ (self.lattice.dv * tau),",
+  "new": "/ tau,"
+ },
+ {
+  "label": "F_g sign",
+  "old": "Modulation::Conductance => (v - e0) * rho / tau,",
+  "new": "Modulation::Conductance => (e0 - v) * rho / tau,"
+ },
+ {
+  "label": "F_g drops E",
+  "old": "Modulation::Conductance => (v - e0) * rho / tau,",
+  "new": "Modulation::Conductance => v * rho / tau,"
+ },
+ {
+  "label": "F_VT drops delta_t",
+  "old": "self.neuron.psi(v) * rho / (delta_t * tau)",
+  "new": "self.neuron.psi(v) * rho / tau"
+ },
+ {
+  "label": "F_DT inner sign",
+  "old": "(1.0 - (v - v_t) / delta_t)",
+  "new": "(1.0 + (v - v_t) / delta_t)"
+ },
+ {
+  "label": "F_DT constant",
+  "old": "(1.0 - (v - v_t) / delta_t)",
+  "new": "(2.0 - (v - v_t) / delta_t)"
+ },
+ {
+  "label": "F_DT overall sign",
+  "old": "-self.neuron.psi(v) / (delta_t * tau) *",
+  "new": "self.neuron.psi(v) / (delta_t * tau) *"
+ },
+ {
+  "label": "integrate skips re check",
+  "old": "        finite(\"lambda.re\", lambda.re)?;\n",
+  "new": ""
+ },
+ {
+  "label": "integrate skips im check",
+  "old": "        finite(\"lambda.im\", lambda.im)?;\n",
+  "new": ""
+ },
+ {
+  "label": "zero test and->or",
+  "old": "if lambda.re == 0.0 && lambda.im == 0.0 {",
+  "new": "if lambda.re == 0.0 || lambda.im == 0.0 {"
+ },
+ {
+  "label": "zero refusal removed",
+  "old": "        if lambda.re == 0.0 && lambda.im == 0.0 {\n            return Err(DensityError::ZeroFrequency);\n        }\n",
+  "new": ""
+ },
+ {
+  "label": "refractory phase sign",
+  "old": "let reset = lambda.scale(-self.neuron.t_ref).exp();",
+  "new": "let reset = lambda.scale(self.neuron.t_ref).exp();"
+ },
+ {
+  "label": "step times tau",
+  "old": "let step = lambda.scale(dv);",
+  "new": "let step = lambda.scale(dv * tau);"
+ },
+ {
+  "label": "ja starts at one",
+  "old": "(Complex::new(1.0, 0.0), zero, zero, zero)",
+  "new": "(Complex::new(1.0, 0.0), zero, Complex::new(1.0, 0.0), zero)"
+ },
+ {
+  "label": "w drops tau",
+  "old": "let w = dv * tau * self.b[k];",
+  "new": "let w = dv * self.b[k];"
+ },
+ {
+  "label": "jr sign of step",
+  "old": "let mut jr_next = jr + step * pr;",
+  "new": "let mut jr_next = jr - step * pr;"
+ },
+ {
+  "label": "reset one cell low in response",
+  "old": "            if k == k_re + 1 {\n                jr_next",
+  "new": "            if k == k_re {\n                jr_next"
+ },
+ {
+  "label": "reset term unscaled",
+  "old": "jr_next = jr_next - Complex::new(shifted(reset.re, rescale_at, shift_r), shifted(reset.im, rescale_at, shift_r));",
+  "new": "jr_next = jr_next - reset;"
+ },
+ {
+  "label": "reset term sign",
+  "old": "jr_next = jr_next - Complex::new(shifted(reset.re",
+  "new": "jr_next = jr_next + Complex::new(shifted(reset.re"
+ },
+ {
+  "label": "reset im unscaled",
+  "old": "shifted(reset.im, rescale_at, shift_r))",
+  "new": "reset.im)"
+ },
+ {
+  "label": "pr drops A",
+  "old": "let pr_next = pr.scale(self.a[k]) + jr.scale(w);",
+  "new": "let pr_next = pr + jr.scale(w);"
+ },
+ {
+  "label": "ja sign of step",
+  "old": "let ja_next = ja + step * pa;",
+  "new": "let ja_next = ja - step * pa;"
+ },
+ {
+  "label": "drive unscaled",
+  "old": "Complex::new(shifted(f(k)?, rescale_at, shift_a), 0.0)",
+  "new": "Complex::new(f(k)?, 0.0)"
+ },
+ {
+  "label": "drive on the rate pair's scale",
+  "old": "shifted(f(k)?, rescale_at, shift_a)",
+  "new": "shifted(f(k)?, rescale_at, shift_r)"
+ },
+ {
+  "label": "drive sign",
+  "old": "(ja + Complex::new(shifted(f(k)?",
+  "new": "(ja - Complex::new(shifted(f(k)?"
+ },
+ {
+  "label": "pa drops A",
+  "old": "let pa_next = pa.scale(self.a[k]) + (ja",
+  "new": "let pa_next = pa + (ja"
+ },
+ {
+  "label": "A13 sign",
+  "old": "let ratio = -(ja / jr);",
+  "new": "let ratio = ja / jr;"
+ },
+ {
+  "label": "gauss_weighted mirror",
+  "old": "siegert_integral(lo, hi)? + siegert_integral(-hi, -lo)?",
+  "new": "siegert_integral(lo, hi)? + siegert_integral(lo, hi)?"
+ },
+ {
+  "label": "gauss_weighted half",
+  "old": "Some((-y * y).exp() * 0.5 * twice)",
+  "new": "Some((-y * y).exp() * twice)"
+ },
+ {
+  "label": "gauss_weighted exponent sign",
+  "old": "Some((-y * y).exp() * 0.5 * twice)",
+  "new": "Some((y * y).exp() * 0.5 * twice)"
+ },
+ {
+  "label": "brunel skips revalidation",
+  "old": "let i = SiegertInput::new(input.tau_m, input.t_ref, input.v_th, input.v_reset, input.mu, input.sigma)\n        .map_err(DensityError::MeanField)?;",
+  "new": "let i = *input;"
+ },
+ {
+  "label": "brunel skips sigma",
+  "old": "    positive(\"sigma\", i.sigma)?;\n    finite(\"v\", v)?;",
+  "new": "    finite(\"v\", v)?;"
+ },
+ {
+  "label": "brunel skips v",
+  "old": "    finite(\"v\", v)?;\n    Ok((i,",
+  "new": "    Ok((i,"
+ },
+ {
+  "label": "brunel y over tau",
+  "old": "Ok((i, (v - i.mu) / i.sigma,",
+  "new": "Ok((i, (v - i.mu) / i.tau_m,"
+ },
+ {
+  "label": "brunel y_r sign",
+  "old": "(i.v_reset - i.mu) / i.sigma, (i.v_th",
+  "new": "(i.v_reset + i.mu) / i.sigma, (i.v_th"
+ },
+ {
+  "label": "brunel y_th from reset",
+  "old": "(i.v_th - i.mu) / i.sigma))",
+  "new": "(i.v_th - i.v_reset) / i.sigma))"
+ },
+ {
+  "label": "density ignores the reset",
+  "old": "    let lo = y.max(yr).min(yth);\n    let p = i.rate()",
+  "new": "    let lo = y.min(yth);\n    let p = i.rate()"
+ },
+ {
+  "label": "density drops 2",
+  "old": ".map(|(nu, g)| 2.0 * nu * i.tau_m / i.sigma * g);",
+  "new": ".map(|(nu, g)| nu * i.tau_m / i.sigma * g);"
+ },
+ {
+  "label": "density accepts non-finite",
+  "old": "Some(p) if p.is_finite() => Ok(p),",
+  "new": "Some(p) => Ok(p),"
+ },
+ {
+  "label": "density name",
+  "old": "Unevaluable { what: \"brunel_density\" }",
+  "new": "Unevaluable { what: \"brunel_slope\" }"
+ },
+ {
+  "label": "slope at threshold is zero",
+  "old": "if v > i.v_th {\n        return Ok(0.0);",
+  "new": "if v >= i.v_th {\n        return Ok(0.0);"
+ },
+ {
+  "label": "slope above threshold one",
+  "old": "        return Ok(0.0);\n    }\n    let lo",
+  "new": "        return Ok(1.0);\n    }\n    let lo"
+ },
+ {
+  "label": "slope step at y_r",
+  "old": "let step = if y > yr { 1.0 } else { 0.0 };",
+  "new": "let step = if y >= yr { 1.0 } else { 0.0 };"
+ },
+ {
+  "label": "slope step sign",
+  "old": "(-2.0 * y * g - step)",
+  "new": "(-2.0 * y * g + step)"
+ },
+ {
+  "label": "slope sigma once",
+  "old": "2.0 * nu * i.tau_m / (i.sigma * i.sigma) *",
+  "new": "2.0 * nu * i.tau_m / i.sigma *"
+ },
+ {
+  "label": "slope ignores the reset",
+  "old": "    let lo = y.max(yr).min(yth);\n    let step",
+  "new": "    let lo = y.min(yth);\n    let step"
+ },
+ {
+  "label": "slope accepts non-finite",
+  "old": "Some(d) if d.is_finite() => Ok(d),",
+  "new": "Some(d) => Ok(d),"
+ },
+ {
+  "label": "slope name",
+  "old": "Unevaluable { what: \"brunel_slope\" }",
+  "new": "Unevaluable { what: \"brunel_density\" }"
+ },
+ {
+  "label": "neuron nu finiteness",
+  "old": "if finite(\"nu\", nu)? < 0.0 {",
+  "new": "if nu < 0.0 {"
+ },
+ {
+  "label": "neuron refuses zero rate",
+  "old": "nu)? < 0.0 {",
+  "new": "nu)? <= 0.0 {"
+ },
+ {
+  "label": "neuron Negative name",
+  "old": "Negative { what: \"nu\", value: nu }",
+  "new": "Negative { what: \"rate\", value: nu }"
+ },
+ {
+  "label": "neuron nu_thr message",
+  "old": "\"nu_thr = (v_th - v_rest)/(c_exc j tau_m)\"",
+  "new": "\"nu_thr\""
+ },
+ {
+  "label": "neuron floor",
+  "old": "Ok(WhiteNoiseIf::from_siegert(&s, self.v_lb))",
+  "new": "Ok(WhiteNoiseIf::from_siegert(&s, 2.0 * self.v_lb))"
+ },
+ {
+  "label": "rate skips t_ref check",
+  "old": "let t_ref = positive(\"t_ref\", self.net.neuron.t_ref)?;",
+  "new": "let t_ref = self.net.neuron.t_ref;"
+ },
+ {
+  "label": "rate bracket halved",
+  "old": "(0.0f64, 1.0 / t_ref)",
+  "new": "(0.0f64, 0.5 / t_ref)"
+ },
+ {
+  "label": "rate bisection short",
+  "old": "for _ in 0..200 {",
+  "new": "for _ in 0..12 {"
+ },
+ {
+  "label": "rate bisection off-centre",
+  "old": "let mid = 0.5 * (lo + hi);\n            if self.neuron(mid)",
+  "new": "let mid = 0.4 * (lo + hi);\n            if self.neuron(mid)"
+ },
+ {
+  "label": "rate bisection inverted",
+  "old": ".rate() > mid {",
+  "new": ".rate() < mid {"
+ },
+ {
+  "label": "dmu sign",
+  "old": "let dmu = tau * j * (c_exc - g * c_inh);",
+  "new": "let dmu = tau * j * (c_exc + g * c_inh);"
+ },
+ {
+  "label": "dvar g once",
+  "old": "let dvar = tau * j * j * (c_exc + g * g * c_inh);",
+  "new": "let dvar = tau * j * j * (c_exc + g * c_inh);"
+ },
+ {
+  "label": "variance half dropped",
+  "old": "rv.scale(0.5 * dvar)",
+  "new": "rv.scale(dvar)"
+ },
+ {
+  "label": "delay sign",
+  "old": "lambda.scale(-delay).exp()",
+  "new": "lambda.scale(delay).exp()"
+ },
+ {
+  "label": "characteristic sign",
+  "old": "Ok(Complex::new(1.0, 0.0) - loop_gain)",
+  "new": "Ok(Complex::new(1.0, 0.0) + loop_gain)"
+ },
+ {
+  "label": "characteristic tau doubled",
+  "old": "let tau = self.net.neuron.tau_m;",
+  "new": "let tau = 2.0 * self.net.neuron.tau_m;"
+ },
+ {
+  "label": "newton counts from zero",
+  "old": "for steps in 1..=NEWTON_STEPS {",
+  "new": "for steps in 0..=NEWTON_STEPS {"
+ },
+ {
+  "label": "newton slope not divided",
+  "old": "let slope = (self.characteristic_on(&st, z + h)? - f) / h;",
+  "new": "let slope = self.characteristic_on(&st, z + h)? - f;"
+ },
+ {
+  "label": "newton step multiplies",
+  "old": "let dz = f / slope;",
+  "new": "let dz = f * slope;"
+ },
+ {
+  "label": "newton step sign",
+  "old": "z = z - dz;",
+  "new": "z = z + dz;"
+ },
+ {
+  "label": "cap reports re and im swapped",
+  "old": "Err(DensityError::NoConvergence { steps: NEWTON_STEPS, re: z.re, im: z.im })",
+  "new": "Err(DensityError::NoConvergence { steps: NEWTON_STEPS, re: z.im, im: z.re })"
+ },
+ {
+  "label": "cap reports no steps",
+  "old": "Err(DensityError::NoConvergence { steps: NEWTON_STEPS, re: z.re, im: z.im })",
+  "new": "Err(DensityError::NoConvergence { steps: 0, re: z.re, im: z.im })"
+ },
+ {
+  "label": "newton finite guard removed",
+  "old": "            if !(z.re.is_finite() && z.im.is_finite()) {\n                return Err(DensityError::NoConvergence { steps, re: z.re, im: z.im });\n            }\n",
+  "new": ""
+ },
+ {
+  "label": "newton reports the cap",
+  "old": "return Err(DensityError::NoConvergence { steps, re: z.re, im: z.im });",
+  "new": "return Err(DensityError::NoConvergence { steps: NEWTON_STEPS, re: z.re, im: z.im });"
+ },
+ {
+  "label": "newton test inverted",
+  "old": "if dz.norm() <= NEWTON_TOLERANCE * z.norm() {",
+  "new": "if dz.norm() >= NEWTON_TOLERANCE * z.norm() {"
+ },
+ {
+  "label": "NEWTON_STEPS 50 -> 9",
+  "old": "pub const NEWTON_STEPS: usize = 50;",
+  "new": "pub const NEWTON_STEPS: usize = 9;"
+ },
+ {
+  "label": "NEWTON_DIFFERENCE 1e-7 -> 1e-2",
+  "old": "pub const NEWTON_DIFFERENCE: f64 = 1e-7;",
+  "new": "pub const NEWTON_DIFFERENCE: f64 = 1e-2;"
+ },
+ {
+  "label": "NEWTON_TOLERANCE 1e-12 -> 1e-4",
+  "old": "pub const NEWTON_TOLERANCE: f64 = 1e-12;",
+  "new": "pub const NEWTON_TOLERANCE: f64 = 1e-4;"
+ }
+]
