@@ -278,30 +278,56 @@
 //! aligned with a bar ([`Bars::aligned`]) when its cosine with that bar's template is at least 0.8
 //! and leads every other bar's by at least 0.4.
 //!
-//! ⚠ **As printed, the bars problem finds no bar.** At Fig. 7's `η_IP = η_Hebb = 0.01`, none of
-//! sixteen seeds is aligned at any check in the figure's 2 × 10⁴ images: the weights spread evenly,
-//! each bar's overlap near `1/√N = 0.316`, and `(a, b)` settles near `(7.3, −6.4)`. Redrawing blank
-//! images instead changes nothing; started on a bar, every unit loses it; and at Fig. 8's left and
-//! centre rates, eight seeds each over 10⁵ images, none aligns. Fig. 8's right panel, a fixed
-//! sigmoid without IP finding no bar, holds, but only as every other configuration does.
+//! ⚠ **As printed, the bars problem finds no bar, and [`Bars::drive`] shows why.** At Fig. 7's
+//! `η_IP = η_Hebb = 0.01`, none of sixteen seeds is aligned at any check in the figure's 2 × 10⁴
+//! images: the weights spread evenly, each bar's overlap near `1/√N = 0.316`, and `(a, b)` settles
+//! near `(7.3, −6.4)`. Redrawing blank images instead changes nothing; started on a bar, every unit
+//! loses it; and at Fig. 8's left and centre rates, eight seeds each over 10⁵ images, none aligns.
+//! Fig. 8's right panel, a fixed sigmoid without IP finding no bar, holds, but only as every other
+//! configuration does. The averaged dynamics say the same exactly. With IP fast beside the Hebbian
+//! rate, as section 3.1 assumes, a unit whose weights favour one bar by a factor `ρ` is driven
+//! towards a favour below `ρ` for every `ρ > 1`, and above it for every `ρ < 1`, at `µ` = 0.05,
+//! 0.02 and 0.01: a pure bar is sent to 4.16, a favour of 5 to 2.96, of 2 to 1.60. The only
+//! stationary state in that family is the even one, and the neuron IP holds there,
+//! `(7.4931, −6.5062)`, is where the runs settle. On unit-length images an evenly spread unit
+//! responds most to the images that light the most pixels, whichever bars they are, so the
+//! Hebbian term grows every bar at once.
 //!
-//! ⚠ **Footnote 3's sigmoid, and Fig. 8's right panel, cannot come from non-negative inputs.** With
-//! every pixel and weight non-negative, `x ≥ 0` and `y ≥ σ(b)`: at least 0.214 in footnote 3's box
+//! ⚠ **Footnote 3's sigmoid, and Fig. 8's right panel, cannot come from non-negative inputs under
+//! eq. 2.1; read with the bias as a threshold, `σ(a(x + b))`, they are a bar unit's.** With every
+//! pixel and weight non-negative, `x ≥ 0` and `y ≥ σ(b)`: at least 0.214 in footnote 3's box
 //! `a ∈ [4.5, 5.5]`, `b ∈ [−1.3, −1.0]`, and 0.2405 at Fig. 8's `(5.0, −1.15)`. Eq. 2.3 at
 //! `µ = 0.05` is negative for every rate between 0.0475 and 1.0525, so in that box every input
 //! lowers `b`: IP has no fixed point there. The right panel's 9,812 dots lie between 0.0170 and
 //! 0.0716, which at `(5.0, −1.15)` needs `x ≤ −0.282`; run as printed, that sigmoid fires at a mean
-//! rate near 0.677.
+//! rate near 0.677. For a unit favouring one bar by 5 to 10⁶, though — Fig. 7c's histogram puts the
+//! bar's weights 3.85 to 6.53 times the rest — the averaged rule holds the gain between 4.5106 and
+//! 5.3051, inside the footnote's `[4.5, 5.5]`, with the bias at −3.8360 to −4.9808: as a threshold,
+//! `b/a`, −0.8504 to −0.9410, 0.06 to 0.15 above the footnote's interval. Fig. 8's `(5.0, −1.15)`
+//! read the same way gives an evenly spread unit rates from 0.0152 (one bar) to 0.0699 (four
+//! parallel bars), the scale of the right panel's dots. The 2007 text prints eq. 2.1 throughout;
+//! this reading is this review's inference from its numbers.
 //!
 //! ⚠ **Fig. 7c's histogram is not of a unit-length vector.** Its bars hold 90 weights between
 //! 0.00587 and 0.00911 and 10 between 0.03507 and 0.03831: any such vector has a length between
 //! 0.124 and 0.149, and a sum between 0.879 and 1.203, consistent with weights summing to one.
 //!
-//! One experiment beyond the paper: centring each image, subtracting its mean pixel, before
-//! normalising it. The same unit then finds a bar in 12 of 16 seeds within 2 × 10⁴ images, keeps a
-//! bar it starts on in all sixteen, and at Fig. 8's fixed sigmoid finds one in 1 of 8 seeds over
-//! 10⁵; `a` settles between 4.37 and 5.65, about footnote 3's interval, but `b` between −3.50 and
-//! −3.27. The paper says nothing of centring, and this review does not claim it is what was run.
+//! **What works: centred images.** [`Bars::centre`] subtracts each image's mean pixel and
+//! normalises it again, which the paper does not describe. Every image then sums to zero, an evenly
+//! spread unit sees `x = 0` whatever is shown, and the Hebbian term can grow only a contrast between
+//! pixels. The same unit then finds a bar in 12 of 16 seeds within 2 × 10⁴ images, keeps a bar it
+//! starts on in all sixteen, and at Fig. 8's fixed sigmoid finds one in 1 of 8 seeds over 10⁵; `a`
+//! settles between 4.37 and 5.65, about footnote 3's interval, but `b` between −3.50 and −3.27. The
+//! paper says nothing of centring, and this review does not claim it is what was run.
+//!
+//! **The 2004 predecessor.** J. Triesch, *Synergies between Intrinsic and Synaptic Plasticity in
+//! Individual Model Neurons*, in L. Saul, Y. Weiss and L. Bottou (eds.), Advances in Neural
+//! Information Processing Systems 17 (NIPS 2004), MIT Press, prints the same bars experiment in
+//! nearly the same words — the `N`-by-`N` retina, `p = 1/N`, inputs normalised to unit length, the
+//! default `µ` "(1/2N = 0.05)" and "we tried down to 10⁻⁵" — with a different neuron and rule:
+//! `S_ab(X) = 1/(1 + exp(−(X − b)/a))`, `a` an inverse slope and `b` a threshold, moved by matching
+//! the rate's first two moments to the exponential's (its eq. 4), with IP set slower than the
+//! synapses. The 2007 paper's footnote 1 notes the change of parameterisation between the two.
 //!
 //! # What the 2007 paper restates differently
 //!
@@ -1585,6 +1611,252 @@ impl Bars {
         let second = o.iter().enumerate().filter(|&(k, _)| k != best).map(|(_, &v)| v).fold(f64::NEG_INFINITY, f64::max);
         Ok((o[best] >= Self::ALIGNED && o[best] - second >= Self::MARGIN).then_some(best))
     }
+
+    /// The largest side [`Bars::drive`] enumerates: its `2n(n + 1)` image classes are 80,400 at
+    /// `n = 200`, and each Newton step passes over all of them several times.
+    pub const DRIVE_MAX_SIDE: usize = 200;
+
+    /// An image made zero-mean: its mean pixel subtracted from every pixel, then divided by its
+    /// length again. An image with every pixel alike — blank, or lit everywhere — has no contrast
+    /// to keep and becomes zero.
+    ///
+    /// This is this review's, not the paper's. With it, every image's pixels sum to zero, so a
+    /// weight vector spread evenly over the retina sees `x = 0` whatever is shown, and the only
+    /// direction the Hebbian term can grow is a contrast between pixels: one unit then finds a
+    /// bar at the paper's rates, where on the images as printed it does not (the module doc, and
+    /// [`Bars::drive`] for why).
+    ///
+    /// # Errors
+    ///
+    /// [`IntrinsicError::Dimension`] for an `image` of the wrong size; whatever [`Bars::check`]
+    /// refuses.
+    pub fn centre(&self, image: &mut [f64]) -> Result<(), IntrinsicError> {
+        let pixels = self.pixels("the image", image.len())?;
+        if image.iter().all(|&v| v == image[0]) {
+            // Subtracting a mean that rounds leaves a residue of order 10⁻¹⁷ in every pixel, and
+            // dividing that by its own length would make an even image a unit vector.
+            image.iter_mut().for_each(|v| *v = 0.0);
+            return Ok(());
+        }
+        let mean = image.iter().sum::<f64>() / pixels as f64;
+        for v in image.iter_mut() {
+            *v -= mean;
+        }
+        let length = image.iter().map(|v| v * v).sum::<f64>().sqrt();
+        if length > 0.0 {
+            for v in image.iter_mut() {
+                *v /= length;
+            }
+        }
+        Ok(())
+    }
+
+    /// Where the averaged rules send a unit whose weights favour bar 0 (the top row) by a factor
+    /// `rho` over every other pixel, on the images as [`Bars::sample`] draws them: the neuron at
+    /// which `ip`'s averaged rule stands still for those weights, and the favour the averaged
+    /// Hebbian step `E[u y]` carries back.
+    ///
+    /// Exact, not sampled. What the unit sees depends only on whether bar 0 is shown, how many
+    /// `h` of the other `n − 1` rows and `v` of the `n` columns are: `n` or `v` lit pixels on bar
+    /// 0, `nh + v(n − 1 − h)` elsewhere. Those `2n(n + 1)` classes, weighted by their binomial
+    /// probabilities, give the rate's distribution; a pixel on bar 0 is lit with probability 1 or
+    /// `v/n`, any other with `h/(n − 1) + v/n − hv/(n(n − 1))`, and by symmetry `E[u y]` takes
+    /// one value on bar 0's pixels and one on all the others. The neuron is found by Newton's
+    /// method on the averaged rule, globalised as [`Triesch::fixed_point`] is, from the gain and
+    /// bias that put the mean input at the target rate's logit with unit slope per standard
+    /// deviation.
+    ///
+    /// This is section 3.1's limit, IP fast beside a slow Hebbian rate: the weights move towards
+    /// [`BarDrive::ratio`], so a unit keeps its favour for bar 0 only where `ratio ≥ rho`.
+    ///
+    /// # Errors
+    ///
+    /// [`IntrinsicError::NotPositive`] for a `rho` that is not finite and positive;
+    /// [`IntrinsicError::Retina`] for a side above [`Bars::DRIVE_MAX_SIDE`];
+    /// [`IntrinsicError::NoFixedPoint`] where Newton's method stops short, and with no steps
+    /// taken where every image looks alike (at `p = 1` the whole retina is always lit, the input
+    /// is constant, and the gain diverges as p. 888 says it must); whatever [`Bars::check`] and
+    /// [`Triesch::check`] refuse.
+    pub fn drive(&self, ip: &Triesch, rho: f64) -> Result<BarDrive, IntrinsicError> {
+        self.check()?;
+        ip.check()?;
+        let rho = positive("rho", rho)?;
+        let n = self.n;
+        if n > Self::DRIVE_MAX_SIDE {
+            return Err(IntrinsicError::Retina { n });
+        }
+        let classes = self.classes(rho);
+        let (neuron, iterations) = settle(ip, &classes, moment_start(ip, &classes)?)?;
+        let (mut rate, mut on, mut off) = (0.0, 0.0, 0.0);
+        for &(prob, x, u_on, u_off) in &classes {
+            let y = neuron.rate(x);
+            rate += prob * y;
+            on += prob * y * u_on;
+            off += prob * y * u_off;
+        }
+        Ok(BarDrive { neuron, iterations, rate, ratio: held("the drive's ratio", on / off)? })
+    }
+
+    /// [`Bars::drive`]'s image classes for a favour `rho`, each as `(probability, x, E[u | class]
+    /// on a bar-0 pixel, E[u | class] on any other)`.
+    fn classes(&self, rho: f64) -> Vec<(f64, f64, f64, f64)> {
+        let n = self.n;
+        let nf = n as f64;
+        let rows = binomial(n - 1, self.p);
+        let columns = binomial(n, self.p);
+        let rest = 1.0 / (nf * rho * rho + nf * nf - nf).sqrt();
+        let favoured = rho * rest;
+        let mut classes = Vec::with_capacity(2 * n * (n + 1));
+        for shown in [false, true] {
+            let bar = if shown { self.p } else { 1.0 - self.p };
+            for (h, &ph) in rows.iter().enumerate() {
+                for (v, &pv) in columns.iter().enumerate() {
+                    let (hf, vf) = (h as f64, v as f64);
+                    let on = if shown { nf } else { vf };
+                    let off = nf * hf + vf * (nf - 1.0 - hf);
+                    let lit = on + off;
+                    let prob = bar * ph * pv;
+                    if lit == 0.0 {
+                        classes.push((prob, 0.0, 0.0, 0.0));
+                        continue;
+                    }
+                    let scale = 1.0 / lit.sqrt();
+                    let lit_on = if shown { 1.0 } else { vf / nf };
+                    let lit_off = hf / (nf - 1.0) + vf / nf - hf * vf / (nf * (nf - 1.0));
+                    classes.push((prob, (favoured * on + rest * off) * scale, lit_on * scale, lit_off * scale));
+                }
+            }
+        }
+        classes
+    }
+}
+
+/// Where the averaged rules send a unit on the bars problem: [`Bars::drive`].
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BarDrive {
+    /// The neuron at which IP's averaged rule, eqs. 2.2 and 2.3, stands still.
+    pub neuron: Sigmoid,
+    /// Newton steps taken to find it.
+    pub iterations: usize,
+    /// The mean rate there, which two parameters hold near `µ` but not on it.
+    pub rate: f64,
+    /// The averaged Hebbian step `E[u y]` on the favoured bar's pixels over its value on any
+    /// other pixel: the favour the weights move towards.
+    pub ratio: f64,
+}
+
+/// The binomial probabilities of `0..=n` successes in `n` trials of probability `p`, through
+/// logarithms of factorials so that no binomial coefficient is formed.
+fn binomial(n: usize, p: f64) -> Vec<f64> {
+    let mut ln_factorial = vec![0.0; n + 1];
+    for i in 1..=n {
+        ln_factorial[i] = ln_factorial[i - 1] + (i as f64).ln();
+    }
+    (0..=n)
+        .map(|k| {
+            let failures = n - k;
+            // At p = 1 a failure's logarithm is −∞, and e^−∞ is the zero that k < n needs; only
+            // k = n, with no failures, must not form 0 · −∞.
+            let ln_q = if failures == 0 { 0.0 } else { failures as f64 * (1.0 - p).ln() };
+            (ln_factorial[n] - ln_factorial[k] - ln_factorial[failures] + k as f64 * p.ln() + ln_q).exp()
+        })
+        .collect()
+}
+
+/// Where [`Bars::drive`] starts Newton's method: unit slope per standard deviation of the input,
+/// and the mean input at the target rate's logit (at the mean input itself where `µ ≥ 1` leaves
+/// the logit undefined). A constant input has no standard deviation, and the rule no fixed point.
+fn moment_start(ip: &Triesch, classes: &[(f64, f64, f64, f64)]) -> Result<Sigmoid, IntrinsicError> {
+    let mean: f64 = classes.iter().map(|c| c.0 * c.1).sum();
+    let variance: f64 = classes.iter().map(|c| c.0 * (c.1 - mean) * (c.1 - mean)).sum();
+    if !(variance > 0.0) {
+        return Err(IntrinsicError::NoFixedPoint { iterations: 0, residual: f64::INFINITY });
+    }
+    let a = 1.0 / variance.sqrt();
+    let mut start = Sigmoid { a, b: (ip.mu / (1.0 - ip.mu)).ln() - a * mean };
+    if !start.b.is_finite() {
+        start.b = -a * mean;
+    }
+    Ok(start)
+}
+
+/// The neuron at which `ip`'s averaged rule stands still over a discrete input, `(probability, x,
+/// ..)` per class, from `start`, and the Newton steps it took: [`Triesch::fixed_point`]'s method,
+/// globalised on `G = −ln a + E[softplus(−u) + softplus(u) + y/µ]`, which is `D` without the
+/// input's entropy (a discrete input has none to subtract) and has the same gradient, eqs. 8 and
+/// 11. Where no halving of a Newton step lowers `G` — near the neuron, where the fall is below
+/// `G`'s rounding — the full step is taken if the gain stays positive. Unlike
+/// [`Triesch::fixed_point`] it does not also ask the step to shorten the gradient: no test input
+/// reaches a step that would not, and an answer is returned only where the gradient is under
+/// [`Triesch::NEWTON_TOLERANCE`], so a longer step can cost steps but not correctness.
+fn settle(ip: &Triesch, classes: &[(f64, f64, f64, f64)], start: Sigmoid) -> Result<(Sigmoid, usize), IntrinsicError> {
+    let mut here = start;
+    let g_of = |s: Sigmoid| -> f64 {
+        let spread: f64 = classes
+            .iter()
+            .map(|c| {
+                let u = s.a * c.1 + s.b;
+                c.0 * (s.rate(c.1) / ip.mu + softplus(u) + softplus(-u))
+            })
+            .sum();
+        spread - s.a.ln()
+    };
+    let slope = |s: Sigmoid| -> [f64; 2] {
+        let mut out = [-1.0 / s.a, 0.0];
+        for c in classes {
+            let y = s.rate(c.1);
+            let h = 1.0 - ip.k() * y + y * y / ip.mu;
+            out[0] -= c.0 * c.1 * h;
+            out[1] -= c.0 * h;
+        }
+        out
+    };
+    let mut grad = slope(here);
+    let mut level = g_of(here);
+    for taken in 0..Triesch::NEWTON_STEPS {
+        let size = grad[0].hypot(grad[1]);
+        if size <= Triesch::NEWTON_TOLERANCE {
+            return Ok((here, taken));
+        }
+        let mut hess = [1.0 / (here.a * here.a), 0.0, 0.0];
+        for c in classes {
+            let y = here.rate(c.1);
+            let curvature = c.0 * y * (1.0 - y) * (ip.k() - 2.0 * y / ip.mu);
+            hess[0] += c.1 * c.1 * curvature;
+            hess[1] += c.1 * curvature;
+            hess[2] += curvature;
+        }
+        let determinant = hess[0] * hess[2] - hess[1] * hess[1];
+        let curved = hess[0] > 0.0 && determinant > 0.0;
+        let direction = if curved {
+            [(hess[1] * grad[1] - hess[2] * grad[0]) / determinant, (hess[1] * grad[0] - hess[0] * grad[1]) / determinant]
+        } else {
+            [-grad[0], -grad[1]]
+        };
+        let mut next = None;
+        let mut fraction = 1.0;
+        for _ in 0..Triesch::HALVINGS {
+            let candidate = Sigmoid { a: here.a + fraction * direction[0], b: here.b + fraction * direction[1] };
+            if candidate.check().is_ok() && g_of(candidate) < level {
+                next = Some(candidate);
+                break;
+            }
+            fraction /= 2.0;
+        }
+        if next.is_none() && curved {
+            let whole = Sigmoid { a: here.a + direction[0], b: here.b + direction[1] };
+            if whole.check().is_ok() {
+                next = Some(whole);
+            }
+        }
+        let Some(found) = next else {
+            return Err(IntrinsicError::NoFixedPoint { iterations: taken, residual: size });
+        };
+        here = found;
+        level = g_of(here);
+        grad = slope(here);
+    }
+    Err(IntrinsicError::NoFixedPoint { iterations: Triesch::NEWTON_STEPS, residual: grad[0].hypot(grad[1]) })
 }
 
 #[cfg(test)]
@@ -3533,12 +3805,7 @@ mod tests {
             for t in 1..=self.steps {
                 while bars.sample(&mut rng, &mut image).unwrap() == 0 && self.redraw {}
                 if self.centre {
-                    let mean = image.iter().sum::<f64>() / 100.0;
-                    image.iter_mut().for_each(|v| *v -= mean);
-                    let length = image.iter().map(|v| v * v).sum::<f64>().sqrt();
-                    if length > 0.0 {
-                        image.iter_mut().for_each(|v| *v /= length);
-                    }
+                    bars.centre(&mut image).unwrap();
                 }
                 let (_, y) = unit.step(self.ip.as_ref(), &self.hebb, &image).unwrap();
                 if t > self.steps / 2 {
@@ -3692,6 +3959,239 @@ mod tests {
         let fixed = BarsRun { ip: None, hebb: Hebbian::FIG3, steps: 100_000, centre: true, ..BarsRun::FIG7 };
         let aligned: Vec<u64> = (1..=8).filter(|&seed| Bars::FIG7.aligned(fixed.run(seed).0.weights()).unwrap().is_some()).collect();
         assert_eq!(aligned, vec![6]);
+    }
+
+    /// `tools/intrinsic_2007_reference.py`, section 5: `SciPy`'s `root` on the averaged rule over
+    /// the same 220 classes, with `NumPy`'s sums. Each row is `(µ, ρ, a*, b*, mean rate, ratio of
+    /// the averaged Hebbian step)`.
+    const DRIVE: [(f64, f64, f64, f64, f64, f64); 14] = [
+        (0.05, 1000.0, 4.511009671686475, -3.8415048059763097, 0.057067198169725095, 4.155671529390783),
+        (0.05, 50.0, 4.526689276207733, -3.9475506203482804, 0.05656071112484455, 4.044378069816884),
+        (0.05, 10.0, 4.741740587294814, -4.403132147140625, 0.05447811178923211, 3.5623756341929105),
+        (0.05, 5.0, 5.305088829986114, -4.98084720640624, 0.05235594315036893, 2.9595675455297186),
+        (0.05, 4.0, 5.66149581000465, -5.26105829353381, 0.05157867196272818, 2.6711176557964045),
+        (0.05, 3.0, 6.262167379876451, -5.682912392545301, 0.050706157192109705, 2.232474474385251),
+        (0.05, 2.0, 7.0931962404703075, -6.228906179773024, 0.050044611176004804, 1.6015826453090303),
+        (0.05, 1.5, 7.396692155231875, -6.434414832666236, 0.04991116954589946, 1.271435142174073),
+        (0.05, 1.05, 7.4922833165497815, -6.50549039928446, 0.04988107278667408, 1.0236228631399127),
+        (0.05, 1.0, 7.49310883030811, -6.506177669540933, 0.04988087741980914, 0.9999999999999999),
+        (0.02, 1000.0, 3.760469704898906, -4.743133791560994, 0.020911035222814227, 4.14807667035984),
+        (0.02, 5.0, 4.888710177144546, -5.818831376389216, 0.020351075494542927, 3.0182601266815143),
+        (0.01, 1000.0, 3.5802914604995517, -5.43368600141254, 0.010211800340826993, 4.120601319822453),
+        (0.01, 2.0, 6.7209608502718625, -7.729644973881569, 0.010008898018478107, 1.613117060747545),
+    ];
+
+    /// [`Bars::drive`] is `SciPy`'s root of the same averaged rule over the same classes, to the
+    /// Newton tolerance: every neuron within `10⁻⁹` relative and every ratio and rate within
+    /// `10⁻¹⁰`.
+    #[test]
+    fn the_bars_drive_is_scipys() {
+        for (mu, rho, a, b, rate, ratio) in DRIVE {
+            let d = Bars::FIG7.drive(&Triesch::new(mu, 0.01).unwrap(), rho).unwrap();
+            let close = |got: f64, want: f64, tol: f64| (got - want).abs() <= tol * want.abs();
+            assert!(close(d.neuron.a, a, 1e-9) && close(d.neuron.b, b, 1e-9), "µ = {mu}, ρ = {rho}: {d:?}");
+            assert!(close(d.rate, rate, 1e-10) && close(d.ratio, ratio, 1e-10), "µ = {mu}, ρ = {rho}: {d:?}");
+        }
+    }
+
+    /// ⚠ The reason the printed bars problem finds no bar: a unit that favours a bar is drawn back
+    /// towards the rest of the retina, whatever its favour.
+    ///
+    /// With IP fast beside the Hebbian rate, as section 3.1 assumes, the weights move towards the
+    /// favour [`BarDrive::ratio`] the averaged Hebbian step carries. At `µ` = 0.05, 0.02 and 0.01
+    /// it is below `ρ` for every `ρ` above 1 on a grid from 1.001 to 10⁶, and above it for every
+    /// `ρ` below 1: the only stationary favour is `ρ = 1`, weights spread evenly, where every
+    /// image's rate depends on how many pixels it lights and not on which. A pure bar
+    /// (`ρ = 10⁶`) is sent to 4.16 at `µ = 0.05`, a unit at 5 to 2.96, one at 2 to 1.60. The
+    /// neuron IP holds at `ρ = 1`, `(7.4931, −6.5062)`, is where the printed runs settle
+    /// ([`the_printed_bars_problem_finds_no_bar`]).
+    #[test]
+    fn a_unit_favouring_a_bar_is_drawn_back_to_the_rest() {
+        for mu in [0.05, 0.02, 0.01] {
+            let ip = Triesch::new(mu, 0.01).unwrap();
+            let mut rho = 1.001_f64;
+            while rho <= 1e6 {
+                let d = Bars::FIG7.drive(&ip, rho).unwrap();
+                assert!(d.ratio > 1.0 && d.ratio < rho, "µ = {mu}, ρ = {rho}: {}", d.ratio);
+                let below = Bars::FIG7.drive(&ip, 1.0 / rho).unwrap();
+                assert!(below.ratio < 1.0 && below.ratio > 1.0 / rho, "µ = {mu}, ρ = 1/{rho}: {}", below.ratio);
+                rho *= 1.5;
+            }
+            let even = Bars::FIG7.drive(&ip, 1.0).unwrap();
+            assert!((even.ratio - 1.0).abs() < 1e-14, "µ = {mu}: {}", even.ratio);
+        }
+        let pure = Bars::FIG7.drive(&Triesch::FIG7, 1e6).unwrap();
+        assert!((pure.ratio - 4.1615).abs() < 5e-5, "{pure:?}");
+        let even = Bars::FIG7.drive(&Triesch::FIG7, 1.0).unwrap().neuron;
+        assert!((even.a - 7.4931).abs() < 5e-5 && (even.b + 6.5062).abs() < 5e-5, "{even:?}");
+    }
+
+    /// The enumeration is what [`Bars::sample`] averages to. With the neuron [`Bars::drive`] finds
+    /// at `ρ = 5` held fixed, 4 × 10⁵ sampled images give the mean rate and `E[u y]` on the
+    /// favoured bar's pixels and on the others within 0.3%, 0.5% and 0.4% of the enumeration's.
+    #[test]
+    fn the_bars_drive_is_what_the_sampler_averages() {
+        let bars = Bars::FIG7;
+        let rho = 5.0;
+        let d = bars.drive(&Triesch::FIG7, rho).unwrap();
+        let rest = 1.0 / (10.0 * rho * rho + 90.0_f64).sqrt();
+        let w: Vec<f64> = (0..100).map(|i| if i < 10 { rho * rest } else { rest }).collect();
+        let (mut rng, mut image) = (Rng::new(11), vec![0.0; 100]);
+        let (mut rate, mut on, mut off) = (0.0, 0.0, 0.0);
+        let draws = 400_000;
+        for _ in 0..draws {
+            bars.sample(&mut rng, &mut image).unwrap();
+            let y = d.neuron.rate(w.iter().zip(&image).map(|(a, b)| a * b).sum());
+            rate += y;
+            on += y * image[..10].iter().sum::<f64>() / 10.0;
+            off += y * image[10..].iter().sum::<f64>() / 90.0;
+        }
+        let n = f64::from(draws);
+        let (rate, on, off) = (rate / n, on / n, off / n);
+        let want_on = on / off * off;
+        let rel = |got: f64, want: f64| (got - want).abs() / want;
+        assert!(rel(rate, d.rate) < 0.003, "{rate} {}", d.rate);
+        assert!(rel(on / off, d.ratio) < 0.009, "{} {}", on / off, d.ratio);
+        assert!(want_on > 0.0);
+    }
+
+    /// ⚠ Footnote 3's gain is a bar unit's, and its bias reads as a threshold: `σ(a(x + b))`, not
+    /// eq. 2.1's `σ(ax + b)`.
+    ///
+    /// For a unit favouring one bar by anything from 5 to 10⁶ — Fig. 7c's histogram has the bar's
+    /// weights 3.85 to 6.53 times the rest across its bins' edges — the averaged rule holds the
+    /// gain between 4.5106 and 5.3051, inside the footnote's `[4.5, 5.5]`. The bias there is
+    /// −3.8360 to −4.9808 in eq. 2.1's form, nowhere near `[−1.3, −1.0]`, and −0.8504 to −0.9410
+    /// as a threshold, `b/a`, 0.06 to 0.15 above it. Fig. 8's fixed `a = 5.0`, `b = −1.15` read the same way gives an
+    /// evenly spread unit rates from 0.0152 (one bar lit) to 0.0699 (four bars in a row), the
+    /// scale of the right panel's 0.0170 to 0.0716; in eq. 2.1's form every rate is at least
+    /// 0.2405.
+    #[test]
+    fn footnote_3_is_a_bar_units_gain_with_its_bias_as_a_threshold() {
+        let (mut a_range, mut b_range, mut t_range) = ((f64::MAX, f64::MIN), (f64::MAX, f64::MIN), (f64::MAX, f64::MIN));
+        let widen = |r: (f64, f64), v: f64| (r.0.min(v), r.1.max(v));
+        let mut rho = 5.0_f64;
+        while rho <= 1e6 {
+            let s = Bars::FIG7.drive(&Triesch::FIG7, rho).unwrap().neuron;
+            (a_range, b_range, t_range) = (widen(a_range, s.a), widen(b_range, s.b), widen(t_range, s.b / s.a));
+            rho *= 1.25;
+        }
+        assert!((a_range.0 - 4.5106).abs() < 5e-5 && (a_range.1 - 5.3051).abs() < 5e-5, "{a_range:?}");
+        assert!((b_range.0 + 4.9808).abs() < 5e-5 && (b_range.1 + 3.8360).abs() < 5e-5, "{b_range:?}");
+        assert!((t_range.0 + 0.9410).abs() < 5e-5 && (t_range.1 + 0.8504).abs() < 5e-5, "{t_range:?}");
+        assert!((0.03507_f64 / 0.00911 - 3.85).abs() < 5e-3 && (0.03831_f64 / 0.00587 - 6.53).abs() < 5e-3);
+        let threshold = |lit: f64| {
+            let s = Sigmoid::FIG8_FIXED;
+            1.0 / (1.0 + (-(s.a * (0.1 * lit.sqrt() + s.b))).exp())
+        };
+        assert!((threshold(10.0) - 0.0152).abs() < 5e-5 && (threshold(40.0) - 0.0699).abs() < 5e-5);
+        assert!((Sigmoid::FIG8_FIXED.rate(0.0) - 0.2405).abs() < 5e-5);
+    }
+
+    /// [`Bars::drive`]'s Newton method: where it starts, how it is globalised, and where it gives
+    /// up, on the classes of a unit favouring bar 0 by 5 at Fig. 7's `µ`.
+    ///
+    /// It starts at unit slope per standard deviation of the input with the mean input at the
+    /// target's logit, `(5.3847, −4.5663)`, and takes 4 steps. From `(100, −50)` and from
+    /// `(50, 10)` it reaches the same neuron in 10 and 23 steps, with every trial step judged on
+    /// `G`, the objective whose gradient is the averaged rule; from `(1000, −800)`, where every
+    /// rate is 0 or 1 to the last bit and no step lowers `G`, it refuses at once with the gradient
+    /// it stopped at, 1.0122. Elsewhere in saturation it gets further before it stops: from
+    /// `(1, −100)` one step, the gradient then 1.0214; from `(0.001, 100)` all 100 steps without
+    /// reaching the tolerance, the gradient then 2.8321.
+    #[test]
+    fn the_bars_drive_starts_and_steps_as_documented() {
+        let (ip, classes) = (Triesch::FIG7, Bars::FIG7.classes(5.0));
+        let start = super::moment_start(&ip, &classes).unwrap();
+        assert!((start.a - 5.384743694399064).abs() < 1e-12 && (start.b + 4.566327166403587).abs() < 1e-12, "{start:?}");
+        let d = Bars::FIG7.drive(&ip, 5.0).unwrap();
+        assert_eq!(d.iterations, 4);
+        for (a, b, steps) in [(100.0, -50.0, 10), (50.0, 10.0, 23)] {
+            let (s, taken) = super::settle(&ip, &classes, neuron(a, b)).unwrap();
+            assert_eq!(taken, steps, "from ({a}, {b})");
+            assert!((s.a - d.neuron.a).abs() < 1e-9 && (s.b - d.neuron.b).abs() < 1e-9, "from ({a}, {b}): {s:?}");
+        }
+        let Err(IntrinsicError::NoFixedPoint { iterations: 0, residual }) = super::settle(&ip, &classes, neuron(1000.0, -800.0)) else {
+            panic!("a start in saturation should be refused at once");
+        };
+        assert!((residual - 1.0122).abs() < 5e-5, "{residual}");
+        for (a, b, steps, gradient) in [(1.0, -100.0, 1, 1.0214), (0.001, 100.0, Triesch::NEWTON_STEPS, 2.8321)] {
+            let Err(IntrinsicError::NoFixedPoint { iterations, residual }) = super::settle(&ip, &classes, neuron(a, b)) else {
+                panic!("from ({a}, {b}) it should stop");
+            };
+            assert_eq!(iterations, steps, "from ({a}, {b})");
+            assert!((residual - gradient).abs() < 5e-5, "from ({a}, {b}): {residual}");
+        }
+    }
+
+    /// [`Bars::centre`]: the mean pixel gone and the length one again; a blank image, and one lit
+    /// everywhere, stay zero; the wrong size is refused. Centred, an image's pixels sum to zero,
+    /// so a weight vector's even part sees nothing: `x` is the same for `w` and for `w` plus any
+    /// constant.
+    #[test]
+    fn centring_leaves_contrast_only() {
+        let bars = Bars::FIG7;
+        let mut rng = Rng::new(3);
+        let mut image = vec![0.0; 100];
+        for _ in 0..50 {
+            let shown = bars.sample(&mut rng, &mut image).unwrap();
+            bars.centre(&mut image).unwrap();
+            let sum: f64 = image.iter().sum();
+            let length: f64 = image.iter().map(|v| v * v).sum::<f64>().sqrt();
+            assert!(sum.abs() < 1e-13, "{sum}");
+            assert!(if shown == 0 { length == 0.0 } else { (length - 1.0).abs() < 1e-14 }, "{shown} bars: {length}");
+            let w: Vec<f64> = (0..100).map(|i| (i as f64 * 0.37).sin()).collect();
+            let x: f64 = w.iter().zip(&image).map(|(a, b)| a * b).sum();
+            let shifted: f64 = w.iter().zip(&image).map(|(a, b)| (a + 0.8) * b).sum();
+            assert!((x - shifted).abs() < 1e-13, "{x} {shifted}");
+        }
+        let mut full = vec![0.1; 100];
+        bars.centre(&mut full).unwrap();
+        assert!(full.iter().all(|&v| v.abs() < 1e-16), "{full:?}");
+        let mut lopsided = vec![0.0; 100];
+        lopsided[7] = 2.0;
+        bars.centre(&mut lopsided).unwrap();
+        assert!((lopsided[7] - 0.99f64.sqrt()).abs() < 1e-15 && (lopsided[0] + 0.01 / 0.99f64.sqrt()).abs() < 1e-15, "{lopsided:?}");
+        let mut short = vec![0.0; 99];
+        assert_eq!(bars.centre(&mut short), Err(IntrinsicError::Dimension { what: "the image", expected: 100, got: 99 }));
+    }
+
+    /// [`Bars::drive`]'s refusals, each by name, and its binomial weights summing to one on other
+    /// retinas.
+    #[test]
+    fn the_bars_drive_refuses_by_name() {
+        let ip = Triesch::FIG7;
+        for rho in [0.0, -1.0, f64::NAN, f64::INFINITY] {
+            let err = Bars::FIG7.drive(&ip, rho).unwrap_err();
+            assert!(matches!(err, IntrinsicError::NotPositive { what: "rho", .. }), "{rho}: {err:?}");
+        }
+        assert_eq!(Bars { n: 201, p: 0.1 }.drive(&ip, 2.0), Err(IntrinsicError::Retina { n: 201 }));
+        let widest = Bars { n: Bars::DRIVE_MAX_SIDE, p: 0.01 }.drive(&ip, 2.0).unwrap();
+        assert!(widest.ratio > 1.0 && widest.ratio < 2.0, "{widest:?}");
+        assert_eq!(Bars { n: 1, p: 0.1 }.drive(&ip, 2.0), Err(IntrinsicError::Retina { n: 1 }));
+        assert_eq!(
+            Bars::FIG7.drive(&Triesch { mu: 0.0, eta: 0.01 }, 2.0),
+            Err(IntrinsicError::NotPositive { what: "mu", value: 0.0 })
+        );
+        // A target of 1 or more puts the starting bias's logit out of reach; it starts from the
+        // mean input instead, and still settles.
+        for mu in [1.0, 2.0] {
+            let d = Bars::FIG7.drive(&Triesch::new(mu, 0.01).unwrap(), 2.0).unwrap();
+            assert!(d.ratio > 1.0 && d.ratio < 2.0 && d.rate > 0.4, "µ = {mu}: {d:?}");
+        }
+        assert_eq!(
+            Bars { n: 4, p: 1.0 }.drive(&ip, 2.0),
+            Err(IntrinsicError::NoFixedPoint { iterations: 0, residual: f64::INFINITY }),
+            "every image the whole retina"
+        );
+        for (n, p) in [(2, 0.5), (3, 0.2), (20, 0.05), (10, 0.9)] {
+            let d = Bars { n, p }.drive(&ip, 3.0).unwrap();
+            assert!(d.ratio > 1.0 && d.ratio < 3.0 && d.rate > 0.0 && d.rate < 1.0, "n = {n}, p = {p}: {d:?}");
+        }
+        let total: f64 = super::binomial(9, 0.1).iter().sum::<f64>() * super::binomial(10, 0.1).iter().sum::<f64>();
+        assert!((total - 1.0).abs() < 1e-14, "{total}");
+        assert_eq!(super::binomial(3, 1.0), vec![0.0, 0.0, 0.0, 1.0]);
+        assert!((super::binomial(4, 0.25)[1] - 4.0 * 0.25 * 0.75f64.powi(3)).abs() < 1e-16);
     }
 
     /// The 2007 paper's Fig. 2 narrows the input fivefold, not tenfold: by the affine rule of

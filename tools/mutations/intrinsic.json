@@ -1828,5 +1828,330 @@
   "label": "t07-sigmoid-fig8",
   "old": "pub const FIG8_FIXED: Self = Self { a: 5.0, b: -1.15 };",
   "new": "pub const FIG8_FIXED: Self = Self { a: 5.0, b: -1.5 };"
+ },
+ {
+  "label": "t07b-centre-even-check-removed",
+  "old": "        if image.iter().all(|&v| v == image[0]) {",
+  "new": "        if false && image.iter().all(|&v| v == image[0]) {"
+ },
+ {
+  "label": "t07b-centre-even-left",
+  "old": "            image.iter_mut().for_each(|v| *v = 0.0);\n            return Ok(());\n        }\n        let mean",
+  "new": "            return Ok(());\n        }\n        let mean"
+ },
+ {
+  "label": "t07b-centre-mean-over-one-less",
+  "old": "        let mean = image.iter().sum::<f64>() / pixels as f64;",
+  "new": "        let mean = image.iter().sum::<f64>() / (pixels - 1) as f64;"
+ },
+ {
+  "label": "t07b-centre-no-subtraction",
+  "old": "            *v -= mean;\n        }\n        let length = image.iter().map(|v| v * v).sum::<f64>().sqrt();\n        if length > 0.0 {\n            for v in image.iter_mut() {\n                *v /= length;",
+  "new": "            *v -= 0.0 * mean;\n        }\n        let length = image.iter().map(|v| v * v).sum::<f64>().sqrt();\n        if length > 0.0 {\n            for v in image.iter_mut() {\n                *v /= length;"
+ },
+ {
+  "label": "t07b-centre-not-renormalised",
+  "old": "            for v in image.iter_mut() {\n                *v /= length;\n            }\n        }\n        Ok(())\n    }\n\n    /// Where the averaged rules",
+  "new": "            for v in image.iter_mut() {\n                *v /= 1.0;\n            }\n        }\n        Ok(())\n    }\n\n    /// Where the averaged rules"
+ },
+ {
+  "label": "t07b-centre-size-unchecked",
+  "old": "        let pixels = self.pixels(\"the image\", image.len())?;\n        if image.iter().all",
+  "new": "        let pixels = image.len();\n        if image.iter().all"
+ },
+ {
+  "label": "t07b-drive-rho-unchecked",
+  "old": "        let rho = positive(\"rho\", rho)?;\n        let n = self.n;",
+  "new": "        let n = self.n;"
+ },
+ {
+  "label": "t07b-drive-side-cap-off-by-one",
+  "old": "        if n > Self::DRIVE_MAX_SIDE {",
+  "new": "        if n >= Self::DRIVE_MAX_SIDE {"
+ },
+ {
+  "label": "t07b-drive-side-cap-constant",
+  "old": "    pub const DRIVE_MAX_SIDE: usize = 200;",
+  "new": "    pub const DRIVE_MAX_SIDE: usize = 201;"
+ },
+ {
+  "label": "t07b-drive-bars-unchecked",
+  "old": "    pub fn drive(&self, ip: &Triesch, rho: f64) -> Result<BarDrive, IntrinsicError> {\n        self.check()?;",
+  "new": "    pub fn drive(&self, ip: &Triesch, rho: f64) -> Result<BarDrive, IntrinsicError> {"
+ },
+ {
+  "label": "t07b-drive-ip-unchecked",
+  "old": "        self.check()?;\n        ip.check()?;\n        let rho",
+  "new": "        self.check()?;\n        let rho"
+ },
+ {
+  "label": "t07b-drive-rows-n",
+  "old": "        let rows = binomial(n - 1, self.p);",
+  "new": "        let rows = binomial(n, self.p);"
+ },
+ {
+  "label": "t07b-drive-columns-n-minus-one",
+  "old": "        let columns = binomial(n, self.p);",
+  "new": "        let columns = binomial(n - 1, self.p);"
+ },
+ {
+  "label": "t07b-drive-rest-norm-forgets-bar",
+  "old": "        let rest = 1.0 / (nf * rho * rho + nf * nf - nf).sqrt();",
+  "new": "        let rest = 1.0 / (nf * rho + nf * nf - nf).sqrt();"
+ },
+ {
+  "label": "t07b-drive-rest-norm-counts-all",
+  "old": "        let rest = 1.0 / (nf * rho * rho + nf * nf - nf).sqrt();",
+  "new": "        let rest = 1.0 / (nf * rho * rho + nf * nf).sqrt();"
+ },
+ {
+  "label": "t07b-drive-favoured-is-rest",
+  "old": "        let favoured = rho * rest;",
+  "new": "        let favoured = rest;"
+ },
+ {
+  "label": "t07b-drive-shown-probability-swapped",
+  "old": "            let bar = if shown { self.p } else { 1.0 - self.p };",
+  "new": "            let bar = if shown { 1.0 - self.p } else { self.p };"
+ },
+ {
+  "label": "t07b-drive-on-when-hidden",
+  "old": "                    let on = if shown { nf } else { vf };",
+  "new": "                    let on = if shown { nf } else { 0.0 };"
+ },
+ {
+  "label": "t07b-drive-off-double-counts-crossings",
+  "old": "                    let off = nf * hf + vf * (nf - 1.0 - hf);",
+  "new": "                    let off = nf * hf + vf * (nf - 1.0);"
+ },
+ {
+  "label": "t07b-drive-off-counts-bar-row",
+  "old": "                    let off = nf * hf + vf * (nf - 1.0 - hf);",
+  "new": "                    let off = nf * hf + vf * (nf - hf);"
+ },
+ {
+  "label": "t07b-drive-blank-dropped",
+  "old": "                    if lit == 0.0 {\n                        classes.push((prob, 0.0, 0.0, 0.0));\n                        continue;",
+  "new": "                    if lit == 0.0 {\n                        continue;"
+ },
+ {
+  "label": "t07b-drive-scale-unsquared",
+  "old": "                    let scale = 1.0 / lit.sqrt();",
+  "new": "                    let scale = 1.0 / lit;"
+ },
+ {
+  "label": "t07b-drive-lit-on-always",
+  "old": "                    let lit_on = if shown { 1.0 } else { vf / nf };",
+  "new": "                    let lit_on = if shown { 1.0 } else { 1.0 };"
+ },
+ {
+  "label": "t07b-drive-lit-off-no-overlap",
+  "old": "                    let lit_off = hf / (nf - 1.0) + vf / nf - hf * vf / (nf * (nf - 1.0));",
+  "new": "                    let lit_off = hf / (nf - 1.0) + vf / nf;"
+ },
+ {
+  "label": "t07b-drive-lit-off-rows-over-n",
+  "old": "                    let lit_off = hf / (nf - 1.0) + vf / nf - hf * vf / (nf * (nf - 1.0));",
+  "new": "                    let lit_off = hf / nf + vf / nf - hf * vf / (nf * (nf - 1.0));"
+ },
+ {
+  "label": "t07b-drive-x-unscaled",
+  "old": "                    classes.push((prob, (favoured * on + rest * off) * scale, lit_on * scale, lit_off * scale));",
+  "new": "                    classes.push((prob, favoured * on + rest * off, lit_on * scale, lit_off * scale));"
+ },
+ {
+  "label": "t07b-drive-x-swaps-weights",
+  "old": "                    classes.push((prob, (favoured * on + rest * off) * scale, lit_on * scale, lit_off * scale));",
+  "new": "                    classes.push((prob, (rest * on + favoured * off) * scale, lit_on * scale, lit_off * scale));"
+ },
+ {
+  "label": "t07b-drive-u-unscaled",
+  "old": "                    classes.push((prob, (favoured * on + rest * off) * scale, lit_on * scale, lit_off * scale));",
+  "new": "                    classes.push((prob, (favoured * on + rest * off) * scale, lit_on, lit_off));"
+ },
+ {
+  "label": "t07b-drive-rate-unweighted",
+  "old": "            rate += prob * y;",
+  "new": "            rate += y;"
+ },
+ {
+  "label": "t07b-drive-on-without-rate",
+  "old": "            on += prob * y * u_on;",
+  "new": "            on += prob * u_on;"
+ },
+ {
+  "label": "t07b-drive-ratio-inverted",
+  "old": "        Ok(BarDrive { neuron, iterations, rate, ratio: held(\"the drive's ratio\", on / off)? })",
+  "new": "        Ok(BarDrive { neuron, iterations, rate, ratio: held(\"the drive's ratio\", off / on)? })"
+ },
+ {
+  "label": "t07b-binomial-factorial-off-by-one",
+  "old": "        ln_factorial[i] = ln_factorial[i - 1] + (i as f64).ln();",
+  "new": "        ln_factorial[i] = ln_factorial[i - 1] + ((i + 1) as f64).ln();"
+ },
+ {
+  "label": "t07b-binomial-certain-failure-term",
+  "old": "            let ln_q = if failures == 0 { 0.0 } else { failures as f64 * (1.0 - p).ln() };",
+  "new": "            let ln_q = failures as f64 * (1.0 - p).ln();"
+ },
+ {
+  "label": "t07b-binomial-no-failure-term",
+  "old": "            let ln_q = if failures == 0 { 0.0 } else { failures as f64 * (1.0 - p).ln() };",
+  "new": "            let ln_q = if failures == 0 { 0.0 } else { (1.0 - p).ln() };"
+ },
+ {
+  "label": "t07b-binomial-success-term",
+  "old": "            (ln_factorial[n] - ln_factorial[k] - ln_factorial[failures] + k as f64 * p.ln() + ln_q).exp()",
+  "new": "            (ln_factorial[n] - ln_factorial[k] - ln_factorial[failures] + p.ln() + ln_q).exp()"
+ },
+ {
+  "label": "t07b-binomial-no-coefficient",
+  "old": "            (ln_factorial[n] - ln_factorial[k] - ln_factorial[failures] + k as f64 * p.ln() + ln_q).exp()",
+  "new": "            (k as f64 * p.ln() + ln_q).exp()"
+ },
+ {
+  "label": "t07b-settle-constant-input-accepted",
+  "old": "    if !(variance > 0.0) {\n        return Err(IntrinsicError::NoFixedPoint { iterations: 0, residual: f64::INFINITY });\n    }",
+  "new": "    if variance < 0.0 {\n        return Err(IntrinsicError::NoFixedPoint { iterations: 0, residual: f64::INFINITY });\n    }"
+ },
+ {
+  "label": "t07b-settle-start-gain-variance",
+  "old": "    let a = 1.0 / variance.sqrt();",
+  "new": "    let a = 1.0 / variance;"
+ },
+ {
+  "label": "t07b-settle-start-bias-ignores-mean",
+  "old": "    let mut start = Sigmoid { a, b: (ip.mu / (1.0 - ip.mu)).ln() - a * mean };",
+  "new": "    let mut start = Sigmoid { a, b: (ip.mu / (1.0 - ip.mu)).ln() };"
+ },
+ {
+  "label": "t07b-settle-start-bias-fallback-removed",
+  "old": "    if !start.b.is_finite() {\n        start.b = -a * mean;\n    }",
+  "new": "    if !start.b.is_finite() {\n        start.b = start.b;\n    }"
+ },
+ {
+  "label": "t07b-settle-g-drops-rate",
+  "old": "                c.0 * (s.rate(c.1) / ip.mu + softplus(u) + softplus(-u))",
+  "new": "                c.0 * (softplus(u) + softplus(-u))"
+ },
+ {
+  "label": "t07b-settle-g-without-gain",
+  "old": "        spread - s.a.ln()",
+  "new": "        spread"
+ },
+ {
+  "label": "t07b-settle-slope-a-sign",
+  "old": "        let mut out = [-1.0 / s.a, 0.0];",
+  "new": "        let mut out = [1.0 / s.a, 0.0];"
+ },
+ {
+  "label": "t07b-settle-slope-a-no-input",
+  "old": "            out[0] -= c.0 * c.1 * h;",
+  "new": "            out[0] -= c.0 * h;"
+ },
+ {
+  "label": "t07b-settle-slope-b-unweighted",
+  "old": "            out[1] -= c.0 * h;",
+  "new": "            out[1] -= h;"
+ },
+ {
+  "label": "t07b-settle-slope-h-sign",
+  "old": "            let h = 1.0 - ip.k() * y + y * y / ip.mu;",
+  "new": "            let h = 1.0 - ip.k() * y - y * y / ip.mu;"
+ },
+ {
+  "label": "t07b-settle-stops-early",
+  "old": "        if size <= Triesch::NEWTON_TOLERANCE {",
+  "new": "        if size <= 1e-6 {"
+ },
+ {
+  "label": "t07b-settle-hessian-gain-term",
+  "old": "        let mut hess = [1.0 / (here.a * here.a), 0.0, 0.0];",
+  "new": "        let mut hess = [0.0, 0.0, 0.0];"
+ },
+ {
+  "label": "t07b-settle-hessian-curvature-sign",
+  "old": "            let curvature = c.0 * y * (1.0 - y) * (ip.k() - 2.0 * y / ip.mu);",
+  "new": "            let curvature = c.0 * y * (1.0 - y) * (ip.k() + 2.0 * y / ip.mu);"
+ },
+ {
+  "label": "t07b-settle-hessian-aa-linear",
+  "old": "            hess[0] += c.1 * c.1 * curvature;",
+  "new": "            hess[0] += c.1 * curvature;"
+ },
+ {
+  "label": "t07b-settle-hessian-ab-flat",
+  "old": "            hess[1] += c.1 * curvature;",
+  "new": "            hess[1] += curvature;"
+ },
+ {
+  "label": "t07b-settle-hessian-bb-input",
+  "old": "            hess[2] += curvature;",
+  "new": "            hess[2] += c.1 * curvature;"
+ },
+ {
+  "label": "t07b-settle-determinant-sign",
+  "old": "        let determinant = hess[0] * hess[2] - hess[1] * hess[1];",
+  "new": "        let determinant = hess[0] * hess[2] + hess[1] * hess[1];"
+ },
+ {
+  "label": "t07b-settle-curved-ignores-determinant",
+  "old": "        let curved = hess[0] > 0.0 && determinant > 0.0;",
+  "new": "        let curved = hess[0] > 0.0;"
+ },
+ {
+  "label": "t07b-settle-never-curved",
+  "old": "        let curved = hess[0] > 0.0 && determinant > 0.0;",
+  "new": "        let curved = false;"
+ },
+ {
+  "label": "t07b-settle-direction-a-sign",
+  "old": "            [(hess[1] * grad[1] - hess[2] * grad[0]) / determinant, (hess[1] * grad[0] - hess[0] * grad[1]) / determinant]",
+  "new": "            [(hess[2] * grad[0] - hess[1] * grad[1]) / determinant, (hess[1] * grad[0] - hess[0] * grad[1]) / determinant]"
+ },
+ {
+  "label": "t07b-settle-direction-b-cross",
+  "old": "            [(hess[1] * grad[1] - hess[2] * grad[0]) / determinant, (hess[1] * grad[0] - hess[0] * grad[1]) / determinant]",
+  "new": "            [(hess[1] * grad[1] - hess[2] * grad[0]) / determinant, (hess[1] * grad[1] - hess[0] * grad[0]) / determinant]"
+ },
+ {
+  "label": "t07b-settle-descent-uphill",
+  "old": "            [-grad[0], -grad[1]]",
+  "new": "            [grad[0], grad[1]]"
+ },
+ {
+  "label": "t07b-settle-accepts-any-candidate",
+  "old": "            if candidate.check().is_ok() && g_of(candidate) < level {",
+  "new": "            if candidate.check().is_ok() {"
+ },
+ {
+  "label": "t07b-settle-halving-thirds",
+  "old": "            fraction /= 2.0;",
+  "new": "            fraction /= 3.0;"
+ },
+ {
+  "label": "t07b-settle-no-whole-step",
+  "old": "        if next.is_none() && curved {",
+  "new": "        if next.is_none() && false {"
+ },
+ {
+  "label": "t07b-settle-refusal-counts-none",
+  "old": "            return Err(IntrinsicError::NoFixedPoint { iterations: taken, residual: size });",
+  "new": "            return Err(IntrinsicError::NoFixedPoint { iterations: 0, residual: size });"
+ },
+ {
+  "label": "t07b-settle-steps-uncounted",
+  "old": "            return Ok((here, taken));",
+  "new": "            return Ok((here, 0));"
+ },
+ {
+  "label": "t07b-drive-starts-at-unit-gain",
+  "old": "        let (neuron, iterations) = settle(ip, &classes, moment_start(ip, &classes)?)?;",
+  "new": "        let (neuron, iterations) = settle(ip, &classes, Sigmoid { a: 1.0, ..moment_start(ip, &classes)? })?;"
+ },
+ {
+  "label": "t07b-drive-iterations-dropped",
+  "old": "        Ok(BarDrive { neuron, iterations, rate, ratio",
+  "new": "        Ok(BarDrive { neuron, iterations: 0, rate, ratio"
  }
 ]

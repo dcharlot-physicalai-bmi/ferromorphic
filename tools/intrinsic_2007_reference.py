@@ -18,7 +18,10 @@ What it computes, with SciPy's adaptive quadrature and root finders, never with 
   3. Fig. 6's normalised contributions (sum of squares one) under each reading of eq. B.10.
   4. Eq. 3.2's Laplace band, and Fig. 3d's Laplace-Gauss plane: total mass, covariance and fourth
      moments by `dblquad`.
-  5. With the PDF: the vector paths of Figs. 1c, 2a, 3c, 3d, 4, 6, 7c and 8, read through each
+  5. The bars problem's averaged rules for a unit favouring one bar, over the 220 image classes
+     enumerated exactly: the neuron IP's averaged rule holds (`root`) and the favour the averaged
+     Hebbian step carries back, which `Bars::drive` computes.
+  6. With the PDF: the vector paths of Figs. 1c, 2a, 3c, 3d, 4, 6, 7c and 8, read through each
      panel's tick marks (or its frame, where it has none), and the comparisons the module doc
      quotes.
 """
@@ -137,6 +140,58 @@ def quadratures():
         print(f"  {name}: mass {m(lambda a, b: 1.0)!r}, E[u1^2] {m(lambda a, b: a * a)!r}, "
               f"E[u2^2] {m(lambda a, b: b * b)!r}, E[u1 u2] {m(lambda a, b: a * b)!r}, "
               f"E[u1^4] {m(lambda a, b: a ** 4)!r}, E[u2^4] {m(lambda a, b: b ** 4)!r}")
+
+
+def bars_cases(n, p):
+    """Every image class for a unit favouring bar 0 (a row): (probability, pixels lit on bar 0,
+    pixels lit elsewhere, P(a bar-0 pixel lit), P(another pixel lit)), by (bar 0 shown, h of the
+    other n - 1 rows shown, v of the n columns shown)."""
+    out = []
+    for s in (0, 1):
+        for h in range(n):
+            for v in range(n + 1):
+                prob = (p if s else 1 - p) * math.comb(n - 1, h) * p ** h * (1 - p) ** (n - 1 - h) \
+                    * math.comb(n, v) * p ** v * (1 - p) ** (n - v)
+                on = n if s else v
+                off = n * h + v * (n - 1 - h)
+                out.append((prob, on, off, 1.0 if s else v / n, h / (n - 1) + v / n - h * v / (n * (n - 1))))
+    return np.array(out)
+
+
+def bars_drive(rho, mu, n=10, p=0.1, start=(4.5, -3.8)):
+    """The averaged rules for weights rho times larger on bar 0 than elsewhere, unit length, images
+    normalised to unit length and a blank one left at zero: the neuron where IP's averaged rule
+    (eqs. 2.2, 2.3) stands still, found by root, and the bar-to-rest ratio of E[u y]."""
+    c = bars_cases(n, p)
+    prob, on, off, pon, poff = c.T
+    lit = on + off
+    g = 1 / math.sqrt(n * rho * rho + n * n - n)
+    inv = np.where(lit > 0, 1 / np.sqrt(np.maximum(lit, 1)), 0.0)
+    x = (rho * g * on + g * off) * inv
+
+    def f(ab):
+        a, b = ab
+        y = 1 / (1 + np.exp(-(a * x + b)))
+        h = 1 - (2 + 1 / mu) * y + y * y / mu
+        return [np.sum(prob * (1 / a + x * h)), np.sum(prob * h)]
+
+    sol = optimize.root(f, start, method="hybr", tol=1e-15)
+    a, b = sol.x
+    y = 1 / (1 + np.exp(-(a * x + b)))
+    ratio = np.sum(prob * y * pon * inv) / np.sum(prob * y * poff * inv)
+    return a, b, float(np.sum(prob * y)), float(ratio), float(np.abs(f(sol.x)).max())
+
+
+def bars():
+    print("\n# 5. The bars problem (N = 10, p = 0.1): a unit favouring one bar by rho, averaged rules")
+    print(f"  classes: {len(bars_cases(10, 0.1))}, total probability {bars_cases(10, 0.1)[:, 0].sum()!r}")
+    for mu in (0.05, 0.02, 0.01):
+        start = (4.5, -3.8)
+        for rho in (1000.0, 50.0, 10.0, 5.0, 4.0, 3.0, 2.0, 1.5, 1.05, 1.0):
+            a, b, rate, ratio, res = bars_drive(rho, mu, start=start)
+            start = (a, b)
+            print(f"  mu = {mu}, rho = {rho}: a = {a!r}, b = {b!r}, b/a = {b / a!r}, rate = {rate!r}, "
+                  f"drive ratio = {ratio!r}, residual {res:.1e}")
 
 
 def svg_page(pdf, page):
@@ -279,5 +334,6 @@ def figures(pdf2007):
 
 if __name__ == "__main__":
     quadratures()
+    bars()
     if len(sys.argv) > 1 and os.path.exists(sys.argv[1]):
         figures(sys.argv[1])
