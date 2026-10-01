@@ -235,7 +235,11 @@
 //!
 //! # References run for 2007
 //!
-//! The 2007 paper ships no code either; this review did not locate its author's.
+//! The 2007 paper ships no code either, and this review did not locate its author's: not with the
+//! paper, not among the three repositories of the author's GitHub account (`triesch`, checked
+//! 2026-10-01, none of them this work), and not by a code search for the rule. Where the paper
+//! leaves its setup unprinted, the choices below are stated as this review's, and a figure the
+//! printed model cannot reproduce is recorded as such rather than explained by a guessed setup.
 //! `tools/intrinsic_2007_reference.py` computes the quadratures of eqs. 3.4, B.9 and 3.2 that the
 //! tests compare against with `SciPy` 1.13.1 and without the crate, and, given the PDF, reads the
 //! figures' vector paths (`pdftocairo -svg`) through each panel's tick marks. Every figure reading
@@ -270,8 +274,12 @@
 //! misses eq. B.10 at eq. B.8's scale by 0.0146 and eq. B.9 by 0.132. The simple and BCM curves are
 //! eqs. B.8 and B.11, within 1.9 × 10⁻⁴ and 2.2 × 10⁻⁴.
 //!
-//! The bars problem, as [`Bars`] poses it: `N` is not printed, and the default `µ` "(1/2N = 0.05)"
-//! (p. 898) gives `N = 10`, an inference. A blank image, with probability `(1 − 1/N)^{2N}`, 0.1216,
+//! The bars problem, as [`Bars`] poses it: `N` is not printed in the 2007 paper, but the same lab's
+//! N. J. Butko and J. Triesch, *Exploring the Role of Intrinsic Plasticity for the Learning of
+//! Sensory Representations*, ESANN 2006, pp. 467–472, prints the retina of its single-unit
+//! predecessor: "a retina of 10-by-10 pixels and the probability of any of the 20 bars occuring in
+//! a given stimulus is 10%" (p. 469), which the 2007 default `µ` "(1/2N = 0.05)" (p. 898) agrees
+//! with. A blank image, with probability `(1 − 1/N)^{2N}`, 0.1216,
 //! has no length to normalise and the paper does not say what it did with one; [`Bars::sample`]
 //! leaves it at zero, so the unit sees `x = 0`. The initial weights and neuron are
 //! not printed: the tests draw each weight uniformly on `[0, 1)` and start at `(1, 0)`. A unit is
@@ -293,20 +301,20 @@
 //! responds most to the images that light the most pixels, whichever bars they are, so the
 //! Hebbian term grows every bar at once.
 //!
-//! ⚠ **Footnote 3's sigmoid, and Fig. 8's right panel, cannot come from non-negative inputs under
-//! eq. 2.1; read with the bias as a threshold, `σ(a(x + b))`, they are a bar unit's.** With every
+//! ⚠ **Footnote 3's sigmoid, and Fig. 8's right panel, cannot come from non-negative inputs.** With every
 //! pixel and weight non-negative, `x ≥ 0` and `y ≥ σ(b)`: at least 0.214 in footnote 3's box
 //! `a ∈ [4.5, 5.5]`, `b ∈ [−1.3, −1.0]`, and 0.2405 at Fig. 8's `(5.0, −1.15)`. Eq. 2.3 at
 //! `µ = 0.05` is negative for every rate between 0.0475 and 1.0525, so in that box every input
 //! lowers `b`: IP has no fixed point there. The right panel's 9,812 dots lie between 0.0170 and
 //! 0.0716, which at `(5.0, −1.15)` needs `x ≤ −0.282`; run as printed, that sigmoid fires at a mean
-//! rate near 0.677. For a unit favouring one bar by 5 to 10⁶, though — Fig. 7c's histogram puts the
-//! bar's weights 3.85 to 6.53 times the rest — the averaged rule holds the gain between 4.5106 and
-//! 5.3051, inside the footnote's `[4.5, 5.5]`, with the bias at −3.8360 to −4.9808: as a threshold,
-//! `b/a`, −0.8504 to −0.9410, 0.06 to 0.15 above the footnote's interval. Fig. 8's `(5.0, −1.15)`
-//! read the same way gives an evenly spread unit rates from 0.0152 (one bar) to 0.0699 (four
-//! parallel bars), the scale of the right panel's dots. The 2007 text prints eq. 2.1 throughout;
-//! this reading is this review's inference from its numbers.
+//! rate near 0.677. The footnote's GAIN is a bar unit's: for a unit favouring one bar by 5 to 10⁶
+//! — Fig. 7c's histogram puts the bar's weights 3.85 to 6.53 times the rest — the averaged rule
+//! holds it between 4.5106 and 5.3051, inside `[4.5, 5.5]`. Its bias is not: −3.8360 to −4.9808
+//! there. The same lab's ESANN 2006 paper writes the neuron as eq. 2.1 does, `[1 + exp(−a h − b)]⁻¹`
+//! (its eq. 1, p. 468), with the same rule, so this review has no reading under which the
+//! footnote's bias and Fig. 8's rates come from the model as printed. (0.23.1 offered one — the
+//! bias taken as a threshold, `σ(a(x + b))` — as an inference from the numbers; it was a guess,
+//! the lab's own later paper does not support it, and it is withdrawn.)
 //!
 //! ⚠ **Fig. 7c's histogram is not of a unit-length vector.** Its bars hold 90 weights between
 //! 0.00587 and 0.00911 and 10 between 0.03507 and 0.03831: any such vector has a length between
@@ -1468,8 +1476,10 @@ pub struct Bars {
 }
 
 impl Bars {
-    /// The paper's retina: `p = 1/N` (p. 898), and `N = 10` from the default `µ` "(1/2N = 0.05)"
-    /// (p. 898). `N` itself is not printed.
+    /// The paper's retina: `p = 1/N` (p. 898) at `N = 10`, which the 2007 paper does not print but
+    /// its default `µ` "(1/2N = 0.05)" (p. 898) agrees with, and which Butko and Triesch, ESANN
+    /// 2006, p. 469, print for the same single-unit experiment: "a retina of 10-by-10 pixels" with
+    /// each of the 20 bars shown "10%" of the time.
     pub const FIG7: Self = Self { n: 10, p: 0.1 };
 
     /// The least overlap [`Bars::aligned`] accepts: a pure bar scores 1, a vector spread evenly
@@ -4055,37 +4065,26 @@ mod tests {
         assert!(want_on > 0.0);
     }
 
-    /// ⚠ Footnote 3's gain is a bar unit's, and its bias reads as a threshold: `σ(a(x + b))`, not
-    /// eq. 2.1's `σ(ax + b)`.
+    /// ⚠ Footnote 3's gain is a bar unit's; its bias is not, and nothing here explains it.
     ///
     /// For a unit favouring one bar by anything from 5 to 10⁶ — Fig. 7c's histogram has the bar's
     /// weights 3.85 to 6.53 times the rest across its bins' edges — the averaged rule holds the
-    /// gain between 4.5106 and 5.3051, inside the footnote's `[4.5, 5.5]`. The bias there is
-    /// −3.8360 to −4.9808 in eq. 2.1's form, nowhere near `[−1.3, −1.0]`, and −0.8504 to −0.9410
-    /// as a threshold, `b/a`, 0.06 to 0.15 above it. Fig. 8's fixed `a = 5.0`, `b = −1.15` read the same way gives an
-    /// evenly spread unit rates from 0.0152 (one bar lit) to 0.0699 (four bars in a row), the
-    /// scale of the right panel's 0.0170 to 0.0716; in eq. 2.1's form every rate is at least
-    /// 0.2405.
+    /// gain between 4.5106 and 5.3051, inside the footnote's `[4.5, 5.5]`, and the bias between
+    /// −4.9808 and −3.8360, nowhere near `[−1.3, −1.0]`.
     #[test]
-    fn footnote_3_is_a_bar_units_gain_with_its_bias_as_a_threshold() {
-        let (mut a_range, mut b_range, mut t_range) = ((f64::MAX, f64::MIN), (f64::MAX, f64::MIN), (f64::MAX, f64::MIN));
+    fn footnote_3s_gain_is_a_bar_units_and_its_bias_is_not() {
+        let (mut a_range, mut b_range) = ((f64::MAX, f64::MIN), (f64::MAX, f64::MIN));
         let widen = |r: (f64, f64), v: f64| (r.0.min(v), r.1.max(v));
         let mut rho = 5.0_f64;
         while rho <= 1e6 {
             let s = Bars::FIG7.drive(&Triesch::FIG7, rho).unwrap().neuron;
-            (a_range, b_range, t_range) = (widen(a_range, s.a), widen(b_range, s.b), widen(t_range, s.b / s.a));
+            (a_range, b_range) = (widen(a_range, s.a), widen(b_range, s.b));
             rho *= 1.25;
         }
         assert!((a_range.0 - 4.5106).abs() < 5e-5 && (a_range.1 - 5.3051).abs() < 5e-5, "{a_range:?}");
         assert!((b_range.0 + 4.9808).abs() < 5e-5 && (b_range.1 + 3.8360).abs() < 5e-5, "{b_range:?}");
-        assert!((t_range.0 + 0.9410).abs() < 5e-5 && (t_range.1 + 0.8504).abs() < 5e-5, "{t_range:?}");
         assert!((0.03507_f64 / 0.00911 - 3.85).abs() < 5e-3 && (0.03831_f64 / 0.00587 - 6.53).abs() < 5e-3);
-        let threshold = |lit: f64| {
-            let s = Sigmoid::FIG8_FIXED;
-            1.0 / (1.0 + (-(s.a * (0.1 * lit.sqrt() + s.b))).exp())
-        };
-        assert!((threshold(10.0) - 0.0152).abs() < 5e-5 && (threshold(40.0) - 0.0699).abs() < 5e-5);
-        assert!((Sigmoid::FIG8_FIXED.rate(0.0) - 0.2405).abs() < 5e-5);
+        assert!(a_range.0 >= 4.5 && a_range.1 <= 5.5 && b_range.1 < -1.3 - 2.5, "{a_range:?} {b_range:?}");
     }
 
     /// [`Bars::drive`]'s Newton method: where it starts, how it is globalised, and where it gives
