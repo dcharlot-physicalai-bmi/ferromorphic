@@ -2603,6 +2603,20 @@ mod tests {
         }
     }
 
+    /// A phase whose `tan(θ/2)` is exactly `a`, within four ulps of `2·atan(a)`.
+    ///
+    /// The walk stops at exact equality. It is not a tolerance.
+    fn phase_whose_half_tangent_is(a: f64) -> f64 {
+        let mut theta = 2.0 * a.atan();
+        for _ in 0..5 {
+            if (0.5 * theta).tan() == a {
+                return theta;
+            }
+            theta = if (0.5 * theta).tan() < a { theta.next_up() } else { theta.next_down() };
+        }
+        panic!("no phase within 4 ulps of 2·atan({a}) has tan(θ/2) = {a}");
+    }
+
     /// `Theta::exact_theta_after` against Runge-Kutta on the circle equation itself, which is the
     /// only reference here that shares no algebra with either closed form.
     ///
@@ -2643,21 +2657,33 @@ mod tests {
             }
         }
         // And on the unstable fixed point itself, where `u₀ · e^{2as}` is `0 · inf`: the phase
-        // stays put, for any interval. Landing on it takes an ulp of care — `tan(atan(a)/1)` comes
-        // back one ulp ABOVE `a`, not on it — and that near miss is the other half of this test.
+        // stays put, for any interval. `θ = 2·atan(a)` is the real angle, and `tan` of that float
+        // is not `a` on every libm. Where this was first written it came back one ulp above `a`,
+        // so `next_down` landed on `a`. On rustc 1.98.1 it comes back one ulp below, and
+        // `next_down` is further below. The premise is the neighbor at which `tan(θ/2)` equals
+        // `a` exactly, so `u₀` is zero. Which neighbor that is is walked, not assumed.
         let a = 0.5f64;
+        let fixed = phase_whose_half_tangent_is(a);
+        let ulps = fixed.to_bits().abs_diff((2.0 * a.atan()).to_bits());
+        assert!(ulps <= 4, "the fixed phase is {ulps} ulps from 2·atan(a)");
         let mut th = Qif::default().matching_theta();
-        th.theta = (2.0 * a.atan()).next_down();
+        th.theta = fixed;
         assert_eq!(th.canonical_y(), a, "the premise is a phase whose tan(θ/2) is a exactly");
         for &t in &[1e-3, 1.0, 1e6] {
             let got = th.exact_theta_after(0.0, t).expect("finite");
             assert!((got - th.theta).abs() < 1e-12, "{t} s moved the fixed phase to {got}");
         }
-        // One ulp above it the cell must SPIKE and then settle onto the stable point at `y = -a`,
-        // and `spikes_by` must say one. The answer -a is right; arriving there without the spike,
-        // which is what `a - y₀·tanh(a·s)` cancelling to a rounding produces, is not.
+        // One ulp off is not the fixed point. Below, a second of flow leaves the angle, so the
+        // special case `u₀ == 0` did not apply. Above, the cell must spike once and settle at
+        // `y = -a`. Arriving there without the spike is the cancellation the branch exists to
+        // prevent.
+        let mut cold = Qif::default().matching_theta();
+        cold.theta = fixed.next_down();
+        assert_ne!(cold.canonical_y(), a, "one ulp below the fixed phase is still exactly on it");
+        let left = cold.exact_theta_after(0.0, 1.0).expect("finite");
+        assert!((left - cold.theta).abs() > 1e-6, "one ulp below the fixed point stayed put at {left}");
         let mut hot = Qif::default().matching_theta();
-        hot.theta = 2.0 * a.atan();
+        hot.theta = fixed.next_up();
         assert!(hot.canonical_y() > a, "the premise is a phase one ulp above the fixed point");
         assert_eq!(hot.spikes_by(0.0, 100.0).expect("finite"), 1, "the escape produced no spike");
         let settled = hot.exact_theta_after(0.0, 100.0).expect("finite");

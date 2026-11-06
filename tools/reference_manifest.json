@@ -25,7 +25,7 @@
         "what": "The runner refuses a silent skip, an empty blocker, and a failing command."
       },
       "sha256": {
-        "tools/scientific_verify.py": "760fff4f037bcbaf807e9b8ab70dc354c23809911d3a2d5735c0eff8507b8adf"
+        "tools/scientific_verify.py": "e95c3ba022700325cc2d3299e1425e51971a4adb727806c8b579a91be348424a"
       }
     },
     {

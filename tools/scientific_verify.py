@@ -253,10 +253,12 @@ def write_report(rows):
             "artifacts": art,
             "provenance": row.get("provenance", {}),
         })
+    complete = all(row["status"] == "PASS" for row in rows)
     payload = {
         "generated_unix": time.time(),
         "python": python_bin(),
         "require_all": "--require-all" in sys.argv,
+        "complete_reproduction": complete,
         "entries": summary,
     }
     os.makedirs(REPORT_DIR, exist_ok=True)
@@ -303,15 +305,16 @@ def execute(doc, require_all):
     write_report(rows)
     bad = statuses_ok(rows, require_all)
     if bad:
-        print("scientific_verify: not pass: " + ", ".join(bad))
+        print("scientific_verify: not a complete reproduction; not pass: " + ", ".join(bad))
         return 2 if require_all and all(r["status"] != "FAIL" for r in rows) else 1
-    if require_all:
-        print(f"scientific_verify: {len(rows)} entries PASS")
+    counts = {}
+    for row in rows:
+        counts[row["status"]] = counts.get(row["status"], 0) + 1
+    kind = ", ".join(f"{k} {v}" for k, v in sorted(counts.items()))
+    if all(row["status"] == "PASS" for row in rows):
+        print(f"scientific_verify: complete reproduction; {kind}")
     else:
-        counts = {}
-        for row in rows:
-            counts[row["status"]] = counts.get(row["status"], 0) + 1
-        print("scientific_verify: " + ", ".join(f"{k} {v}" for k, v in sorted(counts.items())))
+        print(f"scientific_verify: not a complete reproduction; {kind}")
     return 0
 
 

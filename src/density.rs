@@ -1074,15 +1074,29 @@ impl NetworkDensity {
     ///
     /// # Errors
     ///
-    /// [`DensityError::NoConvergence`] after [`NEWTON_STEPS`] steps, or at the first step that
-    /// leaves the finite plane; whatever [`NetworkDensity::characteristic`] refuses.
+    /// [`DensityError::NoConvergence`] after [`NEWTON_STEPS`] steps, at the first step that leaves
+    /// the finite plane, or when a positive difference step samples the same characteristic twice.
+    /// That last case is not a root: the difference quotient is zero and `f / slope` is `0/0`. A
+    /// difference step of length zero, a subnormal `|λ|` where `1e-7·|λ|` underflows, still
+    /// divides, so the reported point is `NaN` and the subnormal refusal stays visible. Whatever
+    /// [`NetworkDensity::characteristic`] refuses is returned as that error.
     pub fn eigenvalue(&self, nu0: f64, guess: Complex) -> Result<Eigenvalue, DensityError> {
         let st = self.neuron(nu0)?.stationary(self.dv)?;
         let mut z = guess;
         for steps in 1..=NEWTON_STEPS {
             let f = self.characteristic_on(&st, z)?;
             let h = Complex::new(NEWTON_DIFFERENCE * z.norm(), 0.0);
-            let slope = (self.characteristic_on(&st, z + h)? - f) / h;
+            let f_h = self.characteristic_on(&st, z + h)?;
+            let df = f_h - f;
+            // Two identical samples. `df / h` is zero and the Newton step is `0/0`, which is a
+            // NaN, not a smaller guess. `|λ| ~ 1e-200` makes `h` far below an ulp of a
+            // characteristic that is an ordinary number there, so the samples agree long before
+            // the step budget. Stop on the finite point. `h == 0` is excluded: that division is
+            // the subnormal refusal, and swallowing it would hide the `0/0`.
+            if h.re != 0.0 && df.re == 0.0 && df.im == 0.0 {
+                return Err(DensityError::NoConvergence { steps, im: z.im, re: z.re });
+            }
+            let slope = df / h;
             let dz = f / slope;
             z = z - dz;
             // A step off the finite plane is a failure, not a root: `hypot(NaN, ∞)` is `∞`, so
@@ -1121,8 +1135,8 @@ pub struct Eigenvalue {
 #[cfg(test)]
 mod tests {
     use super::{
-        Complex, DensityError, Lattice, Model, Modulation, NetworkDensity, Stationary, WhiteNoiseIf,
-        brunel_density, brunel_slope,
+        Complex, DensityError, Lattice, Model, Modulation, NEWTON_DIFFERENCE, NEWTON_STEPS,
+        NetworkDensity, Stationary, WhiteNoiseIf, brunel_density, brunel_slope,
     };
     use crate::meanfield::{BrunelNetwork, SiegertInput};
     use crate::neuron::Lif;
@@ -2561,11 +2575,27 @@ mod tests {
         // A subnormal guess: the difference step 10⁻⁷|λ| is zero, the slope 0/0, the step NaN.
         let lost = nd.eigenvalue(55.8, Complex::new(0.0, 1e-320)).unwrap_err();
         assert_eq!(lost.to_string(), "the eigenvalue search did not settle in 1 steps; it stopped at lambda = (NaN, NaN) per second");
-        // A guess at 10⁻²⁰⁰ creeps towards λ = 0, where the response is 0/0, and runs out of steps.
+        // A guess at 10⁻²⁰⁰ is not a root. The characteristic there is an ordinary number
+        // (about 11.6 for this network), and `h = 1e-7·|λ|` is far below an ulp of that number,
+        // so the forward difference is rounding noise and then exactly zero. Dividing by that
+        // zero slope is `0/0`. The search must stop on the last finite point, with the two
+        // samples equal, and must not report a root. The sign of that point is the noise; what
+        // is invariant is that it is finite, real, and not a root.
         let slow = nd.eigenvalue(55.8, Complex::new(1e-200, 0.0)).unwrap_err();
         let DensityError::NoConvergence { steps, re, im } = slow else { panic!("{slow:?}") };
-        assert!(steps == 50 && re > 0.0 && re < 1e-10 && im == 0.0, "{slow:?}");
-        assert!(slow.to_string().starts_with("the eigenvalue search did not settle in 50 steps; it stopped at lambda = (0.0000000000"));
+        assert!(re.is_finite() && im.is_finite(), "stopped off the finite plane: {slow:?}");
+        assert_eq!(im, 0.0, "a real guess left the real axis: {slow:?}");
+        assert!((1..NEWTON_STEPS).contains(&steps), "steps {steps} is not an early finite stop");
+        let z = Complex::new(re, im);
+        let f = nd.characteristic(55.8, z).unwrap();
+        assert!(f.norm() > 1e-3, "the stop was accepted as a root: {f:?}");
+        let h = NEWTON_DIFFERENCE * z.norm();
+        assert!(h > 0.0, "the difference step underflowed; that is the subnormal case, already tested");
+        let f_h = nd.characteristic(55.8, Complex::new(re + h, im)).unwrap();
+        assert_eq!((f.re, f.im), (f_h.re, f_h.im), "the samples that stopped the search differ");
+        let msg = slow.to_string();
+        assert!(msg.contains(&format!("{steps} steps")), "{msg}");
+        assert!(!msg.contains("NaN"), "a resolved zero difference was reported as NaN: {msg}");
         // And a guess from which the characteristic itself is out of range is refused as that.
         let far_off = nd.eigenvalue(55.8, Complex::new(1e-3, 1e-3)).unwrap_err();
         assert_eq!(far_off.to_string(), "the response is not representable in f64 at these parameters");

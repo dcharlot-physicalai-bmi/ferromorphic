@@ -49,8 +49,10 @@ def main():
 
     shutil.rmtree(dest, ignore_errors=True)
     os.makedirs(os.path.join(dest, "src"))
-    for f in ["Cargo.toml", "Cargo.lock"]:
-        shutil.copy(os.path.join(repo, f), dest)
+    for f in ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml"]:
+        src = os.path.join(repo, f)
+        if os.path.isfile(src):
+            shutil.copy(src, dest)
     # The examples name modules this copy may not hold, and `cargo test` would build them.
     toml = io.open(os.path.join(dest, "Cargo.toml"), encoding="utf-8").read()
     toml = re.sub(r"\n\[\[example\]\]\n.*?(?=\n\[|\Z)", "", toml, flags=re.S)

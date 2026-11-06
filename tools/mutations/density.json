@@ -1092,8 +1092,8 @@
  },
  {
   "label": "newton slope not divided",
-  "old": "let slope = (self.characteristic_on(&st, z + h)? - f) / h;",
-  "new": "let slope = self.characteristic_on(&st, z + h)? - f;"
+  "old": "let slope = df / h;",
+  "new": "let slope = df;"
  },
  {
   "label": "newton step multiplies",
