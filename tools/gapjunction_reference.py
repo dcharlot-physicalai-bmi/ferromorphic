@@ -2,6 +2,8 @@
 """Reference numbers for `src/gapjunction.rs`, computed independently of it.
 
     target/venv/bin/python tools/gapjunction_reference.py      # numpy + scipy; poppler on PATH
+    # Exit 0 only when both PDFs were read. Without them, sections A–D still run and the process
+    # exits 2 with UNAVAILABLE on stderr. A missing figure is not a pass.
 
 This review did not locate code from either paper's authors: ModelDB lists no model for either,
 Lewis's publication directory (math.ucdavis.edu/~tjlewis/pubs/) holds PDFs only, and the one program
@@ -30,6 +32,7 @@ Every number the Rust tests embed from here is printed below with the label the 
 import os
 import re
 import subprocess
+import sys
 import tempfile
 
 import numpy as np
@@ -468,4 +471,13 @@ if __name__ == "__main__":
     section_b()
     section_c()
     section_d()
+    missing = [p for p in (LEWIS, CHOW) if not os.path.isfile(p)]
+    if missing:
+        print(
+            "UNAVAILABLE: figure readings (section E) need "
+            + ", ".join(missing)
+            + "; sections A-D above were computed, the figures were not",
+            file=sys.stderr,
+        )
+        sys.exit(2)
     section_e()

@@ -1,0 +1,140 @@
+#!/usr/bin/env python3
+"""Write or check the supported-model verification matrix.
+
+The Neuron rows are read from `impl Neuron for` / `impl crate::neuron::Neuron for` and from the
+`EXACT_OVER_GAPS` / `EXACT_TIMING` constants in that impl. A model whose constant cannot be read
+is an error: the matrix does not guess. Other rows are structs this workstream named; each name
+must still occur as `pub struct` in the file given here, so a rename fails the check rather than
+leaving a stale row.
+
+`python3 tools/model_matrix.py --write` rewrites docs/verification/MATRIX.md.
+`python3 tools/model_matrix.py --check` exits 1 when that file disagrees.
+"""
+import os
+import re
+import sys
+
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SRC = os.path.join(REPO, "src")
+OUT = os.path.join(REPO, "docs", "verification", "MATRIX.md")
+
+IMPL = re.compile(r"^impl (?:crate::neuron::)?Neuron for (\w+) \{$", re.M)
+
+# What THIS workstream re-executed. Anything else stays "not re-derived here".
+RECHECKED = {
+    "Lif": "re-executed in tests/scientific_gates.rs: free decay versus an independent closed form at 1e-12, forward Euler rejected at that tolerance, convergence order measured",
+    "IntegrateAndFire": "re-executed in tests/scientific_gates.rs: spike tick versus c*(v_th-v)/I, a wrong capacitance rejected",
+    "Izhikevich": "re-executed in tests/scientific_gates.rs: one-step derivative -3 mV/ms, convergence of substeps=1 to an independent RK4, quadratic term dropped is rejected, event-driven build refused",
+    "CubaState": "re-executed in tests/scientific_gates.rs: NIR strict crossing versus Lif non-strict crossing on a membrane that rests on threshold",
+}
+
+# Structs that are models and are not `impl Neuron`. file is relative to src/.
+OTHER = [
+    ("ResonateAndFire", "resonate.rs", "exact complex exponential; module tests hold the pulse response and the transfer function; not re-derived here"),
+    ("Lmu", "resonate.rs", "fourth-order Runge-Kutta; module tests hold Legendre special cases; not re-derived here"),
+    ("TwoVariable", "hindmarshrose.rs", "module documents a measured fourth-order step-halving ratio; not re-derived here"),
+    ("ThreeVariable", "hindmarshrose.rs", "module documents a measured fourth-order step-halving ratio; not re-derived here"),
+    ("MorrisLecar", "morrislecar.rs", "module documents a measured fourth-order step-halving ratio; SciPy reference script is separate; not re-derived here"),
+    ("Glif", "glif.rs", "AllenSDK comparison is tools/glif_reference.py and tools/glif_sweep.py; not re-run here unless the manifest says so"),
+    ("Plif", "plif.rs", "module tests compare the smooth-spike gradient with central differences; not re-derived here"),
+    ("SigmaDeltaEncoder", "control.rs", "module states the spike count equals floor(g*x*T); not re-derived here"),
+    ("Matsuoka", "control.rs", "module tests hold anti-phase of the half-centre; not re-derived here"),
+]
+
+
+def read(path):
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
+def consts_in_impl(text, start):
+    """Constants from the impl header, before the first method."""
+    window = text[start:start + 4000]
+    fn = re.search(r"\n    fn ", window)
+    head = window[: fn.start()] if fn else window
+    gaps = re.search(r"const EXACT_OVER_GAPS: bool = (true|false);", head)
+    timing = re.search(r"const EXACT_TIMING: bool = (true|false);", head)
+    return gaps.group(1) if gaps else None, ("explicit " + timing.group(1)) if timing else "trait default false"
+
+
+def neuron_rows():
+    rows = []
+    for name in sorted(os.listdir(SRC)):
+        if not name.endswith(".rs"):
+            continue
+        path = os.path.join(SRC, name)
+        text = read(path)
+        for m in IMPL.finditer(text):
+            gaps, timing = consts_in_impl(text, m.end())
+            if gaps is None:
+                raise SystemExit(f"model_matrix: {name}: impl Neuron for {m.group(1)} has no EXACT_OVER_GAPS")
+            model = m.group(1)
+            rows.append((model, name, "yes", gaps, timing, RECHECKED.get(model, "module tests exist; not re-derived in this workstream")))
+    if not rows:
+        raise SystemExit("model_matrix: no Neuron impls found")
+    return rows
+
+
+def other_rows():
+    rows = []
+    for model, rel, note in OTHER:
+        path = os.path.join(SRC, rel)
+        text = read(path)
+        if f"pub struct {model}" not in text:
+            raise SystemExit(f"model_matrix: pub struct {model} is not in src/{rel}")
+        rows.append((model, rel, "no", "—", "—", note))
+    return rows
+
+
+def cell(text):
+    text = text.replace("|", "/").replace("\n", " ")
+    if ". " in text or text.endswith("."):
+        raise SystemExit(f"model_matrix: cell contains a sentence break, which the prose gate splits: {text}")
+    return text
+
+
+def render(neuron, other):
+    lines = [
+        "# Supported-model verification matrix",
+        "",
+        "Generated by `python3 tools/model_matrix.py --write`. Do not edit by hand. Neuron rows are parsed from the impls. A constant that is not in the source is not filled in.",
+        "",
+        "`exact_over_gaps` is `Neuron::EXACT_OVER_GAPS`: one quiet step of `k·dt` equals `k` steps of `dt`. `Sim::new` refuses `Mode::EventDriven` when it is false. `exact_timing` is `Neuron::EXACT_TIMING`. `rechecked_here` is what this verification workstream executed, which is a subset of the crate's own tests.",
+        "",
+        "Simulation of a model is not execution on a board. An operation count is not a measured joule. Hardware mapping, a NeuroBench-style held-out task, continual or embodied competence, and a calibrated whole-system energy are parallel objectives and are not claimed by any row.",
+        "",
+        "| model | file | neuron trait | exact_over_gaps | exact_timing | rechecked here |",
+        "| --- | --- | --- | --- | --- | --- |",
+    ]
+    for row in neuron + other:
+        lines.append("| " + " | ".join(cell(c) for c in row) + " |")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def main():
+    neuron = neuron_rows()
+    other = other_rows()
+    text = render(neuron, other)
+    if "--write" in sys.argv:
+        os.makedirs(os.path.dirname(OUT), exist_ok=True)
+        with open(OUT, "w", encoding="utf-8") as f:
+            f.write(text)
+        print(f"model_matrix: wrote {os.path.relpath(OUT, REPO)} ({len(neuron)} Neuron impls, {len(other)} other models)")
+        return 0
+    if "--check" in sys.argv or len(sys.argv) == 1:
+        if not os.path.isfile(OUT):
+            print("model_matrix: MATRIX.md is absent; run --write")
+            return 1
+        have = read(OUT)
+        if have != text:
+            print("model_matrix: MATRIX.md disagrees with the source. Run --write and review the diff.")
+            return 1
+        print(f"model_matrix: MATRIX.md matches ({len(neuron)} Neuron impls, {len(other)} other models)")
+        return 0
+    print("usage: model_matrix.py [--write|--check]")
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main())

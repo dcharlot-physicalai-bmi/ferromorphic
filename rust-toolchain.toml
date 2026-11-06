@@ -1,0 +1,8 @@
+# The toolchain this crate's policy floor names as verified. Cargo.toml rust-version is "1.98"
+# ("verified here", not a bisected minimum). CI and local `cargo` both read this file.
+# Channel date on static.rust-lang.org: 2026-09-03. rustc 1.98.1 (48a229cea 2026-09-01).
+[toolchain]
+channel = "1.98.1"
+components = ["clippy", "rustfmt", "rust-docs"]
+targets = ["wasm32-unknown-unknown"]
+profile = "minimal"

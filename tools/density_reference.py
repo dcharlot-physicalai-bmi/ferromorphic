@@ -480,7 +480,18 @@ def network(tau, g, ratio, ce=1000, j=0.1 * mV):
         sb = np.sqrt(ce * j * j * tau * (ratio * nthr + nu * (1 + g * g * gam)))
         return siegert(tau, trp, th, vr, mu, sb) - nu
 
-    nu0 = optimize.brentq(f, 1e-6, 499.0, xtol=1e-13)
+    # brentq (SciPy 1.13.1) refuses a NaN endpoint. For C_E = 4000, J = 0.2 mV, g = 8 the
+    # Siegert integral is NaN at 499 Hz, while f(1e-6) and f(100) already have opposite signs
+    # and the unique root sits near 10 Hz. Shrink the ceiling until it is finite. A ceiling
+    # that was already finite, including every call whose root was previously taken on
+    # [1e-6, 499], is unchanged.
+    hi = 499.0
+    flo = f(1e-6)
+    while not (np.isfinite(f(hi)) and flo * f(hi) < 0):
+        hi *= 0.5
+        if hi < 1e-3:
+            raise RuntimeError(f"no finite rate bracket at C_E={ce}, J={j}, g={g}, ratio={ratio}")
+    nu0 = optimize.brentq(f, 1e-6, hi, xtol=1e-13)
     mu = ce * j * tau * (ratio * nthr + nu0 * (1 - g * gam))
     sb = np.sqrt(ce * j * j * tau * (ratio * nthr + nu0 * (1 + g * g * gam)))
     G = ce * j * tau * nu0 * (g * gam - 1) / sb

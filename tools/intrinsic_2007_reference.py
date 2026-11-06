@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """Reference values for the Triesch 2007 part of `src/intrinsic.rs`, independent of the crate.
 
-    python3 tools/intrinsic_2007_reference.py                       # the quadratures
-    python3 tools/intrinsic_2007_reference.py papers/triesch-2007.pdf    # and the figure readings
+    python3 tools/intrinsic_2007_reference.py                       # quadratures, then exit 2
+    python3 tools/intrinsic_2007_reference.py papers/triesch-2007.pdf    # quadratures and figures
 
 J. Triesch, *Synergies Between Intrinsic and Synaptic Plasticity Mechanisms*, Neural Computation
-19(4):885-909, 2007 (doi:10.1162/neco.2007.19.4.885). The paper is not in this repository; the
-figure readings need a local copy (and `pdftocairo` from poppler), and are skipped without one.
+19(4):885-909, 2007 (doi:10.1162/neco.2007.19.4.885). The paper is not in this repository. The
+quadrature sections always run. Figure readings need a local PDF and `pdftocairo` (poppler). If
+that path is missing the process prints `UNAVAILABLE` on stderr and exits 2 after the quadratures,
+so an exit of 0 is the figure readings having run and a missing PDF cannot pass for them.
 
 What it computes, with SciPy's adaptive quadrature and root finders, never with the crate's code:
 
@@ -335,5 +337,12 @@ def figures(pdf2007):
 if __name__ == "__main__":
     quadratures()
     bars()
-    if len(sys.argv) > 1 and os.path.exists(sys.argv[1]):
+    if len(sys.argv) > 1 and os.path.isfile(sys.argv[1]):
         figures(sys.argv[1])
+    else:
+        shown = sys.argv[1] if len(sys.argv) > 1 else "(no path given)"
+        print(
+            "UNAVAILABLE: figure readings need the Triesch 2007 PDF and pdftocairo; got " + shown,
+            file=sys.stderr,
+        )
+        sys.exit(2)

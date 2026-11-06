@@ -1,0 +1,69 @@
+# Scientific verification. contents: read is enough to check out the tree.
+# actions: write is only so the verification logs can be uploaded as a run artifact.
+name: verify
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: verify-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-gates:
+    name: nine release gates
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Rust 1.98.1 from rust-toolchain.toml
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16
+      - name: zsh for tools/gates.sh
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends zsh
+      - name: Run the nine gates
+        run: zsh tools/gates.sh
+      - name: Upload gate log
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: gates-log
+          path: target/gates.log
+          if-no-files-found: error
+
+  scientific:
+    name: manifest, mutations, references
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Rust 1.98.1 from rust-toolchain.toml
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # 2026-10-16
+      - name: Python 3.12
+        uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: C toolchain for PySpike
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends build-essential
+      - name: Pinned reference interpreters
+        run: python -m pip install -r tools/reference/requirements.txt
+      - name: Scientific manifest
+        env:
+          FERROMORPHIC_PYTHON: python
+          RUSTUP_TOOLCHAIN: "1.98.1"
+        run: python tools/scientific_verify.py
+      - name: Upload verification report
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: verification-report
+          path: target/verification
+          if-no-files-found: error

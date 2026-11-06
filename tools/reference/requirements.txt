@@ -1,0 +1,11 @@
+# Auxiliary reference interpreters. The ferromorphic crate has no dependencies.
+# Versions are the ones tools/*_reference.py names, pinned to the METADATA this
+# workstream installed and read. Licences: OSI "BSD License" classifier on each
+# installed METADATA file. Owners: NumPy Developers, SciPy Developers, Fredrik
+# Johansson (mpmath, https://github.com/fredrik-johansson/mpmath).
+numpy==1.26.4
+scipy==1.13.1
+mpmath==1.3.0
+# PySpike 0.9.0 (Mario Mulansky, BSD-2-Clause) builds a Cython extension and needs
+# Python.h plus a C compiler. License-Expression read from the installed METADATA.
+pyspike==0.9.0

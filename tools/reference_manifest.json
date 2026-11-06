@@ -1,0 +1,498 @@
+{
+  "version": 1,
+  "toolchain": {
+    "rust": "1.98.1",
+    "rustc_commit": "48a229ceaefd4985c50990b14116b6d856af0985",
+    "channel_date": "2026-09-03",
+    "note": "Cargo.toml rust-version 1.98 is the policy floor. This manifest pins the release the floor names."
+  },
+  "python_requirements": "tools/reference/requirements.txt",
+  "entries": [
+    {
+      "id": "verifier-self-test",
+      "kind": "command",
+      "tier": "ci",
+      "argv": [
+        "{python}",
+        "tools/scientific_verify.py",
+        "--self-test"
+      ],
+      "timeout_s": 60,
+      "owns": [
+        "tools/scientific_verify.py"
+      ],
+      "provenance": {
+        "what": "The runner refuses a silent skip, an empty blocker, and a failing command."
+      },
+      "sha256": {
+        "tools/scientific_verify.py": "760fff4f037bcbaf807e9b8ab70dc354c23809911d3a2d5735c0eff8507b8adf"
+      }
+    },
+    {
+      "id": "mutation-selftest",
+      "kind": "command",
+      "tier": "ci",
+      "argv": [
+        "{python}",
+        "tools/mutation_selftest.py"
+      ],
+      "timeout_s": 180,
+      "owns": [
+        "tools/mutation_selftest.py",
+        "tools/scientific_gates/fixture.rs"
+      ],
+      "provenance": {
+        "what": "Five text mutations of the closed-form and order gates, each required to fail."
+      },
+      "sha256": {
+        "tools/mutation_selftest.py": "ea37c50975e0b436e92f9ee912f9f01b1c389bb787267d8f367b22cf7fcec1ba",
+        "tools/scientific_gates/fixture.rs": "b3417ccfc30fe443b9bd542292b87c2ada221f78f91390aee4a77fc5baaa87f6"
+      }
+    },
+    {
+      "id": "model-matrix",
+      "kind": "command",
+      "tier": "ci",
+      "argv": [
+        "{python}",
+        "tools/model_matrix.py",
+        "--check"
+      ],
+      "timeout_s": 60,
+      "owns": [
+        "tools/model_matrix.py"
+      ],
+      "provenance": {
+        "what": "Neuron::EXACT_OVER_GAPS and EXACT_TIMING parsed from src, compared with docs/verification/MATRIX.md."
+      },
+      "sha256": {
+        "tools/model_matrix.py": "5b4ff04157ca34318705c79ef6bc1d6d4aa5611016d3ad2a171c697bbdb482e0"
+      }
+    },
+    {
+      "id": "prose-verification-docs",
+      "kind": "command",
+      "tier": "ci",
+      "argv": [
+        "{python}",
+        "tools/prose_check.py",
+        "VERIFICATION.md",
+        "INTEGRATION.md",
+        "docs/verification/MATRIX.md"
+      ],
+      "timeout_s": 60,
+      "owns": [
+        "tools/prose_check.py"
+      ],
+      "provenance": {
+        "what": "The same doubled-prose gate as tools/gates.sh, pointed at the verification documents."
+      },
+      "sha256": {
+        "tools/prose_check.py": "ef78c217b815422a0dbd4d7cbea80aa778099855a26eff7cb0abe7137dd51321"
+      }
+    },
+    {
+      "id": "readme-numbers",
+      "kind": "command",
+      "tier": "ci",
+      "argv": [
+        "{python}",
+        "tools/readme_numbers.py"
+      ],
+      "timeout_s": 60,
+      "owns": [
+        "tools/readme_numbers.py"
+      ],
+      "provenance": {
+        "what": "Headline module, test and mutation counts recomputed from the tree."
+      },
+      "sha256": {
+        "tools/readme_numbers.py": "485fe897f17a22759bbe0eedf5cf8b5101ff0a4f8598fef755b51d75fc237fcb"
+      }
+    },
+    {
+      "id": "release-gates",
+      "kind": "delegated",
+      "tier": "ci",
+      "must_contain": [
+        "cargo test --release",
+        "cargo clippy",
+        "wasm32-unknown-unknown",
+        "event_driven_saves",
+        "lif_closed_form",
+        "stdp_window",
+        "prose_check.py",
+        "readme_numbers.py",
+        "cargo doc"
+      ],
+      "owns": [
+        "tools/gates.sh"
+      ],
+      "provenance": {
+        "what": "The nine release gates. Their results are the EXIT lines of tools/gates.sh."
+      },
+      "sha256": {
+        "tools/gates.sh": "5bbdddb3ac9085ef3a4bc5b161c2cf570eb62e32c8b58f800a1ed9713b8fba61"
+      }
+    },
+    {
+      "id": "equivalence-density-shifted",
+      "kind": "command",
+      "tier": "ci",
+      "argv": [
+        "bash",
+        "-c",
+        "mkdir -p target/verification && rustup run 1.98.1 rustc --edition 2021 -O tools/equivalence/density_shifted.rs -o target/verification/density_shifted && target/verification/density_shifted"
+      ],
+      "timeout_s": 180,
+      "expect_stdout_regex": "(?<!\\d)0 disagreements",
+      "owns": [
+        "tools/equivalence/density_shifted.rs"
+      ],
+      "provenance": {
+        "what": "Bit-identical comparison backing one density.rs equivalence argument.",
+        "owner": "ferromorphic"
+      },
+      "sha256": {
+        "tools/equivalence/density_shifted.rs": "155344c5ceed2b393d65a5e4bcc5f43964eccfcce4ac7d629ee48a98c786008a"
+      }
+    },
+    {
+      "id": "equivalence-gapjunction-bisect",
+      "kind": "command",
+      "tier": "ci",
+      "argv": [
+        "bash",
+        "-c",
+        "mkdir -p target/verification && rustup run 1.98.1 rustc --edition 2021 -O tools/equivalence/gapjunction_bisect.rs -o target/verification/gapjunction_bisect && target/verification/gapjunction_bisect"
+      ],
+      "timeout_s": 180,
+      "expect_stdout_regex": "(?<!\\d)0 disagreements",
+      "owns": [
+        "tools/equivalence/gapjunction_bisect.rs"
+      ],
+      "provenance": {
+        "what": "Bit-identical comparison of two bisection stop conditions."
+      },
+      "sha256": {
+        "tools/equivalence/gapjunction_bisect.rs": "7f422170fb25a236589d585201b0bab3c63d9d9008d542e9655bac2a015055f7"
+      }
+    },
+    {
+      "id": "equivalence-gapjunction-eta",
+      "kind": "command",
+      "tier": "ci",
+      "argv": [
+        "bash",
+        "-c",
+        "mkdir -p target/verification && rustup run 1.98.1 rustc --edition 2021 -O tools/equivalence/gapjunction_eta.rs -o target/verification/gapjunction_eta && target/verification/gapjunction_eta"
+      ],
+      "timeout_s": 180,
+      "expect_stdout_regex": "(?<!\\d)0 disagreements",
+      "owns": [
+        "tools/equivalence/gapjunction_eta.rs"
+      ],
+      "provenance": {
+        "what": "Bit-identical comparison of the eta_at boundary at signed zero."
+      },
+      "sha256": {
+        "tools/equivalence/gapjunction_eta.rs": "ed182bce265e0e3d6ba3fa2fe1b3a9472614f1095bc2780fa92fdd016c758d92"
+      }
+    },
+    {
+      "id": "intrinsic-2007",
+      "kind": "incomplete_if_missing",
+      "tier": "reference",
+      "argv": [
+        "{python}",
+        "tools/intrinsic_2007_reference.py"
+      ],
+      "timeout_s": 900,
+      "missing": [
+        "papers/triesch-2007.pdf"
+      ],
+      "missing_exit": 2,
+      "missing_stderr_contains": "UNAVAILABLE",
+      "expect_stdout_contains": "balanced thresholds",
+      "reason": "Quadratures from Triesch, Neural Computation 19(4):885-909, 2007, doi:10.1162/neco.2007.19.4.885, run with SciPy. Figure readings need the PDF and pdftocairo. Exit 2 means those figures were not read.",
+      "owns": [
+        "tools/intrinsic_2007_reference.py"
+      ],
+      "provenance": {
+        "owner": "Jochen Triesch",
+        "paper": "https://doi.org/10.1162/neco.2007.19.4.885",
+        "tools": "NumPy 1.26.4, SciPy 1.13.1",
+        "licence": "The paper is copyrighted and is not in this repository. The script recomputes quadratures; it does not copy the paper."
+      },
+      "sha256": {
+        "tools/intrinsic_2007_reference.py": "cf9714a62ebde98b4ab1973422aebccea475dda65ee1476ecebb2db2b36c0b26"
+      }
+    },
+    {
+      "id": "gapjunction-reference",
+      "kind": "incomplete_if_missing",
+      "tier": "reference",
+      "argv": [
+        "{python}",
+        "tools/gapjunction_reference.py"
+      ],
+      "timeout_s": 1800,
+      "missing": [
+        "papers/lewis-2003.pdf",
+        "papers/chow-2000.pdf"
+      ],
+      "missing_exit": 2,
+      "missing_stderr_contains": "UNAVAILABLE",
+      "expect_stdout_contains": "Lewis-Rinzel eq. (5)",
+      "reason": "Sections A-D integrate Lewis & Rinzel and Chow & Kopell with SciPy DOP853. Section E reads the papers' figures and is unavailable without the PDFs.",
+      "owns": [
+        "tools/gapjunction_reference.py"
+      ],
+      "provenance": {
+        "owners": "Timothy J. Lewis and John Rinzel; Carson C. Chow and Nancy Kopell",
+        "tools": "NumPy 1.26.4, SciPy 1.13.1; section E also needs poppler",
+        "licence": "The PDFs are copyrighted primaries, gitignored, and not in this checkout."
+      },
+      "sha256": {
+        "tools/gapjunction_reference.py": "a67e4592de462f725181c8dbef8297c19e97ee16c8b9ddf3a1180ded31cfbf98"
+      }
+    },
+    {
+      "id": "morrislecar-reference",
+      "kind": "command",
+      "tier": "reference",
+      "argv": [
+        "{python}",
+        "tools/morrislecar_reference.py"
+      ],
+      "timeout_s": 1800,
+      "owns": [
+        "tools/morrislecar_reference.py"
+      ],
+      "provenance": {
+        "owners": "Catherine Morris and Harold Lecar",
+        "paper": "Biophysical Journal 35:193-213 (1981)",
+        "tools": "NumPy 1.26.4, SciPy 1.13.1 DOP853 rtol=atol=1e-12",
+        "licence": "Equations re-derived in the script from the paper. The paper is not vendored. The authors' MLAB integrator is not available."
+      },
+      "sha256": {
+        "tools/morrislecar_reference.py": "0edfd9af1be91cf85deed4aeb8acce75a84165e1ca8fa4449ece1e58b679f7da"
+      }
+    },
+    {
+      "id": "hindmarshrose-reference",
+      "kind": "command",
+      "tier": "reference",
+      "argv": [
+        "{python}",
+        "tools/hindmarshrose_reference.py"
+      ],
+      "timeout_s": 3600,
+      "owns": [
+        "tools/hindmarshrose_reference.py"
+      ],
+      "provenance": {
+        "owners": "J. L. Hindmarsh and R. M. Rose",
+        "paper": "Proceedings of the Royal Society of London B 221:87-102 (1984)",
+        "tools": "NumPy 1.26.4, SciPy 1.13.1 DOP853 and Radau, rtol=atol=1e-12",
+        "licence": "No authors' integrator was published. The script is an independent SciPy integration of the printed equations."
+      },
+      "sha256": {
+        "tools/hindmarshrose_reference.py": "1d669f664718072dc0629c27a64f5c18e5b90d955ff0f9677f710f4f84520184"
+      }
+    },
+    {
+      "id": "density-reference",
+      "kind": "command",
+      "tier": "reference",
+      "argv": [
+        "{python}",
+        "tools/density_reference.py"
+      ],
+      "timeout_s": 3600,
+      "owns": [
+        "tools/density_reference.py"
+      ],
+      "provenance": {
+        "owners": "Nicolas Brunel; Magnus Richardson; Benjamin Lindner and others, as named in the script",
+        "tools": "NumPy 1.26.4, SciPy 1.13.1, mpmath 1.3.0",
+        "licence": "Closed forms and SciPy/mpmath quadratures. Papers are not vendored. mpmath is BSD, Fredrik Johansson, https://github.com/fredrik-johansson/mpmath"
+      },
+      "sha256": {
+        "tools/density_reference.py": "9fcc7b1325704716f7a48d838896ff5f7882afb01f0573fabbf15e8c4bc57814"
+      }
+    },
+    {
+      "id": "pyspike-reference",
+      "kind": "attempt",
+      "tier": "reference",
+      "argv": [
+        "{python}",
+        "tools/pyspike_reference.py",
+        "synchrony"
+      ],
+      "timeout_s": 180,
+      "reason": "PySpike 0.9.0 (Mario Mulansky and Thomas Kreuz, SoftwareX 5:183-189, 2016) is not a crate dependency and is not vendored. A missing import is UNAVAILABLE, with stderr kept.",
+      "owns": [
+        "tools/pyspike_reference.py"
+      ],
+      "provenance": {
+        "owners": "Mario Mulansky and Thomas Kreuz",
+        "source": "https://github.com/mariomulansky/PySpike",
+        "pin": "pyspike==0.9.0",
+        "licence": "License-Expression BSD-2-Clause in the installed METADATA of pyspike 0.9.0. Copyright (c) 2014, Mario Mulansky. Not copied into this repository."
+      },
+      "sha256": {
+        "tools/pyspike_reference.py": "37062f199c42307c6e3a13413dc0e3c5dc9a3672c204c91e88f35def05497ac2"
+      }
+    },
+    {
+      "id": "calcium-reference",
+      "kind": "attempt",
+      "tier": "reference",
+      "argv": [
+        "{python}",
+        "tools/calcium_reference.py",
+        "target/verification/calcium"
+      ],
+      "timeout_s": 900,
+      "reason": "Fetches mgraupe/CalciumBasedPlasticityModel at 56503b0f401536bc0debe996521a5adbd80c6a71. The upstream repository is GPL-3.0, so the script fetches it and this crate does not vendor it.",
+      "owns": [
+        "tools/calcium_reference.py"
+      ],
+      "provenance": {
+        "owners": "Michael Graupner and Nicolas Brunel",
+        "source": "https://github.com/mgraupe/CalciumBasedPlasticityModel/commit/56503b0f401536bc0debe996521a5adbd80c6a71",
+        "licence": "GPL-3.0 as stated by tools/calcium_reference.py. Fetched, not vendored."
+      },
+      "sha256": {
+        "tools/calcium_reference.py": "968481511ddda1af2d8c062e38d55ec27b3533e4d171f3ab22bccba3a3db87a6"
+      }
+    },
+    {
+      "id": "clopath-reference",
+      "kind": "attempt",
+      "tier": "reference",
+      "argv": [
+        "{python}",
+        "tools/clopath_reference.py",
+        "target/verification/clopath"
+      ],
+      "timeout_s": 600,
+      "reason": "Fetches ModelDB accession 144566 (Claudia Clopath) at the commit the script pins, checks the transcribed statements against the .m files, and evaluates the transcription in Python because MATLAB is not required.",
+      "owns": [
+        "tools/clopath_reference.py"
+      ],
+      "provenance": {
+        "owner": "Claudia Clopath",
+        "source": "https://github.com/ModelDBRepository/144566",
+        "licence": "The script does not state an SPDX identifier. The .m files are fetched and not vendored."
+      },
+      "sha256": {
+        "tools/clopath_reference.py": "edfaba7adfd512512d48001915e340893a6e1bdfdf1bec1eb2ee6f9959d46bfe"
+      }
+    },
+    {
+      "id": "glif-reference",
+      "kind": "attempt",
+      "tier": "reference",
+      "argv": [
+        "{python}",
+        "tools/glif_reference.py",
+        "target/verification/glif-sdk"
+      ],
+      "timeout_s": 600,
+      "reason": "Fetches Allen Institute AllenSDK GLIF code at 1bdca3ad884c3a5edea8236161424650603e6f29 and five neuron_config.json files. The script states the AllenSDK licence does not permit redistributing the code.",
+      "owns": [
+        "tools/glif_reference.py"
+      ],
+      "provenance": {
+        "owner": "Allen Institute",
+        "source": "https://github.com/AllenInstitute/AllenSDK/commit/1bdca3ad884c3a5edea8236161424650603e6f29",
+        "licence": "Not redistributed. Fetched at the pinned commit."
+      },
+      "sha256": {
+        "tools/glif_reference.py": "7a8c8f46280c903b64d04dd6302971b11269d916dea1d8c4e8bdaafb263ffbc5"
+      }
+    },
+    {
+      "id": "glif-sweep",
+      "kind": "blocked",
+      "tier": "reference",
+      "argv": [
+        "{python}",
+        "tools/glif_sweep.py",
+        "compare",
+        "third_party/allen-glif-cache"
+      ],
+      "timeout_s": 7200,
+      "missing": [
+        "third_party/allen-glif-cache/allensdk.tsv",
+        "third_party/allen-glif-cache/ferromorphic.tsv"
+      ],
+      "reason": "tools/glif_sweep.py compares every GLIF model the Allen Cell Types Database serves. That corpus is not in this checkout, so the sweep was not executed. When both TSV files exist the compare command runs and must pass.",
+      "owns": [
+        "tools/glif_sweep.py"
+      ],
+      "provenance": {
+        "owner": "Allen Institute",
+        "api": "http://api.brain-map.org/api/v2/data/query.json",
+        "licence": "Database files are fetched by the script and are not vendored."
+      },
+      "sha256": {
+        "tools/glif_sweep.py": "419d1861e0f13c4ee1da61f95f63fb25a3b9464adbe0e84d80121e8f74f36bb3"
+      }
+    },
+    {
+      "id": "clopath-figures",
+      "kind": "blocked",
+      "tier": "reference",
+      "argv": [
+        "{python}",
+        "tools/clopath_figures.py",
+        "papers/clopath-2010.pdf",
+        "target/verification/clopath-figures"
+      ],
+      "timeout_s": 900,
+      "missing": [
+        "papers/clopath-2010.pdf"
+      ],
+      "reason": "Figure readings need the copyrighted PDF of Clopath et al. 2010, plus pypdf and poppler. The PDF is gitignored and is not in this checkout, so the figures were not read.",
+      "owns": [
+        "tools/clopath_figures.py"
+      ],
+      "provenance": {
+        "owner": "Claudia Clopath and coauthors",
+        "paper": "Nature Neuroscience 13:344-352 (2010)",
+        "licence": "PDF not vendored."
+      },
+      "sha256": {
+        "tools/clopath_figures.py": "abc7d8dfc2565f9ce22cccbfcc6110c92b6c265ddd8bc02f9787b107180d2f11"
+      }
+    },
+    {
+      "id": "som-reference",
+      "kind": "attempt",
+      "tier": "reference",
+      "argv": [
+        "{python}",
+        "tools/som_reference.py",
+        "target/verification/som_pak"
+      ],
+      "timeout_s": 600,
+      "reason": "SOM_PAK 3.1 is downloaded from the Helsinki University of Technology archive and checked against SHA-256 a9421ebbe55217674c3a8a5157a8f8e124379e2689c652b7ca6003d0df889f6c. A failed fetch is UNAVAILABLE, with stderr kept. The package is not vendored: its licence, as stated in the script, permits scientific use and forbids inclusion in a commercial application.",
+      "owns": [
+        "tools/som_reference.py"
+      ],
+      "provenance": {
+        "owner": "SOM Programming Team, Helsinki University of Technology",
+        "source": "http://www.cis.hut.fi/research/som_pak/som_pak-3.1.tar",
+        "sha256": "a9421ebbe55217674c3a8a5157a8f8e124379e2689c652b7ca6003d0df889f6c",
+        "licence": "Scientific use permitted; commercial inclusion forbidden, per tools/som_reference.py. Not vendored."
+      },
+      "sha256": {
+        "tools/som_reference.py": "6428239e902b17ffd6b9414f38050c2a3f6e005e5f542c695cea5eb7efc4c7cb"
+      }
+    }
+  ]
+}
