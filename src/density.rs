@@ -332,14 +332,21 @@ pub enum DensityError {
     },
     /// `λ = 0`, where the two backward solutions both end at zero flux and their ratio is `0/0`.
     ZeroFrequency,
-    /// The eigenvalue search did not settle, or left the finite plane.
+    /// The eigenvalue search did not settle, the difference quotient vanished, or a step left
+    /// the finite plane. `re` and `im` are the last finite iterate. `residual_re` and
+    /// `residual_im` are the characteristic there. [`Eigenvalue`] is returned only when the step
+    /// is within [`NEWTON_TOLERANCE`] and that residual's norm is within [`NEWTON_RESIDUAL`].
     NoConvergence {
         /// Newton steps taken.
         steps: usize,
-        /// The last point, real part, per second.
+        /// Last finite iterate, real part, per second.
         re: f64,
-        /// The last point, imaginary part, radians per second.
+        /// Last finite iterate, imaginary part, radians per second.
         im: f64,
+        /// Characteristic at that iterate, real part.
+        residual_re: f64,
+        /// Characteristic at that iterate, imaginary part.
+        residual_im: f64,
     },
     /// [`crate::meanfield`] refused its part.
     MeanField(MeanFieldError),
@@ -367,8 +374,11 @@ impl fmt::Display for DensityError {
             }
             Self::WrongModel { what } => write!(f, "{what} is not defined for this model"),
             Self::ZeroFrequency => f.write_str("the response at lambda = 0 is 0/0; ask for a small nonzero frequency"),
-            Self::NoConvergence { steps, re, im } => {
-                write!(f, "the eigenvalue search did not settle in {steps} steps; it stopped at lambda = ({re}, {im}) per second")
+            Self::NoConvergence { steps, re, im, residual_re, residual_im } => {
+                write!(
+                    f,
+                    "the eigenvalue search did not settle in {steps} steps; it stopped at lambda = ({re}, {im}) per second with residual ({residual_re}, {residual_im})"
+                )
             }
             Self::MeanField(e) => write!(f, "meanfield: {e}"),
         }
@@ -1074,12 +1084,12 @@ impl NetworkDensity {
     ///
     /// # Errors
     ///
-    /// [`DensityError::NoConvergence`] after [`NEWTON_STEPS`] steps, at the first step that leaves
-    /// the finite plane, or when a positive difference step samples the same characteristic twice.
-    /// That last case is not a root: the difference quotient is zero and `f / slope` is `0/0`. A
-    /// difference step of length zero, a subnormal `|λ|` where `1e-7·|λ|` underflows, still
-    /// divides, so the reported point is `NaN` and the subnormal refusal stays visible. Whatever
-    /// [`NetworkDensity::characteristic`] refuses is returned as that error.
+    /// [`DensityError::NoConvergence`] carries the last finite iterate and the characteristic
+    /// there. That is what a vanished difference, a zero or non-finite slope, a non-finite step,
+    /// or a step budget that runs out all return. [`Eigenvalue`] is returned only when the step
+    /// is at most [`NEWTON_TOLERANCE`] of `|λ|` and the residual norm is at most
+    /// [`NEWTON_RESIDUAL`]. A small step whose residual is larger than that is not an eigenvalue.
+    /// Whatever [`NetworkDensity::characteristic`] refuses is returned as that error.
     pub fn eigenvalue(&self, nu0: f64, guess: Complex) -> Result<Eigenvalue, DensityError> {
         let st = self.neuron(nu0)?.stationary(self.dv)?;
         let mut z = guess;
@@ -1088,28 +1098,45 @@ impl NetworkDensity {
             let h = Complex::new(NEWTON_DIFFERENCE * z.norm(), 0.0);
             let f_h = self.characteristic_on(&st, z + h)?;
             let df = f_h - f;
-            // Two identical samples. `df / h` is zero and the Newton step is `0/0`, which is a
-            // NaN, not a smaller guess. `|λ| ~ 1e-200` makes `h` far below an ulp of a
-            // characteristic that is an ordinary number there, so the samples agree long before
-            // the step budget. Stop on the finite point. `h == 0` is excluded: that division is
-            // the subnormal refusal, and swallowing it would hide the `0/0`.
-            if h.re != 0.0 && df.re == 0.0 && df.im == 0.0 {
-                return Err(DensityError::NoConvergence { steps, im: z.im, re: z.re });
-            }
             let slope = df / h;
             let dz = f / slope;
-            z = z - dz;
-            // A step off the finite plane is a failure, not a root: `hypot(NaN, ∞)` is `∞`, so
-            // the test below would otherwise accept it.
-            if !(z.re.is_finite() && z.im.is_finite()) {
-                return Err(DensityError::NoConvergence { steps, re: z.re, im: z.im });
+            let next = z - dz;
+            // Identical samples, a zero-length `h`, or a slope that does not divide: `dz` is not
+            // finite. Keep `z`, which has not moved, and the residual already evaluated there.
+            if !(dz.re.is_finite() && dz.im.is_finite() && next.re.is_finite() && next.im.is_finite()) {
+                return Err(DensityError::NoConvergence { steps, re: z.re, im: z.im, residual_re: f.re, residual_im: f.im });
             }
+            z = z - dz;
             if dz.norm() <= NEWTON_TOLERANCE * z.norm() {
-                return Ok(Eigenvalue { lambda: z, steps });
+                let at = self.characteristic_on(&st, z)?;
+                if newton_converged(dz.norm(), z.norm(), at.norm()) {
+                    return Ok(Eigenvalue { lambda: z, steps, residual: at });
+                }
+                // The step stalled and the residual is not a root.
+                return Err(DensityError::NoConvergence {
+                    steps,
+                    re: z.re,
+                    im: z.im,
+                    residual_re: at.re,
+                    residual_im: at.im,
+                });
             }
         }
-        Err(DensityError::NoConvergence { steps: NEWTON_STEPS, re: z.re, im: z.im })
+        let at = self.characteristic_on(&st, z)?;
+        Err(DensityError::NoConvergence { steps: NEWTON_STEPS, re: z.re, im: z.im, residual_re: at.re, residual_im: at.im })
     }
+}
+
+/// Whether a Newton proposal is an eigenvalue.
+///
+/// `step` is the length of the update, `scale` is `|λ|` after it, and `residual` is the norm of
+/// the characteristic at that `λ`. Both bounds are required. A tiny step with a residual above
+/// [`NEWTON_RESIDUAL`] is stagnation, not convergence.
+fn newton_converged(step: f64, scale: f64, residual: f64) -> bool {
+    step.is_finite()
+        && scale.is_finite()
+        && residual.is_finite()
+        && step <= NEWTON_TOLERANCE * scale && residual <= NEWTON_RESIDUAL
 }
 
 /// The most Newton steps [`NetworkDensity::eigenvalue`] takes.
@@ -1121,7 +1148,15 @@ pub const NEWTON_STEPS: usize = 50;
 pub const NEWTON_DIFFERENCE: f64 = 1e-7;
 
 /// [`NetworkDensity::eigenvalue`] stops when a step moves `λ` by less than this fraction of `|λ|`.
+///
+/// This is not the acceptance test by itself. The residual must also be at most [`NEWTON_RESIDUAL`].
 pub const NEWTON_TOLERANCE: f64 = 1e-12;
+
+/// The largest characteristic norm [`NetworkDensity::eigenvalue`] will call an eigenvalue.
+///
+/// A Newton step smaller than [`NEWTON_TOLERANCE`] of `|λ|` whose residual exceeds this bound is
+/// [`DensityError::NoConvergence`], not [`Eigenvalue`].
+pub const NEWTON_RESIDUAL: f64 = 1e-12;
 
 /// An eigenvalue of the asynchronous state, and how it was found.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1130,13 +1165,16 @@ pub struct Eigenvalue {
     pub lambda: Complex,
     /// Newton steps taken.
     pub steps: usize,
+    /// Characteristic at [`Self::lambda`]. Its norm is at most [`NEWTON_RESIDUAL`].
+    pub residual: Complex,
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        Complex, DensityError, Lattice, Model, Modulation, NEWTON_DIFFERENCE, NEWTON_STEPS,
-        NetworkDensity, Stationary, WhiteNoiseIf, brunel_density, brunel_slope,
+        Complex, DensityError, Lattice, Model, Modulation, NEWTON_DIFFERENCE, NEWTON_RESIDUAL,
+        NEWTON_STEPS, NetworkDensity, Stationary, WhiteNoiseIf, brunel_density, brunel_slope,
+        newton_converged,
     };
     use crate::meanfield::{BrunelNetwork, SiegertInput};
     use crate::neuron::Lif;
@@ -2562,19 +2600,27 @@ mod tests {
     }
 
     /// Newton's method from far away: a guess at 1 MHz reaches a root in ten steps, which is what
-    /// [`NEWTON_STEPS`] has to allow. A subnormal guess leaves the finite plane on its first step,
-    /// and that is refused, not reported as a root; a guess at `10⁻²⁰⁰` per second creeps towards the
-    /// degenerate `λ = 0` and runs out of steps.
+    /// [`NEWTON_STEPS`] has to allow, and the residual is under [`NEWTON_RESIDUAL`]. A subnormal
+    /// guess makes the difference step underflow; the refusal keeps that finite guess and its
+    /// residual. A guess at `10⁻²⁰⁰` per second is not a root: the forward samples meet and the
+    /// refusal carries the last finite iterate and a residual above [`NEWTON_RESIDUAL`].
     #[test]
     fn the_eigenvalue_search_reports_its_steps_and_refuses_to_diverge() {
         let net = brunel_net(1000.0, 0.1e-3, 6.0, 4.0);
         let nd = NetworkDensity { net, v_lb: -40e-3, dv: 10e-6 };
         let far = nd.eigenvalue(55.8, Complex::new(0.0, 1e6)).unwrap();
         assert_eq!(far.steps, 10);
+        assert!(far.residual.norm() <= NEWTON_RESIDUAL);
         assert!(nd.characteristic(55.8, far.lambda).unwrap().norm() < 1e-12);
-        // A subnormal guess: the difference step 10⁻⁷|λ| is zero, the slope 0/0, the step NaN.
+        // A subnormal guess: `1e-7·|λ|` underflows, the quotient is not finite, and the refusal
+        // keeps that finite guess plus its residual. It is not an `Ok` eigenvalue.
         let lost = nd.eigenvalue(55.8, Complex::new(0.0, 1e-320)).unwrap_err();
-        assert_eq!(lost.to_string(), "the eigenvalue search did not settle in 1 steps; it stopped at lambda = (NaN, NaN) per second");
+        let DensityError::NoConvergence { steps, re, im, residual_re, residual_im } = lost else {
+            panic!("{lost:?}")
+        };
+        assert_eq!(steps, 1);
+        assert!(re.is_finite() && im.is_finite() && im > 0.0 && im < 1e-300, "{lost}");
+        assert!(Complex::new(residual_re, residual_im).norm() > NEWTON_RESIDUAL, "{lost}");
         // A guess at 10⁻²⁰⁰ is not a root. The characteristic there is an ordinary number
         // (about 11.6 for this network), and `h = 1e-7·|λ|` is far below an ulp of that number,
         // so the forward difference is rounding noise and then exactly zero. Dividing by that
@@ -2582,13 +2628,24 @@ mod tests {
         // samples equal, and must not report a root. The sign of that point is the noise; what
         // is invariant is that it is finite, real, and not a root.
         let slow = nd.eigenvalue(55.8, Complex::new(1e-200, 0.0)).unwrap_err();
-        let DensityError::NoConvergence { steps, re, im } = slow else { panic!("{slow:?}") };
+        let DensityError::NoConvergence { steps, re, im, residual_re, residual_im } = slow else {
+            panic!("{slow:?}")
+        };
         assert!(re.is_finite() && im.is_finite(), "stopped off the finite plane: {slow:?}");
         assert_eq!(im, 0.0, "a real guess left the real axis: {slow:?}");
         assert!((1..NEWTON_STEPS).contains(&steps), "steps {steps} is not an early finite stop");
         let z = Complex::new(re, im);
         let f = nd.characteristic(55.8, z).unwrap();
+        let stored = Complex::new(residual_re, residual_im);
+        assert_eq!((stored.re, stored.im), (f.re, f.im), "the diagnostic residual is not the characteristic");
         assert!(f.norm() > 1e-3, "the stop was accepted as a root: {f:?}");
+        assert!(f.norm() > NEWTON_RESIDUAL);
+        // A tiny step is not enough. This is the pair `newton_converged` rejects, and the
+        // search above is the same refusal on a real characteristic.
+        assert!(!newton_converged(1e-20, 1.0, 1e-2), "stagnation with residual 1e-2 was accepted");
+        assert!(newton_converged(1e-20, 1.0, 1e-13));
+        assert!(!newton_converged(1.0, 1e6, 0.0));
+        assert!(!newton_converged(f64::NAN, 1.0, 0.0));
         let h = NEWTON_DIFFERENCE * z.norm();
         assert!(h > 0.0, "the difference step underflowed; that is the subnormal case, already tested");
         let f_h = nd.characteristic(55.8, Complex::new(re + h, im)).unwrap();

@@ -1107,28 +1107,28 @@
  },
  {
   "label": "cap reports re and im swapped",
-  "old": "Err(DensityError::NoConvergence { steps: NEWTON_STEPS, re: z.re, im: z.im })",
-  "new": "Err(DensityError::NoConvergence { steps: NEWTON_STEPS, re: z.im, im: z.re })"
+  "old": "Err(DensityError::NoConvergence { steps: NEWTON_STEPS, re: z.re, im: z.im, residual_re: at.re, residual_im: at.im })",
+  "new": "Err(DensityError::NoConvergence { steps: NEWTON_STEPS, re: z.im, im: z.re, residual_re: at.re, residual_im: at.im })"
  },
  {
   "label": "cap reports no steps",
-  "old": "Err(DensityError::NoConvergence { steps: NEWTON_STEPS, re: z.re, im: z.im })",
-  "new": "Err(DensityError::NoConvergence { steps: 0, re: z.re, im: z.im })"
+  "old": "Err(DensityError::NoConvergence { steps: NEWTON_STEPS, re: z.re, im: z.im, residual_re: at.re, residual_im: at.im })",
+  "new": "Err(DensityError::NoConvergence { steps: 0, re: z.re, im: z.im, residual_re: at.re, residual_im: at.im })"
  },
  {
   "label": "newton finite guard removed",
-  "old": "            if !(z.re.is_finite() && z.im.is_finite()) {\n                return Err(DensityError::NoConvergence { steps, re: z.re, im: z.im });\n            }\n",
+  "old": "            if !(dz.re.is_finite() && dz.im.is_finite() && next.re.is_finite() && next.im.is_finite()) {\n                return Err(DensityError::NoConvergence { steps, re: z.re, im: z.im, residual_re: f.re, residual_im: f.im });\n            }\n",
   "new": ""
  },
  {
   "label": "newton reports the cap",
-  "old": "return Err(DensityError::NoConvergence { steps, re: z.re, im: z.im });",
-  "new": "return Err(DensityError::NoConvergence { steps: NEWTON_STEPS, re: z.re, im: z.im });"
+  "old": "return Err(DensityError::NoConvergence { steps, re: z.re, im: z.im, residual_re: f.re, residual_im: f.im });",
+  "new": "return Err(DensityError::NoConvergence { steps: NEWTON_STEPS, re: z.re, im: z.im, residual_re: f.re, residual_im: f.im });"
  },
  {
   "label": "newton test inverted",
-  "old": "if dz.norm() <= NEWTON_TOLERANCE * z.norm() {",
-  "new": "if dz.norm() >= NEWTON_TOLERANCE * z.norm() {"
+  "old": "step <= NEWTON_TOLERANCE * scale && residual <= NEWTON_RESIDUAL",
+  "new": "step >= NEWTON_TOLERANCE * scale && residual <= NEWTON_RESIDUAL"
  },
  {
   "label": "NEWTON_STEPS 50 -> 9",
