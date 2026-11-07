@@ -2531,16 +2531,464 @@ impl SpikeFilter {
     }
 }
 
+/// Autonomous echo-state rollout whose matrices are supplied by the caller.
+///
+/// The recurrence is `x ← (1 − a) x + a tanh(W x + W_in [1, u])` when a bias column is
+/// included, and the readout is a bias-free map of `[1, u, x]` when the input is kept in the
+/// feature. After the first step, autonomous mode feeds the prediction back in place of the
+/// later observed samples. That is the Mackey–Glass example's forecast. It is not [`Esn::new`]:
+/// that constructor draws `W` and scales it by a power-iteration radius. Nothing here draws,
+/// rescales, or fits a ridge. The caller has already done those, or has declined to.
+///
+/// Matrices are row-major. Row `i` of `w_in` and of `w` is the weights into unit `i`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SuppliedEcho {
+    /// Reservoir width.
+    pub units: usize,
+    /// Columns of `w_in`, including the leading bias column when `include_bias` is set.
+    pub in_width: usize,
+    /// Readout outputs. Autonomous feedback below is defined for one output.
+    pub n_out: usize,
+    /// `units × in_width`.
+    pub w_in: Vec<f64>,
+    /// `units × units`.
+    pub w: Vec<f64>,
+    /// `n_out × feature`, feature being `in_width + units` when `include_input` is set.
+    pub w_out: Vec<f64>,
+    /// Leak `a` in the convex combination above. Finite, and not restricted to `(0, 1]`.
+    pub leakage: f64,
+    /// Reservoir state, length `units`. The forecast continues from this vector.
+    pub state: Vec<f64>,
+    /// Prepend `1` to each scalar drive before `w_in`.
+    pub include_bias: bool,
+    /// Concatenate the augmented drive with the new state before `w_out`.
+    pub include_input: bool,
+}
+
+impl SuppliedEcho {
+    /// Check the shapes and store the matrices unchanged.
+    ///
+    /// # Errors
+    ///
+    /// [`ReservoirError::Empty`] for a zero width, [`ReservoirError::ShapeMismatch`] when a
+    /// matrix does not have the stated shape, [`ReservoirError::NonFinite`] for a non-finite
+    /// entry or leak, and [`ReservoirError::OutOfRange`] when `include_bias` does not leave
+    /// exactly one driving channel. Autonomous feedback of a scalar series is the case this
+    /// type runs.
+    pub fn try_new(
+        units: usize,
+        in_width: usize,
+        n_out: usize,
+        w_in: Vec<f64>,
+        w: Vec<f64>,
+        w_out: Vec<f64>,
+        leakage: f64,
+        state: Vec<f64>,
+        include_bias: bool,
+        include_input: bool,
+    ) -> Result<Self, ReservoirError> {
+        if units == 0 || in_width == 0 || n_out == 0 {
+            return Err(ReservoirError::Empty { what: "supplied echo shape" });
+        }
+        if !leakage.is_finite() {
+            return Err(ReservoirError::NonFinite { what: "leakage", index: 0 });
+        }
+        let drive = if include_bias { in_width - 1 } else { in_width };
+        if drive != 1 || n_out != 1 {
+            return Err(ReservoirError::OutOfRange {
+                what: "scalar autonomous width",
+                value: drive as f64,
+                low: 1.0,
+                high: 1.0,
+            });
+        }
+        shape(w_in.len(), units * in_width, "w_in")?;
+        shape(w.len(), units * units, "w")?;
+        let feature = if include_input { in_width + units } else { units };
+        shape(w_out.len(), n_out * feature, "w_out")?;
+        shape(state.len(), units, "state")?;
+        finite(&w_in, "w_in")?;
+        finite(&w, "w")?;
+        finite(&w_out, "w_out")?;
+        finite(&state, "state")?;
+        Ok(Self {
+            units,
+            in_width,
+            n_out,
+            w_in,
+            w,
+            w_out,
+            leakage,
+            state,
+            include_bias,
+            include_input,
+        })
+    }
+
+    /// Forecast `observed.len()` steps. Only `observed[0]` enters the reservoir. Every later
+    /// drive is the previous prediction.
+    ///
+    /// # Errors
+    ///
+    /// [`ReservoirError::Empty`] when `observed` is empty, and [`ReservoirError::NonFinite`]
+    /// when `observed[0]` is not finite.
+    pub fn autonomous(&mut self, observed: &[f64]) -> Result<Vec<f64>, ReservoirError> {
+        if observed.is_empty() {
+            return Err(ReservoirError::Empty { what: "observed" });
+        }
+        finite(&observed[..1], "observed")?;
+        let mut drive = observed[0];
+        let mut out = Vec::with_capacity(observed.len());
+        for _ in 0..observed.len() {
+            drive = self.step_scalar(drive)?;
+            out.push(drive);
+        }
+        Ok(out)
+    }
+
+    fn step_scalar(&mut self, u: f64) -> Result<f64, ReservoirError> {
+        let n = self.units;
+        let mut aug = Vec::with_capacity(self.in_width);
+        if self.include_bias {
+            aug.push(1.0);
+        }
+        aug.push(u);
+        shape(aug.len(), self.in_width, "augmented drive")?;
+        let mut next = vec![0.0f64; n];
+        for i in 0..n {
+            let mut pre = 0.0;
+            for j in 0..n {
+                pre += self.w[i * n + j] * self.state[j];
+            }
+            for j in 0..self.in_width {
+                pre += self.w_in[i * self.in_width + j] * aug[j];
+            }
+            next[i] = (1.0 - self.leakage) * self.state[i] + self.leakage * pre.tanh();
+        }
+        self.state = next;
+        let mut feat = Vec::new();
+        if self.include_input {
+            feat.extend_from_slice(&aug);
+        }
+        feat.extend_from_slice(&self.state);
+        let mut y = 0.0;
+        for (weight, value) in self.w_out.iter().zip(&feat) {
+            y += weight * value;
+        }
+        Ok(y)
+    }
+}
+
+/// Eval-mode dense stack with the reaching example's causal sum window.
+///
+/// Each frame is appended to a buffer that starts as one zero row. While the buffer is no
+/// longer than `window`, the output is zero. After that the oldest row is dropped, the
+/// remaining rows are summed, and the sum goes through `ReLU`, batch-norm, `ReLU`, batch-norm,
+/// and a linear map. Dropout is not applied: this is the eval path, where dropout is the
+/// identity. Batch-norm uses the stored running mean and variance,
+/// `(x − mean) / sqrt(var + eps) * weight + bias`, with the caller's `eps`.
+///
+/// The weights are the caller's. This function does not open a dataset and it does not
+/// report energy.
+#[derive(Debug, Clone, PartialEq)]
+pub struct WindowAnn {
+    /// Features in one frame.
+    pub input_dim: usize,
+    /// First hidden width.
+    pub hidden1: usize,
+    /// Second hidden width.
+    pub hidden2: usize,
+    /// Outputs.
+    pub output_dim: usize,
+    /// Rows kept before the sum. The reaching example uses `0.2 / 0.004 = 50`.
+    pub window: usize,
+    /// `hidden1 × input_dim`, row-major.
+    pub fc1_w: Vec<f32>,
+    /// Length `hidden1`.
+    pub fc1_b: Vec<f32>,
+    /// Batch-norm scale, shift, running mean, running variance. Each length `hidden1`.
+    pub bn1_w: Vec<f32>,
+    /// Batch-norm shift.
+    pub bn1_b: Vec<f32>,
+    /// Running mean.
+    pub bn1_mean: Vec<f32>,
+    /// Running variance.
+    pub bn1_var: Vec<f32>,
+    /// `hidden2 × hidden1`, row-major.
+    pub fc2_w: Vec<f32>,
+    /// Length `hidden2`.
+    pub fc2_b: Vec<f32>,
+    /// Batch-norm scale, shift, running mean, running variance. Each length `hidden2`.
+    pub bn2_w: Vec<f32>,
+    /// Batch-norm shift.
+    pub bn2_b: Vec<f32>,
+    /// Running mean.
+    pub bn2_mean: Vec<f32>,
+    /// Running variance.
+    pub bn2_var: Vec<f32>,
+    /// `output_dim × hidden2`, row-major.
+    pub fc3_w: Vec<f32>,
+    /// Length `output_dim`.
+    pub fc3_b: Vec<f32>,
+    /// Batch-norm epsilon added to the running variance.
+    pub eps: f32,
+    /// Time-major buffer, including the initial zero row.
+    buffer: Vec<f32>,
+}
+
+impl WindowAnn {
+    /// Store a checkpoint and a one-row zero buffer.
+    ///
+    /// # Errors
+    ///
+    /// [`ReservoirError::Empty`] for a zero width or window, [`ReservoirError::ShapeMismatch`]
+    /// for a matrix of the wrong length, and [`ReservoirError::NonFinite`] for a non-finite
+    /// weight or a non-positive `eps`.
+    pub fn try_new(
+        input_dim: usize,
+        hidden1: usize,
+        hidden2: usize,
+        output_dim: usize,
+        window: usize,
+        fc1_w: Vec<f32>,
+        fc1_b: Vec<f32>,
+        bn1_w: Vec<f32>,
+        bn1_b: Vec<f32>,
+        bn1_mean: Vec<f32>,
+        bn1_var: Vec<f32>,
+        fc2_w: Vec<f32>,
+        fc2_b: Vec<f32>,
+        bn2_w: Vec<f32>,
+        bn2_b: Vec<f32>,
+        bn2_mean: Vec<f32>,
+        bn2_var: Vec<f32>,
+        fc3_w: Vec<f32>,
+        fc3_b: Vec<f32>,
+        eps: f32,
+    ) -> Result<Self, ReservoirError> {
+        if input_dim == 0 || hidden1 == 0 || hidden2 == 0 || output_dim == 0 || window == 0 {
+            return Err(ReservoirError::Empty { what: "window ann shape" });
+        }
+        if !(eps.is_finite() && eps > 0.0) {
+            return Err(ReservoirError::NonFinite { what: "eps", index: 0 });
+        }
+        shape(fc1_w.len(), hidden1 * input_dim, "fc1_w")?;
+        shape(fc1_b.len(), hidden1, "fc1_b")?;
+        shape(bn1_w.len(), hidden1, "bn1_w")?;
+        shape(bn1_b.len(), hidden1, "bn1_b")?;
+        shape(bn1_mean.len(), hidden1, "bn1_mean")?;
+        shape(bn1_var.len(), hidden1, "bn1_var")?;
+        shape(fc2_w.len(), hidden2 * hidden1, "fc2_w")?;
+        shape(fc2_b.len(), hidden2, "fc2_b")?;
+        shape(bn2_w.len(), hidden2, "bn2_w")?;
+        shape(bn2_b.len(), hidden2, "bn2_b")?;
+        shape(bn2_mean.len(), hidden2, "bn2_mean")?;
+        shape(bn2_var.len(), hidden2, "bn2_var")?;
+        shape(fc3_w.len(), output_dim * hidden2, "fc3_w")?;
+        shape(fc3_b.len(), output_dim, "fc3_b")?;
+        for (what, xs) in [
+            ("fc1_w", fc1_w.as_slice()),
+            ("fc1_b", fc1_b.as_slice()),
+            ("bn1_w", bn1_w.as_slice()),
+            ("bn1_b", bn1_b.as_slice()),
+            ("bn1_mean", bn1_mean.as_slice()),
+            ("bn1_var", bn1_var.as_slice()),
+            ("fc2_w", fc2_w.as_slice()),
+            ("fc2_b", fc2_b.as_slice()),
+            ("bn2_w", bn2_w.as_slice()),
+            ("bn2_b", bn2_b.as_slice()),
+            ("bn2_mean", bn2_mean.as_slice()),
+            ("bn2_var", bn2_var.as_slice()),
+            ("fc3_w", fc3_w.as_slice()),
+            ("fc3_b", fc3_b.as_slice()),
+        ] {
+            finite_f32(xs, what)?;
+        }
+        Ok(Self {
+            input_dim,
+            hidden1,
+            hidden2,
+            output_dim,
+            window,
+            fc1_w,
+            fc1_b,
+            bn1_w,
+            bn1_b,
+            bn1_mean,
+            bn1_var,
+            fc2_w,
+            fc2_b,
+            bn2_w,
+            bn2_b,
+            bn2_mean,
+            bn2_var,
+            fc3_w,
+            fc3_b,
+            eps,
+            buffer: vec![0.0; input_dim],
+        })
+    }
+
+    /// Replace the buffer with one zero row. Weights stay.
+    pub fn reset_buffer(&mut self) {
+        self.buffer = vec![0.0; self.input_dim];
+    }
+
+    /// Run `frames.len() / input_dim` frames. `frames` is time-major.
+    ///
+    /// # Errors
+    ///
+    /// [`ReservoirError::ShapeMismatch`] when `frames` is not a whole number of frames, and
+    /// [`ReservoirError::NonFinite`] for a non-finite feature.
+    pub fn forward(&mut self, frames: &[f32]) -> Result<Vec<f32>, ReservoirError> {
+        if !frames.len().is_multiple_of(self.input_dim) {
+            return Err(ReservoirError::ShapeMismatch {
+                what: "frames",
+                got: frames.len(),
+                want: self.input_dim,
+            });
+        }
+        finite_f32(frames, "frames")?;
+        let steps = frames.len() / self.input_dim;
+        let mut out = Vec::with_capacity(steps * self.output_dim);
+        for s in 0..steps {
+            let frame = &frames[s * self.input_dim..(s + 1) * self.input_dim];
+            self.buffer.extend_from_slice(frame);
+            let rows = self.buffer.len() / self.input_dim;
+            if rows <= self.window {
+                out.extend(std::iter::repeat_n(0.0, self.output_dim));
+                continue;
+            }
+            let drop = (rows - self.window) * self.input_dim;
+            self.buffer.drain(..drop);
+            let mut acc = vec![0.0f32; self.input_dim];
+            for row in self.buffer.chunks(self.input_dim) {
+                for (a, v) in acc.iter_mut().zip(row) {
+                    *a += *v;
+                }
+            }
+            out.extend(self.single(&acc));
+        }
+        Ok(out)
+    }
+
+    fn single(&self, acc: &[f32]) -> Vec<f32> {
+        let h1 = relu(affine(&self.fc1_w, &self.fc1_b, acc, self.hidden1, self.input_dim));
+        let h1 = batch_norm(&h1, &self.bn1_w, &self.bn1_b, &self.bn1_mean, &self.bn1_var, self.eps);
+        let h2 = relu(affine(&self.fc2_w, &self.fc2_b, &h1, self.hidden2, self.hidden1));
+        let h2 = batch_norm(&h2, &self.bn2_w, &self.bn2_b, &self.bn2_mean, &self.bn2_var, self.eps);
+        affine(&self.fc3_w, &self.fc3_b, &h2, self.output_dim, self.hidden2)
+    }
+}
+
+fn finite_f32(xs: &[f32], what: &'static str) -> Result<(), ReservoirError> {
+    for (index, x) in xs.iter().enumerate() {
+        if !x.is_finite() {
+            return Err(ReservoirError::NonFinite { what, index });
+        }
+    }
+    Ok(())
+}
+
+fn affine(weight: &[f32], bias: &[f32], x: &[f32], rows: usize, cols: usize) -> Vec<f32> {
+    let mut y = vec![0.0f32; rows];
+    for i in 0..rows {
+        let mut s = bias[i];
+        let row = &weight[i * cols..(i + 1) * cols];
+        for (w, v) in row.iter().zip(x) {
+            s += w * v;
+        }
+        y[i] = s;
+    }
+    y
+}
+
+fn relu(mut x: Vec<f32>) -> Vec<f32> {
+    for v in &mut x {
+        if *v < 0.0 {
+            *v = 0.0;
+        }
+    }
+    x
+}
+
+fn batch_norm(x: &[f32], weight: &[f32], bias: &[f32], mean: &[f32], var: &[f32], eps: f32) -> Vec<f32> {
+    x.iter()
+        .zip(weight)
+        .zip(bias)
+        .zip(mean)
+        .zip(var)
+        .map(|((((v, w), b), m), var)| {
+            let scale = (var + eps).sqrt();
+            (v - m) / scale * w + b
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         Cell, Cholesky, Esn, EsnSpec, Liquid, LiquidSpec, Readout, ReservoirError, Ridge,
-        SpikeFilter, approximation_residual, cholesky, echo_state_check, information_processing_capacity, legendre,
-        memory_capacity, power_iteration, separation, separation_ratio, sym,
+        SpikeFilter, SuppliedEcho, WindowAnn, approximation_residual, cholesky, echo_state_check,
+        information_processing_capacity, legendre, memory_capacity, power_iteration, separation,
+        separation_ratio, sym,
     };
     use crate::neuron::Lif;
     use crate::rng::Rng;
     use crate::sim::Mode;
+
+    /// The forecast uses the first sample and then its own predictions. The later observed
+    /// values are present so a teacher-forced reading of them would move the result.
+    #[test]
+    fn a_supplied_echo_rolls_forward_from_its_own_predictions() {
+        let mut echo = SuppliedEcho::try_new(
+            1,
+            2,
+            1,
+            vec![0.5, -0.25],
+            vec![0.2],
+            vec![0.0, 1.0, -1.0],
+            0.5,
+            vec![0.1],
+            true,
+            true,
+        )
+        .unwrap();
+        let got = echo.autonomous(&[0.4, 999.0, 999.0]).unwrap();
+        let expect = [0.15153478399746123, -0.20837470166018801, -0.66530909595266452];
+        for (i, (g, e)) in got.iter().zip(expect).enumerate() {
+            assert!((g - e).abs() < 1e-12, "step {i}: {g} vs {e}");
+        }
+        assert!(SuppliedEcho::try_new(1, 2, 1, vec![0.5, -0.25], vec![0.2], vec![0.0, 1.0, -1.0], 0.5, vec![0.1], true, true)
+            .unwrap()
+            .autonomous(&[f64::NAN])
+            .is_err());
+    }
+
+    /// Window 2 keeps the initial zero row until the third frame, then sums the last two.
+    /// The stack is the identity with unit batch-norm, so the outputs are the scaled sums.
+    #[test]
+    fn a_window_ann_emits_zeros_until_the_sum_window_fills() {
+        let mut net = WindowAnn::try_new(
+            1, 1, 1, 1, 2,
+            vec![1.0], vec![0.0],
+            vec![1.0], vec![0.0], vec![0.0], vec![1.0],
+            vec![1.0], vec![0.0],
+            vec![1.0], vec![0.0], vec![0.0], vec![1.0],
+            vec![1.0], vec![0.0],
+            1e-5,
+        )
+        .unwrap();
+        let got = net.forward(&[1.0, 2.0, 3.0]).unwrap();
+        assert_eq!(got[0], 0.0);
+        let scale = 1.0f32 / (1.0f32 + 1e-5).sqrt();
+        let sum3 = 3.0f32 * scale * scale;
+        let sum5 = 5.0f32 * scale * scale;
+        assert!((got[1] - sum3).abs() < 1e-6, "{}", got[1]);
+        assert!((got[2] - sum5).abs() < 1e-6, "{}", got[2]);
+        net.reset_buffer();
+        assert_eq!(net.forward(&[1.0]).unwrap(), vec![0.0]);
+    }
 
     /// `Q D Q` with `Q = I − 2vvᵀ` a Householder reflection: orthogonal and symmetric, so the
     /// product is symmetric with **exactly** the eigenvalues in `d`, whatever `v` is. This is how a

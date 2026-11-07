@@ -9,7 +9,7 @@ hardware constraint models, analog device non-idealities, NIR, event-camera deco
 metrics, teaching tasks — and a joules ledger that charges for the memory traffic a synaptic
 operation needs.
 
-**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 89 modules, 3,081 tests.**
+**Zero dependencies. `std` only. `wasm32` clean. Deterministic by seed. 89 modules, 3,083 tests.**
 
 Run it in a browser without installing anything:
 **[energy.physicalai-bmi.org/neuromorphic](https://energy.physicalai-bmi.org/neuromorphic)** — the
@@ -291,7 +291,7 @@ rather than assumed.
 - **A sub-threshold current returns `None`, not a large number.** "Fires rarely" and "does not fire"
   are different statements and a rate-coded readout cannot recover the difference later.
 
-3,081 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
+3,083 unit tests and nineteen doctests, `cargo clippy --all-targets -- -D warnings` clean,
 `#![forbid(unsafe_code)]`, and `cargo build --target wasm32-unknown-unknown` compiles the library
 unchanged. Three of the four `examples/` are verification gates that exit non-zero when a check fails. Two of them run
 a closed form against the simulator — the LIF's analytic inter-spike interval, and the STDP pair
@@ -342,7 +342,7 @@ be reproduced cannot be checked against anything, including itself.
 
 ## Status
 
-**Today:** eighty-nine modules, 3,081 tests, and **10,579 recorded mutations — one list per
+**Today:** eighty-nine modules, 3,083 tests, and **10,579 recorded mutations — one list per
 module**, every one applicable to today's source by `python3 tools/mutate.py`.
 `python3 tools/readme_numbers.py` recomputes those figures from the repository and refuses if this
 paragraph disagrees with it, because the last time they were typed by hand the test count was 423
