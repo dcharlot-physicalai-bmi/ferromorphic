@@ -1,0 +1,8 @@
+ferromorphic-nir 1
+node 0 Affine rows=1 cols=1 weight=[1.0] bias=[0.0]
+node 1 LIF shape=[1] tau=[0.0024999999441206455] r=[1.0] v_leak=[0.0] v_threshold=[0.10000000149011612] v_reset=[0.0]
+node input Input shape=[1]
+node output Output shape=[1]
+edge input 0
+edge 0 1
+edge 1 output

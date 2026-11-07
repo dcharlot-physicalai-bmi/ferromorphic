@@ -446,6 +446,9 @@ pub struct Flatten {
     /// First axis to collapse, indexing [`Flatten::size`].
     pub start_dim: usize,
     /// Last axis to collapse, **inclusive**; must be at least `start_dim` and inside the shape.
+    ///
+    /// The text reader accepts the token `-1` and stores `size.len() - 1`. That is the index the
+    /// official `cnn_sinabs.nir` file writes for a flatten of every axis.
     pub end_dim: usize,
 }
 
@@ -2394,8 +2397,10 @@ impl Graph {
     ///
     /// A [`TextError`] naming the 1-based line: a wrong magic line, an unknown directive or node
     /// type, a missing, repeated or surplus parameter, a value that does not parse, a non-finite
-    /// float, or a fixed-length parameter of the wrong arity. Nothing is skipped and nothing is
-    /// defaulted — a file this reader accepts holds exactly the graph it returns.
+    /// float, or a fixed-length parameter of the wrong arity. A missing field is an error. The one
+    /// token with a defined expansion is `Flatten` `end_dim=-1`, the last axis of `size`, which is
+    /// how the pinned `cnn_sinabs.nir` file writes `PyTorch`'s `nn.Flatten`. The writer stores that
+    /// index. Any other negative `end_dim` is an error.
     pub fn from_text(text: &str) -> Result<Self, TextError> {
         let mut g = Self::new();
         let mut seen_magic = false;
@@ -2497,11 +2502,25 @@ fn parse_node(line: usize, toks: &[&str]) -> Result<(String, Node), TextError> {
             };
             if kind == Kind::SumPool2d { Node::SumPool2d(p) } else { Node::AvgPool2d(p) }
         }
-        Kind::Flatten => Node::Flatten(Flatten {
-            size: f.dims("size")?,
-            start_dim: f.usize_of("start_dim")?,
-            end_dim: f.usize_of("end_dim")?,
-        }),
+        Kind::Flatten => {
+            let size = f.dims("size")?;
+            let start_dim = f.usize_of("start_dim")?;
+            let raw = f.take("end_dim")?;
+            let end_dim = if raw == "-1" {
+                size.len().checked_sub(1).ok_or_else(|| TextError::BadValue {
+                    line: f.line,
+                    key: "end_dim",
+                    text: raw.to_string(),
+                })?
+            } else {
+                raw.parse::<usize>().map_err(|_| TextError::BadValue {
+                    line: f.line,
+                    key: "end_dim",
+                    text: raw.to_string(),
+                })?
+            };
+            Node::Flatten(Flatten { size, start_dim, end_dim })
+        }
         Kind::I => Node::I(I { shape: f.dims("shape")?, r: f.floats("r")? }),
         Kind::If => Node::If(If {
             shape: f.dims("shape")?,
@@ -4461,6 +4480,25 @@ mod tests {
             assert_eq!(out, want, "flatten {start}..={end}");
             assert_eq!(product(&out), product(&size), "flatten changed the element count");
         }
+    }
+
+    /// Official `cnn_sinabs.nir` writes `end_dim=-1`. The reader stores the last axis, and the
+    /// writer emits that index.
+    #[test]
+    fn flatten_end_dim_minus_one_is_the_last_axis() {
+        let text = "ferromorphic-nir 1\nnode f Flatten size=[8,4,4] start_dim=0 end_dim=-1\n";
+        let g = Graph::from_text(text).expect("end_dim=-1");
+        let Node::Flatten(flat) = &g.nodes[0].node else { panic!("flatten") };
+        assert_eq!((flat.start_dim, flat.end_dim), (0, 2));
+        assert_eq!(g.nodes[0].node.output_shape(), Some(vec![128]));
+        let canonical = g.to_text();
+        assert!(canonical.contains("end_dim=2"), "{canonical}");
+        assert!(!canonical.contains("-1"));
+        assert_eq!(Graph::from_text(&canonical).unwrap(), g);
+        assert!(Graph::from_text(
+            "ferromorphic-nir 1\nnode f Flatten size=[8,4,4] start_dim=0 end_dim=-2\n"
+        )
+        .is_err());
     }
 
     #[test]

@@ -1,0 +1,8 @@
+ferromorphic-nir 1
+node 0_LinearTorch Linear rows=1 cols=1 weight=[0.03999999910593033]
+node 1_LIFNeuronTorch LIF shape=[1] tau=[0.0024999999441206455] r=[24.019737243652344] v_leak=[0.0] v_threshold=[0.10000000149011612] v_reset=[0.0]
+node input Input shape=[1]
+node output Output shape=[1,1,1]
+edge 0_LinearTorch 1_LIFNeuronTorch
+edge 1_LIFNeuronTorch output
+edge input 0_LinearTorch

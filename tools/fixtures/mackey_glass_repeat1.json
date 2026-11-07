@@ -1,0 +1,118 @@
+{
+  "task": "mackey_glass",
+  "held_out": true,
+  "repeat": 1,
+  "seed_id": 0,
+  "start_offset": 0.0,
+  "tau": [
+    17,
+    18,
+    19,
+    20,
+    21,
+    22,
+    23,
+    24,
+    25,
+    26,
+    27,
+    28,
+    29,
+    30
+  ],
+  "neurobench_pin": "e521c28f5798cb40bb9423758bf066dad53fe070",
+  "neurobench_version": "2.3.0",
+  "torch": "2.7.1+cpu",
+  "data_url": "https://huggingface.co/datasets/NeuroBench/mackey_glass/resolve/main/data.tar.gz",
+  "data_sha256": "5e7c2b62a5135b744e7b49f103f58a2d74c70fe2dae67890cd5f93a6110fdf7c",
+  "data_license": "CC-BY-4.0",
+  "harness_smape_mean": 26.846464407283186,
+  "rust_smape_mean": 26.846464407283186,
+  "published_repeat1_comment": 40.803375080880265,
+  "rows": [
+    {
+      "tau": 17,
+      "harness_smape": 14.326413990693283,
+      "rust_smape": 14.326413990693293,
+      "abs_diff": 1.0658141036401503e-14
+    },
+    {
+      "tau": 18,
+      "harness_smape": 20.593509609045473,
+      "rust_smape": 20.593509609045462,
+      "abs_diff": 1.0658141036401503e-14
+    },
+    {
+      "tau": 19,
+      "harness_smape": 35.99093291532104,
+      "rust_smape": 35.990932915321,
+      "abs_diff": 4.263256414560601e-14
+    },
+    {
+      "tau": 20,
+      "harness_smape": 15.25638855109264,
+      "rust_smape": 15.256388551092641,
+      "abs_diff": 1.7763568394002505e-15
+    },
+    {
+      "tau": 21,
+      "harness_smape": 26.270361810511595,
+      "rust_smape": 26.27036181051162,
+      "abs_diff": 2.4868995751603507e-14
+    },
+    {
+      "tau": 22,
+      "harness_smape": 15.346997168839566,
+      "rust_smape": 15.346997168839549,
+      "abs_diff": 1.7763568394002505e-14
+    },
+    {
+      "tau": 23,
+      "harness_smape": 23.18987950072823,
+      "rust_smape": 23.18987950072823,
+      "abs_diff": 0.0
+    },
+    {
+      "tau": 24,
+      "harness_smape": 25.140903006561338,
+      "rust_smape": 25.140903006561324,
+      "abs_diff": 1.4210854715202004e-14
+    },
+    {
+      "tau": 25,
+      "harness_smape": 17.889049393596775,
+      "rust_smape": 17.88904939359676,
+      "abs_diff": 1.4210854715202004e-14
+    },
+    {
+      "tau": 26,
+      "harness_smape": 29.538875245875285,
+      "rust_smape": 29.538875245875314,
+      "abs_diff": 2.842170943040401e-14
+    },
+    {
+      "tau": 27,
+      "harness_smape": 24.593326873174867,
+      "rust_smape": 24.59332687317489,
+      "abs_diff": 2.4868995751603507e-14
+    },
+    {
+      "tau": 28,
+      "harness_smape": 33.95438493327332,
+      "rust_smape": 33.954384933273325,
+      "abs_diff": 7.105427357601002e-15
+    },
+    {
+      "tau": 29,
+      "harness_smape": 24.72100738318115,
+      "rust_smape": 24.72100738318116,
+      "abs_diff": 1.0658141036401503e-14
+    },
+    {
+      "tau": 30,
+      "harness_smape": 69.03847132007004,
+      "rust_smape": 69.03847132007006,
+      "abs_diff": 1.4210854715202004e-14
+    }
+  ]
+}

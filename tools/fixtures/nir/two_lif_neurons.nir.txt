@@ -1,0 +1,12 @@
+ferromorphic-nir 1
+node in Input shape=[1]
+node lif1 LIF shape=[1] tau=[0.01] r=[1.0] v_leak=[1.2] v_threshold=[1.0] v_reset=[0.0]
+node lif2 LIF shape=[1] tau=[0.01] r=[1.0] v_leak=[0.0] v_threshold=[20.0] v_reset=[0.0]
+node linear1 Linear rows=1 cols=1 weight=[1.0]
+node linear2 Linear rows=1 cols=1 weight=[1.0]
+node out Output shape=[1]
+edge in linear1
+edge linear1 lif1
+edge lif1 linear2
+edge linear2 lif2
+edge lif2 out

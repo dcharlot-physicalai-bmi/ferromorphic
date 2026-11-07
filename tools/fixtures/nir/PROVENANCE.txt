@@ -1,0 +1,28 @@
+Canonical ferromorphic-nir text produced from official HDF5 fixtures in
+neuromorphs/NIR commit 563c58b45873429e3b1b6f71763ec334ceb981d5.
+That repository is SPDX BSD-3-Clause, copyright 2023 NIR Team.
+These text files are the output of tools/nir_hdf5_oracle.py. They are not
+the upstream HDF5 bytes.
+
+Source path and sha256 of the HDF5 bytes the oracle fetched:
+
+paper/01_lif/lif_norse.nir
+  0dd9143ef624892d4a6461f474d93653a337b3490a62e23ec9ec5d18fde9b7b6
+paper/01_lif/lif_rockpool.nir
+  f493a2cd00e20be6305acd7808faa1d4558993c91f3af43454bf637371e543d6
+paper/01_lif/debug_spike_representation/two_lif_neurons.nir
+  806c7c1cfae72b5be92ce15a670f37014b82a5d4fba8a077efce46d193c21a82
+paper/02_cnn/cnn_sinabs.nir
+  e2fa55bda7aab5a772485e1b690358bcb825b303eca7dc426e3973937fcb5bcb
+paper/03_rnn/braille_noDelay_bias_zero.nir
+  f1aab3ce74024e7feac508a03b04c58d483ee3a01e293dba4b53d0b519b8650e
+
+lif_rockpool.nir fails nir.read(type_check=True): the LIF output shape is
+[1] and the Output node stores [1, 1, 1]. The text keeps [1, 1, 1].
+Graph::validate reports ShapeMismatch on that edge.
+
+cnn_sinabs.nir stores Flatten end_dim=-1. The canonical text stores
+end_dim=2, the last axis of size [8, 4, 4].
+
+Graph::to_net refuses Input->weight edges, CubaLIF by kind, and Conv2d by
+kind. Those refusals are asserted in tests/nir_official.rs.
