@@ -28,7 +28,8 @@ No integer epoch, and no shared step index, appeared in those files. An epoch fi
 `StepReceipt::to_text` writes this record. The bytes are fixed by `a_step_receipt_records_the_tick_and_refuses_a_different_dt`.
 
 ```text
-ferromorphic-step 1
+ferromorphic-step 2
+epoch 0
 step 4
 dt_bits 3fb999999999999a
 mode clocked
@@ -36,7 +37,21 @@ spike 4 0
 spike 4 1
 ```
 
-`dt_bits` is the little-endian IEEE-754 hex of `0.1_f64`. `mode` is `clocked` or `event`. Spike lines are `(t, source)` with `t` equal to `step`, in non-decreasing order. `StepReceipt::from_text` returns `TimebaseError::Unordered` otherwise.
+`dt_bits` is the little-endian IEEE-754 hex of `0.1_f64`. `mode` is `clocked` or `event`. Spike lines are `(t, source)` with `t` equal to `step`, in non-decreasing order. `StepReceipt::from_text` returns `TimebaseError::Unordered` otherwise. A record whose first line is `ferromorphic-step 1` is refused. That version had no epoch.
+
+### Episode epoch, implemented here
+
+`Sim::new` opens episode 0 at tick 0. Every later episode begins only through `Sim::episode_start`, which advances the epoch and sets `t` back to 0. `Sim::reset_state` restores neurons and clears the ring and keeps both `t` and the epoch. A membrane reset is not a new episode. `an_episode_starts_at_tick_zero_and_rejects_the_previous_epoch` pins that split. An event whose epoch is not the clock's epoch is `TimebaseError::StaleEpoch`. `episode_start` when the epoch is already `u64::MAX` returns `TimebaseError::EpochOverflow` and leaves the clock where it was.
+
+### One tick, two authorities
+
+A peer record of one tick carries both `dt` (`f64` bits) and `period_ns` (a positive integer nanosecond count). `Schedule::try_new` keeps the caller's bits. It does not rewrite `dt` from the nanoseconds. Membrane time stays `step as f64 * dt`, one multiply. The schedule is `tick * period_ns` from episode tick 0, integer multiplication, not a running sum of `dt`.
+
+The consistency rule is one way. `10^9` is an exact `f64`. The pair matches when `period_ns` is an exact `f64` integer and `|dt * 1e9 - period_ns as f64| < 0.5`. That is an open half-nanosecond neighborhood: ordinary rounding of a microsecond is inside it, and a value equidistant from two integers is not. `1e-6` and `1000.0 * 1e-9` are different bits and both match 1000 ns. `1000.5 / 1e9` matches neither 1000 nor 1001. A millisecond `dt` with a 1000 ns period is rejected. A period that is not an exact `f64` (the first such integer is `2^53 + 1`) is rejected rather than rounded to a nearby schedule. Ferromotion has not been run against this pair. Nothing here is a claim that Ferromotion accepts it.
+
+`Sim::try_step` checks `t + 1 + max_delay` before it touches a neuron or a ring slot. The sum is checked addition. The ring slot is `tick % ring_len` computed in `u64`. That modulus names a slot. It is not a wrap of the tick. A delay stored above `max_delay` is `TimebaseError::DelayPastRing`. `a_step_that_would_overflow_changes_nothing` sets `t` to `u64::MAX - 5` on a delay of 5 and checks that the membrane, the ring, the ledger and `t` are unchanged. `Sim::step` panics with the same error for callers that already know the tick fits. Untrusted ticks use `try_step`.
+
+`ticks_per_action(control_period, sim_dt)` accepts the ratio only when it is an integer `k >= 1` and `k as f64 * sim_dt` equals `control_period`. `0.5` seconds at `dt = 0.125` is 4 ticks. `0.3 / 0.1` is not an integer in `f64` and is `TimebaseError::AmbiguousRate`, as is a control period shorter than one tick. `action_tick(index, k)` is `index * k` from tick 0 of the episode, checked. Action 0 is tick 0. Ferromotion's `ChunkClock` was not called. Nothing in that repository reads this epoch.
 
 ### Phase inside one tick
 
@@ -51,9 +66,9 @@ Event-driven touched indices are sorted so `fired` is in neuron order, which is 
 
 ### Delay, late, future, reset, refractory
 
-`delivery_step(step, delay)` is `step + 1 + delay`, checked against `u64` overflow (`TimebaseError::Overflow`). A delay of zero is delivered on the following tick. `a_delayed_synapse_delivers_when_it_says_it_will` pins delay 5 at `source.t + 6`. `Net::delay` is in ticks. The simulator sizes its ring to `max_delay + 1`, so a synapse cannot name a delay the ring cannot hold.
+`delivery_step(step, delay)` is `step + 1 + delay`, checked against `u64` overflow (`TimebaseError::Overflow`). A delay of zero is delivered on the following tick. `a_delayed_synapse_delivers_when_it_says_it_will` pins delay 5 at `source.t + 6`. `Net::delay` is in ticks. The simulator sizes its ring to `max_delay + 1`. `try_step` refuses a delay above that cache before the step runs.
 
-`Sim::step` still adds `t + 1 + delay` with the ordinary `+` operator. In debug that panics on overflow. In release it wraps. The checked helper is the contract. Changing `Sim::step` to return `TimebaseError` is negotiable and is not done here.
+`accept_event_step` adds `max_delay` with checked addition. A horizon that does not fit in a `u64` is `TimebaseError::Overflow`.
 
 `accept_event_step(event, clock, max_delay)` accepts `clock..=clock+max_delay`. An earlier step is `TimebaseError::Late`. A later step is `TimebaseError::BeyondHorizon`. `Train::push` panics when a spike's tick is below the last stored tick. There is no late-event queue.
 

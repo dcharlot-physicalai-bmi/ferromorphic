@@ -125,8 +125,14 @@ pub struct Sim<N: Neuron> {
     pub mode: Mode,
     /// Exact counts of everything that happened. Price it with [`crate::ledger::Prices`].
     pub ledger: Ledger,
-    /// Ticks elapsed. The next call to [`Sim::step`] processes this tick.
+    /// Ticks elapsed in the current episode. The next call to [`Sim::step`] processes this tick.
+    ///
+    /// [`Sim::new`] and [`Sim::episode_start`] set this to zero. [`Sim::reset_state`] leaves it
+    /// where it is.
     pub t: u64,
+    /// Identity of the current episode. [`Sim::new`] starts at zero. [`Sim::episode_start`]
+    /// advances it. [`Sim::reset_state`] does not.
+    pub epoch: u64,
     /// Pending synaptic deliveries, indexed `(tick % ring.len())`.
     ///
     /// A ring rather than a sorted queue: delivery ticks are bounded above by
@@ -168,6 +174,7 @@ impl<N: Neuron> Sim<N> {
             mode,
             ledger: Ledger::default(),
             t: 0,
+            epoch: 0,
             ring: vec![Vec::new(); ring_len],
             inject: vec![0.0; n],
             touched: Vec::new(),
@@ -222,19 +229,39 @@ impl<N: Neuron> Sim<N> {
     ///
     /// # Panics
     ///
-    /// If `external` is neither empty nor `net.n` long — a half-length current vector would
-    /// silently drive only the first half of the network. With exact timing, also if a neuron
-    /// refuses the step, which a non-finite external current makes it do.
+    /// If [`Sim::try_step`] refuses. A half-length current vector and a tick that cannot schedule
+    /// `t + 1 + max_delay` are both refusals. Call [`Sim::try_step`] when the inputs are not
+    /// already known to be in range. With exact timing, a neuron that refuses the step still
+    /// panics: a non-finite external current is what makes it do that.
     pub fn step(&mut self, external: &[f64]) -> Vec<u32> {
-        assert!(
-            external.is_empty() || external.len() == self.net.n,
-            "external current has {} entries for {} neurons",
-            external.len(),
-            self.net.n
-        );
+        self.try_step(external).unwrap_or_else(|err| panic!("{err}"))
+    }
+
+    /// [`Sim::step`] that returns the refusal instead of panicking.
+    ///
+    /// The check that `t + 1 + max_delay` fits in a `u64` runs before any neuron or ring slot is
+    /// touched. A refusal leaves the membrane, the ring, `t`, the epoch and the ledger as they
+    /// were. The ring address is `tick % ring_len` in `u64`. That modulus is the slot, not a wrap
+    /// of the tick.
+    ///
+    /// # Errors
+    ///
+    /// [`TimebaseError::BadExternal`] when `external` is neither empty nor `net.n` long.
+    /// [`TimebaseError::DelayPastRing`] when a stored delay exceeds `net.max_delay`.
+    /// [`TimebaseError::Overflow`] when this tick cannot schedule its longest delay.
+    pub fn try_step(&mut self, external: &[f64]) -> Result<Vec<u32>, TimebaseError> {
+        if !(external.is_empty() || external.len() == self.net.n) {
+            return Err(TimebaseError::BadExternal { got: external.len(), want: self.net.n });
+        }
+        if self.net.delay.iter().any(|&d| d > self.net.max_delay) {
+            return Err(TimebaseError::DelayPastRing);
+        }
+        // Fail closed before the membrane moves. Every synapse delay is at most max_delay.
+        let next_t = delivery_step(self.t, 0)?;
+        let _horizon = delivery_step(self.t, self.net.max_delay)?;
 
         // ---- 1. collect what arrives this tick -------------------------------------------------
-        let slot = (self.t as usize) % self.ring.len();
+        let slot = ring_slot(self.t, self.ring.len());
         self.touched.clear();
         let deliveries = core::mem::take(&mut self.ring[slot]);
         for &(post, w) in &deliveries {
@@ -276,7 +303,7 @@ impl<N: Neuron> Sim<N> {
                     let ext = if external.is_empty() { 0.0 } else { external[i] };
                     self.neurons[i].bump(self.inject[i]);
                     self.advance(i, ext, &mut fired);
-                    self.as_of[i] = self.t + 1;
+                    self.as_of[i] = next_t;
                 }
             }
             Mode::EventDriven => {
@@ -293,18 +320,21 @@ impl<N: Neuron> Sim<N> {
                     let ext = if external.is_empty() { 0.0 } else { external[i] };
                     self.neurons[i].bump(self.inject[i]);
                     self.advance(i, ext, &mut fired);
-                    self.as_of[i] = self.t + 1;
+                    self.as_of[i] = next_t;
                 }
                 self.touched = touched;
             }
         }
 
         // ---- 3. post the spikes forward -------------------------------------------------------
+        let ring_len = self.ring.len();
         for &src in &fired {
             self.ledger.spikes_out += 1;
             for (post, w, d) in self.net.out_of(src as usize) {
-                let when = (self.t + 1 + u64::from(d)) as usize % self.ring.len();
-                self.ring[when].push((post, w));
+                let when = next_t
+                    .checked_add(u64::from(d))
+                    .ok_or(TimebaseError::Overflow { step: self.t, delay: d })?;
+                self.ring[ring_slot(when, ring_len)].push((post, w));
             }
         }
 
@@ -314,8 +344,47 @@ impl<N: Neuron> Sim<N> {
         if self.mode == Mode::Clocked {
             self.inject.iter_mut().for_each(|x| *x = 0.0);
         }
-        self.t += 1;
-        fired
+        self.t = next_t;
+        Ok(fired)
+    }
+
+    /// Open the next episode at tick zero.
+    ///
+    /// Neurons return to rest and the delivery ring is cleared, as in [`Sim::reset_state`]. The
+    /// epoch advances by one and `t` becomes zero. The ledger is kept: it is still the record of
+    /// what already ran. [`Sim::reset_state`] does not do this. A neuron reset is not a new episode.
+    ///
+    /// # Errors
+    ///
+    /// [`TimebaseError::EpochOverflow`] when the epoch is already `u64::MAX`. Nothing is changed
+    /// in that case.
+    pub fn episode_start(&mut self) -> Result<u64, TimebaseError> {
+        let next = self.epoch.checked_add(1).ok_or(TimebaseError::EpochOverflow)?;
+        self.epoch = next;
+        self.t = 0;
+        for n in &mut self.neurons {
+            n.reset();
+        }
+        for r in &mut self.ring {
+            r.clear();
+        }
+        self.inject.iter_mut().for_each(|x| *x = 0.0);
+        self.as_of.iter_mut().for_each(|x| *x = 0);
+        self.touched.clear();
+        Ok(next)
+    }
+
+    /// Accept an event only when its epoch is the current one and its step is inside the ring.
+    ///
+    /// # Errors
+    ///
+    /// [`TimebaseError::StaleEpoch`] when the epochs differ. Otherwise the errors of
+    /// [`accept_event_step`].
+    pub fn accept_event(&self, epoch: u64, step: u64) -> Result<(), TimebaseError> {
+        if epoch != self.epoch {
+            return Err(TimebaseError::StaleEpoch { event: epoch, clock: self.epoch });
+        }
+        accept_event_step(step, self.t, self.net.max_delay)
     }
 
     /// Bring neuron `i` forward from the tick it is current as of to the current tick.
@@ -402,10 +471,12 @@ impl<N: Neuron> Sim<N> {
         self.neurons.iter().map(Neuron::potential).collect()
     }
 
-    /// Reset every neuron and clear the pending deliveries, keeping the ledger.
+    /// Reset every neuron and clear the pending deliveries, keeping the ledger and the clock.
     ///
     /// The ledger survives because it is a record of what the hardware did, and a run that resets
-    /// its network halfway through still paid for the first half.
+    /// its network halfway through still paid for the first half. `t` and [`Sim::epoch`] survive
+    /// for the same reason: clearing a membrane is not the start of an episode. Call
+    /// [`Sim::episode_start`] for a new epoch at tick zero.
     pub fn reset_state(&mut self) {
         for n in &mut self.neurons {
             n.reset();
@@ -454,6 +525,47 @@ pub enum TimebaseError {
     },
     /// A spike line is not in `(t, source)` order, or its tick is not the receipt step.
     Unordered,
+    /// `external` was neither empty nor one current per neuron.
+    BadExternal {
+        /// Entries supplied.
+        got: usize,
+        /// Neurons in the network.
+        want: usize,
+    },
+    /// A synapse delay is larger than `Net::max_delay`, so the ring cannot hold it.
+    DelayPastRing,
+    /// The event names an episode other than the one the clock is in.
+    StaleEpoch {
+        /// Epoch on the event.
+        event: u64,
+        /// Epoch on the clock.
+        clock: u64,
+    },
+    /// The episode counter is already `u64::MAX`.
+    EpochOverflow,
+    /// The scheduling period is zero.
+    BadPeriod,
+    /// `period_ns` is not an exact `f64`, so a half-nanosecond test cannot name it.
+    PeriodNotExact,
+    /// Canonical `dt` is not strictly within half a nanosecond of `period_ns`.
+    InconsistentSchedule,
+    /// `tick * period_ns` does not fit in a `u64`.
+    ScheduleOverflow {
+        /// Episode tick.
+        tick: u64,
+        /// Scheduling period, nanoseconds.
+        period_ns: u64,
+    },
+    /// `control_period / sim_dt` is not an integer number of ticks that multiplies back to the
+    /// same `control_period` bits.
+    AmbiguousRate,
+    /// `action_index * ticks_per_action` does not fit in a `u64`.
+    ActionOverflow {
+        /// Action index.
+        action: u64,
+        /// Exact ticks between actions.
+        ticks_per_action: u64,
+    },
 }
 
 impl core::fmt::Display for TimebaseError {
@@ -473,6 +585,32 @@ impl core::fmt::Display for TimebaseError {
                 write!(f, "event step {event_step} is past horizon {horizon}")
             }
             Self::Unordered => f.write_str("spike lines are not in (t, source) order"),
+            Self::BadExternal { got, want } => {
+                write!(f, "external current has {got} entries for {want} neurons")
+            }
+            Self::DelayPastRing => {
+                f.write_str("a synapse delay is longer than the delivery ring")
+            }
+            Self::StaleEpoch { event, clock } => {
+                write!(f, "event epoch {event} is not clock epoch {clock}")
+            }
+            Self::EpochOverflow => f.write_str("the episode counter is already u64::MAX"),
+            Self::BadPeriod => f.write_str("the scheduling period is zero nanoseconds"),
+            Self::PeriodNotExact => {
+                f.write_str("the scheduling period is not an exact f64 integer")
+            }
+            Self::InconsistentSchedule => {
+                f.write_str("dt is not strictly within half a nanosecond of the scheduling period")
+            }
+            Self::ScheduleOverflow { tick, period_ns } => {
+                write!(f, "tick {tick} times {period_ns} ns overflows u64")
+            }
+            Self::AmbiguousRate => {
+                f.write_str("control period is not an exact integer number of simulation ticks")
+            }
+            Self::ActionOverflow { action, ticks_per_action } => {
+                write!(f, "action {action} times {ticks_per_action} ticks overflows u64")
+            }
         }
     }
 }
@@ -532,19 +670,149 @@ pub fn accept_event_step(event_step: u64, clock_step: u64, max_delay: u32) -> Re
     if event_step < clock_step {
         return Err(TimebaseError::Late { event_step, clock_step });
     }
-    let horizon = clock_step.saturating_add(u64::from(max_delay));
+    let horizon = clock_step.checked_add(u64::from(max_delay)).ok_or(TimebaseError::Overflow {
+        step: clock_step,
+        delay: max_delay,
+    })?;
     if event_step > horizon {
         return Err(TimebaseError::BeyondHorizon { event_step, horizon });
     }
     Ok(())
 }
 
+/// How many simulation ticks one control action spans.
+///
+/// The ratio `control_period / sim_dt` must be an integer `k >= 1`, and `k as f64 * sim_dt` must
+/// be the same bits as `control_period`. Anything else, including a ratio that is almost an
+/// integer, is [`TimebaseError::AmbiguousRate`].
+///
+/// # Errors
+///
+/// [`TimebaseError::BadDt`] or [`TimebaseError::AmbiguousRate`].
+pub fn ticks_per_action(control_period: f64, sim_dt: f64) -> Result<u64, TimebaseError> {
+    if !(control_period.is_finite() && control_period > 0.0 && sim_dt.is_finite() && sim_dt > 0.0)
+    {
+        return Err(TimebaseError::BadDt);
+    }
+    let q = control_period / sim_dt;
+    if !q.is_finite() || q < 1.0 || q.fract() != 0.0 {
+        return Err(TimebaseError::AmbiguousRate);
+    }
+    let k = q as u64;
+    let back = (k as f64) * sim_dt;
+    if (k as f64).to_bits() != q.to_bits() || back.to_bits() != control_period.to_bits() {
+        return Err(TimebaseError::AmbiguousRate);
+    }
+    Ok(k)
+}
+
+/// Episode-local tick of action `action_index` when each action lasts `ticks_per_action` ticks.
+///
+/// Action 0 is tick 0, the start of the episode. The product is checked.
+///
+/// # Errors
+///
+/// [`TimebaseError::AmbiguousRate`] when `ticks_per_action` is zero.
+/// [`TimebaseError::ActionOverflow`] when the product does not fit in a `u64`.
+pub fn action_tick(action_index: u64, ticks_per_action: u64) -> Result<u64, TimebaseError> {
+    if ticks_per_action == 0 {
+        return Err(TimebaseError::AmbiguousRate);
+    }
+    action_index
+        .checked_mul(ticks_per_action)
+        .ok_or(TimebaseError::ActionOverflow { action: action_index, ticks_per_action })
+}
+
+fn ring_slot(tick: u64, ring_len: usize) -> usize {
+    (tick % ring_len as u64) as usize
+}
+
+/// One simulation tick, named twice.
+///
+/// `dt_bits` is the canonical step used by membrane arithmetic (`step as f64 * dt`).
+/// `period_ns` is the scheduling period: tick `n` is `n * period_ns` nanoseconds after
+/// episode tick 0, in integer arithmetic. [`Schedule::try_new`] checks that those two
+/// names are within half a nanosecond. It does not replace either value with the other.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Schedule {
+    /// `dt.to_bits()`. Simulation authority.
+    pub dt_bits: u64,
+    /// Scheduling period in nanoseconds. Scheduling authority.
+    pub period_ns: u64,
+}
+
+impl Schedule {
+    /// Pair a canonical `dt` with a scheduling period.
+    ///
+    /// # Errors
+    ///
+    /// The errors of [`schedule_matches_dt`].
+    pub fn try_new(dt: f64, period_ns: u64) -> Result<Self, TimebaseError> {
+        schedule_matches_dt(dt, period_ns)?;
+        Ok(Self { dt_bits: dt.to_bits(), period_ns })
+    }
+
+    /// The canonical step, recovered from [`Schedule::dt_bits`].
+    #[must_use]
+    pub fn dt(self) -> f64 {
+        f64::from_bits(self.dt_bits)
+    }
+
+    /// Integer nanoseconds from episode tick 0 to `tick`. This product does not use `dt`.
+    ///
+    /// # Errors
+    ///
+    /// [`TimebaseError::ScheduleOverflow`] when the product does not fit in a `u64`.
+    pub fn elapsed_ns(self, tick: u64) -> Result<u64, TimebaseError> {
+        tick.checked_mul(self.period_ns).ok_or(TimebaseError::ScheduleOverflow {
+            tick,
+            period_ns: self.period_ns,
+        })
+    }
+}
+
+/// Whether canonical `dt` lies strictly closer to `period_ns` nanoseconds than to either neighbor.
+///
+/// The comparison is one way. `scaled = dt * 1_000_000_000` (the integer `10^9` is an exact
+/// `f64`) and the pair matches when `period_ns` is an exact `f64` and
+/// `|scaled - period_ns as f64| < 0.5`. A distance of exactly half a nanosecond is a tie between
+/// two integers and is rejected. The check does not require
+/// `(period_ns as f64) * 1e-9` to have the same bits as `dt`. Both `1e-6` and `1000.0 * 1e-9`
+/// match 1000 ns, and those two `f64` values are not the same bits.
+///
+/// `dt` stays the value the caller supplied. Nothing here writes a "corrected" step.
+///
+/// # Errors
+///
+/// [`TimebaseError::BadDt`], [`TimebaseError::BadPeriod`], [`TimebaseError::PeriodNotExact`],
+/// [`TimebaseError::InconsistentSchedule`].
+pub fn schedule_matches_dt(dt: f64, period_ns: u64) -> Result<(), TimebaseError> {
+    if !(dt.is_finite() && dt > 0.0) {
+        return Err(TimebaseError::BadDt);
+    }
+    if period_ns == 0 {
+        return Err(TimebaseError::BadPeriod);
+    }
+    let ns = period_ns as f64;
+    if ns as u64 != period_ns {
+        return Err(TimebaseError::PeriodNotExact);
+    }
+    let scaled = dt * 1_000_000_000.0;
+    if !scaled.is_finite() || (scaled - ns).abs() >= 0.5 {
+        return Err(TimebaseError::InconsistentSchedule);
+    }
+    Ok(())
+}
+
 /// One closed-loop step, as ferromorphic can already record it.
 ///
-/// `step` is the tick index passed to the spikes of that call, which is [`Sim::t`] before
-/// [`Sim::step`] increments it. `dt_bits` is `dt.to_bits()`. Spikes are in `(t, source)` order.
+/// `epoch` is [`Sim::epoch`]. `step` is the tick index passed to the spikes of that call, which
+/// is [`Sim::t`] before [`Sim::step`] increments it. `dt_bits` is `dt.to_bits()`. Spikes are in
+/// `(t, source)` order.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StepReceipt {
+    /// Episode identity.
+    pub epoch: u64,
     /// Tick index of this step.
     pub step: u64,
     /// `dt.to_bits()`.
@@ -560,12 +828,13 @@ impl StepReceipt {
     ///
     /// The caller passes `sim.t` from before `step`, and the vector `step` returned.
     #[must_use]
-    pub fn from_step(step: u64, dt: f64, mode: Mode, fired: &[u32]) -> Self {
+    pub fn from_step(epoch: u64, step: u64, dt: f64, mode: Mode, fired: &[u32]) -> Self {
         let mode = match mode {
             Mode::Clocked => "clocked",
             Mode::EventDriven => "event",
         };
         Self {
+            epoch,
             step,
             dt_bits: dt.to_bits(),
             mode,
@@ -573,12 +842,12 @@ impl StepReceipt {
         }
     }
 
-    /// Line-oriented text. The first line is `ferromorphic-step 1`.
+    /// Line-oriented text. The first line is `ferromorphic-step 2`.
     #[must_use]
     pub fn to_text(&self) -> String {
         let mut out = format!(
-            "ferromorphic-step 1\nstep {}\ndt_bits {:016x}\nmode {}\n",
-            self.step, self.dt_bits, self.mode
+            "ferromorphic-step 2\nepoch {}\nstep {}\ndt_bits {:016x}\nmode {}\n",
+            self.epoch, self.step, self.dt_bits, self.mode
         );
         for (t, source) in &self.spikes {
             out.push_str(&format!("spike {t} {source}\n"));
@@ -594,9 +863,10 @@ impl StepReceipt {
     /// separate error type.
     pub fn from_text(text: &str) -> Result<Self, TimebaseError> {
         let mut lines = text.lines();
-        if lines.next() != Some("ferromorphic-step 1") {
+        if lines.next() != Some("ferromorphic-step 2") {
             return Err(TimebaseError::BadDt);
         }
+        let epoch = parse_key(lines.next(), "epoch")?;
         let step = parse_key(lines.next(), "step")?;
         let bits_line = lines.next().unwrap_or("");
         let bits_hex = bits_line.strip_prefix("dt_bits ").ok_or(TimebaseError::BadDt)?;
@@ -626,7 +896,7 @@ impl StepReceipt {
             }
             spikes.push((t, source));
         }
-        Ok(Self { step, dt_bits, mode, spikes })
+        Ok(Self { epoch, step, dt_bits, mode, spikes })
     }
 }
 
@@ -1169,6 +1439,94 @@ mod tests {
         let after = sim.run(500, &[]);
         assert!(after.is_empty(), "{} spikes after a reset into silence", after.len());
         assert_eq!(sim.ledger.syn_ops, paid.syn_ops, "a delivery outlived the reset");
+        assert_eq!(sim.t, 1_500, "reset_state kept the clock");
+        assert_eq!(sim.epoch, 0, "reset_state kept the episode");
+    }
+
+    /// A new episode is tick zero and a new epoch. Resetting neurons is not that.
+    #[test]
+    fn an_episode_starts_at_tick_zero_and_rejects_the_previous_epoch() {
+        let dt = 1e-4;
+        let mut sim = Sim::new(chain(2, 1e-3, 0), vec![Lif::default(); 2], dt, Mode::Clocked).unwrap();
+        sim.run(10, &[3e-9, 0.0]);
+        let paid = sim.ledger;
+        let clock = sim.t;
+        assert!(clock > 0 && paid.neuron_updates() > 0);
+        sim.reset_state();
+        assert_eq!((sim.t, sim.epoch, sim.ledger.neuron_updates()), (clock, 0, paid.neuron_updates()));
+        let epoch = sim.episode_start().unwrap();
+        assert_eq!(epoch, 1);
+        assert_eq!(sim.t, 0);
+        assert_eq!(sim.epoch, 1);
+        assert_eq!(sim.ledger.neuron_updates(), paid.neuron_updates());
+        assert!(sim.accept_event(0, 0).is_err());
+        assert!(sim.accept_event(1, 0).is_ok());
+        sim.run(4, &[]);
+        assert_eq!(sim.t, 4);
+        assert_eq!(sim.episode_start().unwrap(), 2);
+        assert_eq!(sim.t, 0);
+        assert!(sim.accept_event(1, 0).is_err());
+        let k = super::ticks_per_action(0.5, 0.125).unwrap();
+        assert_eq!(k, 4);
+        assert_eq!(super::action_tick(3, k).unwrap(), 12);
+        assert!(super::ticks_per_action(0.3, 0.1).is_err());
+        assert!(super::ticks_per_action(0.125, 0.5).is_err());
+        assert!(super::action_tick(u64::MAX, 2).is_err());
+        sim.epoch = u64::MAX;
+        let t_before = sim.t;
+        assert!(sim.episode_start().is_err());
+        assert_eq!((sim.epoch, sim.t), (u64::MAX, t_before));
+    }
+
+    /// A tick that cannot schedule its delay does not move the membrane or the clock.
+    #[test]
+    fn a_step_that_would_overflow_changes_nothing() {
+        let mut sim = Sim::new(chain(2, 30e-3, 5), vec![Lif::default(); 2], 1e-4, Mode::Clocked)
+            .unwrap();
+        sim.t = u64::MAX - 5;
+        let v = sim.neurons[0].v;
+        let paid = sim.ledger;
+        let err = sim.try_step(&[5e-9, 0.0]).unwrap_err();
+        assert!(matches!(err, super::TimebaseError::Overflow { .. }));
+        assert_eq!(sim.t, u64::MAX - 5);
+        assert_eq!(sim.neurons[0].v, v);
+        assert_eq!(sim.ledger, paid);
+        assert!(sim.ring.iter().all(|slot| slot.is_empty()));
+    }
+
+    /// 1000 ns is a microsecond even though the two common f64 spellings differ by a bit.
+    #[test]
+    fn a_thousand_nanoseconds_matches_a_microsecond_without_a_bit_round_trip() {
+        let via_literal = 1e-6_f64;
+        let via_ns = 1000.0_f64 * 1e-9;
+        assert_ne!(via_literal.to_bits(), via_ns.to_bits());
+        for dt in [via_literal, via_ns] {
+            super::schedule_matches_dt(dt, 1000).unwrap();
+            let schedule = super::Schedule::try_new(dt, 1000).unwrap();
+            assert_eq!(schedule.dt().to_bits(), dt.to_bits());
+            assert_eq!(schedule.elapsed_ns(4).unwrap(), 4000);
+        }
+        let down = f64::from_bits(via_literal.to_bits() - 1);
+        let up = f64::from_bits(via_literal.to_bits() + 1);
+        super::schedule_matches_dt(down, 1000).unwrap();
+        super::schedule_matches_dt(up, 1000).unwrap();
+
+        let tie = 1000.5_f64 / 1_000_000_000.0;
+        assert_eq!(tie * 1_000_000_000.0, 1000.5);
+        assert!(super::schedule_matches_dt(tie, 1000).is_err());
+        assert!(super::schedule_matches_dt(tie, 1001).is_err());
+
+        let just_under = f64::from_bits(tie.to_bits() - 1);
+        let err = (just_under * 1_000_000_000.0 - 1000.0).abs();
+        assert!(err < 0.5, "{err}");
+        super::schedule_matches_dt(just_under, 1000).unwrap();
+
+        assert!(super::schedule_matches_dt(1e-3, 1000).is_err());
+        assert!(super::schedule_matches_dt(1e-6, 0).is_err());
+        assert!(super::schedule_matches_dt(f64::NAN, 1000).is_err());
+        let inexact = (1u64 << 53) + 1;
+        assert!(super::schedule_matches_dt(1.0, inexact).is_err());
+        assert!(super::Schedule::try_new(1e-6, 1000).unwrap().elapsed_ns(u64::MAX).is_err());
     }
 
     /// The closed-loop receipt records the tick a spike is stamped with, and a delay of zero
@@ -1182,11 +1540,11 @@ mod tests {
             .unwrap();
         let step = sim.t;
         let fired = sim.step(&[5e-9, 0.0]);
-        let receipt = super::StepReceipt::from_step(step, dt, Mode::Clocked, &fired);
+        let receipt = super::StepReceipt::from_step(sim.epoch, step, dt, Mode::Clocked, &fired);
         let text = receipt.to_text();
         let back = super::StepReceipt::from_text(&text).unwrap();
         assert_eq!(back, receipt);
-        assert!(text.starts_with("ferromorphic-step 1\n"));
+        assert!(text.starts_with("ferromorphic-step 2\n"));
         assert_eq!(super::delivery_step(step, 0).unwrap(), step + 1);
         assert_eq!(super::delivery_step(4, 5).unwrap(), 10);
         assert_eq!(super::step_seconds(step, dt).unwrap(), step as f64 * dt);
@@ -1204,6 +1562,7 @@ mod tests {
         sim.reset_state();
         assert_eq!(sim.t, step + 1, "reset_state keeps the integer clock");
         let sample = super::StepReceipt {
+            epoch: 0,
             step: 4,
             dt_bits: 0.1_f64.to_bits(),
             mode: "clocked",
@@ -1211,7 +1570,7 @@ mod tests {
         };
         assert_eq!(
             sample.to_text(),
-            "ferromorphic-step 1\nstep 4\ndt_bits 3fb999999999999a\nmode clocked\nspike 4 0\nspike 4 1\n"
+            "ferromorphic-step 2\nepoch 0\nstep 4\ndt_bits 3fb999999999999a\nmode clocked\nspike 4 0\nspike 4 1\n"
         );
         assert_eq!(super::StepReceipt::from_text(&sample.to_text()).unwrap(), sample);
     }
