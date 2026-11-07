@@ -1,0 +1,75 @@
+{
+  "task": "primate_reaching",
+  "protocol": "benchmark_2d_ann.py at e521c28",
+  "neurobench": "2.3.0",
+  "torch": "2.7.1+cpu",
+  "train_ratio": 0.5,
+  "bin_width_s": 0.004,
+  "biological_delay": 0,
+  "num_steps": 1,
+  "held_out": true,
+  "aggregate_mean_r2": 0.5756965776284536,
+  "sessions": [
+    {
+      "file": "indy_20160622_01.mat",
+      "md5": "c33d5fff31320d709d23fe445561fb6e",
+      "bytes": 908989308,
+      "checkpoint_sha256": "4bf2b48c7da6b6905127e6f2be7b164a531d545c6375c567ad3ac115e24f7271",
+      "input_feature_size": 96,
+      "n_test": 132745,
+      "harness_r2": 0.6337745189666748,
+      "license": "CC-BY-4.0"
+    },
+    {
+      "file": "indy_20160630_01.mat",
+      "md5": "197413a5339630ea926cbd22b8b43338",
+      "bytes": 382243800,
+      "checkpoint_sha256": "14dcf4091ef8e4b13e76e5cadd74da6fbaf09756c70bcebca40dd5256882ffc4",
+      "input_feature_size": 96,
+      "n_test": 107444,
+      "harness_r2": 0.5250669717788696,
+      "license": "CC-BY-4.0"
+    },
+    {
+      "file": "indy_20170131_02.mat",
+      "md5": "2790b1c869564afaa7772dbf9e42d784",
+      "bytes": 208792806,
+      "checkpoint_sha256": "fa44b369b3d7e387d1cb37a5097530abb37adae83ea409610de02a9c0d14d242",
+      "input_feature_size": 96,
+      "n_test": 52116,
+      "harness_r2": 0.6211199760437012,
+      "license": "CC-BY-4.0"
+    },
+    {
+      "file": "loco_20170210_03.mat",
+      "md5": "4cae63b58c4cb9c8abd44929216c703b",
+      "bytes": 1141201538,
+      "checkpoint_sha256": "e91b129d3fa18a18937c6cf719c34345e553edfb6b7d4b79986b69fbda74efc8",
+      "input_feature_size": 192,
+      "n_test": 137545,
+      "harness_r2": 0.572067379951477,
+      "license": "CC-BY-4.0"
+    },
+    {
+      "file": "loco_20170215_02.mat",
+      "md5": "739b70762d838f3a1f358733c426bb02",
+      "bytes": 779509843,
+      "checkpoint_sha256": "b39fe1b8c89bd49bab41a5d48c353d3f1702ec1b29a64d5cd15d165960ca5007",
+      "input_feature_size": 192,
+      "n_test": 76537,
+      "harness_r2": 0.4740315079689026,
+      "license": "CC-BY-4.0"
+    },
+    {
+      "file": "loco_20170301_05.mat",
+      "md5": "47342da09f9c950050c9213c3df38ea3",
+      "bytes": 902210274,
+      "checkpoint_sha256": "89b0fd750750fc2a650c823b8e271d49aef4044cb82e269b75d19c6909964d74",
+      "input_feature_size": 192,
+      "n_test": 113636,
+      "harness_r2": 0.6281191110610962,
+      "license": "CC-BY-4.0"
+    }
+  ],
+  "note": "mean of six harness R2 values, the example's sum/len aggregation"
+}
