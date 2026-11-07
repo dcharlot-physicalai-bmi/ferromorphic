@@ -133,6 +133,12 @@ pub struct Sim<N: Neuron> {
     /// Identity of the current episode. [`Sim::new`] starts at zero. [`Sim::episode_start`]
     /// advances it. [`Sim::reset_state`] does not.
     pub epoch: u64,
+    /// Nanosecond stamp of tick 0. Unset until [`Sim::episode_start`]. [`Sim::reset_state`]
+    /// leaves it.
+    pub origin_ns: Option<u64>,
+    /// Integer scheduling period in nanoseconds. Unset until [`Sim::episode_start`].
+    /// [`Sim::reset_state`] leaves it. It is not required to equal `dt`.
+    pub period_ns: Option<u64>,
     /// Pending synaptic deliveries, indexed `(tick % ring.len())`.
     ///
     /// A ring rather than a sorted queue: delivery ticks are bounded above by
@@ -175,6 +181,8 @@ impl<N: Neuron> Sim<N> {
             ledger: Ledger::default(),
             t: 0,
             epoch: 0,
+            origin_ns: None,
+            period_ns: None,
             ring: vec![Vec::new(); ring_len],
             inject: vec![0.0; n],
             touched: Vec::new(),
@@ -348,20 +356,25 @@ impl<N: Neuron> Sim<N> {
         Ok(fired)
     }
 
-    /// Open the next episode at tick zero.
+    /// Open the next episode at tick zero and install a scheduling period.
     ///
-    /// Neurons return to rest and the delivery ring is cleared, as in [`Sim::reset_state`]. The
-    /// epoch advances by one and `t` becomes zero. The ledger is kept: it is still the record of
-    /// what already ran. [`Sim::reset_state`] does not do this. A neuron reset is not a new episode.
+    /// Neurons return to rest and the delivery ring is cleared. The epoch advances by one and
+    /// `t` becomes zero. `origin_ns` and `period_ns` are stored. `dt` is not rewritten: it stays
+    /// the value from [`Sim::new`]. The operation ledger is kept. [`Sim::reset_state`] does not
+    /// do any of this. A neuron reset is not a new episode.
     ///
     /// # Errors
     ///
-    /// [`TimebaseError::EpochOverflow`] when the epoch is already `u64::MAX`. Nothing is changed
-    /// in that case.
-    pub fn episode_start(&mut self) -> Result<u64, TimebaseError> {
+    /// [`TimebaseError::BadPeriod`] when `period_ns` is zero or its nominal seconds are not a
+    /// finite positive `f64`. [`TimebaseError::EpochOverflow`] when the epoch is already
+    /// `u64::MAX`. Nothing is changed on either refusal.
+    pub fn episode_start(&mut self, origin_ns: u64, period_ns: u64) -> Result<u64, TimebaseError> {
+        nominal_seconds(period_ns)?;
         let next = self.epoch.checked_add(1).ok_or(TimebaseError::EpochOverflow)?;
         self.epoch = next;
         self.t = 0;
+        self.origin_ns = Some(origin_ns);
+        self.period_ns = Some(period_ns);
         for n in &mut self.neurons {
             n.reset();
         }
@@ -543,12 +556,8 @@ pub enum TimebaseError {
     },
     /// The episode counter is already `u64::MAX`.
     EpochOverflow,
-    /// The scheduling period is zero.
+    /// The scheduling period is zero, or `period_ns as f64 * 1e-9` is not finite and positive.
     BadPeriod,
-    /// `period_ns` is not an exact `f64`, so a half-nanosecond test cannot name it.
-    PeriodNotExact,
-    /// Canonical `dt` is not strictly within half a nanosecond of `period_ns`.
-    InconsistentSchedule,
     /// `tick * period_ns` does not fit in a `u64`.
     ScheduleOverflow {
         /// Episode tick.
@@ -595,12 +604,8 @@ impl core::fmt::Display for TimebaseError {
                 write!(f, "event epoch {event} is not clock epoch {clock}")
             }
             Self::EpochOverflow => f.write_str("the episode counter is already u64::MAX"),
-            Self::BadPeriod => f.write_str("the scheduling period is zero nanoseconds"),
-            Self::PeriodNotExact => {
-                f.write_str("the scheduling period is not an exact f64 integer")
-            }
-            Self::InconsistentSchedule => {
-                f.write_str("dt is not strictly within half a nanosecond of the scheduling period")
+            Self::BadPeriod => {
+                f.write_str("the scheduling period is zero or its nominal seconds are not usable")
             }
             Self::ScheduleOverflow { tick, period_ns } => {
                 write!(f, "tick {tick} times {period_ns} ns overflows u64")
@@ -727,12 +732,13 @@ fn ring_slot(tick: u64, ring_len: usize) -> usize {
     (tick % ring_len as u64) as usize
 }
 
-/// One simulation tick, named twice.
+/// One simulation tick, named twice and not required to be the same duration.
 ///
 /// `dt_bits` is the canonical step used by membrane arithmetic (`step as f64 * dt`).
 /// `period_ns` is the scheduling period: tick `n` is `n * period_ns` nanoseconds after
-/// episode tick 0, in integer arithmetic. [`Schedule::try_new`] checks that those two
-/// names are within half a nanosecond. It does not replace either value with the other.
+/// the episode origin, in integer arithmetic. [`nominal_seconds`] is
+/// `period_ns as f64 * 1e-9`. That nominal value is not required to have the same bits
+/// as `dt`, and it is not required to round-trip to `period_ns`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Schedule {
     /// `dt.to_bits()`. Simulation authority.
@@ -742,13 +748,17 @@ pub struct Schedule {
 }
 
 impl Schedule {
-    /// Pair a canonical `dt` with a scheduling period.
+    /// Pair a canonical `dt` with a scheduling period. The two are stored as given.
     ///
     /// # Errors
     ///
-    /// The errors of [`schedule_matches_dt`].
+    /// [`TimebaseError::BadDt`] when `dt` is not finite and positive.
+    /// [`TimebaseError::BadPeriod`] when [`nominal_seconds`] refuses `period_ns`.
     pub fn try_new(dt: f64, period_ns: u64) -> Result<Self, TimebaseError> {
-        schedule_matches_dt(dt, period_ns)?;
+        if !(dt.is_finite() && dt > 0.0) {
+            return Err(TimebaseError::BadDt);
+        }
+        nominal_seconds(period_ns)?;
         Ok(Self { dt_bits: dt.to_bits(), period_ns })
     }
 
@@ -771,37 +781,44 @@ impl Schedule {
     }
 }
 
-/// Whether canonical `dt` lies strictly closer to `period_ns` nanoseconds than to either neighbor.
+/// Nominal seconds of one scheduling period: `period_ns as f64 * 1e-9`.
 ///
-/// The comparison is one way. `scaled = dt * 1_000_000_000` (the integer `10^9` is an exact
-/// `f64`) and the pair matches when `period_ns` is an exact `f64` and
-/// `|scaled - period_ns as f64| < 0.5`. A distance of exactly half a nanosecond is a tie between
-/// two integers and is rejected. The check does not require
-/// `(period_ns as f64) * 1e-9` to have the same bits as `dt`. Both `1e-6` and `1000.0 * 1e-9`
-/// match 1000 ns, and those two `f64` values are not the same bits.
-///
-/// `dt` stays the value the caller supplied. Nothing here writes a "corrected" step.
+/// This is the conversion in ferromotion `nominal_seconds` at
+/// `00fa031083b85a4a95815a3899faab2b3afefd7d`. It is deterministic. It is not required to
+/// round-trip through nanoseconds, so 1000 ns is accepted. It is not required to equal the
+/// canonical dynamics `dt`. There is no physical-time ratio field in that pin's
+/// `EpisodeEnvelope`.
 ///
 /// # Errors
 ///
-/// [`TimebaseError::BadDt`], [`TimebaseError::BadPeriod`], [`TimebaseError::PeriodNotExact`],
-/// [`TimebaseError::InconsistentSchedule`].
-pub fn schedule_matches_dt(dt: f64, period_ns: u64) -> Result<(), TimebaseError> {
-    if !(dt.is_finite() && dt > 0.0) {
-        return Err(TimebaseError::BadDt);
-    }
+/// [`TimebaseError::BadPeriod`] when `period_ns` is zero or the product is not finite and
+/// positive.
+pub fn nominal_seconds(period_ns: u64) -> Result<f64, TimebaseError> {
     if period_ns == 0 {
         return Err(TimebaseError::BadPeriod);
     }
-    let ns = period_ns as f64;
-    if ns as u64 != period_ns {
-        return Err(TimebaseError::PeriodNotExact);
+    let seconds = (period_ns as f64) * 1e-9;
+    if !seconds.is_finite() || seconds <= 0.0 {
+        return Err(TimebaseError::BadPeriod);
     }
-    let scaled = dt * 1_000_000_000.0;
-    if !scaled.is_finite() || (scaled - ns).abs() >= 0.5 {
-        return Err(TimebaseError::InconsistentSchedule);
+    Ok(seconds)
+}
+
+/// Integer stamp `origin_ns + tick * period_ns`.
+///
+/// # Errors
+///
+/// [`TimebaseError::BadPeriod`] when `period_ns` is zero.
+/// [`TimebaseError::ScheduleOverflow`] when the product or the sum does not fit in a `u64`.
+pub fn tick_stamp_ns(origin_ns: u64, period_ns: u64, tick: u64) -> Result<u64, TimebaseError> {
+    if period_ns == 0 {
+        return Err(TimebaseError::BadPeriod);
     }
-    Ok(())
+    let delta = tick.checked_mul(period_ns).ok_or(TimebaseError::ScheduleOverflow {
+        tick,
+        period_ns,
+    })?;
+    origin_ns.checked_add(delta).ok_or(TimebaseError::ScheduleOverflow { tick, period_ns })
 }
 
 /// One closed-loop step, as ferromorphic can already record it.
@@ -1454,16 +1471,20 @@ mod tests {
         assert!(clock > 0 && paid.neuron_updates() > 0);
         sim.reset_state();
         assert_eq!((sim.t, sim.epoch, sim.ledger.neuron_updates()), (clock, 0, paid.neuron_updates()));
-        let epoch = sim.episode_start().unwrap();
+        let epoch = sim.episode_start(1_000, 1_000).unwrap();
         assert_eq!(epoch, 1);
         assert_eq!(sim.t, 0);
         assert_eq!(sim.epoch, 1);
+        assert_eq!(sim.origin_ns, Some(1_000));
+        assert_eq!(sim.period_ns, Some(1_000));
         assert_eq!(sim.ledger.neuron_updates(), paid.neuron_updates());
         assert!(sim.accept_event(0, 0).is_err());
         assert!(sim.accept_event(1, 0).is_ok());
         sim.run(4, &[]);
         assert_eq!(sim.t, 4);
-        assert_eq!(sim.episode_start().unwrap(), 2);
+        sim.reset_state();
+        assert_eq!((sim.t, sim.epoch, sim.period_ns, sim.origin_ns), (4, 1, Some(1_000), Some(1_000)));
+        assert_eq!(sim.episode_start(0, 1_000).unwrap(), 2);
         assert_eq!(sim.t, 0);
         assert!(sim.accept_event(1, 0).is_err());
         let k = super::ticks_per_action(0.5, 0.125).unwrap();
@@ -1474,8 +1495,9 @@ mod tests {
         assert!(super::action_tick(u64::MAX, 2).is_err());
         sim.epoch = u64::MAX;
         let t_before = sim.t;
-        assert!(sim.episode_start().is_err());
-        assert_eq!((sim.epoch, sim.t), (u64::MAX, t_before));
+        let origin_before = sim.origin_ns;
+        assert!(sim.episode_start(9, 1_000).is_err());
+        assert_eq!((sim.epoch, sim.t, sim.origin_ns), (u64::MAX, t_before, origin_before));
     }
 
     /// A tick that cannot schedule its delay does not move the membrane or the clock.
@@ -1494,39 +1516,25 @@ mod tests {
         assert!(sim.ring.iter().all(|slot| slot.is_empty()));
     }
 
-    /// 1000 ns is a microsecond even though the two common f64 spellings differ by a bit.
+    /// 1000 ns is a valid scheduling period. Its nominal seconds are `1000 as f64 * 1e-9`.
+    /// Those bits are not required to equal `dt`, and they are not a round trip to 1000.
     #[test]
-    fn a_thousand_nanoseconds_matches_a_microsecond_without_a_bit_round_trip() {
-        let via_literal = 1e-6_f64;
-        let via_ns = 1000.0_f64 * 1e-9;
-        assert_ne!(via_literal.to_bits(), via_ns.to_bits());
-        for dt in [via_literal, via_ns] {
-            super::schedule_matches_dt(dt, 1000).unwrap();
-            let schedule = super::Schedule::try_new(dt, 1000).unwrap();
-            assert_eq!(schedule.dt().to_bits(), dt.to_bits());
-            assert_eq!(schedule.elapsed_ns(4).unwrap(), 4000);
-        }
-        let down = f64::from_bits(via_literal.to_bits() - 1);
-        let up = f64::from_bits(via_literal.to_bits() + 1);
-        super::schedule_matches_dt(down, 1000).unwrap();
-        super::schedule_matches_dt(up, 1000).unwrap();
-
-        let tie = 1000.5_f64 / 1_000_000_000.0;
-        assert_eq!(tie * 1_000_000_000.0, 1000.5);
-        assert!(super::schedule_matches_dt(tie, 1000).is_err());
-        assert!(super::schedule_matches_dt(tie, 1001).is_err());
-
-        let just_under = f64::from_bits(tie.to_bits() - 1);
-        let err = (just_under * 1_000_000_000.0 - 1000.0).abs();
-        assert!(err < 0.5, "{err}");
-        super::schedule_matches_dt(just_under, 1000).unwrap();
-
-        assert!(super::schedule_matches_dt(1e-3, 1000).is_err());
-        assert!(super::schedule_matches_dt(1e-6, 0).is_err());
-        assert!(super::schedule_matches_dt(f64::NAN, 1000).is_err());
+    fn a_thousand_nanoseconds_is_a_valid_period_and_need_not_equal_dt() {
+        let nominal = super::nominal_seconds(1_000).unwrap();
+        assert_eq!(nominal.to_bits(), (1_000.0_f64 * 1e-9).to_bits());
+        assert_ne!(nominal.to_bits(), (1_000.0_f64 * 1e-9 * 1e9).to_bits());
+        assert_ne!(nominal.to_bits(), 1e-6_f64.to_bits());
+        assert!(super::nominal_seconds(0).is_err());
+        // The pinned adapter accepts dt 0.1 with period 1000. Those are not the same duration.
+        let schedule = super::Schedule::try_new(0.1, 1_000).unwrap();
+        assert_eq!(schedule.dt_bits, 0.1_f64.to_bits());
+        assert_ne!(schedule.dt_bits, nominal.to_bits());
+        assert_eq!(super::tick_stamp_ns(0, 1_000, 3).unwrap(), 3_000);
+        assert!(super::tick_stamp_ns(u64::MAX, 1_000, 1).is_err());
+        assert!(super::Schedule::try_new(f64::NAN, 1_000).is_err());
+        assert!(super::Schedule::try_new(-0.1, 1_000).is_err());
         let inexact = (1u64 << 53) + 1;
-        assert!(super::schedule_matches_dt(1.0, inexact).is_err());
-        assert!(super::Schedule::try_new(1e-6, 1000).unwrap().elapsed_ns(u64::MAX).is_err());
+        assert!(super::nominal_seconds(inexact).is_ok());
     }
 
     /// The closed-loop receipt records the tick a spike is stamped with, and a delay of zero
