@@ -2646,6 +2646,28 @@ impl SuppliedEcho {
         Ok(out)
     }
 
+    /// Forecast one step per observed sample, driving every step with that sample.
+    ///
+    /// [`SuppliedEcho::autonomous`] uses only the first sample and then its own predictions.
+    /// The two forecasts agree on a one-step series and separate as soon as a prediction
+    /// differs from the next observation.
+    ///
+    /// # Errors
+    ///
+    /// [`ReservoirError::Empty`] when `observed` is empty, and [`ReservoirError::NonFinite`]
+    /// when any sample is not finite.
+    pub fn teacher(&mut self, observed: &[f64]) -> Result<Vec<f64>, ReservoirError> {
+        if observed.is_empty() {
+            return Err(ReservoirError::Empty { what: "observed" });
+        }
+        finite(observed, "observed")?;
+        let mut out = Vec::with_capacity(observed.len());
+        for &sample in observed {
+            out.push(self.step_scalar(sample)?);
+        }
+        Ok(out)
+    }
+
     fn step_scalar(&mut self, u: f64) -> Result<f64, ReservoirError> {
         let n = self.units;
         let mut aug = Vec::with_capacity(self.in_width);
@@ -2834,6 +2856,14 @@ impl WindowAnn {
         self.buffer = vec![0.0; self.input_dim];
     }
 
+    /// Remove every buffered row, including the zero row [`WindowAnn::try_new`] installs.
+    ///
+    /// The reaching eval path does not do this. A later [`WindowAnn::forward`] then starts
+    /// from an empty buffer, which shifts the first summed window by one frame.
+    pub fn discard_buffer(&mut self) {
+        self.buffer.clear();
+    }
+
     /// Run `frames.len() / input_dim` frames. `frames` is time-major.
     ///
     /// # Errors
@@ -2925,6 +2955,594 @@ fn batch_norm(x: &[f32], weight: &[f32], bias: &[f32], mean: &[f32], var: &[f32]
         .collect()
 }
 
+/// Why a weight or series table was refused.
+///
+/// The table is data. The parser checks a header and a little-endian payload. It does not
+/// execute anything in the file.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TableError {
+    /// The file does not start with `ferromorphic-table 1`.
+    Magic,
+    /// A required line is missing, repeated, unknown, or out of the fixed order.
+    Header {
+        /// What was wrong.
+        what: &'static str,
+    },
+    /// The payload is shorter than the header's count.
+    Truncated {
+        /// Bytes the header required.
+        need: usize,
+        /// Bytes present.
+        have: usize,
+    },
+    /// Bytes follow the declared payload.
+    Trailing {
+        /// Extra bytes.
+        extra: usize,
+    },
+    /// The payload's SHA-256 is not the header's hex.
+    Hash,
+    /// A payload value is not finite.
+    NonFinite {
+        /// Index in the payload.
+        index: usize,
+    },
+    /// A declared dimension or length is outside the bound for that kind.
+    Bound {
+        /// Which field.
+        what: &'static str,
+        /// The declared value.
+        value: usize,
+        /// The largest value the parser accepts.
+        max: usize,
+    },
+    /// The declared value count is not the product of the declared shape.
+    Shape {
+        /// Values the shape requires.
+        want: usize,
+        /// Values the header declares.
+        got: usize,
+    },
+}
+
+impl core::fmt::Display for TableError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Magic => f.write_str("weight table magic is not ferromorphic-table 1"),
+            Self::Header { what } => write!(f, "weight table header: {what}"),
+            Self::Truncated { need, have } => {
+                write!(f, "weight table payload has {have} bytes and needs {need}")
+            }
+            Self::Trailing { extra } => write!(f, "weight table has {extra} trailing bytes"),
+            Self::Hash => f.write_str("weight table payload sha256 does not match the header"),
+            Self::NonFinite { index } => write!(f, "weight table value {index} is not finite"),
+            Self::Bound { what, value, max } => {
+                write!(f, "weight table {what} {value} exceeds {max}")
+            }
+            Self::Shape { want, got } => {
+                write!(f, "weight table declares {got} values and the shape needs {want}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for TableError {}
+
+/// Largest reservoir the echo table accepts. The pinned Mackey–Glass widths are below this.
+pub const ECHO_UNITS_MAX: usize = 1024;
+/// Largest `w_in` width, bias column included.
+pub const ECHO_IN_MAX: usize = 8;
+/// Largest reaching input width.
+pub const ANN_INPUT_MAX: usize = 1024;
+/// Largest hidden width.
+pub const ANN_HIDDEN_MAX: usize = 256;
+/// Largest reaching output width.
+pub const ANN_OUT_MAX: usize = 16;
+/// Largest sum window.
+pub const ANN_WINDOW_MAX: usize = 512;
+
+const TABLE_MAGIC: &str = "ferromorphic-table 1";
+
+/// SHA-256, FIPS 180-4. Used only to check a table payload against its header.
+#[must_use]
+pub fn sha256(data: &[u8]) -> [u8; 32] {
+    const K: [u32; 64] = [
+        0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4,
+        0xab1c5ed5, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe,
+        0x9bdc06a7, 0xc19bf174, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f,
+        0x4a7484aa, 0x5cb0a9dc, 0x76f988da, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7,
+        0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc,
+        0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85, 0xa2bfe8a1, 0xa81a664b,
+        0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070, 0x19a4c116,
+        0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+        0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7,
+        0xc67178f2,
+    ];
+    let mut state: [u32; 8] = [
+        0x6a09e667, 0xbb67ae85, 0x3c6ef372, 0xa54ff53a, 0x510e527f, 0x9b05688c, 0x1f83d9ab,
+        0x5be0cd19,
+    ];
+    let bit_len = (data.len() as u64).wrapping_mul(8);
+    let mut msg = Vec::with_capacity(data.len() + 72);
+    msg.extend_from_slice(data);
+    msg.push(0x80);
+    while (msg.len() % 64) != 56 {
+        msg.push(0);
+    }
+    msg.extend_from_slice(&bit_len.to_be_bytes());
+    for chunk in msg.chunks(64) {
+        let mut w = [0u32; 64];
+        for i in 0..16 {
+            w[i] = u32::from_be_bytes([chunk[i * 4], chunk[i * 4 + 1], chunk[i * 4 + 2], chunk[i * 4 + 3]]);
+        }
+        for i in 16..64 {
+            let s0 = w[i - 15].rotate_right(7) ^ w[i - 15].rotate_right(18) ^ (w[i - 15] >> 3);
+            let s1 = w[i - 2].rotate_right(17) ^ w[i - 2].rotate_right(19) ^ (w[i - 2] >> 10);
+            w[i] = w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1);
+        }
+        let mut a = state[0];
+        let mut b = state[1];
+        let mut c = state[2];
+        let mut d = state[3];
+        let mut e = state[4];
+        let mut f = state[5];
+        let mut g = state[6];
+        let mut h = state[7];
+        for i in 0..64 {
+            let s1 = e.rotate_right(6) ^ e.rotate_right(11) ^ e.rotate_right(25);
+            let ch = (e & f) ^ (!e & g);
+            let t1 = h.wrapping_add(s1).wrapping_add(ch).wrapping_add(K[i]).wrapping_add(w[i]);
+            let s0 = a.rotate_right(2) ^ a.rotate_right(13) ^ a.rotate_right(22);
+            let maj = (a & b) ^ (a & c) ^ (b & c);
+            let t2 = s0.wrapping_add(maj);
+            h = g;
+            g = f;
+            f = e;
+            e = d.wrapping_add(t1);
+            d = c;
+            c = b;
+            b = a;
+            a = t1.wrapping_add(t2);
+        }
+        state[0] = state[0].wrapping_add(a);
+        state[1] = state[1].wrapping_add(b);
+        state[2] = state[2].wrapping_add(c);
+        state[3] = state[3].wrapping_add(d);
+        state[4] = state[4].wrapping_add(e);
+        state[5] = state[5].wrapping_add(f);
+        state[6] = state[6].wrapping_add(g);
+        state[7] = state[7].wrapping_add(h);
+    }
+    let mut out = [0u8; 32];
+    for (i, word) in state.iter().enumerate() {
+        out[i * 4..i * 4 + 4].copy_from_slice(&word.to_be_bytes());
+    }
+    out
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
+}
+
+fn hex_decode_64(text: &str) -> Result<[u8; 32], TableError> {
+    if text.len() != 64 || !text.bytes().all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()) {
+        return Err(TableError::Header { what: "sha256 is not 64 lowercase hex digits" });
+    }
+    let mut out = [0u8; 32];
+    for i in 0..32 {
+        out[i] = u8::from_str_radix(&text[i * 2..i * 2 + 2], 16)
+            .map_err(|_| TableError::Header { what: "sha256 is not 64 lowercase hex digits" })?;
+    }
+    Ok(out)
+}
+
+fn split_table(bytes: &[u8]) -> Result<(&str, &[u8]), TableError> {
+    let Some(end) = bytes.windows(2).position(|pair| pair == b"\n\n") else {
+        return Err(TableError::Magic);
+    };
+    if bytes[..end].contains(&b'\r') {
+        return Err(TableError::Header { what: "carriage return" });
+    }
+    let header = std::str::from_utf8(&bytes[..end]).map_err(|_| TableError::Magic)?;
+    Ok((header, &bytes[end + 2..]))
+}
+
+fn header_lines<'a>(header: &'a str, keys: &[&str]) -> Result<Vec<&'a str>, TableError> {
+    let mut lines = header.split('\n');
+    let magic = lines.next().ok_or(TableError::Magic)?;
+    if magic != TABLE_MAGIC {
+        return Err(TableError::Magic);
+    }
+    let mut values = Vec::with_capacity(keys.len());
+    for key in keys {
+        let line = lines.next().ok_or(TableError::Header { what: "missing line" })?;
+        let Some(rest) = line.strip_prefix(*key).and_then(|s| s.strip_prefix(' ')) else {
+            return Err(TableError::Header { what: "line out of order or unknown" });
+        };
+        if rest.is_empty() || rest.contains(' ') {
+            return Err(TableError::Header { what: "value" });
+        }
+        values.push(rest);
+    }
+    if lines.next().is_some() {
+        return Err(TableError::Header { what: "extra line" });
+    }
+    Ok(values)
+}
+
+fn parse_usize_field(text: &str, what: &'static str) -> Result<usize, TableError> {
+    let value: u64 = text.parse().map_err(|_| TableError::Header { what })?;
+    usize::try_from(value).map_err(|_| TableError::Bound { what, value: usize::MAX, max: usize::MAX })
+}
+
+fn check_payload(payload: &[u8], values: usize, width: usize, expect_hash: [u8; 32]) -> Result<(), TableError> {
+    let need = values.checked_mul(width).ok_or(TableError::Bound {
+        what: "payload bytes",
+        value: values,
+        max: usize::MAX / width.max(1),
+    })?;
+    if payload.len() < need {
+        return Err(TableError::Truncated { need, have: payload.len() });
+    }
+    if payload.len() > need {
+        return Err(TableError::Trailing { extra: payload.len() - need });
+    }
+    if sha256(payload) != expect_hash {
+        return Err(TableError::Hash);
+    }
+    Ok(())
+}
+
+fn f64_le(payload: &[u8]) -> Result<Vec<f64>, TableError> {
+    let mut out = Vec::with_capacity(payload.len() / 8);
+    for (index, chunk) in payload.chunks(8).enumerate() {
+        let value = f64::from_le_bytes(chunk.try_into().map_err(|_| TableError::Truncated {
+            need: 8,
+            have: chunk.len(),
+        })?);
+        if !value.is_finite() {
+            return Err(TableError::NonFinite { index });
+        }
+        out.push(value);
+    }
+    Ok(out)
+}
+
+fn f32_le(payload: &[u8]) -> Result<Vec<f32>, TableError> {
+    let mut out = Vec::with_capacity(payload.len() / 4);
+    for (index, chunk) in payload.chunks(4).enumerate() {
+        let value = f32::from_le_bytes(chunk.try_into().map_err(|_| TableError::Truncated {
+            need: 4,
+            have: chunk.len(),
+        })?);
+        if !value.is_finite() {
+            return Err(TableError::NonFinite { index });
+        }
+        out.push(value);
+    }
+    Ok(out)
+}
+
+fn fixed_preamble(kind: &str, dtype: &str) -> String {
+    format!(
+        "{TABLE_MAGIC}\nkind {kind}\nendian le\ndtype {dtype}\norder row-major\n"
+    )
+}
+
+fn finish_table(header_without_hash: &str, payload: &[u8]) -> Vec<u8> {
+    let mut text = String::with_capacity(header_without_hash.len() + 80);
+    text.push_str(header_without_hash);
+    text.push_str("sha256 ");
+    text.push_str(&hex_encode(&sha256(payload)));
+    text.push_str("\n\n");
+    let mut bytes = text.into_bytes();
+    bytes.extend_from_slice(payload);
+    bytes
+}
+
+/// Encode an echo table. Little-endian `f64`, row-major, payload order `w_in`, `w`, `w_out`, state.
+#[must_use]
+pub fn echo_table_bytes(echo: &SuppliedEcho) -> Vec<u8> {
+    let mut payload = Vec::new();
+    for value in echo.w_in.iter().chain(&echo.w).chain(&echo.w_out).chain(&echo.state) {
+        payload.extend_from_slice(&value.to_le_bytes());
+    }
+    let feature = if echo.include_input { echo.in_width + echo.units } else { echo.units };
+    let values = echo.units * echo.in_width + echo.units * echo.units + echo.n_out * feature + echo.units;
+    let header = format!(
+        "{}units {}\nin_width {}\nn_out {}\nleakage_bits {:016x}\ninclude_bias {}\ninclude_input {}\nvalues {}\n",
+        fixed_preamble("echo", "f64"),
+        echo.units,
+        echo.in_width,
+        echo.n_out,
+        echo.leakage.to_bits(),
+        u8::from(echo.include_bias),
+        u8::from(echo.include_input),
+        values,
+    );
+    finish_table(&header, &payload)
+}
+
+/// Read an echo table into [`SuppliedEcho`].
+///
+/// # Errors
+///
+/// [`TableError`] when the magic, key order, endianness, dtype, shapes, hash, bounds, or
+/// finiteness check fails. A big-endian or column-major table is refused. `units` above
+/// [`ECHO_UNITS_MAX`] is refused before the payload is decoded.
+pub fn parse_echo_table(bytes: &[u8]) -> Result<SuppliedEcho, TableError> {
+    let (header, payload) = split_table(bytes)?;
+    let fields = header_lines(
+        header,
+        &[
+            "kind",
+            "endian",
+            "dtype",
+            "order",
+            "units",
+            "in_width",
+            "n_out",
+            "leakage_bits",
+            "include_bias",
+            "include_input",
+            "values",
+            "sha256",
+        ],
+    )?;
+    if fields[0] != "echo" || fields[1] != "le" || fields[2] != "f64" || fields[3] != "row-major" {
+        return Err(TableError::Header { what: "echo preamble" });
+    }
+    let units = parse_usize_field(fields[4], "units")?;
+    let in_width = parse_usize_field(fields[5], "in_width")?;
+    let n_out = parse_usize_field(fields[6], "n_out")?;
+    if units == 0 || units > ECHO_UNITS_MAX {
+        return Err(TableError::Bound { what: "units", value: units, max: ECHO_UNITS_MAX });
+    }
+    if in_width == 0 || in_width > ECHO_IN_MAX {
+        return Err(TableError::Bound { what: "in_width", value: in_width, max: ECHO_IN_MAX });
+    }
+    if n_out != 1 {
+        return Err(TableError::Bound { what: "n_out", value: n_out, max: 1 });
+    }
+    if fields[7].len() != 16 {
+        return Err(TableError::Header { what: "leakage_bits" });
+    }
+    let leakage_bits = u64::from_str_radix(fields[7], 16).map_err(|_| TableError::Header { what: "leakage_bits" })?;
+    let leakage = f64::from_bits(leakage_bits);
+    if !leakage.is_finite() {
+        return Err(TableError::NonFinite { index: 0 });
+    }
+    let include_bias = match fields[8] {
+        "1" => true,
+        "0" => false,
+        _ => return Err(TableError::Header { what: "include_bias" }),
+    };
+    let include_input = match fields[9] {
+        "1" => true,
+        "0" => false,
+        _ => return Err(TableError::Header { what: "include_input" }),
+    };
+    let values = parse_usize_field(fields[10], "values")?;
+    let feature = if include_input { in_width + units } else { units };
+    let want = units * in_width + units * units + n_out * feature + units;
+    if values != want {
+        return Err(TableError::Shape { want, got: values });
+    }
+    let expect = hex_decode_64(fields[11])?;
+    check_payload(payload, values, 8, expect)?;
+    let flat = f64_le(payload)?;
+    let w_in_n = units * in_width;
+    let w_n = units * units;
+    let w_out_n = n_out * feature;
+    let w_in = flat[..w_in_n].to_vec();
+    let w = flat[w_in_n..w_in_n + w_n].to_vec();
+    let w_out = flat[w_in_n + w_n..w_in_n + w_n + w_out_n].to_vec();
+    let state = flat[w_in_n + w_n + w_out_n..].to_vec();
+    SuppliedEcho::try_new(units, in_width, n_out, w_in, w, w_out, leakage, state, include_bias, include_input)
+        .map_err(|_| TableError::Header { what: "echo rejected by SuppliedEcho" })
+}
+
+/// Encode a window-ann table. Little-endian `f32`, row-major.
+#[must_use]
+pub fn ann_table_bytes(ann: &WindowAnn) -> Vec<u8> {
+    let mut payload = Vec::new();
+    let slices: [&[f32]; 14] = [
+        &ann.fc1_w, &ann.fc1_b, &ann.bn1_w, &ann.bn1_b, &ann.bn1_mean, &ann.bn1_var, &ann.fc2_w,
+        &ann.fc2_b, &ann.bn2_w, &ann.bn2_b, &ann.bn2_mean, &ann.bn2_var, &ann.fc3_w, &ann.fc3_b,
+    ];
+    let mut values = 0usize;
+    for slice in slices {
+        values += slice.len();
+        for value in slice {
+            payload.extend_from_slice(&value.to_le_bytes());
+        }
+    }
+    let header = format!(
+        "{}input_dim {}\nhidden1 {}\nhidden2 {}\noutput_dim {}\nwindow {}\neps_bits {:08x}\nvalues {}\n",
+        fixed_preamble("ann", "f32"),
+        ann.input_dim,
+        ann.hidden1,
+        ann.hidden2,
+        ann.output_dim,
+        ann.window,
+        ann.eps.to_bits(),
+        values,
+    );
+    finish_table(&header, &payload)
+}
+
+/// Read a window-ann table. The buffer is the one zero row, not anything stored in the file.
+///
+/// # Errors
+///
+/// [`TableError`] on a bad header, hash, bound, or non-finite weight.
+pub fn parse_ann_table(bytes: &[u8]) -> Result<WindowAnn, TableError> {
+    let (header, payload) = split_table(bytes)?;
+    let fields = header_lines(
+        header,
+        &[
+            "kind",
+            "endian",
+            "dtype",
+            "order",
+            "input_dim",
+            "hidden1",
+            "hidden2",
+            "output_dim",
+            "window",
+            "eps_bits",
+            "values",
+            "sha256",
+        ],
+    )?;
+    if fields[0] != "ann" || fields[1] != "le" || fields[2] != "f32" || fields[3] != "row-major" {
+        return Err(TableError::Header { what: "ann preamble" });
+    }
+    let input_dim = parse_usize_field(fields[4], "input_dim")?;
+    let hidden1 = parse_usize_field(fields[5], "hidden1")?;
+    let hidden2 = parse_usize_field(fields[6], "hidden2")?;
+    let output_dim = parse_usize_field(fields[7], "output_dim")?;
+    let window = parse_usize_field(fields[8], "window")?;
+    if input_dim == 0 || input_dim > ANN_INPUT_MAX {
+        return Err(TableError::Bound { what: "input_dim", value: input_dim, max: ANN_INPUT_MAX });
+    }
+    if hidden1 == 0 || hidden1 > ANN_HIDDEN_MAX || hidden2 == 0 || hidden2 > ANN_HIDDEN_MAX {
+        return Err(TableError::Bound { what: "hidden", value: hidden1.max(hidden2), max: ANN_HIDDEN_MAX });
+    }
+    if output_dim == 0 || output_dim > ANN_OUT_MAX {
+        return Err(TableError::Bound { what: "output_dim", value: output_dim, max: ANN_OUT_MAX });
+    }
+    if window == 0 || window > ANN_WINDOW_MAX {
+        return Err(TableError::Bound { what: "window", value: window, max: ANN_WINDOW_MAX });
+    }
+    if fields[9].len() != 8 {
+        return Err(TableError::Header { what: "eps_bits" });
+    }
+    let eps_bits = u32::from_str_radix(fields[9], 16).map_err(|_| TableError::Header { what: "eps_bits" })?;
+    let eps = f32::from_bits(eps_bits);
+    let values = parse_usize_field(fields[10], "values")?;
+    let want = hidden1 * input_dim
+        + hidden1 * 5
+        + hidden2 * hidden1
+        + hidden2 * 5
+        + output_dim * hidden2
+        + output_dim;
+    if values != want {
+        return Err(TableError::Shape { want, got: values });
+    }
+    let expect = hex_decode_64(fields[11])?;
+    check_payload(payload, values, 4, expect)?;
+    let flat = f32_le(payload)?;
+    let mut at = 0usize;
+    let take = |flat: &[f32], at: &mut usize, n: usize| -> Vec<f32> {
+        let out = flat[*at..*at + n].to_vec();
+        *at += n;
+        out
+    };
+    let fc1_w = take(&flat, &mut at, hidden1 * input_dim);
+    let fc1_b = take(&flat, &mut at, hidden1);
+    let bn1_w = take(&flat, &mut at, hidden1);
+    let bn1_b = take(&flat, &mut at, hidden1);
+    let bn1_mean = take(&flat, &mut at, hidden1);
+    let bn1_var = take(&flat, &mut at, hidden1);
+    let fc2_w = take(&flat, &mut at, hidden2 * hidden1);
+    let fc2_b = take(&flat, &mut at, hidden2);
+    let bn2_w = take(&flat, &mut at, hidden2);
+    let bn2_b = take(&flat, &mut at, hidden2);
+    let bn2_mean = take(&flat, &mut at, hidden2);
+    let bn2_var = take(&flat, &mut at, hidden2);
+    let fc3_w = take(&flat, &mut at, output_dim * hidden2);
+    let fc3_b = take(&flat, &mut at, output_dim);
+    WindowAnn::try_new(
+        input_dim, hidden1, hidden2, output_dim, window, fc1_w, fc1_b, bn1_w, bn1_b, bn1_mean,
+        bn1_var, fc2_w, fc2_b, bn2_w, bn2_b, bn2_mean, bn2_var, fc3_w, fc3_b, eps,
+    )
+    .map_err(|_| TableError::Header { what: "ann rejected by WindowAnn" })
+}
+
+/// Encode a one-dimensional little-endian series. `role` is a single token.
+#[must_use]
+pub fn series_f64_bytes(role: &str, values: &[f64]) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(values.len() * 8);
+    for value in values {
+        payload.extend_from_slice(&value.to_le_bytes());
+    }
+    let header = format!(
+        "{}role {role}\nlen {}\n",
+        fixed_preamble("series", "f64"),
+        values.len(),
+    );
+    finish_table(&header, &payload)
+}
+
+/// Encode a one-dimensional little-endian `f32` series.
+#[must_use]
+pub fn series_f32_bytes(role: &str, values: &[f32]) -> Vec<u8> {
+    let mut payload = Vec::with_capacity(values.len() * 4);
+    for value in values {
+        payload.extend_from_slice(&value.to_le_bytes());
+    }
+    let header = format!(
+        "{}role {role}\nlen {}\n",
+        fixed_preamble("series", "f32"),
+        values.len(),
+    );
+    finish_table(&header, &payload)
+}
+
+/// Read an `f64` series whose header role equals `role` and whose length is at most `max_len`.
+///
+/// # Errors
+///
+/// [`TableError`] when the file is not that role, is too long, is non-finite, or fails the
+/// hash check.
+pub fn parse_f64_series(bytes: &[u8], role: &str, max_len: usize) -> Result<Vec<f64>, TableError> {
+    parse_series(bytes, "f64", 8, role, max_len).and_then(f64_le)
+}
+
+/// Read an `f32` series whose header role equals `role` and whose length is at most `max_len`.
+///
+/// # Errors
+///
+/// [`TableError`] when the file is not that role, is too long, is non-finite, or fails the
+/// hash check.
+pub fn parse_f32_series(bytes: &[u8], role: &str, max_len: usize) -> Result<Vec<f32>, TableError> {
+    parse_series(bytes, "f32", 4, role, max_len).and_then(f32_le)
+}
+
+fn parse_series<'a>(
+    bytes: &'a [u8],
+    dtype: &str,
+    width: usize,
+    role: &str,
+    max_len: usize,
+) -> Result<&'a [u8], TableError> {
+    let (header, payload) = split_table(bytes)?;
+    let fields = header_lines(
+        header,
+        &["kind", "endian", "dtype", "order", "role", "len", "sha256"],
+    )?;
+    if fields[0] != "series" || fields[1] != "le" || fields[2] != dtype || fields[3] != "row-major" {
+        return Err(TableError::Header { what: "series preamble" });
+    }
+    if fields[4] != role {
+        return Err(TableError::Header { what: "role" });
+    }
+    let len = parse_usize_field(fields[5], "len")?;
+    if len > max_len {
+        return Err(TableError::Bound { what: "len", value: len, max: max_len });
+    }
+    let expect = hex_decode_64(fields[6])?;
+    check_payload(payload, len, width, expect)?;
+    Ok(payload)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -2955,7 +3573,7 @@ mod tests {
         )
         .unwrap();
         let got = echo.autonomous(&[0.4, 999.0, 999.0]).unwrap();
-        let expect = [0.15153478399746123, -0.20837470166018801, -0.66530909595266452];
+        let expect = [0.15153478399746123, -0.208_374_701_660_188, -0.665_309_095_952_664_5];
         for (i, (g, e)) in got.iter().zip(expect).enumerate() {
             assert!((g - e).abs() < 1e-12, "step {i}: {g} vs {e}");
         }
@@ -2963,6 +3581,93 @@ mod tests {
             .unwrap()
             .autonomous(&[f64::NAN])
             .is_err());
+        let mut forced = SuppliedEcho::try_new(
+            1, 2, 1, vec![0.5, -0.25], vec![0.2], vec![0.0, 1.0, -1.0], 0.5, vec![0.1], true, true,
+        )
+        .unwrap();
+        let teacher = forced.teacher(&[0.4, 0.4, 0.4]).unwrap();
+        assert!((teacher[0] - got[0]).abs() < 1e-12, "the first step has no feedback yet");
+        assert!((teacher[2] - got[2]).abs() > 1e-6, "later teacher-forced steps keep the observation");
+    }
+
+    /// The table is little-endian row-major data. A bad magic, endian, hash, trailing byte,
+    /// non-finite payload, oversized width, or wrong series role is refused.
+    #[test]
+    fn a_weight_table_checks_hash_endian_bounds_and_finiteness() {
+        let echo = SuppliedEcho::try_new(
+            1, 2, 1, vec![0.5, -0.25], vec![0.2], vec![0.0, 1.0, -1.0], 0.5, vec![0.1], true, true,
+        )
+        .unwrap();
+        let bytes = super::echo_table_bytes(&echo);
+        let parsed = super::parse_echo_table(&bytes).unwrap();
+        let mut rolled = parsed.clone();
+        assert!((rolled.autonomous(&[0.4, 999.0, 999.0]).unwrap()[2] + 0.665_309_095_952_664_5).abs() < 1e-12);
+        assert_eq!(
+            super::hex_encode(&super::sha256(b"")),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(
+            super::hex_encode(&super::sha256(b"abc")),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        let mut bad_magic = bytes.clone();
+        bad_magic[0] = b'x';
+        assert!(matches!(super::parse_echo_table(&bad_magic), Err(super::TableError::Magic)));
+        let be_at = bytes.windows(9).position(|w| w == b"endian le").unwrap();
+        let mut be = bytes.clone();
+        be[be_at..be_at + 9].copy_from_slice(b"endian be");
+        assert!(matches!(super::parse_echo_table(&be), Err(super::TableError::Header { .. })));
+        let mut trailing = bytes.clone();
+        trailing.push(0);
+        assert!(matches!(super::parse_echo_table(&trailing), Err(super::TableError::Trailing { .. })));
+        let mut short = bytes.clone();
+        short.pop();
+        assert!(matches!(super::parse_echo_table(&short), Err(super::TableError::Truncated { .. })));
+        let sha_at = bytes.windows(6).position(|w| w == b"sha256").unwrap();
+        let mut bad_hash = bytes.clone();
+        let hex_pos = sha_at + "sha256 ".len();
+        bad_hash[hex_pos] = if bad_hash[hex_pos] == b'0' { b'1' } else { b'0' };
+        assert!(matches!(super::parse_echo_table(&bad_hash), Err(super::TableError::Hash)));
+        let mut huge = bytes.clone();
+        let header_end = huge.windows(2).position(|w| w == b"\n\n").unwrap();
+        let units_at = std::str::from_utf8(&huge[..header_end]).unwrap().find("units 1\n").unwrap();
+        huge.splice(units_at..units_at + "units 1\n".len(), b"units 5000\n".iter().copied());
+        assert!(matches!(
+            super::parse_echo_table(&huge),
+            Err(super::TableError::Bound { what: "units", .. })
+        ));
+        let mut nan_bytes = bytes.clone();
+        let payload_at = nan_bytes.windows(2).position(|w| w == b"\n\n").unwrap() + 2;
+        nan_bytes[payload_at..payload_at + 8].copy_from_slice(&f64::NAN.to_le_bytes());
+        let payload = &nan_bytes[payload_at..];
+        let digest = super::hex_encode(&super::sha256(payload));
+        nan_bytes[hex_pos..hex_pos + 64].copy_from_slice(digest.as_bytes());
+        assert!(matches!(super::parse_echo_table(&nan_bytes), Err(super::TableError::NonFinite { .. })));
+        let series = super::series_f64_bytes("mackey-drive", &[0.4, 0.5]);
+        assert!(super::parse_f64_series(&series, "mackey-pred", 8).is_err());
+        assert_eq!(super::parse_f64_series(&series, "mackey-drive", 8).unwrap(), vec![0.4, 0.5]);
+        assert!(matches!(
+            super::parse_f64_series(&series, "mackey-drive", 1),
+            Err(super::TableError::Bound { what: "len", .. })
+        ));
+        let ann = super::WindowAnn::try_new(
+            1, 1, 1, 1, 2,
+            vec![1.0], vec![0.0], vec![1.0], vec![0.0], vec![0.0], vec![1.0],
+            vec![1.0], vec![0.0], vec![1.0], vec![0.0], vec![0.0], vec![1.0],
+            vec![1.0], vec![0.0], 1e-5,
+        )
+        .unwrap();
+        let ann_bytes = super::ann_table_bytes(&ann);
+        let mut loaded = super::parse_ann_table(&ann_bytes).unwrap();
+        let with_zero = loaded.forward(&[1.0, 2.0, 3.0]).unwrap();
+        assert_eq!(with_zero[0], 0.0);
+        let mut emptied = super::parse_ann_table(&ann_bytes).unwrap();
+        emptied.discard_buffer();
+        assert_ne!(emptied.forward(&[1.0, 2.0, 3.0]).unwrap(), with_zero);
+        let order_at = ann_bytes.windows(9).position(|w| w == b"row-major").unwrap();
+        let mut fortran = ann_bytes.clone();
+        fortran[order_at..order_at + 9].copy_from_slice(b"col-major");
+        assert!(matches!(super::parse_ann_table(&fortran), Err(super::TableError::Header { .. })));
     }
 
     /// Window 2 keeps the initial zero row until the third frame, then sums the last two.
