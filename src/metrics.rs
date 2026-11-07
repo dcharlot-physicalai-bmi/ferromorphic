@@ -1144,6 +1144,33 @@ pub fn r_squared(predicted: &[f64], truth: &[f64]) -> Result<f64, MetricError> {
     Ok(1.0 - ss_res / ss_tot)
 }
 
+/// Symmetric mean absolute percentage error, in percent, matching the arithmetic of
+/// `NeuroBench` `neurobench.metrics.workload.smape` at commit
+/// `e521c28f5798cb40bb9423758bf066dad53fe070`: `200 * mean(|p - y| / (|p| + |y|))`.
+///
+/// A term whose denominator is zero is 200. That is the value their `nan_to_num(..., nan=200)`
+/// writes for a `0/0`. These arrays are a metric check. They are not a held-out task score.
+///
+/// # Errors
+///
+/// [`MetricError::LengthMismatch`], [`MetricError::Empty`], [`MetricError::NonFinite`].
+pub fn smape(predicted: &[f64], truth: &[f64]) -> Result<f64, MetricError> {
+    if predicted.len() != truth.len() {
+        return Err(MetricError::LengthMismatch { a: predicted.len(), b: truth.len() });
+    }
+    if truth.is_empty() {
+        return Err(MetricError::Empty { what: "test set" });
+    }
+    all_finite(predicted, "prediction")?;
+    all_finite(truth, "target")?;
+    let mut sum = 0.0;
+    for (p, y) in predicted.iter().zip(truth) {
+        let denom = p.abs() + y.abs();
+        sum += if denom == 0.0 { 200.0 } else { 200.0 * (p - y).abs() / denom };
+    }
+    Ok(sum / truth.len() as f64)
+}
+
 /// Average precision of one ranking: the mean of the precisions at the ranks where a positive was
 /// retrieved.
 ///
@@ -1439,7 +1466,7 @@ mod tests {
         ActivationCensus, ActivationKind, Footprint, MetricError, SynOpMeter, SynOps,
         account_for_train, accuracy, activation_sparsity_of_run, average_precision,
         connection_sparsity, connection_sparsity_of, layer_synops, mean_average_precision,
-        mean_squared_error, r_squared, summarise, top_k_accuracy,
+        mean_squared_error, r_squared, smape, summarise, top_k_accuracy,
     };
     use crate::crossover::Verdict;
     use crate::ledger::Ledger;
@@ -1447,6 +1474,14 @@ mod tests {
     use crate::neuron::Lif;
     use crate::sim::{Mode, Sim};
     use crate::spike::{Spike, Train};
+
+    /// Hand values for sMAPE. Both-zero is 200. This is a synthetic pair.
+    #[test]
+    fn smape_matches_the_pinned_harness_arithmetic_on_a_synthetic_pair() {
+        let err = smape(&[1.0, 0.0], &[1.0, 0.0]).unwrap();
+        assert_eq!(err, 100.0);
+        assert!(smape(&[], &[]).is_err());
+    }
 
     // ---- (a) activation sparsity of a hand-constructed pattern ---------------------------------
 

@@ -419,6 +419,223 @@ impl<N: Neuron> Sim<N> {
     }
 }
 
+/// Why an integer step cannot be shared with another time base.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TimebaseError {
+    /// `dt` was not finite and strictly positive.
+    BadDt,
+    /// Two `dt` values differ in their `f64` bits.
+    Mismatch {
+        /// Bits of the left-hand `dt`.
+        left: u64,
+        /// Bits of the right-hand `dt`.
+        right: u64,
+    },
+    /// `step + 1 + delay` does not fit in a `u64`.
+    Overflow {
+        /// Tick the spike was emitted on.
+        step: u64,
+        /// Synaptic delay in ticks.
+        delay: u32,
+    },
+    /// An event's step is earlier than the clock step that would accept it.
+    Late {
+        /// Event step.
+        event_step: u64,
+        /// Clock step.
+        clock_step: u64,
+    },
+    /// An event's step is past the delivery horizon `clock_step + max_delay`.
+    BeyondHorizon {
+        /// Event step.
+        event_step: u64,
+        /// Last step the ring can hold.
+        horizon: u64,
+    },
+    /// A spike line is not in `(t, source)` order, or its tick is not the receipt step.
+    Unordered,
+}
+
+impl core::fmt::Display for TimebaseError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::BadDt => f.write_str("dt must be finite and strictly positive"),
+            Self::Mismatch { left, right } => {
+                write!(f, "dt bits {left:016x} and {right:016x} are different time bases")
+            }
+            Self::Overflow { step, delay } => {
+                write!(f, "delivery of step {step} delay {delay} overflows u64")
+            }
+            Self::Late { event_step, clock_step } => {
+                write!(f, "event step {event_step} is late for clock step {clock_step}")
+            }
+            Self::BeyondHorizon { event_step, horizon } => {
+                write!(f, "event step {event_step} is past horizon {horizon}")
+            }
+            Self::Unordered => f.write_str("spike lines are not in (t, source) order"),
+        }
+    }
+}
+
+impl std::error::Error for TimebaseError {}
+
+/// Seconds for an integer step: one multiply, `step as f64 * dt`.
+///
+/// # Errors
+///
+/// [`TimebaseError::BadDt`] when `dt` is not finite and strictly positive.
+pub fn step_seconds(step: u64, dt: f64) -> Result<f64, TimebaseError> {
+    if !(dt.is_finite() && dt > 0.0) {
+        return Err(TimebaseError::BadDt);
+    }
+    Ok(step as f64 * dt)
+}
+
+/// Accept a shared `dt` only when both values are finite, positive, and the same `f64` bits.
+///
+/// # Errors
+///
+/// [`TimebaseError::BadDt`] or [`TimebaseError::Mismatch`].
+pub fn same_dt(left: f64, right: f64) -> Result<(), TimebaseError> {
+    if !(left.is_finite() && left > 0.0) {
+        return Err(TimebaseError::BadDt);
+    }
+    if left.to_bits() != right.to_bits() {
+        return Err(TimebaseError::Mismatch { left: left.to_bits(), right: right.to_bits() });
+    }
+    Ok(())
+}
+
+/// Tick on which [`Sim::step`] posts a spike emitted at `step` with synaptic delay `delay`.
+///
+/// The implemented rule is `step + 1 + delay`.
+///
+/// # Errors
+///
+/// [`TimebaseError::Overflow`] when the sum does not fit in a `u64`.
+pub fn delivery_step(step: u64, delay: u32) -> Result<u64, TimebaseError> {
+    step.checked_add(1)
+        .and_then(|t| t.checked_add(u64::from(delay)))
+        .ok_or(TimebaseError::Overflow { step, delay })
+}
+
+/// Refuse an event that is late or past `clock_step + max_delay`.
+///
+/// A step equal to `clock_step` is on time. This is the acceptance rule for an external event
+/// joining a [`Sim`] whose ring spans `max_delay` ticks. [`crate::spike::Train::push`] separately
+/// panics when a recorded spike goes backwards.
+///
+/// # Errors
+///
+/// [`TimebaseError::Late`] or [`TimebaseError::BeyondHorizon`].
+pub fn accept_event_step(event_step: u64, clock_step: u64, max_delay: u32) -> Result<(), TimebaseError> {
+    if event_step < clock_step {
+        return Err(TimebaseError::Late { event_step, clock_step });
+    }
+    let horizon = clock_step.saturating_add(u64::from(max_delay));
+    if event_step > horizon {
+        return Err(TimebaseError::BeyondHorizon { event_step, horizon });
+    }
+    Ok(())
+}
+
+/// One closed-loop step, as ferromorphic can already record it.
+///
+/// `step` is the tick index passed to the spikes of that call, which is [`Sim::t`] before
+/// [`Sim::step`] increments it. `dt_bits` is `dt.to_bits()`. Spikes are in `(t, source)` order.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StepReceipt {
+    /// Tick index of this step.
+    pub step: u64,
+    /// `dt.to_bits()`.
+    pub dt_bits: u64,
+    /// `clocked` or `event`.
+    pub mode: &'static str,
+    /// Spikes emitted on this step, `(t, source)` with `t == step`.
+    pub spikes: Vec<(u64, u32)>,
+}
+
+impl StepReceipt {
+    /// Record the spikes [`Sim::run`] would have stored for one step.
+    ///
+    /// The caller passes `sim.t` from before `step`, and the vector `step` returned.
+    #[must_use]
+    pub fn from_step(step: u64, dt: f64, mode: Mode, fired: &[u32]) -> Self {
+        let mode = match mode {
+            Mode::Clocked => "clocked",
+            Mode::EventDriven => "event",
+        };
+        Self {
+            step,
+            dt_bits: dt.to_bits(),
+            mode,
+            spikes: fired.iter().map(|&source| (step, source)).collect(),
+        }
+    }
+
+    /// Line-oriented text. The first line is `ferromorphic-step 1`.
+    #[must_use]
+    pub fn to_text(&self) -> String {
+        let mut out = format!(
+            "ferromorphic-step 1\nstep {}\ndt_bits {:016x}\nmode {}\n",
+            self.step, self.dt_bits, self.mode
+        );
+        for (t, source) in &self.spikes {
+            out.push_str(&format!("spike {t} {source}\n"));
+        }
+        out
+    }
+
+    /// Parse [`StepReceipt::to_text`].
+    ///
+    /// # Errors
+    ///
+    /// [`TimebaseError::BadDt`] for a malformed record. The name is the refusal; the text has no
+    /// separate error type.
+    pub fn from_text(text: &str) -> Result<Self, TimebaseError> {
+        let mut lines = text.lines();
+        if lines.next() != Some("ferromorphic-step 1") {
+            return Err(TimebaseError::BadDt);
+        }
+        let step = parse_key(lines.next(), "step")?;
+        let bits_line = lines.next().unwrap_or("");
+        let bits_hex = bits_line.strip_prefix("dt_bits ").ok_or(TimebaseError::BadDt)?;
+        let dt_bits = u64::from_str_radix(bits_hex, 16).map_err(|_| TimebaseError::BadDt)?;
+        let mode_line = lines.next().unwrap_or("");
+        let mode = match mode_line.strip_prefix("mode ") {
+            Some("clocked") => "clocked",
+            Some("event") => "event",
+            _ => return Err(TimebaseError::BadDt),
+        };
+        let mut spikes = Vec::new();
+        for line in lines {
+            if line.is_empty() {
+                continue;
+            }
+            let rest = line.strip_prefix("spike ").ok_or(TimebaseError::BadDt)?;
+            let (t, source) = rest.split_once(' ').ok_or(TimebaseError::BadDt)?;
+            let t: u64 = t.parse().map_err(|_| TimebaseError::BadDt)?;
+            let source: u32 = source.parse().map_err(|_| TimebaseError::BadDt)?;
+            if t != step {
+                return Err(TimebaseError::Unordered);
+            }
+            if let Some((prev_t, prev_s)) = spikes.last().copied()
+                && (t, source) < (prev_t, prev_s)
+            {
+                return Err(TimebaseError::Unordered);
+            }
+            spikes.push((t, source));
+        }
+        Ok(Self { step, dt_bits, mode, spikes })
+    }
+}
+
+fn parse_key(line: Option<&str>, key: &str) -> Result<u64, TimebaseError> {
+    let line = line.ok_or(TimebaseError::BadDt)?;
+    let rest = line.strip_prefix(key).and_then(|s| s.strip_prefix(' ')).ok_or(TimebaseError::BadDt)?;
+    rest.parse().map_err(|_| TimebaseError::BadDt)
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Mode, Sim, SimError};
@@ -952,5 +1169,50 @@ mod tests {
         let after = sim.run(500, &[]);
         assert!(after.is_empty(), "{} spikes after a reset into silence", after.len());
         assert_eq!(sim.ledger.syn_ops, paid.syn_ops, "a delivery outlived the reset");
+    }
+
+    /// The closed-loop receipt records the tick a spike is stamped with, and a delay of zero
+    /// is delivered on the following tick. `dt` is shared only when the bits match.
+    #[test]
+    fn a_step_receipt_records_the_tick_and_refuses_a_different_dt() {
+        let dt = 1e-4;
+        let mut b = NetBuilder::new(2);
+        b.connect(0, 1, 30e-3, 0).unwrap();
+        let mut sim = Sim::new(b.build(), vec![Lif { t_ref: 0.0, ..Lif::default() }; 2], dt, Mode::Clocked)
+            .unwrap();
+        let step = sim.t;
+        let fired = sim.step(&[5e-9, 0.0]);
+        let receipt = super::StepReceipt::from_step(step, dt, Mode::Clocked, &fired);
+        let text = receipt.to_text();
+        let back = super::StepReceipt::from_text(&text).unwrap();
+        assert_eq!(back, receipt);
+        assert!(text.starts_with("ferromorphic-step 1\n"));
+        assert_eq!(super::delivery_step(step, 0).unwrap(), step + 1);
+        assert_eq!(super::delivery_step(4, 5).unwrap(), 10);
+        assert_eq!(super::step_seconds(step, dt).unwrap(), step as f64 * dt);
+        assert!(super::same_dt(dt, dt).is_ok());
+        assert!(matches!(
+            super::same_dt(dt, dt + dt),
+            Err(super::TimebaseError::Mismatch { .. })
+        ));
+        assert!(super::same_dt(f64::NAN, dt).is_err());
+        assert!(super::delivery_step(u64::MAX, 0).is_err());
+        assert!(super::accept_event_step(3, 4, 2).is_err());
+        assert!(super::accept_event_step(7, 4, 2).is_err());
+        assert!(super::accept_event_step(6, 4, 2).is_ok());
+        assert_eq!(sim.t, step + 1);
+        sim.reset_state();
+        assert_eq!(sim.t, step + 1, "reset_state keeps the integer clock");
+        let sample = super::StepReceipt {
+            step: 4,
+            dt_bits: 0.1_f64.to_bits(),
+            mode: "clocked",
+            spikes: vec![(4, 0), (4, 1)],
+        };
+        assert_eq!(
+            sample.to_text(),
+            "ferromorphic-step 1\nstep 4\ndt_bits 3fb999999999999a\nmode clocked\nspike 4 0\nspike 4 1\n"
+        );
+        assert_eq!(super::StepReceipt::from_text(&sample.to_text()).unwrap(), sample);
     }
 }

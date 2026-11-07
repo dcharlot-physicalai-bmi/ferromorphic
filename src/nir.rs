@@ -48,19 +48,17 @@
 //! so **this module does not read or write `.nir` files** — saying otherwise would be the useful
 //! lie. What it has instead is:
 //!
-//! - an in-memory graph over seventeen `NIR` node kinds ([`Node`]),
+//! - an in-memory graph over the `NIR` node kinds in [`Node`],
 //! - a line-oriented **text** serialisation that round-trips the graph *exactly*, every float
 //!   included ([`Graph::to_text`], [`Graph::from_text`]),
 //! - validation that names what is wrong ([`Graph::validate`]),
 //! - and a bridge to [`crate::net::Net`] + [`crate::neuron::Lif`] for the subset that maps
 //!   ([`Graph::to_net`], [`Graph::from_net`]).
 //!
-//! ⚠ **The node set here was not re-verified against the reference implementation.** The naming
-//! ladder `I -> IF` and `LI -> LIF` is complete, but `CubaLIF` has no `CubaLI` beside it — the
-//! current-based leaky integrator with no threshold, the readout counterpart a systematic naming
-//! scheme would predict, and the most likely gap in the seventeen. Whether `NIR` defines one was
-//! not checked here, so what follows is what this module implements and not a claim about what
-//! `NIR` contains.
+//! The node vocabulary was compared with neuromorphs/NIR commit
+//! `563c58b45873429e3b1b6f71763ec334ceb981d5`. That revision's `CubaLI` is stored and round-tripped
+//! here. [`Graph::to_net`] still refuses it by name. The equations were not re-derived from that
+//! repository's Python, and an official `.nir` file is HDF5, which this module does not read.
 //!
 //! The node types are plain structs with public fields, so an `HDF5` reader living in a sibling
 //! crate can populate them without this module changing. That is the intended division: the format
@@ -88,7 +86,7 @@
 //! | `Affine` | only when every bias is exactly `0` | emitted as `Linear` | the bias is **not representable** |
 //! | `Delay` | per-element tick delay | yes, when every synapse onto a neuron shares a delay | seconds to ticks is exact or refused |
 //! | `Input`, `Output` | recorded in [`Conversion`] | emitted | they carry only a shape |
-//! | `I`, `IF`, `LI`, `CubaLIF`, `Threshold`, `Scale`, `Conv1d`, `Conv2d`, `SumPool2d`, `AvgPool2d`, `Flatten` | **refused by name** | — | — |
+//! | `I`, `IF`, `LI`, `CubaLI`, `CubaLIF`, `Threshold`, `Scale`, `Conv1d`, `Conv2d`, `SumPool2d`, `AvgPool2d`, `Flatten` | **refused by name** | — | — |
 //!
 //! Refused by name, rather than converted approximately: a `CubaLIF` silently demoted to a `LIF`
 //! is a network whose synaptic filter vanished, and it would still produce a plausible raster.
@@ -155,6 +153,12 @@
 use crate::net::{Net, NetBuilder, NetError};
 use core::fmt;
 
+mod nirdata;
+pub use nirdata::{
+    EventData, EventSample, GraphData, NirDataError, NodeData, Observable, TimeGridded,
+    ValuedEventData,
+};
+
 // ---------------------------------------------------------------------------------------------
 // Node kinds
 // ---------------------------------------------------------------------------------------------
@@ -194,6 +198,12 @@ pub enum Kind {
     /// Current-based leaky integrate-and-fire: a first-order synaptic filter in front of a
     /// [`Kind::Lif`].
     CubaLif,
+    /// Current-based leaky integrator: the same filter with no threshold.
+    ///
+    /// Present in neuromorphs/NIR at commit `563c58b45873429e3b1b6f71763ec334ceb981d5`. It is
+    /// stored and round-tripped. [`Graph::to_net`] refuses it by name rather than dropping the
+    /// synaptic filter.
+    CubaLi,
     /// Emits a spike while its input exceeds a per-element threshold; carries no state.
     Threshold,
     /// Delays its input by a per-element number of **seconds**.
@@ -221,6 +231,7 @@ impl Kind {
             Self::Li => "LI",
             Self::Lif => "LIF",
             Self::CubaLif => "CubaLIF",
+            Self::CubaLi => "CubaLI",
             Self::Threshold => "Threshold",
             Self::Delay => "Delay",
             Self::Scale => "Scale",
@@ -247,6 +258,7 @@ impl Kind {
             "LI" => Self::Li,
             "LIF" => Self::Lif,
             "CubaLIF" => Self::CubaLif,
+            "CubaLI" => Self::CubaLi,
             "Threshold" => Self::Threshold,
             "Delay" => Self::Delay,
             "Scale" => Self::Scale,
@@ -516,6 +528,26 @@ pub struct Lif {
 /// instantaneous jump in the membrane, which is the difference between a neuron that integrates
 /// coincidences over a few milliseconds and one that only sees them within a single timestep.
 ///
+/// Current-based leaky integrator, the threshold-free pair from neuromorphs/NIR `CubaLI`.
+///
+/// `tau_syn * dI/dt = -I + w_in * S` and `tau_mem * dv/dt = (v_leak - v) + r * I`. There is no
+/// threshold and no reset. [`Graph::to_net`] refuses the node by name.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CubaLi {
+    /// Element shape. Its product is the length of every parameter array.
+    pub shape: Vec<usize>,
+    /// Synaptic time constant, seconds. Finite and non-negative. Zero is the unfiltered limit.
+    pub tau_syn: Vec<f64>,
+    /// Membrane time constant, seconds. Finite and strictly positive.
+    pub tau_mem: Vec<f64>,
+    /// Input resistance, ohms.
+    pub r: Vec<f64>,
+    /// Leak potential, volts.
+    pub v_leak: Vec<f64>,
+    /// Elementwise input gain, dimensionless.
+    pub w_in: Vec<f64>,
+}
+
 /// [`CubaLif::reduce_to_lif`] is the documented relationship to the plain [`Lif`]: at
 /// `tau_syn = 0` the filter is instantaneous, `I` equals `w_in * u`, and the pair collapses to a
 /// `LIF` of resistance `r * w_in`.
@@ -603,6 +635,8 @@ pub enum Node {
     Lif(Lif),
     /// Current-based leaky integrate-and-fire.
     CubaLif(CubaLif),
+    /// Current-based leaky integrator, no threshold.
+    CubaLi(CubaLi),
     /// Stateless threshold.
     Threshold(Threshold),
     /// Per-element delay in seconds.
@@ -672,6 +706,7 @@ impl Node {
             Self::Li(_) => Kind::Li,
             Self::Lif(_) => Kind::Lif,
             Self::CubaLif(_) => Kind::CubaLif,
+            Self::CubaLi(_) => Kind::CubaLi,
             Self::Threshold(_) => Kind::Threshold,
             Self::Delay(_) => Kind::Delay,
             Self::Scale(_) => Kind::Scale,
@@ -701,6 +736,7 @@ impl Node {
             Self::Li(x) => x.shape.clone(),
             Self::Lif(x) => x.shape.clone(),
             Self::CubaLif(x) => x.shape.clone(),
+            Self::CubaLi(x) => x.shape.clone(),
             Self::Threshold(x) => x.shape.clone(),
             Self::Delay(x) => x.shape.clone(),
             Self::Scale(x) => x.shape.clone(),
@@ -750,6 +786,7 @@ impl Node {
             Self::Li(x) => x.shape.clone(),
             Self::Lif(x) => x.shape.clone(),
             Self::CubaLif(x) => x.shape.clone(),
+            Self::CubaLi(x) => x.shape.clone(),
             Self::Threshold(x) => x.shape.clone(),
             Self::Delay(x) => x.shape.clone(),
             Self::Scale(x) => x.shape.clone(),
@@ -768,7 +805,8 @@ impl Node {
             | Self::Conv1d(_)
             | Self::Conv2d(_)
             | Self::I(_)
-            | Self::Li(_) => Signal::Continuous,
+            | Self::Li(_)
+            | Self::CubaLi(_) => Signal::Continuous,
             _ => Signal::Either,
         }
     }
@@ -1828,6 +1866,19 @@ fn check_node(name: &str, node: &Node) -> Result<(), ValidationError> {
             check_array(name, "v_reset", &x.v_reset, n)?;
             check_array(name, "w_in", &x.w_in, n)?;
         }
+        Node::CubaLi(x) => {
+            check_shape(name, &x.shape)?;
+            let n = product(&x.shape);
+            check_array(name, "tau_syn", &x.tau_syn, n)?;
+            if x.tau_syn.iter().any(|&t| t < 0.0) {
+                return Err(bad("tau_syn", "must be non-negative (zero is the unfiltered limit)"));
+            }
+            check_array(name, "tau_mem", &x.tau_mem, n)?;
+            check_positive(name, "tau_mem", &x.tau_mem)?;
+            check_array(name, "r", &x.r, n)?;
+            check_array(name, "v_leak", &x.v_leak, n)?;
+            check_array(name, "w_in", &x.w_in, n)?;
+        }
         Node::Threshold(x) => {
             check_shape(name, &x.shape)?;
             check_array(name, "threshold", &x.threshold, product(&x.shape))?;
@@ -2301,6 +2352,14 @@ impl Graph {
                     w_floats(&mut out, "v_reset", &x.v_reset);
                     w_floats(&mut out, "w_in", &x.w_in);
                 }
+                Node::CubaLi(x) => {
+                    w_dims(&mut out, "shape", &x.shape);
+                    w_floats(&mut out, "tau_syn", &x.tau_syn);
+                    w_floats(&mut out, "tau_mem", &x.tau_mem);
+                    w_floats(&mut out, "r", &x.r);
+                    w_floats(&mut out, "v_leak", &x.v_leak);
+                    w_floats(&mut out, "w_in", &x.w_in);
+                }
                 Node::Threshold(x) => {
                     w_dims(&mut out, "shape", &x.shape);
                     w_floats(&mut out, "threshold", &x.threshold);
@@ -2472,6 +2531,14 @@ fn parse_node(line: usize, toks: &[&str]) -> Result<(String, Node), TextError> {
             v_leak: f.floats("v_leak")?,
             v_threshold: f.floats("v_threshold")?,
             v_reset: f.floats("v_reset")?,
+            w_in: f.floats("w_in")?,
+        }),
+        Kind::CubaLi => Node::CubaLi(CubaLi {
+            shape: f.dims("shape")?,
+            tau_syn: f.floats("tau_syn")?,
+            tau_mem: f.floats("tau_mem")?,
+            r: f.floats("r")?,
+            v_leak: f.floats("v_leak")?,
             w_in: f.floats("w_in")?,
         }),
         Kind::Threshold => Node::Threshold(Threshold {
@@ -3213,9 +3280,11 @@ fn ticks_of(name: &str, delay: &[f64], dt: f64) -> Result<Vec<u32>, BridgeError>
 #[cfg(test)]
 mod tests {
     use super::{
-        Affine, Block, BridgeError, Conv1d, Conv2d, CubaLif, CubaState, Delay, Flatten,
-        Graph, I, If, Input, Kind, Li, Lif, Linear, MAGIC, Named, Node, Output, Pool2d, Rules,
-        Scale, Signal, TextError, Threshold, ValidationError, checked_product, conv_dim, fmt_f64,
+        Affine, Block, BridgeError, Conv1d, Conv2d, CubaLi, CubaLif, CubaState, Delay, EventData,
+        EventSample, Flatten, Graph, GraphData, I, If, Input, Kind, Li, Lif, Linear, MAGIC, Named,
+        NirDataError, Node, NodeData, Observable, Output, Pool2d, Rules,
+        Scale, Signal, TextError, Threshold, TimeGridded, ValidationError, ValuedEventData,
+        checked_product, conv_dim, fmt_f64,
         fmt_f64_long, name_is_writable, product, ticks_of,
     };
     use crate::neuron::Neuron;
@@ -4535,6 +4604,101 @@ mod tests {
             }
             other => panic!("expected an unsupported-node refusal, got {other:?}"),
         }
+    }
+
+    /// `CubaLI` at neuromorphs/NIR `563c58b` is stored. The bridge refuses it by name.
+    #[test]
+    fn cubali_round_trips_in_text_and_the_bridge_names_it() {
+        let mut g = Graph::new();
+        g.push(
+            "li",
+            Node::CubaLi(CubaLi {
+                shape: vec![2],
+                tau_syn: vec![0.0, 1e-3],
+                tau_mem: vec![2e-2, 2e-2],
+                r: vec![1.0, 1.0],
+                v_leak: vec![0.0, 0.0],
+                w_in: vec![1.0, -1.0],
+            }),
+        );
+        let back = Graph::from_text(&g.to_text()).expect("CubaLI text");
+        assert_eq!(back, g);
+        match g.to_net(1e-4) {
+            Err(BridgeError::UnsupportedNode { name, kind }) => {
+                assert_eq!((name.as_str(), kind), ("li", Kind::CubaLi));
+            }
+            other => panic!("expected CubaLI to be refused by name, got {other:?}"),
+        }
+        if let Node::CubaLi(cell) = &mut g.nodes[0].node {
+            cell.tau_syn[0] = -1.0;
+        }
+        assert!(g.validate(&Rules::default()).is_err());
+    }
+
+    #[test]
+    fn a_binary_grid_round_trips_through_events_at_a_legal_shift() {
+        let grid = TimeGridded::try_new(vec![0.0, 1.0, 1.0, 0.0], 1, 2, 2, 0.001).unwrap();
+        let events = grid.to_events(0.00025).unwrap();
+        assert_eq!(events.samples[0].idx, vec![1, 0]);
+        assert_eq!(events.samples[0].time, vec![0.00025, 0.00125]);
+        let back = events.to_time_gridded(0.001, 2).unwrap();
+        assert_eq!(back.data, grid.data);
+        assert!(grid.to_events(0.001).is_err());
+        assert!(grid.to_events(0.0).is_ok());
+    }
+
+    #[test]
+    fn a_non_binary_grid_and_a_backwards_event_are_refused() {
+        let grid = TimeGridded::try_new(vec![0.5], 1, 1, 1, 0.001).unwrap();
+        assert!(matches!(grid.to_events(0.0), Err(NirDataError::Unsupported { .. })));
+        let bad = EventData {
+            samples: vec![EventSample { idx: vec![0, 0], time: vec![0.002, 0.001] }],
+            neurons: 1,
+            t_max: 0.01,
+        };
+        assert!(bad.validate().is_err());
+    }
+
+    #[test]
+    fn valued_events_reach_a_grid_and_do_not_become_binary_events() {
+        let valued = ValuedEventData {
+            samples: vec![EventSample { idx: vec![1], time: vec![0.0015] }],
+            value: vec![vec![0.25]],
+            neurons: 2,
+            t_max: 0.004,
+        };
+        let grid = valued.to_time_gridded(0.001, 4).unwrap();
+        assert_eq!(grid.data[3], 0.25);
+        assert!(valued.to_events().is_err());
+    }
+
+    #[test]
+    fn graph_data_refuses_an_unknown_node_and_a_repeated_key() {
+        let missing = GraphData {
+            nodes: vec![NodeData { name: "missing".into(), observables: vec![] }],
+        };
+        assert!(matches!(
+            missing.validate(&Graph::new()),
+            Err(NirDataError::UnknownNode { .. })
+        ));
+        let mut present = Graph::new();
+        present.push("a", Node::Input(Input { shape: vec![1] }));
+        let dup = GraphData {
+            nodes: vec![NodeData {
+                name: "a".into(),
+                observables: vec![
+                    (
+                        "v".into(),
+                        Observable::Events(EventData { samples: vec![], neurons: 1, t_max: 0.0 }),
+                    ),
+                    (
+                        "v".into(),
+                        Observable::Events(EventData { samples: vec![], neurons: 1, t_max: 0.0 }),
+                    ),
+                ],
+            }],
+        };
+        assert!(matches!(dup.validate(&present), Err(NirDataError::DuplicateKey { .. })));
     }
 
     #[test]

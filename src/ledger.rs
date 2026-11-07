@@ -659,9 +659,65 @@ fn priced(x: Option<f64>) -> bool {
     matches!(x, Some(e) if e.is_finite())
 }
 
+/// A place a joule could be written down. This workspace has no meter attached, so
+/// [`MeterReceipt::unmetered`] is the reading, and [`MeterReceipt::measured_joules`] is `None`.
+///
+/// A synthetic fixture is labelled `synthetic` and also returns `None`. CPU duration, operation
+/// counts and a published pJ figure are not a reading of this type.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MeterReceipt {
+    /// `unmetered`, `synthetic`, `raw`, `soc`, `board` or `wall`.
+    pub boundary: &'static str,
+    /// Set only by a caller who holds a real instrument sample. Absent here.
+    pub joules: Option<f64>,
+    /// True for a fixture.
+    pub synthetic: bool,
+}
+
+impl MeterReceipt {
+    /// No instrument sample.
+    #[must_use]
+    pub fn unmetered() -> Self {
+        Self { boundary: "unmetered", joules: None, synthetic: false }
+    }
+
+    /// A fixture. It carries no joule.
+    #[must_use]
+    pub fn synthetic_fixture() -> Self {
+        Self { boundary: "synthetic", joules: None, synthetic: true }
+    }
+
+    /// Joules only when the receipt is a real finite non-negative sample.
+    #[must_use]
+    pub fn measured_joules(self) -> Option<f64> {
+        if self.synthetic {
+            return None;
+        }
+        self.joules.filter(|j| j.is_finite() && *j >= 0.0)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{CATALOGUE, Evidence, LOIHI_2018, Ledger, Prices, Scope, TRUENORTH_2014, weaker};
+    use super::{
+        CATALOGUE, Evidence, LOIHI_2018, Ledger, MeterReceipt, Prices, Scope, TRUENORTH_2014, weaker,
+    };
+
+    #[test]
+    fn an_unmetered_receipt_has_no_joules() {
+        let live = MeterReceipt::unmetered();
+        assert_eq!(live.boundary, "unmetered");
+        assert_eq!(live.measured_joules(), None);
+        let fixture = MeterReceipt::synthetic_fixture();
+        assert!(fixture.synthetic);
+        assert_eq!(fixture.measured_joules(), None);
+        let zero = MeterReceipt { boundary: "wall", joules: Some(0.0), synthetic: false };
+        assert_eq!(zero.measured_joules(), Some(0.0));
+        let neg = MeterReceipt { boundary: "wall", joules: Some(-1.0), synthetic: false };
+        assert_eq!(neg.measured_joules(), None);
+        let nan = MeterReceipt { boundary: "wall", joules: Some(f64::NAN), synthetic: false };
+        assert_eq!(nan.measured_joules(), None);
+    }
 
     /// A table with every term priced, so that dropping any ONE of them is visible. Nothing in
     /// this crate is complete, which is the finding — so the only way to test completeness is to

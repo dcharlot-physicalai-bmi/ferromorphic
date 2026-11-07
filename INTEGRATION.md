@@ -48,3 +48,7 @@ Site evidence is a reading from a place, with the boundary named. A ledger total
 ## Held beside this contract
 
 Hardware mapping onto a placed fabric, a NeuroBench-style held-out task, continual or embodied competence, and a calibrated whole-system energy are parallel objectives. They are not implied by a spike train, a NIR text file, or an operation count.
+
+## Ferromotion step clock
+
+`docs/contracts/ferromotion-clock.md` is the draft for a closed loop with Ferromotion (bmi-4). It separates three layers: the `u64` tick and `StepReceipt` this crate implements, the `f64` clocks read in Ferromotion at commit `5daca8aac1b513a18c54792383d021cf1d27af56`, and a joint sense-control-actuate order that neither repository runs. `same_dt` requires identical `f64` bits. `delivery_step` is `step + 1 + delay`. `MeterReceipt::unmetered` carries no joules.

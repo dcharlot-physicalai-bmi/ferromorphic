@@ -35,7 +35,10 @@ pub struct Net {
     /// Weight of each synapse, parallel to [`Net::post`]. Volts of instantaneous membrane
     /// displacement per arriving spike; negative for inhibition.
     pub w: Vec<f64>,
-    /// Delay of each synapse in ticks, parallel to [`Net::post`]. Zero means same-tick delivery.
+    /// Delay of each synapse in ticks, parallel to [`Net::post`].
+    ///
+    /// [`crate::sim::Sim`] delivers a spike emitted at tick `t` on this synapse at tick
+    /// `t + 1 + delay`. A delay of zero is delivered on the following tick.
     pub delay: Vec<u32>,
     /// Synapse count, which is `post.len()` and **not** `post.len() / 2`.
     pub n_syn: usize,
