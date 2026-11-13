@@ -105,6 +105,7 @@ pub mod biosignal;
 pub mod calcium;
 pub mod cerebellum;
 pub mod chaos;
+pub mod closedloop;
 pub mod clopath;
 pub mod cochlea;
 pub mod coding;

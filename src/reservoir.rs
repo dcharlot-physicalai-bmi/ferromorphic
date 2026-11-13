@@ -2668,6 +2668,18 @@ impl SuppliedEcho {
         Ok(out)
     }
 
+    /// One leaky step driven by `input`. The returned value is the readout after the state update.
+    ///
+    /// # Errors
+    ///
+    /// [`ReservoirError::NonFinite`] when `input` is not finite.
+    pub fn step(&mut self, input: f64) -> Result<f64, ReservoirError> {
+        if !input.is_finite() {
+            return Err(ReservoirError::NonFinite { what: "input", index: 0 });
+        }
+        self.step_scalar(input)
+    }
+
     fn step_scalar(&mut self, u: f64) -> Result<f64, ReservoirError> {
         let n = self.units;
         let mut aug = Vec::with_capacity(self.in_width);
