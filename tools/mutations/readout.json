@@ -1,0 +1,12 @@
+[
+  {
+    "label": "the readout sum subtracts the weighted count",
+    "old": "                acc += term;",
+    "new": "                acc -= term;"
+  },
+  {
+    "label": "the encoder subtracts the offset after the scale",
+    "old": "            let amperes = product + self.offset[channel];",
+    "new": "            let amperes = product - self.offset[channel];"
+  }
+]

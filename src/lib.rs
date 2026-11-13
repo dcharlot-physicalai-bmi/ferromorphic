@@ -164,6 +164,7 @@ pub mod plif;
 pub mod polychron;
 pub mod predictive;
 pub mod proprio;
+pub mod readout;
 pub mod reinforce;
 pub mod reservoir;
 pub mod resonance;

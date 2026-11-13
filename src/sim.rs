@@ -631,6 +631,14 @@ pub enum TimebaseError {
     AmbiguousEpoch,
     /// `period_ns > 2^53`. `2^53` itself is an exact `f64` and is accepted.
     InexactPeriod,
+    /// An episode line is not one of the canonical keys.
+    UnknownLine,
+    /// A canonical episode line is absent.
+    MissingLine,
+    /// A canonical episode line appears twice.
+    DuplicateLine,
+    /// A canonical episode line is not in header order.
+    ReorderedLine,
 }
 
 /// Largest scheduling period whose integer is a distinct `f64`.
@@ -700,6 +708,10 @@ impl core::fmt::Display for TimebaseError {
             Self::OffGrid => f.write_str("the envelope version, step duration, or t0 grid does not match"),
             Self::AmbiguousEpoch => f.write_str("the clock origin or period is not the envelope"),
             Self::InexactPeriod => f.write_str("the scheduling period is above 2^53 and is not an exact f64"),
+            Self::UnknownLine => f.write_str("an episode line is not a canonical key"),
+            Self::MissingLine => f.write_str("a canonical episode line is missing"),
+            Self::DuplicateLine => f.write_str("a canonical episode line is repeated"),
+            Self::ReorderedLine => f.write_str("a canonical episode line is out of order"),
         }
     }
 }
@@ -918,8 +930,8 @@ pub fn tick_stamp_ns(origin_ns: u64, period_ns: u64, tick: u64) -> Result<u64, T
 /// `f12ba04d25b943870fd950aa1ce8412764c44c13`. Envelope v1 has no ratio field. The comparison
 /// does not cast the product back to nanoseconds. [`Schedule::try_new`] and [`Sim::episode_start`]
 /// both call it, and neither rewrites `dt` to force a match. A later write to the public clock
-/// fields is not rechecked: this crate has no bind step. Their `bind_v2_timestamps` rechecks
-/// on every call and does not read `tick` as authorization.
+/// fields is rechecked by [`bind_v2_timestamps`], which does not write the clock and does not
+/// read `tick` as authorization.
 ///
 /// # Errors
 ///
@@ -1005,6 +1017,79 @@ impl EpisodeEnvelope {
     pub fn origin_ns(&self) -> u64 {
         self.origin_ns
     }
+
+    /// Canonical text. The header is `ferromorphic-episode 1`, then `version`, `epoch`,
+    /// `dt_bits` as 16 lowercase hex digits, `period_ns`, and `origin_ns`, in that order.
+    #[must_use]
+    pub fn to_text(&self) -> String {
+        format!(
+            "ferromorphic-episode 1\nversion {}\nepoch {}\ndt_bits {:016x}\nperiod_ns {}\norigin_ns {}\n",
+            self.version, self.epoch, self.dt_bits, self.period_ns, self.origin_ns
+        )
+    }
+
+    /// Parse [`EpisodeEnvelope::to_text`] and pass the fields through [`EpisodeEnvelope::try_new`].
+    ///
+    /// A missing, duplicate, unknown, or reordered line is refused before the numeric checks.
+    /// `try_new` then refuses a version other than 1, a period above `2^53`, and a `dt` that is
+    /// not the forward product of the period.
+    ///
+    /// # Errors
+    ///
+    /// [`TimebaseError::MissingLine`], [`TimebaseError::DuplicateLine`],
+    /// [`TimebaseError::UnknownLine`], or [`TimebaseError::ReorderedLine`] for the text.
+    /// [`TimebaseError::BadDt`] when a value is not the canonical decimal or 16-digit hex.
+    /// The variants of [`EpisodeEnvelope::try_new`] for a well-formed record that fails the clock.
+    pub fn from_text(text: &str) -> Result<Self, TimebaseError> {
+        const KEYS: [&str; 5] = ["version", "epoch", "dt_bits", "period_ns", "origin_ns"];
+        let mut lines = text.lines();
+        let header = lines.next().ok_or(TimebaseError::MissingLine)?;
+        if header != "ferromorphic-episode 1" {
+            return Err(TimebaseError::UnknownLine);
+        }
+        let mut values = [""; 5];
+        let mut at = 0usize;
+        for line in lines {
+            if line.is_empty() {
+                return Err(TimebaseError::UnknownLine);
+            }
+            let (key, rest) = line.split_once(' ').ok_or(TimebaseError::UnknownLine)?;
+            if at >= KEYS.len() {
+                return Err(if KEYS.contains(&key) {
+                    TimebaseError::DuplicateLine
+                } else {
+                    TimebaseError::UnknownLine
+                });
+            }
+            if key != KEYS[at] {
+                return Err(if KEYS[..at].contains(&key) {
+                    TimebaseError::DuplicateLine
+                } else if KEYS[at + 1..].contains(&key) {
+                    TimebaseError::ReorderedLine
+                } else {
+                    TimebaseError::UnknownLine
+                });
+            }
+            if rest.is_empty() || rest.contains(' ') {
+                return Err(TimebaseError::BadDt);
+            }
+            values[at] = rest;
+            at += 1;
+        }
+        if at != KEYS.len() {
+            return Err(TimebaseError::MissingLine);
+        }
+        let version: u32 = values[0].parse().map_err(|_| TimebaseError::BadDt)?;
+        let epoch: u64 = values[1].parse().map_err(|_| TimebaseError::BadDt)?;
+        let hex = values[2];
+        if hex.len() != 16 || !hex.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()) {
+            return Err(TimebaseError::BadDt);
+        }
+        let dt_bits = u64::from_str_radix(hex, 16).map_err(|_| TimebaseError::BadDt)?;
+        let period_ns: u64 = values[3].parse().map_err(|_| TimebaseError::BadDt)?;
+        let origin_ns: u64 = values[4].parse().map_err(|_| TimebaseError::BadDt)?;
+        Self::try_new(version, epoch, dt_bits, period_ns, origin_ns)
+    }
 }
 
 /// Public clock values copied for one bind. `tick` is recorded and is not authorization.
@@ -1023,6 +1108,82 @@ pub struct ClockSnapshot {
 }
 
 impl<N: crate::neuron::Neuron> Sim<N> {
+    /// Canonical bytes of every field this simulator owns other than [`Sim::net`] and
+    /// [`Sim::neurons`].
+    ///
+    /// Those two are public and compared with `PartialEq`. This encoding is what a caller cannot
+    /// rebuild from the public fields: the delivery ring in slot order and insertion order, the
+    /// inject buffer, `touched` in its current order, `as_of`, and `exact_timing`, together with
+    /// the clock and the ledger counters so one digest covers that whole remainder.
+    ///
+    /// Layout, all little-endian: `dt` bits, mode (`0` clocked, `1` event), `t`, `epoch`, a
+    /// presence byte and the value for `origin_ns` and again for `period_ns`, `exact_timing` as
+    /// `0` or `1`, then `syn_ops`, `syn_fetches`, `neuron_updates_idle`, `neuron_updates_driven`,
+    /// `spikes_out`, `reads`. Then the ring: slot count, and for each slot its delivery count and
+    /// each delivery as `post: u32` then weight bits. Then `inject` length and bits, `touched`
+    /// length and the `u32` indexes, `as_of` length and the ticks.
+    ///
+    /// The same state produces the same bytes. Nothing in here calls `mul_add`.
+    #[must_use]
+    pub fn state_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        let push_u64 = |out: &mut Vec<u8>, value: u64| out.extend(value.to_le_bytes());
+        let push_u32 = |out: &mut Vec<u8>, value: u32| out.extend(value.to_le_bytes());
+        push_u64(&mut out, self.dt.to_bits());
+        out.push(match self.mode {
+            Mode::Clocked => 0,
+            Mode::EventDriven => 1,
+        });
+        push_u64(&mut out, self.t);
+        push_u64(&mut out, self.epoch);
+        match self.origin_ns {
+            Some(value) => {
+                out.push(1);
+                push_u64(&mut out, value);
+            }
+            None => out.push(0),
+        }
+        match self.period_ns {
+            Some(value) => {
+                out.push(1);
+                push_u64(&mut out, value);
+            }
+            None => out.push(0),
+        }
+        out.push(u8::from(self.exact_timing));
+        for value in [
+            self.ledger.syn_ops,
+            self.ledger.syn_fetches,
+            self.ledger.neuron_updates_idle,
+            self.ledger.neuron_updates_driven,
+            self.ledger.spikes_out,
+            self.ledger.reads,
+        ] {
+            push_u64(&mut out, value);
+        }
+        push_u64(&mut out, self.ring.len() as u64);
+        for slot in &self.ring {
+            push_u64(&mut out, slot.len() as u64);
+            for (post, weight) in slot {
+                push_u32(&mut out, *post);
+                push_u64(&mut out, weight.to_bits());
+            }
+        }
+        push_u64(&mut out, self.inject.len() as u64);
+        for value in &self.inject {
+            push_u64(&mut out, value.to_bits());
+        }
+        push_u64(&mut out, self.touched.len() as u64);
+        for index in &self.touched {
+            push_u32(&mut out, *index);
+        }
+        push_u64(&mut out, self.as_of.len() as u64);
+        for tick in &self.as_of {
+            push_u64(&mut out, *tick);
+        }
+        out
+    }
+
     /// Copy the public clock. The copy is not a validity cache.
     #[must_use]
     pub fn clock_snapshot(&self) -> ClockSnapshot {
@@ -1036,11 +1197,13 @@ impl<N: crate::neuron::Neuron> Sim<N> {
     }
 }
 
-/// Revalidate an untrusted snapshot against an envelope and stamp `n_action_steps` indexes.
+/// Revalidate an untrusted snapshot against an envelope.
 ///
-/// `n_action_steps == 0` still runs the checks and stamps nothing. `clock.tick` is not
-/// authorization. Nothing is stored. A period above `2^53` on the envelope, the snapshot, or
-/// `step_duration_ns` is [`TimebaseError::InexactPeriod`].
+/// This is a pure validator. It does not stamp, store, or mutate the simulator, the envelope,
+/// or the snapshot. Stamping a step's spikes is only [`StepReceipt::from_step`].
+/// `n_action_steps == 0` still runs every check and then returns `Ok(())` without a stamp.
+/// `clock.tick` is read and is not authorization. A period above `2^53` on the envelope, the
+/// snapshot, or `step_duration_ns` is [`TimebaseError::InexactPeriod`].
 ///
 /// # Errors
 ///
@@ -2036,5 +2199,90 @@ mod tests {
         let hex = |bytes: [u8; 32]| -> String { bytes.iter().map(|b| format!("{b:02x}")).collect() };
         assert_eq!(hex(super::ferric_v2_digest(empty)), "6295818fa11b85b37ad8054c75e0a1935b0c0cbb5d7e419090c2520a17b1744e");
         assert_eq!(hex(super::ferric_v2_digest(full)), "6d668d7e25c89249c890d895ef15b8fdcbb97dab7a1339a0a97605c6e1172d86");
+    }
+
+    /// Bind is a pure check. The receipt text and every simulator field, including the private
+    /// ring, stay byte-for-byte.
+    #[test]
+    fn bind_leaves_the_sim_state_and_the_receipt_bytes() {
+        let period = 1_000u64;
+        let dt = super::nominal_seconds(period).unwrap();
+        let mut builder = NetBuilder::new(2);
+        builder.connect(0, 1, 30e-3, 1).unwrap();
+        let mut sim = Sim::new(builder.build(), vec![Lif { t_ref: 0.0, ..Lif::default() }; 2], dt, Mode::Clocked)
+            .unwrap();
+        sim.episode_start(0, period).unwrap();
+        let tick = sim.t;
+        let fired = sim.try_step(&[5e-9, 0.0]).unwrap();
+        let receipt = super::StepReceipt::from_step(sim.epoch, tick, sim.dt, sim.mode, &fired);
+        let receipt_bytes = receipt.to_text().into_bytes();
+        let state = sim.state_bytes();
+        let neurons = sim.neurons.clone();
+        let net = sim.net.clone();
+        assert!(!state.is_empty());
+        let envelope = super::EpisodeEnvelope::try_new(1, sim.epoch, sim.dt.to_bits(), period, 0).unwrap();
+        assert_eq!(envelope.to_text().lines().next(), Some("ferromorphic-episode 1"));
+        assert_eq!(super::EpisodeEnvelope::from_text(&envelope.to_text()).unwrap(), envelope);
+        let clock = sim.clock_snapshot();
+        assert!(super::bind_v2_timestamps(0, period, 0, Some(envelope), &clock).is_ok());
+        assert_eq!(sim.state_bytes(), state);
+        assert_eq!(sim.neurons, neurons);
+        assert_eq!(sim.net, net);
+        assert_eq!(receipt.to_text().into_bytes(), receipt_bytes);
+        assert_eq!(super::StepReceipt::from_text(&receipt.to_text()).unwrap(), receipt);
+    }
+
+    #[test]
+    fn an_episode_record_refuses_a_broken_line_and_an_inexact_period() {
+        let period = 1_000u64;
+        let envelope = super::EpisodeEnvelope::try_new(1, 4, super::nominal_seconds(period).unwrap().to_bits(), period, 9)
+            .unwrap();
+        let text = envelope.to_text();
+        assert_eq!(super::EpisodeEnvelope::from_text(&text).unwrap(), envelope);
+        let swapped = text.replacen("version 1\nepoch 4", "epoch 4\nversion 1", 1);
+        assert_eq!(
+            super::EpisodeEnvelope::from_text(&swapped),
+            Err(super::TimebaseError::ReorderedLine)
+        );
+        let duplicated = text.replace("epoch 4\n", "epoch 4\nepoch 4\n");
+        assert_eq!(
+            super::EpisodeEnvelope::from_text(&duplicated),
+            Err(super::TimebaseError::DuplicateLine)
+        );
+        let missing = text.replace("epoch 4\n", "");
+        assert_eq!(
+            super::EpisodeEnvelope::from_text(&missing),
+            Err(super::TimebaseError::ReorderedLine)
+        );
+        let truncated = text.lines().take(3).collect::<Vec<_>>().join("\n") + "\n";
+        assert_eq!(
+            super::EpisodeEnvelope::from_text(&truncated),
+            Err(super::TimebaseError::MissingLine)
+        );
+        let unknown = text.replace("origin_ns 9\n", "origin_ns 9\nnote 1\n");
+        assert_eq!(
+            super::EpisodeEnvelope::from_text(&unknown),
+            Err(super::TimebaseError::UnknownLine)
+        );
+        let extra = format!("{text}note 1\n");
+        assert_eq!(super::EpisodeEnvelope::from_text(&extra), Err(super::TimebaseError::UnknownLine));
+        let hi = 1u64 << 53;
+        let collided = format!(
+            "ferromorphic-episode 1\nversion 1\nepoch 0\ndt_bits {:016x}\nperiod_ns {}\norigin_ns 0\n",
+            super::nominal_seconds(hi).unwrap().to_bits(),
+            hi + 1
+        );
+        assert_eq!(
+            super::EpisodeEnvelope::from_text(&collided),
+            Err(super::TimebaseError::InexactPeriod)
+        );
+        let mismatch = format!(
+            "ferromorphic-episode 1\nversion 1\nepoch 0\ndt_bits {:016x}\nperiod_ns {period}\norigin_ns 0\n",
+            0x3eb0c6f7a0b5ed8d_u64
+        );
+        assert!(matches!(
+            super::EpisodeEnvelope::from_text(&mismatch),
+            Err(super::TimebaseError::DtPeriodMismatch { .. })
+        ));
     }
 }
