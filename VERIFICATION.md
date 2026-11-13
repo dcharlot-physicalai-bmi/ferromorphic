@@ -2,7 +2,7 @@
 
 This file is the index for the scientific-verification workstream. Counts of modules, tests and mutations live in `README.md` and are recomputed by `python3 tools/readme_numbers.py`. The supported-model matrix is `docs/verification/MATRIX.md`. The exchange contract is `INTEGRATION.md`.
 
-The crate stays std-only. Reference interpreters live in `tools/` and are pinned in `tools/reference/requirements.txt` and `tools/reference_manifest.json`. `rust-toolchain.toml` pins rustc 1.98.1 (48a229cea, channel date 2026-09-03), which is the release `Cargo.toml`'s `rust-version = "1.98"` names as verified here.
+The crate stays std-only. Reference interpreters live in `tools/` and are pinned in `tools/reference/requirements.txt` and `tools/reference_manifest.json`. `rust-toolchain.toml` pins rustc 1.100.0 (0ef1bc386, channel date 2026-11-12), which is the release `Cargo.toml`'s `rust-version = "1.100"` names as verified here.
 
 ## Commands
 

@@ -1,10 +1,10 @@
 {
   "version": 1,
   "toolchain": {
-    "rust": "1.98.1",
-    "rustc_commit": "48a229ceaefd4985c50990b14116b6d856af0985",
-    "channel_date": "2026-09-03",
-    "note": "Cargo.toml rust-version 1.98 is the policy floor. This manifest pins the release the floor names."
+    "rust": "1.100.0",
+    "rustc_commit": "0ef1bc386059596dada8fb65b50425aab2ea637a",
+    "channel_date": "2026-11-12",
+    "note": "Cargo.toml rust-version 1.100 is the policy floor. This manifest pins the release the floor names."
   },
   "python_requirements": "tools/reference/requirements.txt",
   "entries": [
@@ -25,7 +25,7 @@
         "what": "The runner refuses a silent skip, an empty blocker, and a failing command."
       },
       "sha256": {
-        "tools/scientific_verify.py": "e95c3ba022700325cc2d3299e1425e51971a4adb727806c8b579a91be348424a"
+        "tools/scientific_verify.py": "b2189814150e027ddadaa27147c98a94992f7bedfe21fdc38a96a4afd014b17a"
       }
     },
     {
@@ -45,7 +45,7 @@
         "what": "Five text mutations of the closed-form and order gates, each required to fail."
       },
       "sha256": {
-        "tools/mutation_selftest.py": "ea37c50975e0b436e92f9ee912f9f01b1c389bb787267d8f367b22cf7fcec1ba",
+        "tools/mutation_selftest.py": "585a9d48605a5ea139cd66b999aced606dc2beeb16b933478cd500c6dbae080a",
         "tools/scientific_gates/fixture.rs": "b3417ccfc30fe443b9bd542292b87c2ada221f78f91390aee4a77fc5baaa87f6"
       }
     },
@@ -142,7 +142,7 @@
       "argv": [
         "bash",
         "-c",
-        "mkdir -p target/verification && rustup run 1.98.1 rustc --edition 2021 -O tools/equivalence/density_shifted.rs -o target/verification/density_shifted && target/verification/density_shifted"
+        "mkdir -p target/verification && rustup run 1.100.0 rustc --edition 2021 -O tools/equivalence/density_shifted.rs -o target/verification/density_shifted && target/verification/density_shifted"
       ],
       "timeout_s": 180,
       "expect_stdout_regex": "(?<!\\d)0 disagreements",
@@ -164,7 +164,7 @@
       "argv": [
         "bash",
         "-c",
-        "mkdir -p target/verification && rustup run 1.98.1 rustc --edition 2021 -O tools/equivalence/gapjunction_bisect.rs -o target/verification/gapjunction_bisect && target/verification/gapjunction_bisect"
+        "mkdir -p target/verification && rustup run 1.100.0 rustc --edition 2021 -O tools/equivalence/gapjunction_bisect.rs -o target/verification/gapjunction_bisect && target/verification/gapjunction_bisect"
       ],
       "timeout_s": 180,
       "expect_stdout_regex": "(?<!\\d)0 disagreements",
@@ -185,7 +185,7 @@
       "argv": [
         "bash",
         "-c",
-        "mkdir -p target/verification && rustup run 1.98.1 rustc --edition 2021 -O tools/equivalence/gapjunction_eta.rs -o target/verification/gapjunction_eta && target/verification/gapjunction_eta"
+        "mkdir -p target/verification && rustup run 1.100.0 rustc --edition 2021 -O tools/equivalence/gapjunction_eta.rs -o target/verification/gapjunction_eta && target/verification/gapjunction_eta"
       ],
       "timeout_s": 180,
       "expect_stdout_regex": "(?<!\\d)0 disagreements",

@@ -65,7 +65,7 @@ def compile_and_run(src, work):
     if os.environ.get("RUSTC"):
         cmd = [os.environ["RUSTC"]]
     else:
-        cmd = ["rustup", "run", "1.98.1", "rustc"]
+        cmd = ["rustup", "run", "1.100.0", "rustc"]
     compiled = subprocess.run(
         [*cmd, "--edition", "2024", "-O", src, "-o", bin_path],
         cwd=work,

@@ -1178,7 +1178,7 @@ mod tests {
     };
     use crate::meanfield::{BrunelNetwork, SiegertInput};
     use crate::neuron::Lif;
-    use core::f64::consts::{E, FRAC_PI_2, FRAC_PI_4, PI, SQRT_2};
+    use core::f64::consts::{E, EULER_GAMMA, FRAC_PI_2, FRAC_PI_4, PI, SQRT_2};
 
     /// `λ = iω` at `f` hertz.
     fn at(f: f64) -> Complex {
@@ -1922,7 +1922,6 @@ mod tests {
     /// in both cases.
     #[test]
     fn the_eif_high_frequency_limits_are_eqs_51_52_and_54() {
-        const EULER_GAMMA: f64 = 0.577_215_664_901_532_9;
         for c in [WhiteNoiseIf::FIG2_CASE_I, WhiteNoiseIf::FIG2_CASE_II] {
             let Model::Eif { v_t, delta_t } = c.model else { unreachable!() };
             let st = c.stationary(2.5e-6).unwrap();

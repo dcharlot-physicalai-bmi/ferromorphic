@@ -860,9 +860,9 @@ pub struct ThreeVariable {
 }
 
 impl ThreeVariable {
-    /// `x₁ = −(1 + √5)/2`, the exact leftmost root of (9) for [`TwoVariable::PAPER`] at `I = 0`,
-    /// to the nearest double. The paper does not print it.
-    pub const X1: f64 = -1.618_033_988_749_895;
+    /// `x₁ = −(1 + √5)/2`, the exact leftmost root of (9) for [`TwoVariable::PAPER`] at `I = 0`.
+    /// That double is `f64::consts::GOLDEN_RATIO` negated. The paper does not print it.
+    pub const X1: f64 = -core::f64::consts::GOLDEN_RATIO;
 
     /// `−1.6`, the paper's rounding of the same e.p. (pp. 94 and 95). Not an equilibrium: see the
     /// module doc.

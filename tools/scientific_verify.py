@@ -125,7 +125,7 @@ def argv_of(entry):
 
 def run_argv(argv, timeout):
     env = os.environ.copy()
-    env.setdefault("RUSTUP_TOOLCHAIN", "1.98.1")
+    env.setdefault("RUSTUP_TOOLCHAIN", "1.100.0")
     try:
         proc = subprocess.run(
             argv, cwd=REPO, capture_output=True, text=True, timeout=timeout, env=env,

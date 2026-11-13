@@ -1879,7 +1879,7 @@ mod tests {
             "C(1) = {} is not the random-graph density {want_c1}",
             c[8]
         );
-        let gamma = 0.577_215_664_901_532_9f64;
+        let gamma = core::f64::consts::EULER_GAMMA;
         let want_l1 = ((n as f64).ln() - gamma) / (k as f64).ln() + 0.5;
         assert!(
             (l[8] - want_l1).abs() < 0.05 * want_l1,
