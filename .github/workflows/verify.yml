@@ -9,7 +9,7 @@ name: verify
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, "cursor/**"]
   workflow_dispatch:
 
 permissions:
