@@ -259,6 +259,7 @@ impl<N: Neuron> Sim<N> {
     /// [`TimebaseError::DelayPastRing`] when a stored delay exceeds `net.max_delay`.
     /// [`TimebaseError::Overflow`] when this tick cannot schedule its longest delay.
     pub fn try_step(&mut self, external: &[f64]) -> Result<Vec<u32>, TimebaseError> {
+        self.revalidate_public_clock()?;
         if !(external.is_empty() || external.len() == self.net.n) {
             return Err(TimebaseError::BadExternal { got: external.len(), want: self.net.n });
         }
@@ -367,6 +368,7 @@ impl<N: Neuron> Sim<N> {
     ///
     /// # Errors
     ///
+    /// [`TimebaseError::InexactPeriod`] when `period_ns > 2^53`.
     /// [`TimebaseError::BadPeriod`] when `period_ns` is zero or its nominal seconds are not a
     /// finite positive `f64`. [`TimebaseError::DtPeriodMismatch`] when `dt` bits differ from that
     /// product. [`TimebaseError::EpochOverflow`] when the epoch is already `u64::MAX`. Nothing is
@@ -504,6 +506,40 @@ impl<N: Neuron> Sim<N> {
         self.as_of.iter_mut().for_each(|x| *x = self.t);
         self.touched.clear();
     }
+
+    /// Re-read the public `dt`, `origin_ns`, and `period_ns` before a step mutates anything.
+    ///
+    /// The fields stay public. A later write is not trusted: either both schedule fields are
+    /// unset, or both are set and `dt` bits equal `((period_ns as f64) * 1e-9).to_bits()`.
+    /// There is no stored validity bit. A period above [`MAX_EXACT_PERIOD_NS`] is
+    /// [`TimebaseError::InexactPeriod`], including a value written after [`Sim::episode_start`].
+    ///
+    /// # Errors
+    ///
+    /// [`TimebaseError::InexactPeriod`] when `period_ns > 2^53`.
+    /// [`TimebaseError::DtPeriodMismatch`] when the schedule is only half installed or the
+    /// forward product does not match `dt`. [`TimebaseError::BadPeriod`] when `period_ns` is
+    /// zero or its nominal seconds are not usable. [`TimebaseError::BadDt`] when `dt` is not
+    /// finite and positive.
+    pub fn revalidate_public_clock(&self) -> Result<(), TimebaseError> {
+        match (self.origin_ns, self.period_ns) {
+            (None, None) => Ok(()),
+            (Some(_), Some(period)) => require_forward_product(self.dt.to_bits(), period),
+            (None, Some(period)) => {
+                let nominal = nominal_seconds(period)?;
+                Err(TimebaseError::DtPeriodMismatch {
+                    dt_bits: self.dt.to_bits(),
+                    period_ns: period,
+                    nominal_bits: nominal.to_bits(),
+                })
+            }
+            (Some(_), None) => Err(TimebaseError::DtPeriodMismatch {
+                dt_bits: self.dt.to_bits(),
+                period_ns: 0,
+                nominal_bits: 0,
+            }),
+        }
+    }
 }
 
 /// Why an integer step cannot be shared with another time base.
@@ -587,6 +623,34 @@ pub enum TimebaseError {
         /// Exact ticks between actions.
         ticks_per_action: u64,
     },
+    /// A bind was asked for with no envelope, or the clock has no period and origin.
+    MissingEpoch,
+    /// The envelope version, the step duration, or the `t0` grid does not match.
+    OffGrid,
+    /// The clock origin or period is not the envelope's.
+    AmbiguousEpoch,
+    /// `period_ns > 2^53`. `2^53` itself is an exact `f64` and is accepted.
+    InexactPeriod,
+}
+
+/// Largest scheduling period whose integer is a distinct `f64`.
+///
+/// `period_ns > MAX_EXACT_PERIOD_NS` is [`TimebaseError::InexactPeriod`]. The check is a
+/// bound, not `(period_ns as f64) as u64 == period_ns`: that cast saturates, so `u64::MAX`
+/// would compare equal after the round trip and would be accepted.
+pub const MAX_EXACT_PERIOD_NS: u64 = 1 << 53;
+
+/// Refuse a scheduling period that is not an exact `f64` integer.
+///
+/// # Errors
+///
+/// [`TimebaseError::InexactPeriod`] when `period_ns > 2^53`.
+pub fn require_exact_period(period_ns: u64) -> Result<(), TimebaseError> {
+    if period_ns > MAX_EXACT_PERIOD_NS {
+        Err(TimebaseError::InexactPeriod)
+    } else {
+        Ok(())
+    }
 }
 
 impl core::fmt::Display for TimebaseError {
@@ -632,6 +696,10 @@ impl core::fmt::Display for TimebaseError {
             Self::ActionOverflow { action, ticks_per_action } => {
                 write!(f, "action {action} times {ticks_per_action} ticks overflows u64")
             }
+            Self::MissingEpoch => f.write_str("a bind needs an envelope and a clock period and origin"),
+            Self::OffGrid => f.write_str("the envelope version, step duration, or t0 grid does not match"),
+            Self::AmbiguousEpoch => f.write_str("the clock origin or period is not the envelope"),
+            Self::InexactPeriod => f.write_str("the scheduling period is above 2^53 and is not an exact f64"),
         }
     }
 }
@@ -808,17 +876,18 @@ impl Schedule {
 /// `c78d0516f0593350582f311003db4e176c654b09`). It is deterministic. It does not round-trip
 /// through nanoseconds: the bits of a 1000 ns period are `0x3eb0c6f7a0b5ed8e`, and the bits of
 /// the literal `1e-6` are `0x3eb0c6f7a0b5ed8d`. [`require_forward_product`] is what demands
-/// those product bits equal the canonical `dt`. Integers past the exact `f64` range that share
-/// a cast, such as `2^53` and `2^53 + 1`, produce one product.
+/// those product bits equal the canonical `dt`. A period above [`MAX_EXACT_PERIOD_NS`] is
+/// refused before the cast, because `(period_ns as f64) as u64` saturates at `u64::MAX`.
 ///
 /// # Errors
 ///
 /// [`TimebaseError::BadPeriod`] when `period_ns` is zero or the product is not finite and
-/// positive.
+/// positive. [`TimebaseError::InexactPeriod`] when `period_ns > 2^53`.
 pub fn nominal_seconds(period_ns: u64) -> Result<f64, TimebaseError> {
     if period_ns == 0 {
         return Err(TimebaseError::BadPeriod);
     }
+    require_exact_period(period_ns)?;
     let seconds = (period_ns as f64) * 1e-9;
     if !seconds.is_finite() || seconds <= 0.0 {
         return Err(TimebaseError::BadPeriod);
@@ -855,6 +924,7 @@ pub fn tick_stamp_ns(origin_ns: u64, period_ns: u64, tick: u64) -> Result<u64, T
 /// # Errors
 ///
 /// [`TimebaseError::BadDt`] when `dt_bits` is not a finite positive `f64`.
+/// [`TimebaseError::InexactPeriod`] when `period_ns > 2^53`.
 /// [`TimebaseError::BadPeriod`] when [`nominal_seconds`] refuses `period_ns`.
 /// [`TimebaseError::DtPeriodMismatch`] when the bits differ.
 pub fn require_forward_product(dt_bits: u64, period_ns: u64) -> Result<(), TimebaseError> {
@@ -862,6 +932,7 @@ pub fn require_forward_product(dt_bits: u64, period_ns: u64) -> Result<(), Timeb
     if !(dt.is_finite() && dt > 0.0) {
         return Err(TimebaseError::BadDt);
     }
+    require_exact_period(period_ns)?;
     let nominal = nominal_seconds(period_ns)?;
     if dt_bits != nominal.to_bits() {
         return Err(TimebaseError::DtPeriodMismatch {
@@ -871,6 +942,231 @@ pub fn require_forward_product(dt_bits: u64, period_ns: u64) -> Result<(), Timeb
         });
     }
     Ok(())
+}
+
+/// Envelope version this crate binds. Ferromotion envelope v1 has no ratio field.
+pub const EPISODE_ENVELOPE_VERSION: u32 = 1;
+
+/// Private episode envelope. A struct literal cannot skip [`EpisodeEnvelope::try_new`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct EpisodeEnvelope {
+    version: u32,
+    epoch: u64,
+    dt_bits: u64,
+    period_ns: u64,
+    origin_ns: u64,
+}
+
+impl EpisodeEnvelope {
+    /// Build version-1 envelope. `period_ns > 2^53` is [`TimebaseError::InexactPeriod`].
+    ///
+    /// # Errors
+    ///
+    /// [`TimebaseError::OffGrid`] when `version` is not 1.
+    /// [`TimebaseError::InexactPeriod`] when `period_ns > 2^53`.
+    /// [`TimebaseError::BadPeriod`] or [`TimebaseError::DtPeriodMismatch`] from
+    /// [`require_forward_product`].
+    pub fn try_new(
+        version: u32,
+        epoch: u64,
+        dt_bits: u64,
+        period_ns: u64,
+        origin_ns: u64,
+    ) -> Result<Self, TimebaseError> {
+        if version != EPISODE_ENVELOPE_VERSION {
+            return Err(TimebaseError::OffGrid);
+        }
+        require_forward_product(dt_bits, period_ns)?;
+        Ok(Self { version, epoch, dt_bits, period_ns, origin_ns })
+    }
+
+    /// Envelope version.
+    #[must_use]
+    pub fn version(&self) -> u32 {
+        self.version
+    }
+    /// Episode identity.
+    #[must_use]
+    pub fn epoch(&self) -> u64 {
+        self.epoch
+    }
+    /// `dt` bits stored with the envelope.
+    #[must_use]
+    pub fn dt_bits(&self) -> u64 {
+        self.dt_bits
+    }
+    /// Scheduling period, nanoseconds.
+    #[must_use]
+    pub fn period_ns(&self) -> u64 {
+        self.period_ns
+    }
+    /// Nanosecond stamp of tick 0.
+    #[must_use]
+    pub fn origin_ns(&self) -> u64 {
+        self.origin_ns
+    }
+}
+
+/// Public clock values copied for one bind. `tick` is recorded and is not authorization.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClockSnapshot {
+    /// Episode identity.
+    pub epoch: u64,
+    /// Current tick. Bind does not read this as permission.
+    pub tick: u64,
+    /// `dt.to_bits()`.
+    pub dt_bits: u64,
+    /// Scheduling period, if an episode has been started.
+    pub period_ns: Option<u64>,
+    /// Origin of tick 0, if an episode has been started.
+    pub origin_ns: Option<u64>,
+}
+
+impl<N: crate::neuron::Neuron> Sim<N> {
+    /// Copy the public clock. The copy is not a validity cache.
+    #[must_use]
+    pub fn clock_snapshot(&self) -> ClockSnapshot {
+        ClockSnapshot {
+            epoch: self.epoch,
+            tick: self.t,
+            dt_bits: self.dt.to_bits(),
+            period_ns: self.period_ns,
+            origin_ns: self.origin_ns,
+        }
+    }
+}
+
+/// Revalidate an untrusted snapshot against an envelope and stamp `n_action_steps` indexes.
+///
+/// `n_action_steps == 0` still runs the checks and stamps nothing. `clock.tick` is not
+/// authorization. Nothing is stored. A period above `2^53` on the envelope, the snapshot, or
+/// `step_duration_ns` is [`TimebaseError::InexactPeriod`].
+///
+/// # Errors
+///
+/// [`TimebaseError::MissingEpoch`] when the envelope is absent or the clock has no period and
+/// origin. [`TimebaseError::OffGrid`] for a bad version, a zero envelope period, a step
+/// duration that is not the period, or a `t0` off the grid. [`TimebaseError::InexactPeriod`]
+/// when a period exceeds `2^53`. [`TimebaseError::StaleEpoch`] when the identities differ.
+/// [`TimebaseError::AmbiguousEpoch`] when origin or period differ.
+/// [`TimebaseError::Mismatch`] when `dt` bits differ. [`TimebaseError::DtPeriodMismatch`]
+/// when the envelope fails the forward product. [`TimebaseError::ScheduleOverflow`] when a
+/// stamp does not fit in `u64`.
+pub fn bind_v2_timestamps(
+    t0_ns: u64,
+    step_duration_ns: u64,
+    n_action_steps: u32,
+    envelope: Option<EpisodeEnvelope>,
+    clock: &ClockSnapshot,
+) -> Result<(), TimebaseError> {
+    let Some(envelope) = envelope else {
+        return Err(TimebaseError::MissingEpoch);
+    };
+    if envelope.version() != EPISODE_ENVELOPE_VERSION || envelope.period_ns() == 0 {
+        return Err(TimebaseError::OffGrid);
+    }
+    require_forward_product(envelope.dt_bits(), envelope.period_ns())?;
+    if clock.period_ns.is_some_and(|period| period > MAX_EXACT_PERIOD_NS) || step_duration_ns > MAX_EXACT_PERIOD_NS
+    {
+        return Err(TimebaseError::InexactPeriod);
+    }
+    if clock.period_ns.is_none() || clock.origin_ns.is_none() {
+        return Err(TimebaseError::MissingEpoch);
+    }
+    if clock.epoch != envelope.epoch() {
+        return Err(TimebaseError::StaleEpoch { event: envelope.epoch(), clock: clock.epoch });
+    }
+    if clock.origin_ns != Some(envelope.origin_ns()) || clock.period_ns != Some(envelope.period_ns()) {
+        return Err(TimebaseError::AmbiguousEpoch);
+    }
+    if clock.dt_bits != envelope.dt_bits() {
+        return Err(TimebaseError::Mismatch { left: clock.dt_bits, right: envelope.dt_bits() });
+    }
+    if step_duration_ns != envelope.period_ns() || t0_ns < envelope.origin_ns() {
+        return Err(TimebaseError::OffGrid);
+    }
+    let delta = t0_ns - envelope.origin_ns();
+    if !delta.is_multiple_of(envelope.period_ns()) {
+        return Err(TimebaseError::OffGrid);
+    }
+    let start = delta / envelope.period_ns();
+    let _ = clock.tick;
+    for k in 0..n_action_steps {
+        let from_v2 = t0_ns
+            .checked_add((k as u64).checked_mul(step_duration_ns).ok_or(TimebaseError::ScheduleOverflow {
+                tick: k as u64,
+                period_ns: step_duration_ns,
+            })?)
+            .ok_or(TimebaseError::ScheduleOverflow { tick: k as u64, period_ns: step_duration_ns })?;
+        let from_grid = tick_stamp_ns(
+            envelope.origin_ns(),
+            envelope.period_ns(),
+            start.checked_add(k as u64).ok_or(TimebaseError::ScheduleOverflow {
+                tick: start,
+                period_ns: envelope.period_ns(),
+            })?,
+        )?;
+        if from_v2 != from_grid {
+            return Err(TimebaseError::OffGrid);
+        }
+    }
+    Ok(())
+}
+
+/// SHA-256 of a Ferric codec v2 body. A matching digest does not authorize a rollout.
+#[must_use]
+pub fn ferric_v2_digest(bytes: &[u8]) -> [u8; 32] {
+    crate::reservoir::sha256(bytes)
+}
+
+/// Read the action-step count from a Ferric codec v2 body. Rollout stays refused.
+///
+/// # Errors
+///
+/// [`TimebaseError::BadDt`] when the magic, version, or a length is not the v2 layout.
+pub fn parse_ferric_v2_steps(bytes: &[u8]) -> Result<u32, TimebaseError> {
+    const MAGIC: &[u8] = b"FERRIC-SMOLVLA-CHUNK\0";
+    if bytes.len() < MAGIC.len() + 4 || &bytes[..MAGIC.len()] != MAGIC {
+        return Err(TimebaseError::BadDt);
+    }
+    let mut at = MAGIC.len();
+    let version = read_u32(bytes, &mut at)?;
+    if version != 2 {
+        return Err(TimebaseError::BadDt);
+    }
+    skip_str(bytes, &mut at)?;
+    skip_str(bytes, &mut at)?;
+    skip_exact(bytes, &mut at, 64)?;
+    skip_exact(bytes, &mut at, 64)?;
+    skip_exact(bytes, &mut at, 64)?;
+    skip_str(bytes, &mut at)?;
+    skip_exact(bytes, &mut at, 8)?;
+    skip_exact(bytes, &mut at, 8)?;
+    read_u32(bytes, &mut at)
+}
+
+fn read_u32(bytes: &[u8], at: &mut usize) -> Result<u32, TimebaseError> {
+    if *at + 4 > bytes.len() {
+        return Err(TimebaseError::BadDt);
+    }
+    let mut buf = [0u8; 4];
+    buf.copy_from_slice(&bytes[*at..*at + 4]);
+    let value = u32::from_le_bytes(buf);
+    *at += 4;
+    Ok(value)
+}
+
+fn skip_exact(bytes: &[u8], at: &mut usize, n: usize) -> Result<(), TimebaseError> {
+    if *at + n > bytes.len() {
+        return Err(TimebaseError::BadDt);
+    }
+    *at += n;
+    Ok(())
+}
+
+fn skip_str(bytes: &[u8], at: &mut usize) -> Result<(), TimebaseError> {
+    let n = read_u32(bytes, at)? as usize;
+    skip_exact(bytes, at, n)
 }
 
 /// One closed-loop step, as ferromorphic can already record it.
@@ -1613,10 +1909,29 @@ mod tests {
         assert!(super::Schedule::try_new(-0.1, 1_000).is_err());
         let hi = 1u64 << 53;
         let collided = hi + 1;
+        assert_eq!(super::MAX_EXACT_PERIOD_NS, hi);
+        assert_eq!((hi as f64) as u64, hi);
+        assert_ne!((collided as f64) as u64, collided);
+        assert_eq!((u64::MAX as f64) as u64, u64::MAX, "the cast saturates, so it cannot be the test");
         let shared = super::nominal_seconds(hi).unwrap();
-        assert_eq!(shared.to_bits(), super::nominal_seconds(collided).unwrap().to_bits());
         assert!(super::Schedule::try_new(shared, hi).is_ok());
-        assert!(super::Schedule::try_new(shared, collided).is_ok());
+        assert!(matches!(super::nominal_seconds(collided), Err(super::TimebaseError::InexactPeriod)));
+        assert!(matches!(super::nominal_seconds(u64::MAX), Err(super::TimebaseError::InexactPeriod)));
+        assert!(matches!(super::Schedule::try_new(shared, collided), Err(super::TimebaseError::InexactPeriod)));
+        let mut sim = Sim::new(NetBuilder::new(1).build(), vec![Lif::default()], shared, Mode::Clocked).unwrap();
+        sim.period_ns = Some(u64::MAX);
+        assert!(matches!(sim.revalidate_public_clock(), Err(super::TimebaseError::InexactPeriod)));
+        sim.period_ns = None;
+        assert!(matches!(sim.episode_start(0, collided), Err(super::TimebaseError::InexactPeriod)));
+        assert!(matches!(sim.episode_start(0, u64::MAX), Err(super::TimebaseError::InexactPeriod)));
+        assert_eq!((sim.t, sim.epoch, sim.period_ns), (0, 0, None));
+        assert_eq!(sim.episode_start(0, hi).unwrap(), 1);
+        assert_eq!(sim.period_ns, Some(hi));
+        sim.period_ns = Some(collided);
+        assert!(matches!(sim.try_step(&[]), Err(super::TimebaseError::InexactPeriod)));
+        sim.period_ns = Some(u64::MAX);
+        assert!(matches!(sim.revalidate_public_clock(), Err(super::TimebaseError::InexactPeriod)));
+        assert_eq!(sim.t, 0, "a refused period does not advance the tick");
     }
 
     /// The closed-loop receipt records the tick a spike is stamped with, and a delay of zero
@@ -1663,5 +1978,63 @@ mod tests {
             "ferromorphic-step 2\nepoch 0\nstep 4\ndt_bits 3fb999999999999a\nmode clocked\nspike 4 0\nspike 4 1\n"
         );
         assert_eq!(super::StepReceipt::from_text(&sample.to_text()).unwrap(), sample);
+    }
+
+    #[test]
+    fn bind_rechecks_the_snapshot_and_a_zero_step_count_stamps_nothing() {
+        let dt_bits = (1_000_f64 * 1e-9).to_bits();
+        let envelope = super::EpisodeEnvelope::try_new(1, 1, dt_bits, 1_000, 0).unwrap();
+        let mut clock = super::ClockSnapshot {
+            epoch: 1,
+            tick: 40,
+            dt_bits,
+            period_ns: Some(1_000),
+            origin_ns: Some(0),
+        };
+        assert!(super::bind_v2_timestamps(0, 1_000, 0, Some(envelope), &clock).is_ok());
+        assert!(super::bind_v2_timestamps(0, 1_000, 2, Some(envelope), &clock).is_ok());
+        clock.tick = 0;
+        assert!(super::bind_v2_timestamps(0, 1_000, 1, Some(envelope), &clock).is_ok());
+        clock.dt_bits ^= 1;
+        assert!(matches!(
+            super::bind_v2_timestamps(0, 1_000, 0, Some(envelope), &clock),
+            Err(super::TimebaseError::Mismatch { .. })
+        ));
+        clock.dt_bits = dt_bits;
+        clock.epoch = 2;
+        assert!(matches!(
+            super::bind_v2_timestamps(0, 1_000, 0, Some(envelope), &clock),
+            Err(super::TimebaseError::StaleEpoch { .. })
+        ));
+        assert!(super::bind_v2_timestamps(0, 1_000, 0, None, &clock).is_err());
+        let hi = 1u64 << 53;
+        let collided = hi + 1;
+        let shared = super::nominal_seconds(hi).unwrap().to_bits();
+        assert!(super::EpisodeEnvelope::try_new(1, 0, shared, hi, 0).is_ok());
+        assert!(matches!(
+            super::EpisodeEnvelope::try_new(1, 0, shared, collided, 0),
+            Err(super::TimebaseError::InexactPeriod)
+        ));
+        assert!(matches!(
+            super::EpisodeEnvelope::try_new(1, 0, shared, u64::MAX, 0),
+            Err(super::TimebaseError::InexactPeriod)
+        ));
+        clock.period_ns = Some(collided);
+        assert!(matches!(
+            super::bind_v2_timestamps(0, 1_000, 0, Some(envelope), &clock),
+            Err(super::TimebaseError::InexactPeriod)
+        ));
+        clock.period_ns = Some(1_000);
+        assert!(matches!(
+            super::bind_v2_timestamps(0, u64::MAX, 0, Some(envelope), &clock),
+            Err(super::TimebaseError::InexactPeriod)
+        ));
+        let empty = include_bytes!("../tools/fixtures/ferric-v2-empty.bin");
+        let full = include_bytes!("../tools/fixtures/ferric-v2-nonempty.bin");
+        assert_eq!(super::parse_ferric_v2_steps(empty).unwrap(), 0);
+        assert_eq!(super::parse_ferric_v2_steps(full).unwrap(), 2);
+        let hex = |bytes: [u8; 32]| -> String { bytes.iter().map(|b| format!("{b:02x}")).collect() };
+        assert_eq!(hex(super::ferric_v2_digest(empty)), "6295818fa11b85b37ad8054c75e0a1935b0c0cbb5d7e419090c2520a17b1744e");
+        assert_eq!(hex(super::ferric_v2_digest(full)), "6d668d7e25c89249c890d895ef15b8fdcbb97dab7a1339a0a97605c6e1172d86");
     }
 }

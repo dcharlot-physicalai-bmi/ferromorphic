@@ -133,6 +133,7 @@ pub mod glif;
 pub mod graph;
 pub mod grid;
 pub mod hardware;
+pub mod heldout;
 pub mod hh;
 pub mod hindmarshrose;
 pub mod hopfield;
