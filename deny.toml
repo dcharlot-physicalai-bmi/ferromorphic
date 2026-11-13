@@ -1,0 +1,18 @@
+# The library has an empty [dependencies] table. This file is what `cargo deny check`
+# reads so that emptiness is a checked fact: Apache-2.0 is the only accepted license,
+# and a crate from anywhere other than crates.io is refused.
+[advisories]
+yanked = "deny"
+
+[licenses]
+allow = ["Apache-2.0"]
+confidence-threshold = 0.8
+
+[bans]
+multiple-versions = "deny"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
